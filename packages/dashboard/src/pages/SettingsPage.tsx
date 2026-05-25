@@ -28,7 +28,7 @@ export default function SettingsPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [clearDays, setClearDays] = useState(90);
+  const [clearDays, setClearDays] = useState(0);
   const [showClear, setShowClear] = useState(false);
   const [showNuke, setShowNuke] = useState(false);
   const [nukeConfirmText, setNukeConfirmText] = useState("");
@@ -381,14 +381,19 @@ export default function SettingsPage() {
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between p-4 border border-red-500/20 rounded-lg">
             <div>
-              <p className="text-sm font-medium">Clear Old Logs</p>
+              <p className="text-sm font-medium">Clear Logs &amp; Sessions</p>
               <p className="text-xs text-muted-foreground mt-1">
-                Delete request logs older than a specified number of days
+                Delete request logs and chat sessions — older than N days, or all at once.
               </p>
             </div>
-            <Button variant="destructive" size="sm" onClick={() => setShowClear(true)}>
-              <Trash2 className="h-3 w-3 mr-1" /> Clear Logs
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => { setClearDays(90); setShowClear(true); }}>
+                <Trash2 className="h-3 w-3 mr-1" /> Older Than...
+              </Button>
+              <Button variant="destructive" size="sm" onClick={() => { setClearDays(0); setShowClear(true); }}>
+                <Trash2 className="h-3 w-3 mr-1" /> Clear All
+              </Button>
+            </div>
           </div>
 
           <div className="flex items-center justify-between p-4 border-2 border-red-600/50 rounded-lg bg-red-950/20">
