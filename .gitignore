@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+
+# Environment / secrets — NEVER commit
+.env
+
+# SQLite database files
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+
+# Runtime data directories
+data/
+packages/proxy/data/
+packages/bot/data/
+
+# Generated cache files
+packages/proxy/data/model_catalog_cache.json
+
+# TypeScript build cache
+*.tsbuildinfo
+
+# Tool caches
+.turbo
+.vite
+
+# PM2 / process logs
+packages/bot/logs/
+*.log
+
+# OS / editor artifacts
+.DS_Store
+Thumbs.db

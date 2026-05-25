@@ -1,0 +1,27 @@
+{
+  "name": "ai-proxy-gateway",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI API Proxy Gateway with Admin Dashboard",
+  "scripts": {
+    "dev": "concurrently \"pnpm --filter proxy dev\" \"pnpm dev:dashboard:wait\" \"pnpm dev:bot:wait\"",
+    "dev:proxy": "pnpm --filter proxy dev",
+    "dev:dashboard": "pnpm --filter dashboard dev",
+    "dev:bot": "pnpm --filter bot dev",
+    "wait:proxy": "node scripts/wait-for-port.cjs 3000 60000",
+    "dev:dashboard:wait": "pnpm wait:proxy && pnpm --filter dashboard dev",
+    "dev:bot:wait": "pnpm wait:proxy && pnpm --filter bot dev",
+    "build": "pnpm --filter proxy build && pnpm --filter dashboard build",
+    "start": "concurrently \"pnpm --filter proxy start\" \"pnpm --filter bot start\"",
+    "db:generate": "pnpm --filter proxy db:generate",
+    "db:migrate": "pnpm --filter proxy db:migrate"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "packageManager": "pnpm@9.0.0"
+}
