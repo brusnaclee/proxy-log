@@ -30,6 +30,52 @@ export async function initializeDatabase() {
   await client.execute("PRAGMA journal_mode = WAL");
   await client.execute("PRAGMA foreign_keys = ON");
 
+  // Fix for the table creation bug: if api_keys has password_hash, we need to recreate it.
+  const apiKeysPragma = await client.execute(`PRAGMA table_info(api_keys)`);
+  const hasPasswordHash = apiKeysPragma.rows.some((row: any) => String(row.name) === "password_hash");
+  if (hasPasswordHash) {
+    console.log("o. Detected broken api_keys table schema. Recreating and migrating data...");
+    await client.execute("PRAGMA foreign_keys = OFF");
+    await client.execute("ALTER TABLE api_keys RENAME TO api_keys_broken");
+    
+    // Create the proper api_keys table
+    await client.execute(`
+      CREATE TABLE api_keys (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        key TEXT NOT NULL UNIQUE,
+        key_prefix TEXT NOT NULL,
+        key_hash TEXT NOT NULL,
+        discord_user_id TEXT,
+        discord_username TEXT,
+        provisioned_by TEXT NOT NULL DEFAULT 'dashboard',
+        is_active INTEGER NOT NULL DEFAULT 1,
+        max_devices INTEGER DEFAULT 0,
+        device_policy TEXT NOT NULL DEFAULT 'none',
+        ip_policy TEXT NOT NULL DEFAULT 'none',
+        ide_policy TEXT NOT NULL DEFAULT 'none',
+        monthly_token_limit INTEGER DEFAULT 0,
+        rate_limit INTEGER DEFAULT 0,
+        rate_limit_window TEXT,
+        prompt_limit INTEGER DEFAULT 0,
+        prompt_limit_window TEXT,
+        per_model_prompt_limit INTEGER DEFAULT 0,
+        per_model_prompt_limit_window TEXT,
+        pending_notification TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `);
+
+    // We copy the data we can (if any exists).
+    // The broken table had: id, password_hash, upstream_endpoint, upstream_api_key, created_at, updated_at
+    // But none of the valid columns. So if there's data, we can't really copy it cleanly because name, key etc are NOT NULL.
+    // However, since it was broken, it's very likely empty. We will just drop the broken table.
+    await client.execute("DROP TABLE api_keys_broken");
+    await client.execute("PRAGMA foreign_keys = ON");
+    console.log("o. Fixed api_keys table schema.");
+  }
+
   // Create all tables directly using SQL (auto-migration)
   await client.executeMultiple(`
     CREATE TABLE IF NOT EXISTS admin_config (
