@@ -2094,7 +2094,7 @@ async function handleRankingSearchModal(interaction) {
 		return;
 	}
 
-	const { discordUsername, isActive, keyPrefix, today, month } = data;
+	const { discordUsername, isActive, keyPrefix, today, month, promptLimit, promptLimitWindow, perModelPromptLimit, perModelPromptLimitWindow } = data;
 	const displayName = discordUsername || `User ${discordUserId}`;
 
 	function periodField(p) {
@@ -2108,20 +2108,19 @@ async function handleRankingSearchModal(interaction) {
 		];
 		if (p.topModels && p.topModels.length > 0) {
 			lines.push(`\n**Top Models:**`);
-			p.topModels.forEach((m, i) => {
-				lines.push(`${i + 1}. \`${m.model}\` (${m.requests.toLocaleString()} req, ${formatTokens(m.tokens)} tok)`);
+			p.topModels.forEach((m) => {
+				lines.push(`\`${m.model}\` (${m.requests.toLocaleString()} req, ${formatTokens(m.tokens)} tok)`);
 			});
 		}
 		return lines.join('\n');
 	}
 
+	const globalLimitStr = promptLimit > 0 ? `**${promptLimit}** req / ${promptLimitWindow}` : '**Unlimited**';
+	const modelLimitStr = perModelPromptLimit > 0 ? `**${perModelPromptLimit}** req / ${perModelPromptLimitWindow}` : '**Unlimited**';
+
 	const embed = new EmbedBuilder()
 		.setTitle(`📊 Usage: ${displayName}`)
-		.setDescription(
-			`**Discord ID:** \`${discordUserId}\`\n` +
-			`**API Key:** \`[HIDDEN]\`\n` +
-			`**Status:** ${isActive ? '🟢 Active' : '🔴 Disabled'}`,
-		)
+		.setDescription(`Discord ID: \`${discordUserId}\`\nAPI Key: \`${keyPrefix}...\`\nStatus: ${isActive ? '🟢 Active' : '🔴 Inactive'}\n\n**🎯 Limits**\nGlobal: ${globalLimitStr}\nPer-Model: ${modelLimitStr}`)
 		.setColor(isActive ? 0x57f287 : 0xff6b6b)
 		.addFields(
 			{ name: '📅 Hari Ini', value: periodField(today), inline: true },

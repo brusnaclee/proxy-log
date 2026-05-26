@@ -569,11 +569,17 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     getTopModels(monthStr),
   ]);
 
+  const config = await db.select().from(adminConfig).get();
+
   return c.json({
     discordUserId: key.discordUserId,
     discordUsername: key.discordUsername || key.name,
     isActive: key.isActive,
     keyPrefix: key.keyPrefix,
+    promptLimit: key.promptLimit && key.promptLimit > 0 ? key.promptLimit : config?.globalPromptLimit || 0,
+    promptLimitWindow: key.promptLimitWindow || config?.globalPromptLimitWindow || "30m",
+    perModelPromptLimit: key.perModelPromptLimit && key.perModelPromptLimit > 0 ? key.perModelPromptLimit : config?.globalPerModelPromptLimit || 0,
+    perModelPromptLimitWindow: key.perModelPromptLimitWindow || config?.globalPerModelPromptLimitWindow || "30m",
       today: {
         requests: todayStats?.requests || 0,
         tokens: todayStats?.tokens || 0,

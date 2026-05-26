@@ -309,9 +309,15 @@ export default function OverviewPage() {
               {searchUserResult && (
                 <div className="mt-3 text-sm bg-background p-3 rounded border border-border">
                   <p><strong>User:</strong> {searchUserResult.discordUsername || searchUserResult.discordUserId}</p>
-                  <p><strong>Requests Hari Ini:</strong> {formatNumber(searchUserResult.today?.requests || 0)}</p>
-                  <p><strong>Token Hari Ini:</strong> {formatNumber(searchUserResult.today?.tokens || 0)}</p>
                   <p><strong>Status Key:</strong> {searchUserResult.isActive ? 'Aktif' : 'Nonaktif'}</p>
+                  <div className="mt-2 space-y-1">
+                    <p><strong>Global Prompt Limit:</strong> {searchUserResult.promptLimit > 0 ? `${searchUserResult.promptLimit} / ${searchUserResult.promptLimitWindow}` : 'Unlimited'}</p>
+                    <p><strong>Per-Model Prompt Limit:</strong> {searchUserResult.perModelPromptLimit > 0 ? `${searchUserResult.perModelPromptLimit} / ${searchUserResult.perModelPromptLimitWindow}` : 'Unlimited'}</p>
+                  </div>
+                  <div className="mt-2 space-y-1">
+                    <p><strong>Requests Hari Ini:</strong> {formatNumber(searchUserResult.today?.requests || 0)}</p>
+                    <p><strong>Token Hari Ini:</strong> {formatNumber(searchUserResult.today?.tokens || 0)}</p>
+                  </div>
                 </div>
               )}
             </div>
