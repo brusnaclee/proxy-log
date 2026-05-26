@@ -13,11 +13,15 @@ import { useCallback } from "react";
 type TimelineTurn = {
   id: number;
   createdAt: string;
+  model?: string | null;
   contextEvent?: string | null;
   requestPreview?: string | null;
   responsePreview?: string | null;
   toolsUsed?: string[];
   totalTokens?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  estimatedCost?: number;
   latencyMs?: number;
   statusCode?: number;
   transcript?: { role: string; content: string }[];
@@ -188,6 +192,7 @@ export default function SessionDetailPage() {
                     <div className="flex items-center gap-2">
                       <Badge variant="outline" className="text-[10px]">Turn #{idx + 1}</Badge>
                       <Badge variant={(turn.statusCode || 0) >= 400 ? "destructive" : "success"} className="text-[10px]">{turn.statusCode || "-"}</Badge>
+                      {turn.model ? <code className="text-[10px] bg-accent/50 px-1.5 py-0.5 rounded">{turn.model}</code> : null}
                       {attempts > 1 ? <Badge variant="secondary" className="text-[10px]">{attempts} attempts</Badge> : null}
                     </div>
                     <div className="text-[10px] text-muted-foreground">{formatDate(turn.lastSeenAt || turn.createdAt)}</div>
@@ -203,7 +208,10 @@ export default function SessionDetailPage() {
 
                   <div className={`rounded-lg border p-3 ${roleTone("assistant")}`}>
                     <div className="flex items-center justify-between gap-2">
-                      <Badge variant="secondary" className="text-[10px]">assistant</Badge>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary" className="text-[10px]">assistant</Badge>
+                        {turn.model ? <code className="text-[10px] text-muted-foreground">{turn.model}</code> : null}
+                      </div>
                       <span className="text-[10px] text-muted-foreground">{formatNumber(turn.totalTokens || 0)} tokens</span>
                     </div>
                     {renderMessage(assistantText || "-", `${key}-assistant`)}
@@ -251,6 +259,7 @@ export default function SessionDetailPage() {
               <thead>
                 <tr className="border-b border-border/50">
                   <th className="text-left py-3 px-3 text-muted-foreground font-medium text-xs">Time</th>
+                  <th className="text-left py-3 px-3 text-muted-foreground font-medium text-xs">Model</th>
                   <th className="text-left py-3 px-3 text-muted-foreground font-medium text-xs">Event</th>
                   <th className="text-left py-3 px-3 text-muted-foreground font-medium text-xs">Tools</th>
                   <th className="text-right py-3 px-3 text-muted-foreground font-medium text-xs">Input / Output</th>
@@ -266,15 +275,16 @@ export default function SessionDetailPage() {
                 {turns.map((row, idx) => (
                   <tr key={row.id} className="border-b border-border/30">
                     <td className="py-2 px-3 text-xs text-muted-foreground">{formatDate(row.lastSeenAt || row.createdAt)}</td>
+                    <td className="py-2 px-3 text-xs"><code className="bg-accent/50 px-1 py-0.5 rounded text-[10px]">{row.model || "—"}</code></td>
                     <td className="py-2 px-3 text-xs">{row.contextEvent || "append"}</td>
                     <td className="py-2 px-3 text-xs">{(row.toolsUsed || []).join(", ") || "-"}</td>
                     <td className="py-2 px-3 text-right font-mono text-xs">
-                      <span className="text-blue-400">{formatNumber((row as any).promptTokens || 0)}</span>
+                      <span className="text-blue-400">{formatNumber(row.promptTokens || 0)}</span>
                       <span className="text-muted-foreground mx-1">/</span>
-                      <span className="text-purple-400">{formatNumber((row as any).completionTokens || 0)}</span>
+                      <span className="text-purple-400">{formatNumber(row.completionTokens || 0)}</span>
                     </td>
                     <td className="py-2 px-3 text-right font-mono text-xs">{formatNumber(row.totalTokens || 0)}</td>
-                    <td className="py-2 px-3 text-right font-mono text-xs text-emerald-400/90">{formatCost((row as any).estimatedCost || 0)}</td>
+                    <td className="py-2 px-3 text-right font-mono text-xs text-emerald-400/90">{formatCost(row.estimatedCost || 0)}</td>
                     <td className="py-2 px-3 text-right text-xs text-muted-foreground">{row.latencyMs}ms</td>
                     <td className="py-2 px-3 text-center"><Badge variant={(row.statusCode || 0) >= 400 ? "destructive" : "success"} className="text-[10px]">{row.statusCode || "-"}</Badge></td>
                     <td className="py-2 px-3 text-xs text-muted-foreground max-w-[320px] truncate">{row.requestPreview || "-"}</td>

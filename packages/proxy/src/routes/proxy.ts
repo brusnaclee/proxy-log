@@ -392,25 +392,26 @@ async function resolveChatSession(params: {
   }
 
   // ── Context switch: context fingerprint changed ───────────────────────────────
-  // Distinguish between:
-  //   A) User opened a NEW CHAT quickly (different fingerprint, small/zero context → new session)
-  //   B) Sub-agent spawned a parallel context (different fingerprint, still has large context)
+  // Possible causes:
+  //   A) Model changed: IDE may embed model name in system prompt → different fingerprint,
+  //      but this is still the SAME conversation. Should stay in same session.
+  //   B) User opened a NEW CHAT quickly: fresh context (tiny/zero context size).
+  //   C) Sub-agent spawned: different fingerprint, large context, gap < 60s.
   //
-  // Heuristic: if the incoming context is very small (≤ 2× the previous delta for a single
-  // message turn, i.e. looks like only 1–2 messages), treat it as a new chat regardless of gap.
-  // Also treat it as new if has user message AND context token count dropped significantly
-  // compared to the previous session (meaning history was wiped, not just switched context).
+  // Rule priority:
+  //   1. If context is tiny relative to previous → new chat (fingerprint + size changed = new conversation)
+  //   2. If gap is within session window AND context is substantial → model change or sub-agent → same session
+  //   3. If gap > session window → definitely new session
   const prevTokens = latest.lastContextTokens || 0;
   const incomingTokens = params.contextTokensBefore;
 
-  // A new chat sends a very small context (just 1 user message, no assistant history).
-  // A sub-agent typically sends a context that is comparable in size to or larger than
-  // the previous session context.
+  // Detect "new chat opened": context was reset (tiny incoming relative to what we had before).
+  // A model change mid-conversation keeps the full history → context size stays comparable.
   const isLikelyNewChat =
     params.messageAnalysis.hasUserMessage && (
-      // Context is much smaller than what we had before (history was reset)
+      // History wiped: incoming is tiny fraction of previous context
       (prevTokens > 0 && incomingTokens < prevTokens * 0.4) ||
-      // Or context is basically empty (first message only, under ~200 tokens) but previous session had real history
+      // Or context is basically empty (first message only) but previous session had real history
       (incomingTokens <= 200 && prevTokens > 200)
     );
 
@@ -425,14 +426,19 @@ async function resolveChatSession(params: {
     return { sessionId, contextEvent: "new_session", contextDeltaTokens: 0, gapMs, isNewUserPrompt };
   }
 
-  const isSubAgentSwitch = gapMs < SWITCH_PROMPT_MIN_GAP_MS;
-
-  if (isSubAgentSwitch) {
-    // Sub-agent executing within the same user turn → same session, no new prompt
-    return { sessionId: latest.sessionId, contextEvent: "switch", contextDeltaTokens: 0, gapMs, isNewUserPrompt: false };
+  // Context changed but size is comparable → either model switch or sub-agent.
+  // In both cases: stay in the same session as long as we're within the session gap window.
+  if (gapMs <= SESSION_GAP_MS) {
+    // Within active session: treat as a switch event (model change or sub-agent), same session.
+    // Determine if this is a new user prompt: only if gap is large enough and has user message.
+    const isNewUserPrompt =
+      params.messageAnalysis.hasUserMessage &&
+      gapMs >= SWITCH_PROMPT_MIN_GAP_MS &&
+      params.messageAnalysis.messageHash !== latest.lastUserMessageHash;
+    return { sessionId: latest.sessionId, contextEvent: "switch", contextDeltaTokens: incomingTokens - prevTokens, gapMs, isNewUserPrompt };
   }
 
-  // Gap is large enough → genuine user switch to a different context → new session
+  // Gap exceeded session window → new session
   const isNewUserPrompt = params.messageAnalysis.hasUserMessage;
   const sessionId = await createChatSession({
     ...params,
