@@ -45,15 +45,6 @@ export async function initializeDatabase() {
 
     CREATE TABLE IF NOT EXISTS api_keys (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      password_hash TEXT NOT NULL,
-      upstream_endpoint TEXT NOT NULL DEFAULT 'https://api.openai.com',
-      upstream_api_key TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS api_keys (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       key TEXT NOT NULL UNIQUE,
       key_prefix TEXT NOT NULL,
@@ -195,12 +186,24 @@ export async function initializeDatabase() {
   await ensureColumnExists("admin_config", "realtime_enabled", "INTEGER NOT NULL DEFAULT 0");
   await ensureColumnExists("admin_config", "global_rate_limit", "INTEGER DEFAULT 0");
   await ensureColumnExists("admin_config", "global_rate_limit_window", "TEXT DEFAULT '1h'");
+
+  // Fix api_keys columns that might be missing due to the previous schema bug
+  await ensureColumnExists("api_keys", "name", "TEXT NOT NULL DEFAULT ''");
+  await ensureColumnExists("api_keys", "key", "TEXT NOT NULL DEFAULT ''");
+  await ensureColumnExists("api_keys", "key_prefix", "TEXT NOT NULL DEFAULT ''");
+  await ensureColumnExists("api_keys", "key_hash", "TEXT NOT NULL DEFAULT ''");
   await ensureColumnExists("api_keys", "discord_user_id", "TEXT");
   await ensureColumnExists("api_keys", "discord_username", "TEXT");
   await ensureColumnExists("api_keys", "provisioned_by", "TEXT NOT NULL DEFAULT 'dashboard'");
+  await ensureColumnExists("api_keys", "is_active", "INTEGER NOT NULL DEFAULT 1");
+  await ensureColumnExists("api_keys", "max_devices", "INTEGER DEFAULT 0");
+  await ensureColumnExists("api_keys", "device_policy", "TEXT NOT NULL DEFAULT 'none'");
+  await ensureColumnExists("api_keys", "ip_policy", "TEXT NOT NULL DEFAULT 'none'");
   await ensureColumnExists("api_keys", "ide_policy", "TEXT NOT NULL DEFAULT 'none'");
+  await ensureColumnExists("api_keys", "monthly_token_limit", "INTEGER DEFAULT 0");
   await ensureColumnExists("api_keys", "rate_limit", "INTEGER DEFAULT 0");
   await ensureColumnExists("api_keys", "rate_limit_window", "TEXT");
+
   await ensureColumnExists("request_logs", "provider", "TEXT");
   await ensureColumnExists("request_logs", "endpoint_path", "TEXT");
   await ensureColumnExists("request_logs", "session_id", "TEXT");
