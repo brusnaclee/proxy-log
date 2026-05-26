@@ -79,7 +79,7 @@ export default function LogsPage() {
 
   const loadRequestLogs = useCallback(async () => {
     try {
-      const params: Record<string, string> = { page: requestPage.toString(), limit: "500" };
+      const params: Record<string, string> = { page: requestPage.toString(), limit: "50" };
       Object.entries(requestFilters).forEach(([k, v]) => {
         if (v) params[k] = v;
       });
@@ -95,7 +95,7 @@ export default function LogsPage() {
 
   const loadSessions = useCallback(async () => {
     try {
-      const params: Record<string, string> = { page: sessionPage.toString(), limit: "100" };
+      const params: Record<string, string> = { page: sessionPage.toString(), limit: "25" };
       Object.entries(sessionFilters).forEach(([k, v]) => {
         if (v) params[k] = v;
       });
@@ -153,7 +153,7 @@ export default function LogsPage() {
   const handleSSEMessage = useCallback((newLog: any) => {
     if (!liveMode) return;
     if (viewMode === "requests") {
-      setRequestData((prev) => [newLog, ...prev].slice(0, 500));
+      setRequestData((prev) => [newLog, ...prev].slice(0, 50));
     } else {
       void loadSessions();
       if (selectedSessionId) {

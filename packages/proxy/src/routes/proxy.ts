@@ -426,22 +426,12 @@ async function resolveChatSession(params: {
   let isNewUserPrompt = false;
 
   if (params.messageAnalysis.hasUserMessage && hashChanged) {
-    // User typed something new. Count it if this is the "real" request
-    // (the one with assistant history or tools), not the IDE compact setup request.
-    if (params.messageAnalysis.assistantMessageCount > 0) {
-      // Has conversation history ΓåÆ this is a continuation prompt. Always count.
-      isNewUserPrompt = true;
-    } else if (params.contextTokensBefore > 50) {
-      // No assistant history but not a tiny ping. Count it.
-      isNewUserPrompt = true;
-    }
-    // else: no history, extremely small context (<50 tokens) = IDE compact setup request. Don't count.
+    // User typed something new. Always count it.
+    isNewUserPrompt = true;
   } else if (params.messageAnalysis.hasUserMessage && !hashChanged && gapMs >= SWITCH_PROMPT_MIN_GAP_MS) {
-    // Same hash but very large gap ΓåÆ user re-sent after long pause
+    // Same hash but very large gap → user re-sent after long pause
     isNewUserPrompt = true;
   }
-
-  
 
   return { sessionId: latest.sessionId, contextEvent, contextDeltaTokens: delta, gapMs, isNewUserPrompt };
 }

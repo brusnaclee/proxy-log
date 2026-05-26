@@ -95,7 +95,7 @@ function collapseTimelineRows(rows: any[]) {
 
 logs.get("/logs", async (c) => {
   const page = parseInt(c.req.query("page") || "1");
-  const limit = Math.min(parseInt(c.req.query("limit") || "50"), 200);
+  const limit = Math.min(parseInt(c.req.query("limit") || "500"), 500);
   const offset = (page - 1) * limit;
 
   const conditions: any[] = [];
@@ -127,16 +127,23 @@ logs.get("/logs", async (c) => {
     .orderBy(desc(requestLogs.createdAt)).limit(limit).offset(offset).all();
 
   const totalResult = await db.select({ count: sql<number>`count(*)` }).from(requestLogs).where(whereClause).get();
-  const total = totalResult?.count || 0;
+  const total = Math.min(totalResult?.count || 0, 500);
 
   const mappedRows = rows.map((row: any) => mapTimelineRow(row));
 
-  return c.json({ data: mappedRows, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
-});
+  return c.json({
+    data: mappedRows,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    }
+  });
 
 logs.get("/logs/sessions", async (c) => {
   const page = parseInt(c.req.query("page") || "1");
-  const limit = Math.min(parseInt(c.req.query("limit") || "25"), 100);
+  const limit = Math.min(parseInt(c.req.query("limit") || "100"), 100);
   const offset = (page - 1) * limit;
 
   const conditions: any[] = [];
@@ -158,7 +165,7 @@ logs.get("/logs/sessions", async (c) => {
     .orderBy(desc(chatSessions.lastSeenAt)).limit(limit).offset(offset).all();
 
   const totalResult = await db.select({ count: sql<number>`count(*)` }).from(chatSessions).where(whereClause).get();
-  const total = totalResult?.count || 0;
+  const total = Math.min(totalResult?.count || 0, 100);
 
   return c.json({ data: rows, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
 });
