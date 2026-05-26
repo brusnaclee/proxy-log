@@ -16,12 +16,36 @@ import {
 } from "../utils/telemetry.js";
 import { logEmitter } from "../utils/event-emitter.js";
 import { getModelCatalogResponse } from "../utils/model-catalog.js";
-import { checkPromptLimit, checkModelPromptLimit } from "../utils/rate-limit.js";
-import { analyzeRequestMessages, detectToolCallsInResponse, type MessageAnalysis } from "../utils/message-analyzer.js";
+import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow } from "../utils/rate-limit.js";
+import { analyzeRequestMessages, isTitleGenRequest, detectToolCallsInResponse, type MessageAnalysis } from "../utils/message-analyzer.js";
 
 const proxy = new Hono();
 
 type ContextEvent = "new_session" | "append" | "compact" | "switch";
+
+// In-memory cache of the last user message hash per session.
+const sessionHashCache = new Map<string, string>();
+
+// Per-device mutex to serialize session resolution.
+// Without this, concurrent requests from the same device can both read "no session"
+// and each create their own session, causing duplicates and miscounts.
+const deviceLocks = new Map<string, Promise<void>>();
+async function withDeviceLock<T>(deviceKey: string, fn: () => Promise<T>): Promise<T> {
+  // Wait for any existing lock on this device to release
+  while (deviceLocks.has(deviceKey)) {
+    await deviceLocks.get(deviceKey);
+  }
+  // Create our lock
+  let resolve: () => void;
+  const promise = new Promise<void>((r) => { resolve = r; });
+  deviceLocks.set(deviceKey, promise);
+  try {
+    return await fn();
+  } finally {
+    deviceLocks.delete(deviceKey);
+    resolve!();
+  }
+}
 
 /**
  * Derive a human-readable session name from the request body.
@@ -343,15 +367,14 @@ async function resolveChatSession(params: {
 
   const prevTokens = latest.lastContextTokens || 0;
   const incomingTokens = params.contextTokensBefore;
+  
+  // Use in-memory hash cache (single source of truth, immune to async DB lag).
+  // Fall back to DB value only if cache is empty (e.g. server restart).
+  const cachedHash = sessionHashCache.get(latest.sessionId) || latest.lastUserMessageHash || "";
   const hashChanged = !!(
     params.messageAnalysis.messageHash &&
-    params.messageAnalysis.messageHash !== latest.lastUserMessageHash
+    params.messageAnalysis.messageHash !== cachedHash
   );
-
-  // Internal IDE requests (title generator, etc.) → always same session, never counted
-  if (params.messageAnalysis.isInternalRequest) {
-    return { sessionId: latest.sessionId, contextEvent: "append", contextDeltaTokens: incomingTokens - prevTokens, gapMs, isNewUserPrompt: false };
-  }
 
   // ── Detect "New Chat" button pressed ────────────────────────────────────────
   // Method 1: Context size dropped dramatically (history wiped)
@@ -384,27 +407,38 @@ async function resolveChatSession(params: {
   const contextEvent: ContextEvent = delta <= -COMPACT_DROP_THRESHOLD ? "compact" : "append";
 
   // ─── Determine if this is a new user prompt ──────────────────────────────────
-  // Primary signal: message hash changed → user typed something new.
-  //   This works regardless of model, fingerprint, or gap size.
-  // Sub-agent detection: sub-agents fire the SAME message hash repeatedly within seconds,
-  //   or fire tool-result messages (not user messages). Neither counts as new prompt.
+  //
+  // The ONLY question: did the user type a new message that deserves to be counted?
+  //
+  // Rules (in order):
+  //   1. Not a user message → never counted
+  //   2. Hash changed AND has assistant history in context → ALWAYS counted
+  //      (user typed something new in an existing conversation)
+  //   3. Hash changed AND no assistant history → counted ONLY if context has tools
+  //      (IDE sends 2 requests: first compact without tools/history, then full.
+  //       The full one has tools. The compact one is just IDE setup, skip it.)
+  //   4. Hash same AND has assistant history → not counted (IDE retry/sub-agent)
+  //   5. Hash same AND no assistant history AND no tools → not counted (IDE compact retry)
+  //
+  // This is simple and doesn't depend on gap timing or lastToolCallsActive (which
+  // suffers from async write race conditions).
   let isNewUserPrompt = false;
 
-  if (params.messageAnalysis.hasUserMessage) {
-    if (hashChanged) {
-      // Hash changed → user typed a new message.
-      // Exception: if gap is extremely short AND previous had active tool calls,
-      // this is likely an agent follow-up (auto-generated user message for tool result).
-      const likelyAgentFollowup =
-        gapMs < NEW_PROMPT_MIN_GAP_MS && latest.lastToolCallsActive;
-      if (!likelyAgentFollowup) {
-        isNewUserPrompt = true;
-      }
-    } else if (!hashChanged && gapMs >= SWITCH_PROMPT_MIN_GAP_MS) {
-      // Same hash but large gap → user re-sent after long pause (e.g. edited & resent)
+  if (params.messageAnalysis.hasUserMessage && hashChanged) {
+    // User typed something new. Count it if this is the "real" request
+    // (the one with assistant history or tools), not the IDE compact setup request.
+    if (params.messageAnalysis.assistantMessageCount > 0) {
+      // Has conversation history → this is a continuation prompt. Always count.
+      isNewUserPrompt = true;
+    } else if (params.contextTokensBefore > 1000) {
+      // No assistant history but large context (>1000 tokens) = has tool definitions.
+      // This is the "full" IDE request for a first prompt. Count it.
       isNewUserPrompt = true;
     }
-    // else: same hash, short gap → sub-agent/IDE retry/tool retry → not a new prompt
+    // else: no history, small context = IDE compact setup request. Don't count.
+  } else if (params.messageAnalysis.hasUserMessage && !hashChanged && gapMs >= SWITCH_PROMPT_MIN_GAP_MS) {
+    // Same hash but very large gap → user re-sent after long pause
+    isNewUserPrompt = true;
   }
 
   return { sessionId: latest.sessionId, contextEvent, contextDeltaTokens: delta, gapMs, isNewUserPrompt };
@@ -717,58 +751,116 @@ proxy.all("/*", async (c) => {
   // ─── 8. Analyze Request Messages ───────────────────────────────────────
   const messageAnalysis = analyzeRequestMessages(requestBody);
 
-  // ─── 9. Get Upstream Config & Session Info ──────────────────────────────
-  const provider = detectProvider(config.upstreamEndpoint, model);
-  const sessionInfo = await resolveChatSession({
-    apiKeyId: keyRecord.id,
-    apiKeyName: keyRecord.name,
-    ipAddress: clientIp,
-    deviceFingerprint: fingerprint,
-    ideDetected: ide,
-    provider,
-    model,
-    contextFingerprint,
-    contextTokensBefore,
-    requestPreview,
-    messageAnalysis,
-    requestBody,
-  });
-
-  // Determine if this is a new user prompt (simplified - logic moved to resolveChatSession)
-  const isNewPrompt = sessionInfo.isNewUserPrompt;
-
-  // ─── 9b. Immediate sync update of session tracking fields ──────────────────
-  // This MUST happen synchronously (not via the async log write queue) so that
-  // the next request from the same device sees up-to-date lastUserMessageHash,
-  // lastContextTokens etc.  Without this, rapid-fire requests (e.g. IDE sending
-  // 2 requests per prompt) cause race conditions where the second request reads
-  // stale session state and gets double-counted.
-  {
-    const syncUpdates: Record<string, any> = {
-      lastSeenAt: formatSqliteDate(),
-      model,
-    };
-    if (messageAnalysis.messageHash) {
-      syncUpdates.lastUserMessageHash = messageAnalysis.messageHash;
+  // ─── 8b. Title gen / internal IDE requests: forward without session tracking ─
+  // These are auto-generated by the IDE (e.g. generating chat title) and must
+  // NOT create sessions, NOT count as prompts, NOT check limits.
+  if (isTitleGenRequest(requestBody)) {
+    const upstreamBase2 = config.upstreamEndpoint.replace(/\/$/, "");
+    let upstreamPath2 = path;
+    if (upstreamBase2.endsWith("/v1") && upstreamPath2.startsWith("/v1/")) upstreamPath2 = upstreamPath2.slice(3);
+    const upstreamUrl2 = `${upstreamBase2}${upstreamPath2}`;
+    const upstreamHeaders2: Record<string, string> = {};
+    const blocked2 = new Set(["host","content-length","authorization","cookie","connection","keep-alive","transfer-encoding","upgrade"]);
+    for (const [k, v] of c.req.raw.headers.entries()) { if (!blocked2.has(k.toLowerCase())) upstreamHeaders2[k] = v; }
+    upstreamHeaders2["Authorization"] = `Bearer ${config.upstreamApiKey}`;
+    upstreamHeaders2["x-forwarded-for"] = clientIp;
+    if (contentType) upstreamHeaders2["Content-Type"] = contentType;
+    try {
+      const resp = await fetchUpstreamWithRetry(upstreamUrl2, { method: c.req.method, headers: upstreamHeaders2, body: requestBodyBytes as any }, requestBody?.stream === true, c.req.raw.signal);
+      return new Response(resp.body, { status: resp.status, headers: resp.headers });
+    } catch {
+      return c.json({ error: { message: "Upstream request failed", type: "server_error" } }, 502);
     }
-    if (messageAnalysis.messageRole) {
-      syncUpdates.lastMessageRole = messageAnalysis.messageRole;
-    }
-    if (contextTokensBefore > 0) {
-      syncUpdates.lastContextTokens = contextTokensBefore;
-    }
-    if (contextFingerprint) {
-      syncUpdates.contextFingerprint = contextFingerprint;
-    }
-    await db.update(chatSessions)
-      .set(syncUpdates)
-      .where(eq(chatSessions.sessionId, sessionInfo.sessionId))
-      .run();
   }
 
-  // ─── 10. Prompt Limit Checks (ONLY for counted user prompts) ───────────────
+  // ─── 9. Get Upstream Config & Session Info ──────────────────────────────
+  // Wrapped in a per-device lock so concurrent requests from the same device
+  // are serialized.  This prevents race conditions where two requests both
+  // see "no session" and create duplicate sessions, or both read stale hash.
+  const provider = detectProvider(config.upstreamEndpoint, model);
+  const deviceLockKey = `${keyRecord.id}:${fingerprint}`;
+  const { sessionInfo, isNewPrompt } = await withDeviceLock(deviceLockKey, async () => {
+    const sessionInfo = await resolveChatSession({
+      apiKeyId: keyRecord.id,
+      apiKeyName: keyRecord.name,
+      ipAddress: clientIp,
+      deviceFingerprint: fingerprint,
+      ideDetected: ide,
+      provider,
+      model,
+      contextFingerprint,
+      contextTokensBefore,
+      requestPreview,
+      messageAnalysis,
+      requestBody,
+    });
+
+    const isNewPrompt = sessionInfo.isNewUserPrompt;
+
+    // Update in-memory hash cache ONLY for counted prompts.
+    // If we cache hash for non-counted requests (like IDE compact setup),
+    if (messageAnalysis.messageHash && isNewPrompt) {
+      sessionHashCache.set(sessionInfo.sessionId, messageAnalysis.messageHash);
+    }
+    // Sync DB tracking fields (only write hash when counted)
+    {
+      const syncUpdates: Record<string, any> = {
+        lastSeenAt: formatSqliteDate(),
+        model,
+      };
+      if (messageAnalysis.messageHash && isNewPrompt) {
+        syncUpdates.lastUserMessageHash = messageAnalysis.messageHash;
+      }
+      if (messageAnalysis.messageRole) {
+        syncUpdates.lastMessageRole = messageAnalysis.messageRole;
+      }
+      if (contextTokensBefore > 0) {
+        syncUpdates.lastContextTokens = contextTokensBefore;
+      }
+      if (contextFingerprint) {
+        syncUpdates.contextFingerprint = contextFingerprint;
+      }
+      await db.update(chatSessions)
+        .set(syncUpdates)
+        .where(eq(chatSessions.sessionId, sessionInfo.sessionId))
+        .run();
+    }
+
+    return { sessionInfo, isNewPrompt };
+  });
+
+  // ─── 10. Prompt & Model Limit Checks ───────────────────────────────────────
+  //
+  // Per-model limit: checked for EVERY request (not just new prompts).
+  // This ensures that retries after hitting the limit are also blocked.
+  // The count comes from request_logs WHERE is_counted_request=1, so only
+  // real user prompts are counted — not IDE retries or tool follow-ups.
+  {
+    const mlCheck = await checkModelPromptLimit(
+      keyRecord.id,
+      model,
+      keyRecord.perModelPromptLimit || 0,
+      keyRecord.perModelPromptLimitWindow || null,
+      config.globalPerModelPromptLimit || 0,
+      config.globalPerModelPromptLimitWindow || "30m",
+    );
+    if (!mlCheck.allowed) {
+      return c.json({
+        error: {
+          message: `Model prompt limit exceeded for "${model}". Maximum ${mlCheck.effectiveLimit} prompts per window. Used: ${mlCheck.used}.`,
+          type: "rate_limit_error",
+          code: "model_prompt_limit_exceeded",
+        }
+      }, 429, {
+        "x-model-prompt-limit": String(mlCheck.effectiveLimit),
+        "x-model-prompt-remaining": "0",
+        "x-model-prompt-used": String(mlCheck.used),
+      });
+    }
+  }
+
   if (isNewPrompt) {
-    // ─── Global / Per-Key Prompt Limit (all models combined) ─────────────
+    // Global / Per-Key Prompt Limit (all models combined) — only on new prompts
     const effectivePromptLimit = keyRecord.promptLimit && keyRecord.promptLimit > 0 ? keyRecord.promptLimit : config.globalPromptLimit;
     const effectivePromptLimitWindow = keyRecord.promptLimitWindow || config.globalPromptLimitWindow || "30m";
 
@@ -779,7 +871,7 @@ proxy.all("/*", async (c) => {
           error: {
             message: `Prompt limit exceeded. Maximum ${effectivePromptLimit} prompts per ${effectivePromptLimitWindow}. Used: ${plCheck.used}.`,
             type: "rate_limit_error",
-            code: "prompt_limit_exceeded"
+            code: "prompt_limit_exceeded",
           }
         }, 429, {
           "x-prompt-limit": String(effectivePromptLimit),
@@ -789,48 +881,19 @@ proxy.all("/*", async (c) => {
       }
     }
 
-    // ─── Per-Model Prompt Limit Check ───────────────────────────────────
-    // Check if this specific model has exceeded its per-model prompt limit.
-    // Priority: per-key model override > per-key default > global model override > global default
-    {
-      const mlCheck = await checkModelPromptLimit(
-        keyRecord.id,
-        model,
-        keyRecord.perModelPromptLimit || 0,
-        keyRecord.perModelPromptLimitWindow || null,
-        config.globalPerModelPromptLimit || 0,
-        config.globalPerModelPromptLimitWindow || "30m",
-      );
-      if (!mlCheck.allowed) {
-        return c.json({
-          error: {
-            message: `Model prompt limit exceeded for "${model}". Maximum ${mlCheck.effectiveLimit} prompts per window. Used: ${mlCheck.used}.`,
-            type: "rate_limit_error",
-            code: "model_prompt_limit_exceeded"
-          }
-        }, 429, {
-          "x-model-prompt-limit": String(mlCheck.effectiveLimit),
-          "x-model-prompt-remaining": "0",
-          "x-model-prompt-used": String(mlCheck.used),
-        });
-      }
-    }
-
     if (keyRecord.monthlyTokenLimit && keyRecord.monthlyTokenLimit > 0) {
       const monthStart = new Date();
       monthStart.setDate(1);
       monthStart.setHours(0, 0, 0, 0);
-
       const monthlyUsage = await db
         .select({ total: sql<number>`COALESCE(SUM(total_tokens), 0)` })
         .from(requestLogs)
         .where(and(
-          eq(requestLogs.apiKeyId, keyRecord.id), 
+          eq(requestLogs.apiKeyId, keyRecord.id),
           sql`created_at >= ${monthStart.toISOString()}`,
-          sql`is_counted_request IS NOT 0`
+          sql`is_counted_request IS NOT 0`,
         ))
         .get();
-
       if (monthlyUsage && monthlyUsage.total >= keyRecord.monthlyTokenLimit) {
         return c.json({ error: { message: "Monthly token limit exceeded.", type: "rate_limit_error" } }, 429);
       }
