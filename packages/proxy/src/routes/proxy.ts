@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+﻿import { Hono } from "hono";
 import { db } from "../db/index.js";
 import { apiKeys, devices, allowedDevices, allowedIdes, requestLogs, adminConfig, chatSessions } from "../db/schema.js";
 import { eq, and, sql, desc } from "drizzle-orm";
@@ -57,7 +57,7 @@ async function withDeviceLock<T>(deviceKey: string, fn: () => Promise<T>): Promi
  *    e.g. a sub-agent that only has a system prompt).
  * 3. requestPreview already extracted by telemetry (last resort).
  *
- * The name is trimmed to ≤72 chars so it fits in the UI comfortably.
+ * The name is trimmed to Γëñ72 chars so it fits in the UI comfortably.
  */
 function deriveSessionName(requestBody: any, requestPreview: string): string {
   const MAX = 72;
@@ -65,7 +65,7 @@ function deriveSessionName(requestBody: any, requestPreview: string): string {
   function truncate(s: string): string {
     const cleaned = s.replace(/\s+/g, " ").trim();
     if (!cleaned) return "";
-    return cleaned.length > MAX ? cleaned.slice(0, MAX - 1) + "…" : cleaned;
+    return cleaned.length > MAX ? cleaned.slice(0, MAX - 1) + "ΓÇª" : cleaned;
   }
 
   function extractText(value: any): string {
@@ -311,7 +311,7 @@ async function resolveChatSession(params: {
   messageAnalysis: MessageAnalysis;
   requestBody?: any;
 }): Promise<{ sessionId: string; contextEvent: ContextEvent; contextDeltaTokens: number; gapMs: number; isNewUserPrompt: boolean }> {
-  // ─── Find the most recent session for this device ───────────────────────────
+  // ΓöÇΓöÇΓöÇ Find the most recent session for this device ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const latest = await db
     .select()
     .from(chatSessions)
@@ -335,7 +335,7 @@ async function resolveChatSession(params: {
     .limit(1)
     .get();
 
-  // ─── No session yet → create first one ──────────────────────────────────────
+  // ΓöÇΓöÇΓöÇ No session yet ΓåÆ create first one ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   if (!latest) {
     const isNewUserPrompt = params.messageAnalysis.hasUserMessage;
     const sessionId = await createChatSession({ ...params, isUserPrompt: isNewUserPrompt, messageAnalysis: params.messageAnalysis });
@@ -350,20 +350,20 @@ async function resolveChatSession(params: {
     return { sessionId: veryRecent.sessionId, contextEvent: "switch", contextDeltaTokens: 0, gapMs: veryRecentGap, isNewUserPrompt: false };
   }
 
-  // ─── Gap > 45 min → definitely a new session ────────────────────────────────
+  // ΓöÇΓöÇΓöÇ Gap > 45 min ΓåÆ definitely a new session ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   if (gapMs > SESSION_GAP_MS) {
     const isNewUserPrompt = params.messageAnalysis.hasUserMessage;
     const sessionId = await createChatSession({ ...params, isUserPrompt: isNewUserPrompt, messageAnalysis: params.messageAnalysis });
     return { sessionId, contextEvent: "new_session", contextDeltaTokens: 0, gapMs, isNewUserPrompt };
   }
 
-  // ─── Within session window: determine new-chat vs continuation ──────────────
+  // ΓöÇΓöÇΓöÇ Within session window: determine new-chat vs continuation ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   //
   // Reliable signals for detecting new chat:
-  //   1. Context size shrink (history wiped) + hash changed → new chat
-  //   2. No assistant messages in context (fresh chat with only system + 1 user msg) + hash changed → new chat
-  //   3. Internal IDE requests (title gen) → never a new prompt, never a new session
-  //   4. Same hash, short gap → IDE retry / sub-agent → same session
+  //   1. Context size shrink (history wiped) + hash changed ΓåÆ new chat
+  //   2. No assistant messages in context (fresh chat with only system + 1 user msg) + hash changed ΓåÆ new chat
+  //   3. Internal IDE requests (title gen) ΓåÆ never a new prompt, never a new session
+  //   4. Same hash, short gap ΓåÆ IDE retry / sub-agent ΓåÆ same session
 
   const prevTokens = latest.lastContextTokens || 0;
   const incomingTokens = params.contextTokensBefore;
@@ -376,7 +376,7 @@ async function resolveChatSession(params: {
     params.messageAnalysis.messageHash !== cachedHash
   );
 
-  // ── Detect "New Chat" button pressed ────────────────────────────────────────
+  // ΓöÇΓöÇ Detect "New Chat" button pressed ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   // Method 1: Context size dropped dramatically (history wiped)
   const contextResetToZero = incomingTokens <= 0 && prevTokens > 0;
   const contextShrankMassively =
@@ -402,23 +402,23 @@ async function resolveChatSession(params: {
     return { sessionId, contextEvent: "new_session", contextDeltaTokens: 0, gapMs, isNewUserPrompt };
   }
 
-  // ── Same session continuation (model change, context growth, or sub-agent) ──
+  // ΓöÇΓöÇ Same session continuation (model change, context growth, or sub-agent) ΓöÇΓöÇ
   const delta = incomingTokens - prevTokens;
   const contextEvent: ContextEvent = delta <= -COMPACT_DROP_THRESHOLD ? "compact" : "append";
 
-  // ─── Determine if this is a new user prompt ──────────────────────────────────
+  // ΓöÇΓöÇΓöÇ Determine if this is a new user prompt ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   //
   // The ONLY question: did the user type a new message that deserves to be counted?
   //
   // Rules (in order):
-  //   1. Not a user message → never counted
-  //   2. Hash changed AND has assistant history in context → ALWAYS counted
+  //   1. Not a user message ΓåÆ never counted
+  //   2. Hash changed AND has assistant history in context ΓåÆ ALWAYS counted
   //      (user typed something new in an existing conversation)
-  //   3. Hash changed AND no assistant history → counted ONLY if context has tools
+  //   3. Hash changed AND no assistant history ΓåÆ counted ONLY if context has tools
   //      (IDE sends 2 requests: first compact without tools/history, then full.
   //       The full one has tools. The compact one is just IDE setup, skip it.)
-  //   4. Hash same AND has assistant history → not counted (IDE retry/sub-agent)
-  //   5. Hash same AND no assistant history AND no tools → not counted (IDE compact retry)
+  //   4. Hash same AND has assistant history ΓåÆ not counted (IDE retry/sub-agent)
+  //   5. Hash same AND no assistant history AND no tools ΓåÆ not counted (IDE compact retry)
   //
   // This is simple and doesn't depend on gap timing or lastToolCallsActive (which
   // suffers from async write race conditions).
@@ -428,7 +428,7 @@ async function resolveChatSession(params: {
     // User typed something new. Count it if this is the "real" request
     // (the one with assistant history or tools), not the IDE compact setup request.
     if (params.messageAnalysis.assistantMessageCount > 0) {
-      // Has conversation history → this is a continuation prompt. Always count.
+      // Has conversation history ΓåÆ this is a continuation prompt. Always count.
       isNewUserPrompt = true;
     } else if (params.contextTokensBefore > 50) {
       // No assistant history but not a tiny ping. Count it.
@@ -436,15 +436,11 @@ async function resolveChatSession(params: {
     }
     // else: no history, extremely small context (<50 tokens) = IDE compact setup request. Don't count.
   } else if (params.messageAnalysis.hasUserMessage && !hashChanged && gapMs >= SWITCH_PROMPT_MIN_GAP_MS) {
-    // Same hash but very large gap → user re-sent after long pause
+    // Same hash but very large gap ΓåÆ user re-sent after long pause
     isNewUserPrompt = true;
   }
 
-  // FALLBACK PROTEKSI: Jika hash tidak berubah (tool loops) tapi promptCount sesi masih 0
-  // (karena lolos dari aturan ping sebelumnya), paksa hitung sebagai prompt baru agar limit terpotong!
-  if (!isNewUserPrompt && latest && latest.promptCount === 0 && params.contextTokensBefore > 500) {
-    isNewUserPrompt = true;
-  }
+  
 
   return { sessionId: latest.sessionId, contextEvent, contextDeltaTokens: delta, gapMs, isNewUserPrompt };
 }
@@ -515,7 +511,7 @@ proxy.all("/*", async (c) => {
     return c.json(modelCatalog);
   }
 
-  // ─── 1. Extract API Key ──────────────────────────────────────────────────
+  // ΓöÇΓöÇΓöÇ 1. Extract API Key ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const authHeader = c.req.header("Authorization");
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return c.json(
@@ -525,7 +521,7 @@ proxy.all("/*", async (c) => {
   }
   const clientKey = authHeader.replace("Bearer ", "").trim();
 
-  // ─── 2. Validate API Key ────────────────────────────────────────────────
+  // ΓöÇΓöÇΓöÇ 2. Validate API Key ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const keyRecord = await db
     .select()
     .from(apiKeys)
@@ -546,7 +542,7 @@ proxy.all("/*", async (c) => {
     );
   }
 
-  // ─── 3. Device Fingerprinting & IDE Detection ───────────────────────────
+  // ΓöÇΓöÇΓöÇ 3. Device Fingerprinting & IDE Detection ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const userAgent = c.req.header("User-Agent") || "";
   const platformHintRaw = c.req.header("sec-ch-ua-platform") || "";
   const deviceName = c.req.header("x-device-name") || c.req.header("x-machine-name") || "";
@@ -559,7 +555,7 @@ proxy.all("/*", async (c) => {
   const osDetected = detectOperatingSystem(userAgent, platformHint);
   const normalizedIde = normalizeIdeName(ide);
 
-  // ─── 4. Device Policy Check ─────────────────────────────────────────────
+  // ΓöÇΓöÇΓöÇ 4. Device Policy Check ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const existingDevice = await db
     .select()
     .from(devices)
@@ -605,7 +601,7 @@ proxy.all("/*", async (c) => {
     }
   }
 
-  // ─── 4b. IDE Policy Check ──────────────────────────────────────────────
+  // ΓöÇΓöÇΓöÇ 4b. IDE Policy Check ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   if (keyRecord.idePolicy === "allowlist") {
     const allowedIde = await db
       .select()
@@ -638,7 +634,7 @@ proxy.all("/*", async (c) => {
     }
   }
 
-  // ─── 5. IP Policy Check ─────────────────────────────────────────────────
+  // ΓöÇΓöÇΓöÇ 5. IP Policy Check ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   if (keyRecord.ipPolicy === "allowlist") {
     const allowed = await db
       .select().from(allowedDevices)
@@ -657,7 +653,7 @@ proxy.all("/*", async (c) => {
     }
   }
 
-  // ─── 6. Max Devices Check ───────────────────────────────────────────────
+  // ΓöÇΓöÇΓöÇ 6. Max Devices Check ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   if (keyRecord.maxDevices && keyRecord.maxDevices > 0) {
     const deviceCount = await db
       .select({ count: sql<number>`count(*)` })
@@ -714,7 +710,7 @@ proxy.all("/*", async (c) => {
     }
   }
 
-  // ─── 7. Fetch Config & Parse Request Body ──────────────────────────────
+  // ΓöÇΓöÇΓöÇ 7. Fetch Config & Parse Request Body ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const config = await db.select().from(adminConfig).get();
   if (!config || !config.upstreamApiKey) {
     return c.json(
@@ -774,10 +770,10 @@ proxy.all("/*", async (c) => {
     requestToolNames = contextInfo.requestToolNames;
   }
 
-  // ─── 8. Analyze Request Messages ───────────────────────────────────────
+  // ΓöÇΓöÇΓöÇ 8. Analyze Request Messages ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const messageAnalysis = analyzeRequestMessages(requestBody);
 
-  // ─── 8b. Title gen / internal IDE requests: forward without session tracking ─
+  // ΓöÇΓöÇΓöÇ 8b. Title gen / internal IDE requests: forward without session tracking ΓöÇ
   // These are auto-generated by the IDE (e.g. generating chat title) and must
   // NOT create sessions, NOT count as prompts, NOT check limits.
   if (isTitleGenRequest(requestBody)) {
@@ -799,7 +795,7 @@ proxy.all("/*", async (c) => {
     }
   }
 
-  // ─── 9. Get Upstream Config & Session Info ──────────────────────────────
+  // ΓöÇΓöÇΓöÇ 9. Get Upstream Config & Session Info ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   // Wrapped in a per-device lock so concurrent requests from the same device
   // are serialized.  This prevents race conditions where two requests both
   // see "no session" and create duplicate sessions, or both read stale hash.
@@ -855,12 +851,12 @@ proxy.all("/*", async (c) => {
     return { sessionInfo, isNewPrompt };
   });
 
-  // ─── 10. Prompt & Model Limit Checks ───────────────────────────────────────
+  // ΓöÇΓöÇΓöÇ 10. Prompt & Model Limit Checks ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   //
   // Per-model limit: checked for EVERY request (not just new prompts).
   // This ensures that retries after hitting the limit are also blocked.
   // The count comes from request_logs WHERE is_counted_request=1, so only
-  // real user prompts are counted — not IDE retries or tool follow-ups.
+  // real user prompts are counted ΓÇö not IDE retries or tool follow-ups.
   {
     const mlCheck = await checkModelPromptLimit(
       keyRecord.id,
@@ -900,7 +896,7 @@ proxy.all("/*", async (c) => {
     }
   }
 
-  // Global / Per-Key Prompt Limit (all models combined) — checked for EVERY request
+  // Global / Per-Key Prompt Limit (all models combined) ΓÇö checked for EVERY request
   // so retries cannot bypass the limit when isNewPrompt=false.
   {
     const effectivePromptLimit = keyRecord.promptLimit && keyRecord.promptLimit > 0 ? keyRecord.promptLimit : config.globalPromptLimit;
@@ -983,7 +979,7 @@ proxy.all("/*", async (c) => {
   const persistLogAndSession = async (logEntry: Record<string, any>, hasActualToolCalls: boolean, shouldCountRequest: boolean = true) => {
     enqueueLogWrite(async (tx) => {
       // Set the isCountedRequest column
-      logEntry.isCountedRequest = isNewPrompt && shouldCountRequest;
+      logEntry.isCountedRequest = isNewPrompt && shouldCountRequest ? 1 : 0;
       await tx.insert(requestLogs).values(logEntry).run();
       logEmitter.emit({
         ...logEntry,
@@ -1035,7 +1031,7 @@ proxy.all("/*", async (c) => {
     estimatedContextLength: estimatedContextLength || contextTokensBefore,
   };
 
-  // ─── 10. Forward Request to Upstream ────────────────────────────────────
+  // ΓöÇΓöÇΓöÇ 10. Forward Request to Upstream ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const upstreamHeaders: Record<string, string> = {};
   const blockedHeaders = new Set([
     "host",
@@ -1068,7 +1064,7 @@ proxy.all("/*", async (c) => {
     const latencyMs = Date.now() - startTime;
     const statusCode = upstreamResponse.status;
 
-    // ─── 11. Register/Update Device ─────────────────────────────────────
+    // ΓöÇΓöÇΓöÇ 11. Register/Update Device ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     if (existingDevice) {
       await db.update(devices)
         .set({
@@ -1095,7 +1091,7 @@ proxy.all("/*", async (c) => {
       }).run();
     }
 
-    // ─── 12. Handle Streaming Response ──────────────────────────────────
+    // ΓöÇΓöÇΓöÇ 12. Handle Streaming Response ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     if (isStreaming && upstreamResponse.body) {
       let promptTokens = 0;
       let completionTokens = 0;
@@ -1143,8 +1139,8 @@ proxy.all("/*", async (c) => {
           }
         },
         flush() {
-          const finalPromptTokens = promptTokens || contextTokensBefore;
-          const finalTotalTokens = totalTokens || finalPromptTokens + completionTokens;
+          const finalPromptTokens = sessionInfo.contextDeltaTokens;
+          const finalTotalTokens = finalPromptTokens + completionTokens;
           const toolsUsed = Array.from(toolNameSet);
 
           const logEntry = {
@@ -1192,7 +1188,7 @@ proxy.all("/*", async (c) => {
       return new Response(readable, { status: statusCode, headers: responseHeaders });
     }
 
-    // ─── 13. Handle Non-Streaming Response ──────────────────────────────
+    // ΓöÇΓöÇΓöÇ 13. Handle Non-Streaming Response ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     const responseBody = await upstreamResponse.text();
     let promptTokens = 0;
     let completionTokens = 0;
@@ -1230,10 +1226,8 @@ proxy.all("/*", async (c) => {
       // Body might not be JSON.
     }
 
-    if (!totalTokens && contextTokensBefore) {
-      promptTokens = contextTokensBefore;
-      totalTokens = contextTokensBefore + completionTokens;
-    }
+    promptTokens = sessionInfo.contextDeltaTokens;
+    totalTokens = promptTokens + completionTokens;
 
     const toolsUsed = Array.from(toolNameSet);
 
