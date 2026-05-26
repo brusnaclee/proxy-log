@@ -1150,6 +1150,9 @@ proxy.all("/*", async (c) => {
           }
         },
         flush() {
+          if (!completionTokens && streamedResponsePreview) {
+            completionTokens = estimateTokens(streamedResponsePreview);
+          }
           const finalPromptTokens = sessionInfo.contextEvent === "new_session" ? contextTokensBefore : sessionInfo.contextDeltaTokens;
           const finalTotalTokens = finalPromptTokens + completionTokens;
           const toolsUsed = Array.from(toolNameSet);
@@ -1232,6 +1235,9 @@ proxy.all("/*", async (c) => {
       if (assistantText) {
         // Keep the full response in responsePreview so that tool output is not truncated.
         responsePreview = assistantText || null;
+        if (!completionTokens) {
+          completionTokens = estimateTokens(assistantText);
+        }
       }
     } catch {
       // Body might not be JSON.
