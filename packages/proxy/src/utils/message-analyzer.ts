@@ -33,6 +33,14 @@ export function isTitleGenRequest(requestBody: any): boolean {
 export function analyzeRequestMessages(requestBody: any): MessageAnalysis {
   let messages = requestBody?.messages || [];
 
+  // Fallback for Gemini API format
+  if (messages.length === 0 && Array.isArray(requestBody?.contents)) {
+    messages = requestBody.contents.map((m: any) => ({
+      role: m.role === "model" ? "assistant" : m.role === "function" ? "tool" : "user",
+      content: Array.isArray(m.parts) ? JSON.stringify(m.parts) : ""
+    }));
+  }
+
   // Fallback for /v1/completions or /v1/responses
   if (messages.length === 0 && requestBody?.prompt) {
     const p = requestBody.prompt;
@@ -48,6 +56,17 @@ export function analyzeRequestMessages(requestBody: any): MessageAnalysis {
   }
 
   if (messages.length === 0) {
+    if (requestBody && Object.keys(requestBody).length > 0) {
+      const rawContent = typeof requestBody === "string" ? requestBody : JSON.stringify(requestBody);
+      return {
+        hasUserMessage: true,
+        messageRole: "user",
+        messageHash: sha256(rawContent),
+        messageContent: rawContent.substring(0, 500),
+        userMessageCount: 1,
+        assistantMessageCount: 0,
+      };
+    }
     return {
       hasUserMessage: false,
       messageRole: null,
@@ -90,15 +109,6 @@ export function analyzeRequestMessages(requestBody: any): MessageAnalysis {
   let messageHash = content ? sha256(content) : null;
   let finalHasUserMessage = effectiveRole === "user";
   let finalRole = effectiveRole;
-
-  // Fallback for completely unknown JSON structures (e.g. custom IDE endpoints)
-  if (!finalHasUserMessage && requestBody && Object.keys(requestBody).length > 0 && !messages.length) {
-    const rawContent = typeof requestBody === "string" ? requestBody : JSON.stringify(requestBody);
-    finalHasUserMessage = true;
-    finalRole = "user";
-    messageHash = sha256(rawContent);
-    content = rawContent;
-  }
 
   return {
     hasUserMessage: finalHasUserMessage,
