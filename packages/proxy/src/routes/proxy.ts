@@ -1139,7 +1139,7 @@ proxy.all("/*", async (c) => {
           }
         },
         flush() {
-          const finalPromptTokens = sessionInfo.contextDeltaTokens;
+          const finalPromptTokens = sessionInfo.contextEvent === "new_session" ? contextTokensBefore : sessionInfo.contextDeltaTokens;
           const finalTotalTokens = finalPromptTokens + completionTokens;
           const toolsUsed = Array.from(toolNameSet);
 
@@ -1226,7 +1226,7 @@ proxy.all("/*", async (c) => {
       // Body might not be JSON.
     }
 
-    promptTokens = sessionInfo.contextDeltaTokens;
+    promptTokens = sessionInfo.contextEvent === "new_session" ? contextTokensBefore : sessionInfo.contextDeltaTokens;
     totalTokens = promptTokens + completionTokens;
 
     const toolsUsed = Array.from(toolNameSet);
