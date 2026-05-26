@@ -87,11 +87,22 @@ export function analyzeRequestMessages(requestBody: any): MessageAnalysis {
   }
 
   const effectiveRole = isToolResultWrapper ? "tool" : role;
-  const messageHash = content ? sha256(content) : null;
+  let messageHash = content ? sha256(content) : null;
+  let finalHasUserMessage = effectiveRole === "user";
+  let finalRole = effectiveRole;
+
+  // Fallback for completely unknown JSON structures (e.g. custom IDE endpoints)
+  if (!finalHasUserMessage && requestBody && Object.keys(requestBody).length > 0 && !messages.length) {
+    const rawContent = typeof requestBody === "string" ? requestBody : JSON.stringify(requestBody);
+    finalHasUserMessage = true;
+    finalRole = "user";
+    messageHash = sha256(rawContent);
+    content = rawContent;
+  }
 
   return {
-    hasUserMessage: effectiveRole === "user",
-    messageRole: effectiveRole,
+    hasUserMessage: finalHasUserMessage,
+    messageRole: finalRole,
     messageHash,
     messageContent: content.substring(0, 500),
     userMessageCount,
