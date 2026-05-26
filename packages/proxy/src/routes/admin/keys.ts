@@ -301,7 +301,7 @@ keys.post("/keys/:id/rotate", async (c) => {
 
 keys.get("/keys/:id/devices", async (c) => {
   const id = parseInt(c.req.param("id"));
-  const allDevices = await db.select().from(devices).where(eq(devices.apiKeyId, id)).orderBy(sql`last_seen DESC`).all();
+  const allDevices = await db.select().from(devices).where(eq(devices.apiKeyId, id)).orderBy(desc(devices.lastSeen)).all();
   return c.json(allDevices);
 });
 

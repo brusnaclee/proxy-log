@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1779800858161,
+      "tag": "0000_stale_skin",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1779801082847,
+      "tag": "0001_opposite_iron_man",
+      "breakpoints": true
+    }
+  ]
+}

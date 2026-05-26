@@ -543,12 +543,14 @@ proxy.all("/*", async (c) => {
 
   // ─── 3. Device Fingerprinting & IDE Detection ───────────────────────────
   const userAgent = c.req.header("User-Agent") || "";
-  const platformHint = c.req.header("sec-ch-ua-platform") || "";
+  const platformHintRaw = c.req.header("sec-ch-ua-platform") || "";
   const deviceName = c.req.header("x-device-name") || c.req.header("x-machine-name") || "";
   const clientName = c.req.header("x-client-name") || c.req.header("x-app-name") || "";
+  const deviceId = c.req.header("x-device-id") || c.req.header("device-id") || c.req.header("x-machine-id") || "";
   const clientIp = getClientIp(c.req.raw.headers, c.req.header("x-real-ip") || "127.0.0.1");
-  const fingerprint = generateFingerprint(clientIp, userAgent);
+  const fingerprint = generateFingerprint(clientIp, userAgent, deviceId);
   const ide = detectIde(userAgent);
+  const platformHint = platformHintRaw + " " + deviceName;
   const osDetected = detectOperatingSystem(userAgent, platformHint);
   const normalizedIde = normalizeIdeName(ide);
 

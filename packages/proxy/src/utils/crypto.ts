@@ -23,11 +23,14 @@ export function sha256(input: string): string {
 }
 
 /**
- * Generate a device fingerprint from IP and User-Agent
- * fingerprint = sha256(ip_address + ":" + user_agent)
+ * Generate a device fingerprint from IP, User-Agent, and optionally Device ID
+ * If a true device ID is provided, use it instead of IP to allow tracking across networks.
  */
-export function generateFingerprint(ip: string, userAgent: string): string {
-  return sha256(`${ip}:${userAgent}`);
+export function generateFingerprint(ip: string, userAgent: string, deviceId: string = ""): string {
+  if (deviceId) {
+    return sha256(`device:${deviceId}:${userAgent}`);
+  }
+  return sha256(`ip:${ip}:${userAgent}`);
 }
 
 /**
