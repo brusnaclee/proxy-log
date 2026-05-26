@@ -893,8 +893,9 @@ proxy.all("/*", async (c) => {
     }
   }
 
-  if (isNewPrompt) {
-    // Global / Per-Key Prompt Limit (all models combined) — only on new prompts
+  // Global / Per-Key Prompt Limit (all models combined) — checked for EVERY request
+  // so retries cannot bypass the limit when isNewPrompt=false.
+  {
     const effectivePromptLimit = keyRecord.promptLimit && keyRecord.promptLimit > 0 ? keyRecord.promptLimit : config.globalPromptLimit;
     const effectivePromptLimitWindow = keyRecord.promptLimitWindow || config.globalPromptLimitWindow || "30m";
 
@@ -919,7 +920,9 @@ proxy.all("/*", async (c) => {
         });
       }
     }
+  }
 
+  if (isNewPrompt) {
     if (keyRecord.monthlyTokenLimit && keyRecord.monthlyTokenLimit > 0) {
       const monthStart = new Date();
       monthStart.setDate(1);
