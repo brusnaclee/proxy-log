@@ -271,6 +271,7 @@ export async function initializeDatabase() {
   await ensureColumnExists("admin_config", "global_per_model_prompt_limit_window", "TEXT DEFAULT '1d'");
   await ensureColumnExists("api_keys", "per_model_prompt_limit", "INTEGER DEFAULT 0");
   await ensureColumnExists("api_keys", "per_model_prompt_limit_window", "TEXT");
+  await ensureColumnExists("api_keys", "pending_notification", "TEXT");
 
   // model_limits table for per-model overrides
   await client.execute(`

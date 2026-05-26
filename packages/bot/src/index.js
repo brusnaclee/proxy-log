@@ -2251,6 +2251,70 @@ client.once('clientReady', async () => {
 	}
 
 	console.log('Antigravity Verification Bot is ready!');
+
+	// ─── Poll pending device-violation notifications ─────────────────────────
+	// When a new device connects to a Discord key that is limited to 1 device,
+	// the proxy rotates the key and stores a pending notification here.
+	// We pick it up every 30s and send DM + thread reply to the user.
+	async function processPendingNotifications() {
+		try {
+			const data = await proxyInternal('/admin/internal/pending-notifications');
+			const notifications = data?.notifications || [];
+			for (const notif of notifications) {
+				if (!notif.discordUserId || !notif.newKey) continue;
+				try {
+					const dmText =
+						`⚠️ **New Device Detected — API Key Rotated**\n\n` +
+						`A new device attempted to connect to your API key, but only **1 device** is allowed.\n\n` +
+						`Your key has been **automatically rotated**. Here are your new credentials:\n\n` +
+						`**Endpoint:** \`${notif.endpoint}\`\n` +
+						`**Authorization:** \`Bearer ${notif.newKey}\`\n\n` +
+						`Your old device has been removed. Configure your IDE with the new key above.\n\n` +
+						`If you need more than 1 device, please contact an admin.`;
+
+					await sendDMToUser(notif.discordUserId, '🔑 API Key Rotated — New Device Detected', dmText, 0xf59e0b);
+
+					// Also post in verification thread if it exists
+					const threadId = client.agverifData?.verifiedUsers?.[notif.discordUserId]?.threadId;
+					if (threadId) {
+						try {
+							const thread = await client.channels.fetch(threadId);
+							if (thread && thread.send) {
+								const { EmbedBuilder } = await import('discord.js');
+								const embed = new EmbedBuilder()
+									.setTitle('⚠️ New Device Detected — Key Rotated')
+									.setDescription(
+										`A new device connected to your key. Only **1 device** is allowed.\n\n` +
+										`Your API key has been **rotated automatically**. Check your DMs for the new key.\n\n` +
+										`If this wasn't you, contact an admin immediately.`
+									)
+									.setColor(0xf59e0b)
+									.setTimestamp();
+								await thread.send({ embeds: [embed] });
+							}
+						} catch (err) {
+							console.error(`[notify] Failed to send thread message for ${notif.discordUserId}:`, err.message);
+						}
+					}
+
+					// Clear the notification from DB
+					await proxyInternal(`/admin/internal/clear-notification/${notif.keyId}`, 'POST');
+				} catch (err) {
+					console.error(`[notify] Failed to process notification for ${notif.discordUserId}:`, err.message);
+				}
+			}
+		} catch (err) {
+			console.error('[notify] Failed to poll pending notifications:', err.message);
+		}
+	}
+
+	// Run immediately then every 30 seconds
+	void processPendingNotifications();
+	setInterval(() => {
+		processPendingNotifications().catch(err =>
+			console.error('[notify] Poll error:', err.message)
+		);
+	}, 30000);
 });
 
 client.on('interactionCreate', async (interaction) => {

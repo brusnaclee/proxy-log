@@ -573,4 +573,33 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   });
 });
 
+// ─── Pending Notifications (for bot polling) ────────────────────────────────
+internal.get("/internal/pending-notifications", async (c) => {
+  const rows = await db.select({
+    id: apiKeys.id,
+    discordUserId: apiKeys.discordUserId,
+    pendingNotification: apiKeys.pendingNotification,
+  })
+  .from(apiKeys)
+  .where(sql`pending_notification IS NOT NULL AND pending_notification != ''`)
+  .all();
+
+  return c.json({
+    notifications: rows.map(r => ({
+      keyId: r.id,
+      discordUserId: r.discordUserId,
+      ...(JSON.parse(r.pendingNotification || "{}")),
+    }))
+  });
+});
+
+internal.post("/internal/clear-notification/:keyId", async (c) => {
+  const keyId = parseInt(c.req.param("keyId"));
+  await db.update(apiKeys)
+    .set({ pendingNotification: null })
+    .where(eq(apiKeys.id, keyId))
+    .run();
+  return c.json({ success: true });
+});
+
 export default internal;

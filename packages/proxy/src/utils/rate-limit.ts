@@ -104,3 +104,31 @@ export async function checkModelPromptLimit(
     effectiveLimit,
   };
 }
+
+/**
+ * Find how many ms until the window resets (sliding window).
+ * The window resets when the OLDEST counted request in the window expires.
+ */
+export async function getWindowResetMs(apiKeyId: number, windowMs: number, model?: string): Promise<number> {
+  if (windowMs <= 0) return 0;
+  const windowStart = new Date(Date.now() - windowMs).toISOString().replace("T", " ").substring(0, 19);
+
+  const conditions: any[] = [
+    eq(requestLogs.apiKeyId, apiKeyId),
+    gte(requestLogs.createdAt, windowStart),
+    sql`is_counted_request IS NOT 0`,
+  ];
+  if (model) conditions.push(eq(requestLogs.model, model));
+
+  const oldest = await db.select({ createdAt: requestLogs.createdAt })
+    .from(requestLogs)
+    .where(and(...conditions))
+    .orderBy(requestLogs.createdAt)
+    .limit(1)
+    .get();
+
+  if (!oldest?.createdAt) return windowMs;
+  const oldestTime = Date.parse(oldest.createdAt.replace(" ", "T") + "Z");
+  const resetAt = oldestTime + windowMs;
+  return Math.max(0, resetAt - Date.now());
+}

@@ -16,7 +16,7 @@ import {
 } from "../utils/telemetry.js";
 import { logEmitter } from "../utils/event-emitter.js";
 import { getModelCatalogResponse } from "../utils/model-catalog.js";
-import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow } from "../utils/rate-limit.js";
+import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindowResetMs } from "../utils/rate-limit.js";
 import { analyzeRequestMessages, isTitleGenRequest, detectToolCallsInResponse, type MessageAnalysis } from "../utils/message-analyzer.js";
 
 const proxy = new Hono();
@@ -660,21 +660,40 @@ proxy.all("/*", async (c) => {
 
     if (deviceCount && deviceCount.count >= keyRecord.maxDevices && !existingDevice) {
       if (keyRecord.provisionedBy === "discord-bot" && keyRecord.maxDevices === 1) {
+        // Generate a fresh active key, remove old device, queue DM+thread notification
         const rotatedKey = generateApiKey();
+        const newKeyPrefix = getKeyPrefix(rotatedKey);
+
+        // Remove all old devices for this key so the new device can register cleanly
+        await db.delete(devices).where(eq(devices.apiKeyId, keyRecord.id)).run();
+
+        // Update the key to the new value (stays active)
         await db.update(apiKeys).set({
           key: rotatedKey,
-          keyPrefix: getKeyPrefix(rotatedKey),
+          keyPrefix: newKeyPrefix,
           keyHash: sha256(rotatedKey),
-          isActive: false,
+          isActive: true,
           updatedAt: new Date().toISOString().replace("T", " ").substring(0, 19),
+        }).where(eq(apiKeys.id, keyRecord.id)).run();
+
+        // Store pending notification for bot to pick up and send
+        const proxyEndpoint = `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`;
+        const notification = {
+          type: "new_device_detected",
+          discordUserId: keyRecord.discordUserId,
+          newKey: rotatedKey,
+          endpoint: proxyEndpoint,
+        };
+        await db.update(apiKeys).set({
+          pendingNotification: JSON.stringify(notification),
         }).where(eq(apiKeys.id, keyRecord.id)).run();
 
         return c.json(
           {
             error: {
-              message: "Multiple devices detected for this Discord key. Key has been revoked and rotated automatically. Please contact admin.",
+              message: "New device detected. Your API key has been rotated automatically. Please check your Discord DMs for your new key. Only 1 device is allowed per key.",
               type: "access_error",
-              code: "discord_multi_device_revoke",
+              code: "discord_new_device_key_rotated",
             },
           },
           403
@@ -845,9 +864,23 @@ proxy.all("/*", async (c) => {
       config.globalPerModelPromptLimitWindow || "30m",
     );
     if (!mlCheck.allowed) {
+      const windowStr = keyRecord.perModelPromptLimitWindow || config.globalPerModelPromptLimitWindow || "30m";
+      const windowMs = parseRateLimitWindow(windowStr);
+      const resetMs = await getWindowResetMs(keyRecord.id, windowMs, model);
+      const resetMins = Math.ceil(resetMs / 60000);
+      // Check how many prompts remain globally (across all models)
+      const globalLimit = (keyRecord.promptLimit && keyRecord.promptLimit > 0 ? keyRecord.promptLimit : config.globalPromptLimit) || 0;
+      const globalWindow = keyRecord.promptLimitWindow || config.globalPromptLimitWindow || "30m";
+      const globalCheck = globalLimit > 0 ? await checkPromptLimit(keyRecord.id, globalLimit, globalWindow) : null;
+      const globalRemaining = globalCheck ? globalCheck.remaining : -1;
+      const isKeyOverride = (keyRecord.perModelPromptLimit || 0) > 0;
+      const limitSource = isKeyOverride ? "your key's override" : "global default";
+      const globalInfo = globalRemaining >= 0
+        ? ` You have ${globalRemaining} prompt(s) remaining for other models.`
+        : "";
       return c.json({
         error: {
-          message: `Model prompt limit exceeded for "${model}". Maximum ${mlCheck.effectiveLimit} prompts per window. Used: ${mlCheck.used}.`,
+          message: `Limit reached for model "${model}" (${limitSource}): ${mlCheck.used}/${mlCheck.effectiveLimit} prompts used. Resets in ~${resetMins} minute(s).${globalInfo}`,
           type: "rate_limit_error",
           code: "model_prompt_limit_exceeded",
         }
@@ -855,6 +888,7 @@ proxy.all("/*", async (c) => {
         "x-model-prompt-limit": String(mlCheck.effectiveLimit),
         "x-model-prompt-remaining": "0",
         "x-model-prompt-used": String(mlCheck.used),
+        "x-model-prompt-reset-mins": String(resetMins),
       });
     }
   }
@@ -867,9 +901,13 @@ proxy.all("/*", async (c) => {
     if (effectivePromptLimit && effectivePromptLimit > 0) {
       const plCheck = await checkPromptLimit(keyRecord.id, effectivePromptLimit, effectivePromptLimitWindow);
       if (!plCheck.allowed) {
+        const windowMs = parseRateLimitWindow(effectivePromptLimitWindow);
+        const resetMs = await getWindowResetMs(keyRecord.id, windowMs);
+        const resetMins = Math.ceil(resetMs / 60000);
+        const isKeyOverride = (keyRecord.promptLimit || 0) > 0;
         return c.json({
           error: {
-            message: `Prompt limit exceeded. Maximum ${effectivePromptLimit} prompts per ${effectivePromptLimitWindow}. Used: ${plCheck.used}.`,
+            message: `All model limit reached${isKeyOverride ? " (key override)" : ""}: ${plCheck.used}/${effectivePromptLimit} prompts used in this ${effectivePromptLimitWindow} window. Resets in ~${resetMins} minute(s).`,
             type: "rate_limit_error",
             code: "prompt_limit_exceeded",
           }
@@ -877,6 +915,7 @@ proxy.all("/*", async (c) => {
           "x-prompt-limit": String(effectivePromptLimit),
           "x-prompt-remaining": "0",
           "x-prompt-used": String(plCheck.used),
+          "x-prompt-reset-mins": String(resetMins),
         });
       }
     }
@@ -895,7 +934,19 @@ proxy.all("/*", async (c) => {
         ))
         .get();
       if (monthlyUsage && monthlyUsage.total >= keyRecord.monthlyTokenLimit) {
-        return c.json({ error: { message: "Monthly token limit exceeded.", type: "rate_limit_error" } }, 429);
+        const nextMonth = new Date();
+        nextMonth.setMonth(nextMonth.getMonth() + 1, 1);
+        nextMonth.setHours(0, 0, 0, 0);
+        const resetDate = nextMonth.toISOString().split("T")[0];
+        const usedTokens = monthlyUsage.total.toLocaleString();
+        const maxTokens = keyRecord.monthlyTokenLimit.toLocaleString();
+        return c.json({
+          error: {
+            message: `Monthly token limit reached: ${usedTokens}/${maxTokens} tokens used this month. Resets on ${resetDate} (1st of next month).`,
+            type: "rate_limit_error",
+            code: "monthly_token_limit_exceeded",
+          }
+        }, 429);
       }
     }
   }

@@ -53,6 +53,7 @@ export const apiKeys = sqliteTable("api_keys", {
   promptLimitWindow: text("prompt_limit_window"), // overrides global prompt limit window if set
   perModelPromptLimit: integer("per_model_prompt_limit").default(0), // overrides global per-model limit if > 0
   perModelPromptLimitWindow: text("per_model_prompt_limit_window"), // overrides global per-model window if set
+  pendingNotification: text("pending_notification"), // JSON: { type, discordUserId, threadId, newKey, endpoint, message }
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 });
