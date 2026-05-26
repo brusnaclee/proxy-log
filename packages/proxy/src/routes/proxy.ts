@@ -427,7 +427,13 @@ async function resolveChatSession(params: {
 
   if (params.messageAnalysis.hasUserMessage && hashChanged) {
     // User typed something new. Always count it.
-    isNewUserPrompt = true;
+    if (params.messageAnalysis.isRawFormat && gapMs < 120000) {
+      // Codex/Custom endpoints: Since we hash the entire payload and it changes on every tool output,
+      // we must debounce the prompt counting. If the gap is < 120s, it's highly likely an automated tool loop.
+      isNewUserPrompt = false;
+    } else {
+      isNewUserPrompt = true;
+    }
   } else if (params.messageAnalysis.hasUserMessage && !hashChanged && gapMs >= SWITCH_PROMPT_MIN_GAP_MS) {
     // Same hash but very large gap → user re-sent after long pause
     isNewUserPrompt = true;
