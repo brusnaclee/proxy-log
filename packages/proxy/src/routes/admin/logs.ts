@@ -140,6 +140,7 @@ logs.get("/logs", async (c) => {
       totalPages: Math.ceil(total / limit),
     }
   });
+});
 
 logs.get("/logs/sessions", async (c) => {
   const page = parseInt(c.req.query("page") || "1");
