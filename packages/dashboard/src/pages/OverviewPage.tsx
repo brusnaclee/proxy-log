@@ -311,8 +311,16 @@ export default function OverviewPage() {
                   <p><strong>User:</strong> {searchUserResult.discordUsername || searchUserResult.discordUserId}</p>
                   <p><strong>Status Key:</strong> {searchUserResult.isActive ? 'Aktif' : 'Nonaktif'}</p>
                   <div className="mt-2 space-y-1">
-                    <p><strong>Global Prompt Limit:</strong> {searchUserResult.promptLimit > 0 ? `${searchUserResult.promptLimit} / ${searchUserResult.promptLimitWindow}` : 'Unlimited'}</p>
-                    <p><strong>Per-Model Prompt Limit:</strong> {searchUserResult.perModelPromptLimit > 0 ? `${searchUserResult.perModelPromptLimit} / ${searchUserResult.perModelPromptLimitWindow}` : 'Unlimited'}</p>
+                    <p><strong>Global Prompt Limit:</strong> {searchUserResult.promptLimit > 0 ? `${searchUserResult.promptUsed} / ${searchUserResult.promptLimit} (${searchUserResult.promptLimitWindow})` : 'Unlimited'}</p>
+                    <p><strong>Per-Model Usage:</strong></p>
+                    <ul className="list-disc list-inside pl-4 text-xs">
+                      {searchUserResult.modelUsage?.map((m: any) => (
+                        <li key={m.model}><code>{m.model}</code>: {m.used} / {m.limit > 0 ? m.limit : '∞'}</li>
+                      ))}
+                      {(!searchUserResult.modelUsage || searchUserResult.modelUsage.length === 0) && (
+                        <li>Default: {searchUserResult.perModelPromptLimit > 0 ? `${searchUserResult.perModelPromptLimit} (${searchUserResult.perModelPromptLimitWindow})` : 'Unlimited'}</li>
+                      )}
+                    </ul>
                   </div>
                   <div className="mt-2 space-y-1">
                     <p><strong>Requests Hari Ini:</strong> {formatNumber(searchUserResult.today?.requests || 0)}</p>

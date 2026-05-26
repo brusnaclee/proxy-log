@@ -2094,7 +2094,7 @@ async function handleRankingSearchModal(interaction) {
 		return;
 	}
 
-	const { discordUsername, isActive, keyPrefix, today, month, promptLimit, promptLimitWindow, perModelPromptLimit, perModelPromptLimitWindow } = data;
+	const { discordUsername, isActive, keyPrefix, today, month, promptLimit, promptLimitWindow, promptUsed, promptResetMins, modelUsage, perModelPromptLimit, perModelPromptLimitWindow } = data;
 	const displayName = discordUsername || `User ${discordUserId}`;
 
 	function periodField(p) {
@@ -2115,12 +2115,27 @@ async function handleRankingSearchModal(interaction) {
 		return lines.join('\n');
 	}
 
-	const globalLimitStr = promptLimit > 0 ? `**${promptLimit}** req / ${promptLimitWindow}` : '**Unlimited**';
-	const modelLimitStr = perModelPromptLimit > 0 ? `**${perModelPromptLimit}** req / ${perModelPromptLimitWindow}` : '**Unlimited**';
+	const globalLimitStr = promptLimit > 0 
+		? `**${promptUsed} / ${promptLimit}** req (${promptLimitWindow})` + (promptUsed >= promptLimit ? ` 🔴 Resets in ~${promptResetMins}m` : '')
+		: '**Unlimited**';
+
+	let modelLimitStr = '';
+	if (modelUsage && modelUsage.length > 0) {
+		const activeModels = modelUsage.filter((m) => m.used > 0 || m.limit > 0);
+		if (activeModels.length > 0) {
+			modelLimitStr = activeModels.map(m => 
+				`- \`${m.model}\`: **${m.used} / ${m.limit > 0 ? m.limit : '∞'}**` + (m.limit > 0 && m.used >= m.limit ? ` 🔴 Resets in ~${m.resetMins}m` : '')
+			).join('\n');
+		} else {
+			modelLimitStr = perModelPromptLimit > 0 ? `Default: **${perModelPromptLimit}** req (${perModelPromptLimitWindow})` : '**Unlimited**';
+		}
+	} else {
+		modelLimitStr = perModelPromptLimit > 0 ? `Default: **${perModelPromptLimit}** req (${perModelPromptLimitWindow})` : '**Unlimited**';
+	}
 
 	const embed = new EmbedBuilder()
 		.setTitle(`📊 Usage: ${displayName}`)
-		.setDescription(`Discord ID: \`${discordUserId}\`\nAPI Key: \`${keyPrefix}...\`\nStatus: ${isActive ? '🟢 Active' : '🔴 Inactive'}\n\n**🎯 Limits**\nGlobal: ${globalLimitStr}\nPer-Model: ${modelLimitStr}`)
+		.setDescription(`Discord ID: \`${discordUserId}\`\nAPI Key: \`${keyPrefix}...\`\nStatus: ${isActive ? '🟢 Active' : '🔴 Inactive'}\n\n**🎯 Limits**\nGlobal: ${globalLimitStr}\nPer-Model:\n${modelLimitStr}`)
 		.setColor(isActive ? 0x57f287 : 0xff6b6b)
 		.addFields(
 			{ name: '📅 Hari Ini', value: periodField(today), inline: true },
