@@ -9,7 +9,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { useRealtimeSSE } from "@/lib/use-realtime-sse";
-import { exportCsvMultiSection } from "@/lib/export-csv";
+import { exportCsvMultiSection, buildModelsSection } from "@/lib/export-csv";
 
 const COLORS = ["#818cf8", "#34d399", "#f59e0b", "#f87171", "#a78bfa", "#38bdf8", "#fb923c", "#e879f9"];
 
@@ -96,63 +96,84 @@ export default function AnalyticsPage() {
   // ── Export ──────────────────────────────────────────────────────────────────
   const handleExport = () => {
     const pl = periodLabel(days);
+    const dateStr = new Date().toISOString().split("T")[0];
     const sections = [];
-    if (modelData.length) {
-      sections.push({
-        title: "Models by Usage",
-        headers: ["Model", "Requests", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost ($)", "Avg Latency (ms)"],
-        rows: modelData.map(m => [m.model, m.requests, m.tokens, m.promptTokens, m.completionTokens, formatCost(m.estimatedCost), m.avgLatency]),
-        notes: `Period: ${pl}`,
-      });
-    }
+
+    if (modelData.length) sections.push(buildModelsSection(modelData, "Models by Usage"));
+
     if (topUsersData.byRequests.length) {
       sections.push({
         title: "Top Users by Requests",
-        headers: ["Display Name", "Key Name", "Discord ID", "Requests", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost ($)"],
-        rows: topUsersData.byRequests.map(u => [u.displayName, u.keyName, u.discordUserId || "", u.requests, u.tokens, u.promptTokens, u.completionTokens, formatCost(u.estimatedCost)]),
         notes: `Period: ${pl}`,
+        headers: ["Display Name", "Key Name", "Discord ID", "Requests", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost"],
+        rows: topUsersData.byRequests.map(u => [
+          u.displayName, u.keyName, u.discordUserId || "",
+          u.requests, u.tokens, u.promptTokens, u.completionTokens,
+          `$${((u.estimatedCost||0)/1e6).toFixed(5)}`,
+        ]),
       });
     }
+
     if (topUsersData.byTokens.length) {
       sections.push({
         title: "Top Users by Tokens",
-        headers: ["Display Name", "Key Name", "Discord ID", "Total Tokens", "Input Tokens", "Output Tokens", "Requests", "Est. Cost ($)"],
-        rows: topUsersData.byTokens.map(u => [u.displayName, u.keyName, u.discordUserId || "", u.tokens, u.promptTokens, u.completionTokens, u.requests, formatCost(u.estimatedCost)]),
         notes: `Period: ${pl}`,
+        headers: ["Display Name", "Key Name", "Discord ID", "Total Tokens", "Input Tokens", "Output Tokens", "Requests", "Est. Cost"],
+        rows: topUsersData.byTokens.map(u => [
+          u.displayName, u.keyName, u.discordUserId || "",
+          u.tokens, u.promptTokens, u.completionTokens, u.requests,
+          `$${((u.estimatedCost||0)/1e6).toFixed(5)}`,
+        ]),
       });
     }
+
     if (keyData.length) {
       sections.push({
         title: "API Keys by Usage",
-        headers: ["Key Name", "Requests", "Tokens", "Input Tokens", "Output Tokens", "Est. Cost ($)", "Unique Devices", "Top Model"],
-        rows: keyData.map(k => [k.name, k.requests, k.tokens, k.promptTokens || "", k.completionTokens || "", formatCost(k.estimatedCost), k.uniqueDevices, k.topModel]),
         notes: `Period: ${pl}`,
+        headers: ["Key Name", "Requests", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost", "Unique Devices", "Top Model"],
+        rows: keyData.map(k => [
+          k.name, k.requests, k.tokens, k.promptTokens || "", k.completionTokens || "",
+          `$${((k.estimatedCost||0)/1e6).toFixed(5)}`, k.uniqueDevices, k.topModel,
+        ]),
       });
     }
+
     if (deviceData.length) {
       sections.push({
         title: "Top Devices by Usage",
-        headers: ["Fingerprint", "IP Address", "IDE", "Requests", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost ($)", "Last Seen"],
-        rows: deviceData.map(d => [d.fingerprint, d.ipAddress, d.ide, d.requests, d.tokens, d.promptTokens || "", d.completionTokens || "", formatCost(d.estimatedCost), d.lastSeen]),
         notes: `Period: ${pl}`,
+        headers: ["Fingerprint", "IP Address", "IDE", "Requests", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost", "Last Seen"],
+        rows: deviceData.map(d => [
+          d.fingerprint, d.ipAddress, d.ide, d.requests, d.tokens,
+          d.promptTokens || "", d.completionTokens || "",
+          `$${((d.estimatedCost||0)/1e6).toFixed(5)}`, d.lastSeen,
+        ]),
       });
     }
+
     if (timeseriesData.length) {
       sections.push({
         title: "Daily Timeseries",
-        headers: ["Date", "Requests", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost ($)", "Unique Devices"],
-        rows: timeseriesData.map(t => [t.period, t.requests, t.tokens, t.promptTokens, t.completionTokens, formatCost(t.estimatedCost), t.uniqueDevices]),
-        notes: "Each row represents one day.",
+        notes: "Each row = one day",
+        headers: ["Date", "Requests", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost", "Unique Devices"],
+        rows: timeseriesData.map(t => [
+          t.period, t.requests, t.tokens, t.promptTokens, t.completionTokens,
+          `$${((t.estimatedCost||0)/1e6).toFixed(5)}`, t.uniqueDevices,
+        ]),
       });
     }
+
     if (hourlyData.length) {
       sections.push({
         title: "Hourly Timeseries",
-        headers: ["Hour", "Requests", "Tokens"],
+        notes: "Each row = one hour",
+        headers: ["Hour", "Requests", "Total Tokens"],
         rows: hourlyData.map(t => [t.period, t.requests, t.tokens]),
       });
     }
-    exportCsvMultiSection(sections, `analytics-export-${new Date().toISOString().split("T")[0]}.csv`, pl);
+
+    exportCsvMultiSection(sections, `analytics-${dateStr}.csv`, pl);
   };
 
   // IDE distribution from device data

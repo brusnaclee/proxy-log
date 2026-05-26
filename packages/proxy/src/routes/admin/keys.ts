@@ -82,60 +82,50 @@ keys.get("/keys/:id", async (c) => {
   if (!key) return c.json({ error: "API key not found" }, 404);
   const config = await db.select().from(adminConfig).get();
 
-  const totalStats = await db.select({
-    count: sql<number>`count(*)`, 
-    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`, 
-    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
-    contextTokens: sql<number>`COALESCE(SUM(estimated_context_length), 0)`,
-    estimatedCost: sql<number>`COALESCE(SUM(estimated_cost), 0)`,
-  }).from(requestLogs).where(and(
-    eq(requestLogs.apiKeyId, key.id),
-    sql`is_counted_request IS NOT 0`
-  )).get();
+  // Period start timestamps
+  const now = new Date();
+  const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
+  const weekStart  = new Date(now); weekStart.setDate(now.getDate() - 7);
+  const monthStart = new Date(now); monthStart.setDate(now.getDate() - 30);
 
-  // Get today's stats (local midnight → matches local timestamps in DB)
-  const _now2 = new Date(); _now2.setHours(0, 0, 0, 0);
-  const todayStart = _now2.toISOString().replace('T', ' ').substring(0, 19);
-  
-  const todayStats = await db.select({
-    count: sql<number>`count(*)`,
-    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
-    contextTokens: sql<number>`COALESCE(SUM(estimated_context_length), 0)`
-  })
-  .from(requestLogs)
-  .where(and(
-    eq(requestLogs.apiKeyId, key.id),
-    sql`created_at >= ${todayStart}`,
-    sql`is_counted_request IS NOT 0`
-  ))
-  .get();
+  const toSqlDate = (d: Date) => d.toISOString().replace('T', ' ').substring(0, 19);
 
-  // Get total model breakdown for costs
-  const totalBreakdown = await db.select({
-    model: requestLogs.model,
-    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`
-  })
-  .from(requestLogs)
-  .where(and(eq(requestLogs.apiKeyId, key.id), sql`is_counted_request IS NOT 0`))
-  .groupBy(requestLogs.model)
-  .all();
-  const totalCosts = calculateBreakdownCosts(totalBreakdown);
+  const buildPeriodStats = async (since?: string) => {
+    const where = since
+      ? and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${since}`, sql`is_counted_request IS NOT 0`)
+      : and(eq(requestLogs.apiKeyId, key.id), sql`is_counted_request IS NOT 0`);
+    const s = await db.select({
+      count:           sql<number>`count(*)`,
+      tokens:          sql<number>`COALESCE(SUM(total_tokens), 0)`,
+      promptTokens:    sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
+      completionTokens:sql<number>`COALESCE(SUM(completion_tokens), 0)`,
+      contextTokens:   sql<number>`COALESCE(SUM(estimated_context_length), 0)`,
+      estimatedCost:   sql<number>`COALESCE(SUM(estimated_cost), 0)`,
+    }).from(requestLogs).where(where).get();
+    const breakdown = await db.select({
+      model: requestLogs.model,
+      promptTokens:    sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
+      completionTokens:sql<number>`COALESCE(SUM(completion_tokens), 0)`,
+    }).from(requestLogs).where(where).groupBy(requestLogs.model).all();
+    const costs = calculateBreakdownCosts(breakdown);
+    return {
+      requests:        s?.count           || 0,
+      tokens:          s?.tokens          || 0,
+      promptTokens:    s?.promptTokens    || 0,
+      completionTokens:s?.completionTokens|| 0,
+      contextTokens:   s?.contextTokens   || 0,
+      estimatedCost:   s?.estimatedCost   || 0,
+      promptCost:      costs.promptCost,
+      completionCost:  costs.completionCost,
+    };
+  };
 
-  // Get today model breakdown for costs
-  const todayBreakdown = await db.select({
-    model: requestLogs.model,
-    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`
-  })
-  .from(requestLogs)
-  .where(and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${todayStart}`, sql`is_counted_request IS NOT 0`))
-  .groupBy(requestLogs.model)
-  .all();
-  const todayCosts = calculateBreakdownCosts(todayBreakdown);
+  const [todayStats, weekStats, monthStats, allTimeStats] = await Promise.all([
+    buildPeriodStats(toSqlDate(todayStart)),
+    buildPeriodStats(toSqlDate(weekStart)),
+    buildPeriodStats(toSqlDate(monthStart)),
+    buildPeriodStats(),
+  ]);
 
   const deviceCount = await db.select({ count: sql<number>`count(*)` }).from(devices).where(eq(devices.apiKeyId, key.id)).get();
 
@@ -235,20 +225,11 @@ keys.get("/keys/:id", async (c) => {
     perModelPromptLimit: key.perModelPromptLimit || 0, perModelPromptLimitWindow: key.perModelPromptLimitWindow || config?.globalPerModelPromptLimitWindow || "1d",
     createdAt: key.createdAt, updatedAt: key.updatedAt,
     stats: {
-      totalRequests: totalStats?.count || 0, totalTokens: totalStats?.tokens || 0,
-      promptTokens: totalStats?.promptTokens || 0, completionTokens: totalStats?.completionTokens || 0,
-      contextTokens: totalStats?.contextTokens || 0,
-      estimatedCost: totalStats?.estimatedCost || 0,
-      promptCost: totalCosts.promptCost,
-      completionCost: totalCosts.completionCost,
+      today:   { ...todayStats },
+      week:    { ...weekStats },
+      month:   { ...monthStats },
+      allTime: { ...allTimeStats, contextTokens: allTimeStats.contextTokens },
       deviceCount: deviceCount?.count || 0,
-      requestsToday: todayStats?.count || 0,
-      tokensToday: todayStats?.tokens || 0,
-      promptTokensToday: todayStats?.promptTokens || 0,
-      completionTokensToday: todayStats?.completionTokens || 0,
-      contextTokensToday: todayStats?.contextTokens || 0,
-      promptCostToday: todayCosts.promptCost,
-      completionCostToday: todayCosts.completionCost,
       topModels,
     },
     policyStats: {

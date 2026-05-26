@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, ChevronDown, ChevronUp, Download } from "lucide-react";
 import { formatDate, formatNumber, formatCost, formatRelativeTime } from "@/lib/utils";
 import { useRealtimeSSE } from "@/lib/use-realtime-sse";
-import { exportCsvSimple } from "@/lib/export-csv";
+import { exportCsvMultiSection, buildTimelineSection } from "@/lib/export-csv";
 import { useCallback } from "react";
 
 type TimelineTurn = {
@@ -116,23 +116,41 @@ export default function SessionDetailPage() {
   }
 
   const handleExport = () => {
-    const headers = ["Time", "Event", "User Prompt", "Assistant Reply", "Tokens", "Latency (ms)", "Status", "Attempt Count", "Tools"];
-    const exportRows = turns.map(t => {
-      const u = getRoleText(t, "user") || String(t.requestPreview || "");
-      const a = String(t.responsePreview || "") || getRoleText(t, "assistant");
-      return [
-        t.lastSeenAt || t.createdAt,
-        t.contextEvent || "append",
-        u,
-        a,
-        t.totalTokens || 0,
-        t.latencyMs || 0,
-        t.statusCode || 0,
-        t.attemptCount || 1,
-        (t.toolsUsed || []).join("|")
-      ];
-    });
-    exportCsvSimple(headers, exportRows, `session-${sessionId}-${new Date().toISOString().split("T")[0]}`);
+    const sess = detail?.session;
+    const dateStr = new Date().toISOString().split("T")[0];
+    const sessionName = sess?.sessionName && sess.sessionName.trim() ? sess.sessionName : "Session";
+
+    const sections = [];
+
+    // Section 1: Session info
+    if (sess) {
+      sections.push({
+        title: "Session Info",
+        headers: ["Field", "Value"],
+        rows: [
+          ["Session Name",  sess.sessionName || "Untitled Chat"],
+          ["Session ID",    sess.sessionId],
+          ["IDE",           sess.ideDetected || "Unknown"],
+          ["Provider",      sess.provider || "Unknown"],
+          ["Model (Last)",  sess.model || "Unknown"],
+          ["Device",        sess.deviceFingerprint || "Unknown"],
+          ["User Prompts",  sess.requestCount],
+          ["Total Tokens",  sess.totalTokens],
+          ["Est. Cost",     `$${((sess.estimatedCost||0)/1e6).toFixed(5)}`],
+          ["First Seen",    sess.firstSeenAt],
+          ["Last Seen",     sess.lastSeenAt],
+        ],
+      });
+    }
+
+    // Section 2: Timeline
+    sections.push(buildTimelineSection(turns, "Conversation Timeline"));
+
+    exportCsvMultiSection(
+      sections,
+      `session-${sessionName.replace(/[^a-z0-9]/gi, "-").toLowerCase()}-${dateStr}.csv`,
+      "Full Session",
+    );
   };
 
   if (!detail) {

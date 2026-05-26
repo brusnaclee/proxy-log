@@ -96,6 +96,17 @@ export interface ApiKeyListItem {
   createdAt: string;
 }
 
+export interface KeyPeriodStats {
+  requests: number;
+  tokens: number;
+  promptTokens: number;
+  completionTokens: number;
+  contextTokens: number;
+  estimatedCost: number;
+  promptCost: number;
+  completionCost: number;
+}
+
 export interface ApiKeyDetail extends ApiKeyListItem {
   rateLimit: number;
   rateLimitWindow: string;
@@ -105,21 +116,10 @@ export interface ApiKeyDetail extends ApiKeyListItem {
   perModelPromptLimitWindow: string;
   updatedAt: string;
   stats: {
-    totalRequests: number;
-    totalTokens: number;
-    requestsToday: number;
-    tokensToday: number;
-    promptTokens: number;
-    completionTokens: number;
-    contextTokens?: number;
-    estimatedCost: number;
-    promptCost?: number;
-    completionCost?: number;
-    promptTokensToday?: number;
-    completionTokensToday?: number;
-    contextTokensToday?: number;
-    promptCostToday?: number;
-    completionCostToday?: number;
+    today:   KeyPeriodStats;
+    week:    KeyPeriodStats;
+    month:   KeyPeriodStats;
+    allTime: KeyPeriodStats;
     deviceCount: number;
     topModels: { model: string; count: number; tokens: number; estimatedCost?: number }[];
   };

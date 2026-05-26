@@ -10,7 +10,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { useRealtimeSSE } from "@/lib/use-realtime-sse";
-import { exportCsvMultiSection } from "@/lib/export-csv";
+import { exportCsvMultiSection, buildModelsSection } from "@/lib/export-csv";
 import { formatCost } from "@/lib/utils";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -99,44 +99,43 @@ export default function OverviewPage() {
 
   // ── Export ──────────────────────────────────────────────────────────────────
   const handleExport = () => {
+    const activePeriodLabel = PERIOD_OPTS.find(o => o.key === period)?.label || "All Time";
     const sections = [];
     if (overview) {
       sections.push({
         title: "Overview Stats",
-        headers: ["Metric", "Value"],
+        headers: ["Metric", "Today", "7 Days", "30 Days", "All Time"],
+        notes: "Requests and token counts across all API keys",
         rows: [
-          ["Requests Today", overview.today.requests],
-          ["Tokens Today", overview.today.tokens],
-          ["Unique Devices Today", overview.today.uniqueDevices ?? 0],
-          ["Active Keys", overview.activeKeys],
-          ["Total Devices", overview.totalDevices],
-          ["All Time Requests", overview.allTime.requests],
-          ["All Time Tokens", overview.allTime.tokens],
-          ["All Time Input Tokens", overview.allTime.promptTokens || 0],
-          ["All Time Output Tokens", overview.allTime.completionTokens || 0],
-          ["All Time Context Tokens", overview.allTime.contextTokens || 0],
-          ["Total Sessions", overview.allTime.totalSessions || 0],
-          ["Avg Requests Per Session", (overview.allTime.avgRequestsPerSession || 0).toFixed(2)],
-          ["All Time Cost", formatCost(overview.allTime.totalCost ?? overview.allTime.estimatedCost ?? 0)]
+          ["Requests",       overview.today.requests, overview.week?.requests ?? "", overview.month?.requests ?? "", overview.allTime.requests],
+          ["Total Tokens",   overview.today.tokens,   overview.week?.tokens ?? "",   overview.month?.tokens ?? "",   overview.allTime.tokens],
+          ["Input Tokens",   overview.today.promptTokens ?? "",  overview.week?.promptTokens ?? "", overview.month?.promptTokens ?? "", overview.allTime.promptTokens ?? ""],
+          ["Output Tokens",  overview.today.completionTokens ?? "", overview.week?.completionTokens ?? "", overview.month?.completionTokens ?? "", overview.allTime.completionTokens ?? ""],
+          ["Unique Devices", overview.today.uniqueDevices ?? "", "", "", overview.totalDevices],
+          ["Active Keys",    overview.activeKeys, "", "", overview.totalKeys],
+          ["Total Sessions", "", "", "", overview.allTime.totalSessions ?? ""],
+          ["Avg Reqs/Session", "", "", "", (overview.allTime.avgRequestsPerSession || 0).toFixed(2)],
+          ["Est. Cost",      overview.today.totalCost != null ? `$${(overview.today.totalCost/1e6).toFixed(5)}` : "", "", "", overview.allTime.totalCost != null ? `$${(overview.allTime.totalCost/1e6).toFixed(5)}` : ""],
         ]
       });
     }
     if (timeseries.length) {
       sections.push({
         title: "Timeseries",
-        headers: ["Period", "Requests", "Tokens", "Devices"],
-        rows: timeseries.map((t) => [t.period, t.requests, t.tokens, t.uniqueDevices]),
-        notes: "Charts are data tables. Open in Excel/Sheets to visualize."
+        headers: ["Period", "Requests", "Tokens", "Input Tokens", "Output Tokens", "Est. Cost ($)", "Unique Devices"],
+        notes: "Time-series data — open in Excel/Sheets to chart",
+        rows: timeseries.map((t) => [
+          t.period, t.requests, t.tokens,
+          t.promptTokens ?? "", t.completionTokens ?? "",
+          t.estimatedCost != null ? `$${(t.estimatedCost/1e6).toFixed(5)}` : "",
+          t.uniqueDevices ?? "",
+        ]),
       });
     }
     if (modelStats.length) {
-      sections.push({
-        title: "Model Stats",
-        headers: ["Model", "Requests", "Tokens", "Avg Latency", "Est. Cost"],
-        rows: modelStats.map((m) => [m.model, m.requests, m.tokens, m.avgLatency, formatCost(m.estimatedCost)])
-      });
+      sections.push(buildModelsSection(modelStats, "Model Stats"));
     }
-    exportCsvMultiSection(sections, `dashboard-overview-${new Date().toISOString().split("T")[0]}.csv`);
+    exportCsvMultiSection(sections, `gateway-overview-${new Date().toISOString().split("T")[0]}.csv`, activePeriodLabel);
   };
 
   // ── Period Toggle component ─────────────────────────────────────────────────

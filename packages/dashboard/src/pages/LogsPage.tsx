@@ -16,7 +16,7 @@ import { Download, Radio, ChevronLeft, ChevronRight } from "lucide-react";
 import { formatCost } from "@/lib/utils";
 import { useRealtimeSSE } from "@/lib/use-realtime-sse";
 import { useRealtime } from "@/lib/realtime-context";
-import { exportCsvMultiSection } from "@/lib/export-csv";
+import { exportCsvMultiSection, buildLogsSection, buildSessionsSection } from "@/lib/export-csv";
 
 type ViewMode = "requests" | "sessions";
 
@@ -164,33 +164,11 @@ export default function LogsPage() {
   useRealtimeSSE(handleSSEMessage, 500);
 
   const exportCSV = () => {
-    const rows = requestData.map((r) => [
-      r.createdAt,
-      r.apiKeyName,
-      r.ideDetected,
-      r.provider || "",
-      r.model,
-      r.sessionId || "",
-      r.contextEvent || "",
-      r.contextTokensBefore ?? r.estimatedContextLength ?? 0,
-      normalizeTools(r.toolsUsed).join("|"),
-      r.promptTokens,
-      r.completionTokens,
-      r.totalTokens,
-      r.latencyMs,
-      r.statusCode,
-      r.requestPreview || "",
-    ]);
-
+    const dateStr = new Date().toISOString().split("T")[0];
     exportCsvMultiSection(
-      [{
-        title: "Request Logs",
-        headers: ["Time", "API Key", "IDE", "Provider", "Model", "Session", "Context Event", "Context Tokens", "Tools", "Input Tokens", "Output Tokens", "Total Tokens", "Latency (ms)", "Status", "Preview"],
-        rows,
-        notes: `Exported ${rows.length} rows from current view`,
-      }],
-      `proxy-logs-${new Date().toISOString().split("T")[0]}.csv`,
-      "Current View"
+      [buildLogsSection(requestData, "Request Logs")],
+      `proxy-logs-${dateStr}.csv`,
+      `Current View (${requestData.length} rows)`,
     );
   };
 
