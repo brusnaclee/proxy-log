@@ -447,4 +447,6 @@ export const stats = {
   topUsers: (days = 0) => request<{ byRequests: any[]; byTokens: any[] }>(`/stats/top-users?days=${days}`),
   timeseries: (period: string = "daily", days: number = 7) =>
     request<any[]>(`/stats/timeseries?period=${period}&days=${days}`),
+  userDetail: (discordUserId: string) =>
+    request<any>(`/internal/stats/user-detail/${encodeURIComponent(discordUserId)}`),
 };

@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatNumber, formatRelativeTime } from "@/lib/utils";
-import { Activity, Coins, Key, Monitor, TrendingUp, Download, RefreshCw, DollarSign } from "lucide-react";
+import { Activity, Coins, Key, Monitor, TrendingUp, Download, RefreshCw, DollarSign, Search } from "lucide-react";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer,
@@ -49,6 +49,28 @@ export default function OverviewPage() {
   const [period, setPeriod]             = useState<PeriodKey>("today");
   const [chartPeriod, setChartPeriod]   = useState<PeriodKey>("7d"); // for charts only
   const [modelChartDays, setModelChartDays] = useState(7);
+
+  // Search User State
+  const [searchUserResult, setSearchUserResult] = useState<any>(null);
+
+  const handleSearchUser = async () => {
+    const discordId = window.prompt("Masukkan Discord User ID saat diminta:");
+    if (!discordId) return;
+    try {
+      const res = await stats.userDetail(discordId.trim());
+      if (res.error) {
+        alert("Error: " + res.error);
+        return;
+      }
+      if (res.found === false || !res.discordUserId) {
+        alert("User tidak ditemukan.");
+        return;
+      }
+      setSearchUserResult(res);
+    } catch (err: any) {
+      alert("Gagal mencari user: " + err.message);
+    }
+  };
 
   // Map period â†’ overview sub-object
   const periodData = overview
@@ -272,9 +294,34 @@ export default function OverviewPage() {
             </button>
           ))}
         </div>
-      </div>
+        </div>
 
-      {/* Stats Cards */}
+        {/* User Search Feature */}
+        <Card className="border-border/50 bg-accent/20">
+          <CardContent className="p-4 flex flex-col md:flex-row gap-4 items-center justify-between">
+            <div>
+              <h3 className="font-medium flex items-center gap-2">
+                <Search className="w-4 h-4 text-primary" /> Cari Usage User
+              </h3>
+              <p className="text-xs text-muted-foreground mt-1">
+                Klik tombol di bawah untuk mencari data penggunaan API seorang user. Masukkan Discord User ID saat diminta.
+              </p>
+              {searchUserResult && (
+                <div className="mt-3 text-sm bg-background p-3 rounded border border-border">
+                  <p><strong>User:</strong> {searchUserResult.discordUsername || searchUserResult.discordUserId}</p>
+                  <p><strong>Requests Hari Ini:</strong> {formatNumber(searchUserResult.today?.requests || 0)}</p>
+                  <p><strong>Token Hari Ini:</strong> {formatNumber(searchUserResult.today?.tokens || 0)}</p>
+                  <p><strong>Status Key:</strong> {searchUserResult.isActive ? 'Aktif' : 'Nonaktif'}</p>
+                </div>
+              )}
+            </div>
+            <Button onClick={handleSearchUser} variant="secondary" size="sm">
+              <Search className="w-4 h-4 mr-2" /> Cari User
+            </Button>
+          </CardContent>
+        </Card>
+
+        {/* Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
         {allCards.map((card) => (
           <Card key={card.label} className="border-border/50">
