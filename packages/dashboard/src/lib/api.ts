@@ -101,6 +101,8 @@ export interface ApiKeyDetail extends ApiKeyListItem {
   rateLimitWindow: string;
   promptLimit: number;
   promptLimitWindow: string;
+  perModelPromptLimit: number;
+  perModelPromptLimitWindow: string;
   updatedAt: string;
   stats: {
     totalRequests: number;
@@ -207,6 +209,7 @@ export const keys = {
     devicePolicy: string; ipPolicy: string; idePolicy: string; monthlyTokenLimit: number;
     rateLimit: number; rateLimitWindow: string;
     promptLimit: number; promptLimitWindow: string;
+    perModelPromptLimit: number; perModelPromptLimitWindow: string;
   }>) =>
     request<{ success: boolean }>(`/keys/${id}`, {
       method: "PUT",
@@ -241,6 +244,12 @@ export const keys = {
     }),
   removeIdePolicyRule: (keyId: number, ruleId: number) =>
     request<{ success: boolean; message?: string }>(`/keys/${keyId}/policies/ide/${ruleId}`, { method: "DELETE" }),
+  getModelLimits: (keyId: number) =>
+    request<{ data: ModelLimitEntry[] }>(`/keys/${keyId}/model-limits`),
+  setModelLimit: (keyId: number, model: string, promptLimit: number) =>
+    request<{ success: boolean }>(`/keys/${keyId}/model-limits`, { method: "PUT", body: JSON.stringify({ model, promptLimit }) }),
+  deleteModelLimit: (keyId: number, model: string) =>
+    request<{ success: boolean }>(`/keys/${keyId}/model-limits/${encodeURIComponent(model)}`, { method: "DELETE" }),
 };
 
 // ─── Logs ──────────────────────────────────────────────────────────────────────
@@ -378,11 +387,29 @@ export interface GlobalSettings {
   globalRateLimitWindow: string;
   globalPromptLimit: number;
   globalPromptLimitWindow: string;
+  globalPerModelPromptLimit: number;
+  globalPerModelPromptLimitWindow: string;
 }
+
+export interface ModelLimitEntry {
+  id: number;
+  scope: string;
+  scopeId: number;
+  model: string;
+  promptLimit: number;
+  createdAt: string;
+}
+
 export const globalSettings = {
   get: () => request<GlobalSettings>("/settings/global"),
   update: (data: Partial<GlobalSettings>) =>
     request<{ success: boolean }>("/settings/global", { method: "PUT", body: JSON.stringify(data) }),
+  getModelLimits: () =>
+    request<{ data: ModelLimitEntry[] }>("/settings/model-limits"),
+  setModelLimit: (model: string, promptLimit: number) =>
+    request<{ success: boolean }>("/settings/model-limits", { method: "PUT", body: JSON.stringify({ model, promptLimit }) }),
+  deleteModelLimit: (model: string) =>
+    request<{ success: boolean }>(`/settings/model-limits/${encodeURIComponent(model)}`, { method: "DELETE" }),
 };
 
 // ─── Stats ─────────────────────────────────────────────────────────────────────

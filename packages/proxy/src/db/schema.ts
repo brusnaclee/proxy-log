@@ -13,6 +13,8 @@ export const adminConfig = sqliteTable("admin_config", {
   globalRateLimitWindow: text("global_rate_limit_window").default("1h"), // e.g., '1h', '30m', '1d'
   globalPromptLimit: integer("global_prompt_limit").default(0), // prompts per window (0 = unlimited)
   globalPromptLimitWindow: text("global_prompt_limit_window").default("1d"), // e.g., '1h', '1d'
+  globalPerModelPromptLimit: integer("global_per_model_prompt_limit").default(0), // default per-model limit (0 = unlimited)
+  globalPerModelPromptLimitWindow: text("global_per_model_prompt_limit_window").default("1d"),
   
   // Bot & Tokito Settings
   discordBotToken: text("discord_bot_token").default(""),
@@ -49,6 +51,8 @@ export const apiKeys = sqliteTable("api_keys", {
   rateLimitWindow: text("rate_limit_window"), // overrides global if set
   promptLimit: integer("prompt_limit").default(0), // overrides global prompt limit if > 0
   promptLimitWindow: text("prompt_limit_window"), // overrides global prompt limit window if set
+  perModelPromptLimit: integer("per_model_prompt_limit").default(0), // overrides global per-model limit if > 0
+  perModelPromptLimitWindow: text("per_model_prompt_limit_window"), // overrides global per-model window if set
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 });
@@ -189,6 +193,20 @@ export const modelMonitor = sqliteTable("model_monitor", {
   checkedAtIdx: index("idx_monitor_checked_at").on(table.checkedAt),
 }));
 
+// ─── Model Prompt Limits (per-model overrides) ─────────────────────────────────
+// scope="global" scopeId=0 → global override for a specific model
+// scope="key"    scopeId=apiKeyId → per-key override for a specific model
+export const modelLimits = sqliteTable("model_limits", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  scope: text("scope").notNull().default("global"),     // "global" | "key"
+  scopeId: integer("scope_id").notNull().default(0),    // 0 for global, api_key_id for per-key
+  model: text("model").notNull(),                       // model ID e.g. "ag/claude-sonnet-4-6"
+  promptLimit: integer("prompt_limit").notNull().default(0), // override limit for this model
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+}, (table) => ({
+  scopeModelIdx: index("idx_model_limits_scope_model").on(table.scope, table.scopeId, table.model),
+}));
+
 // ─── Type exports ──────────────────────────────────────────────────────────────
 export type AdminConfig = typeof adminConfig.$inferSelect;
 export type ApiKey = typeof apiKeys.$inferSelect;
@@ -198,6 +216,7 @@ export type RequestLog = typeof requestLogs.$inferSelect;
 export type ChatSession = typeof chatSessions.$inferSelect;
 export type Device = typeof devices.$inferSelect;
 export type ModelMonitor = typeof modelMonitor.$inferSelect;
+export type ModelLimit = typeof modelLimits.$inferSelect;
 
 export type NewAdminConfig = typeof adminConfig.$inferInsert;
 export type NewApiKey = typeof apiKeys.$inferInsert;
@@ -207,3 +226,4 @@ export type NewRequestLog = typeof requestLogs.$inferInsert;
 export type NewChatSession = typeof chatSessions.$inferInsert;
 export type NewDevice = typeof devices.$inferInsert;
 export type NewModelMonitor = typeof modelMonitor.$inferInsert;
+export type NewModelLimit = typeof modelLimits.$inferInsert;

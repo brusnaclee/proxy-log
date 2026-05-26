@@ -266,6 +266,25 @@ export async function initializeDatabase() {
   // Human-readable session name derived from first user message
   await ensureColumnExists("chat_sessions", "session_name", "TEXT DEFAULT ''");
 
+  // Per-model prompt limit system
+  await ensureColumnExists("admin_config", "global_per_model_prompt_limit", "INTEGER DEFAULT 0");
+  await ensureColumnExists("admin_config", "global_per_model_prompt_limit_window", "TEXT DEFAULT '1d'");
+  await ensureColumnExists("api_keys", "per_model_prompt_limit", "INTEGER DEFAULT 0");
+  await ensureColumnExists("api_keys", "per_model_prompt_limit_window", "TEXT");
+
+  // model_limits table for per-model overrides
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS model_limits (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      scope TEXT NOT NULL DEFAULT 'global',
+      scope_id INTEGER NOT NULL DEFAULT 0,
+      model TEXT NOT NULL,
+      prompt_limit INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+  await client.execute("CREATE INDEX IF NOT EXISTS idx_model_limits_scope_model ON model_limits(scope, scope_id, model)");
+
 
   await client.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_session_id_unique ON chat_sessions(session_id)");
   await client.execute("CREATE INDEX IF NOT EXISTS idx_logs_session_id ON request_logs(session_id)");

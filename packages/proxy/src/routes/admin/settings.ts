@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { db } from "../../db/index.js";
-import { adminConfig, apiKeys, requestLogs, chatSessions, devices, allowedDevices, allowedIdes } from "../../db/schema.js";
-import { eq } from "drizzle-orm";
+import { adminConfig, apiKeys, requestLogs, chatSessions, devices, allowedDevices, allowedIdes, modelLimits } from "../../db/schema.js";
+import { eq, and, sql } from "drizzle-orm";
 import { maskKey } from "../../utils/crypto.js";
 import { refreshModelCatalog } from "../../utils/model-catalog.js";
 
@@ -17,11 +17,13 @@ settings.get("/settings/global", async (c) => {
     globalRateLimitWindow: config.globalRateLimitWindow || "1h",
     globalPromptLimit: config.globalPromptLimit || 0,
     globalPromptLimitWindow: config.globalPromptLimitWindow || "1d",
+    globalPerModelPromptLimit: config.globalPerModelPromptLimit || 0,
+    globalPerModelPromptLimitWindow: config.globalPerModelPromptLimitWindow || "1d",
   });
 });
 
 settings.put("/settings/global", async (c) => {
-  const body = await c.req.json<{ globalMaxDevices?: number; realtimeEnabled?: boolean; globalRateLimit?: number; globalRateLimitWindow?: string; globalPromptLimit?: number; globalPromptLimitWindow?: string }>();
+  const body = await c.req.json<any>();
   const config = await db.select().from(adminConfig).get();
   if (!config) return c.json({ error: "Admin not configured" }, 500);
 
@@ -32,6 +34,8 @@ settings.put("/settings/global", async (c) => {
   if (body.globalRateLimitWindow !== undefined) updates.globalRateLimitWindow = body.globalRateLimitWindow || "1h";
   if (body.globalPromptLimit !== undefined) updates.globalPromptLimit = body.globalPromptLimit;
   if (body.globalPromptLimitWindow !== undefined) updates.globalPromptLimitWindow = body.globalPromptLimitWindow || "1d";
+  if (body.globalPerModelPromptLimit !== undefined) updates.globalPerModelPromptLimit = body.globalPerModelPromptLimit;
+  if (body.globalPerModelPromptLimitWindow !== undefined) updates.globalPerModelPromptLimitWindow = body.globalPerModelPromptLimitWindow || "1d";
 
   await db.update(adminConfig).set(updates).where(eq(adminConfig.id, config.id)).run();
   return c.json({ success: true, message: "Global settings updated" });
@@ -87,6 +91,47 @@ settings.put("/password", async (c) => {
   return c.json({ success: true, message: "Password updated successfully" });
 });
 
+// ─── Global Model Limits CRUD ──────────────────────────────────────────────────
+
+settings.get("/settings/model-limits", async (c) => {
+  const rows = await db.select().from(modelLimits)
+    .where(and(eq(modelLimits.scope, "global"), eq(modelLimits.scopeId, 0)))
+    .all();
+  return c.json({ data: rows });
+});
+
+settings.put("/settings/model-limits", async (c) => {
+  const body = await c.req.json<{ model: string; promptLimit: number }>();
+  if (!body.model || body.model.trim() === "") return c.json({ error: "model is required" }, 400);
+  const modelName = body.model.trim();
+  const limit = Math.max(0, body.promptLimit || 0);
+
+  // Upsert: delete existing then insert
+  await db.delete(modelLimits).where(and(
+    eq(modelLimits.scope, "global"),
+    eq(modelLimits.scopeId, 0),
+    eq(modelLimits.model, modelName),
+  )).run();
+
+  if (limit > 0) {
+    await db.insert(modelLimits).values({
+      scope: "global", scopeId: 0, model: modelName, promptLimit: limit,
+    }).run();
+  }
+
+  return c.json({ success: true, model: modelName, promptLimit: limit });
+});
+
+settings.delete("/settings/model-limits/:model", async (c) => {
+  const model = decodeURIComponent(c.req.param("model"));
+  await db.delete(modelLimits).where(and(
+    eq(modelLimits.scope, "global"),
+    eq(modelLimits.scopeId, 0),
+    eq(modelLimits.model, model),
+  )).run();
+  return c.json({ success: true, message: `Model limit for "${model}" removed` });
+});
+
 /**
  * POST /admin/settings/factory-reset
  * Resets ALL data to factory defaults:
@@ -106,6 +151,7 @@ settings.post("/settings/factory-reset", async (c) => {
     await db.delete(allowedDevices).run();
     await db.delete(devices).run();
     await db.delete(apiKeys).run();
+    await db.delete(modelLimits).run();
 
     // Reset admin config to defaults (keep password hash)
     await db.update(adminConfig).set({
@@ -117,6 +163,8 @@ settings.post("/settings/factory-reset", async (c) => {
       globalRateLimitWindow: "1h",
       globalPromptLimit: 0,
       globalPromptLimitWindow: "1d",
+      globalPerModelPromptLimit: 0,
+      globalPerModelPromptLimitWindow: "1d",
       discordBotToken: "",
       agverifChannelId: "",
       tokitoChannelId: "",

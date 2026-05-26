@@ -16,7 +16,7 @@ import {
 } from "../utils/telemetry.js";
 import { logEmitter } from "../utils/event-emitter.js";
 import { getModelCatalogResponse } from "../utils/model-catalog.js";
-import { checkRateLimit, checkPromptLimit } from "../utils/rate-limit.js";
+import { checkRateLimit, checkPromptLimit, checkModelPromptLimit } from "../utils/rate-limit.js";
 import { analyzeRequestMessages, detectToolCallsInResponse, type MessageAnalysis } from "../utils/message-analyzer.js";
 
 const proxy = new Hono();
@@ -349,14 +349,21 @@ async function resolveChatSession(params: {
 
   const prevTokens = latest.lastContextTokens || 0;
   const incomingTokens = params.contextTokensBefore;
+  const hashChanged = !!(
+    params.messageAnalysis.messageHash &&
+    params.messageAnalysis.messageHash !== latest.lastUserMessageHash
+  );
 
   // ── Detect "New Chat" button pressed ────────────────────────────────────────
-  // Signs: context size dropped dramatically (history wiped) with a human-speed gap.
+  // Signs: context size dropped dramatically (history wiped) AND the user message
+  // actually changed (different hash).  If the hash is the SAME, this is just
+  // the IDE re-sending the same prompt with different packaging (e.g. without
+  // tool definitions on the first request, then with tools on the second).
   const contextResetToZero = incomingTokens <= 0 && prevTokens > 0;
   const contextShrankMassively =
     prevTokens > 200 && incomingTokens < prevTokens * 0.4 && incomingTokens <= 200;
 
-  if ((contextResetToZero || contextShrankMassively) && gapMs >= NEW_PROMPT_MIN_GAP_MS) {
+  if ((contextResetToZero || contextShrankMassively) && gapMs >= NEW_PROMPT_MIN_GAP_MS && hashChanged) {
     const isNewUserPrompt = params.messageAnalysis.hasUserMessage;
     const sessionId = await createChatSession({ ...params, isUserPrompt: isNewUserPrompt, messageAnalysis: params.messageAnalysis });
     return { sessionId, contextEvent: "new_session", contextDeltaTokens: 0, gapMs, isNewUserPrompt };
@@ -374,9 +381,6 @@ async function resolveChatSession(params: {
   let isNewUserPrompt = false;
 
   if (params.messageAnalysis.hasUserMessage) {
-    const hashChanged = params.messageAnalysis.messageHash &&
-      params.messageAnalysis.messageHash !== latest.lastUserMessageHash;
-
     if (hashChanged) {
       // Hash changed → user typed a new message.
       // Exception: if gap is extremely short AND previous had active tool calls,
@@ -390,7 +394,7 @@ async function resolveChatSession(params: {
       // Same hash but large gap → user re-sent after long pause (e.g. edited & resent)
       isNewUserPrompt = true;
     }
-    // else: same hash, short gap → sub-agent or tool retry → not a new prompt
+    // else: same hash, short gap → sub-agent/IDE retry/tool retry → not a new prompt
   }
 
   return { sessionId: latest.sessionId, contextEvent, contextDeltaTokens: delta, gapMs, isNewUserPrompt };
@@ -412,12 +416,15 @@ async function updateSessionAfterRequest(tx: any, params: {
   messageAnalysis: MessageAnalysis;
   hasActualToolCalls: boolean;
 }) {
+  // NOTE: Tracking fields (lastSeenAt, lastUserMessageHash, lastMessageRole,
+  // lastContextTokens, contextFingerprint, model) are already updated synchronously
+  // right after resolveChatSession() to prevent race conditions. Here we only update
+  // stats (token counts, cost, request counts) and fields that depend on the upstream
+  // response (lastToolCallsActive, lastRequestPreview).
   const updates: Record<string, any> = {
     ipAddress: params.ipAddress,
     ideDetected: params.ideDetected,
     provider: params.provider,
-    model: params.model,
-    lastSeenAt: formatSqliteDate(),
     lastRequestPreview: params.requestPreview || null,
     totalTokens: sql`${chatSessions.totalTokens} + ${Math.max(params.totalTokens || 0, 0)}`,
     estimatedCost: sql`${chatSessions.estimatedCost} + ${Math.max(params.estimatedCost || 0, 0)}`,
@@ -428,22 +435,6 @@ async function updateSessionAfterRequest(tx: any, params: {
   if (params.isNewPrompt) {
     updates.requestCount = sql`${chatSessions.requestCount} + 1`;
     updates.promptCount = sql`${chatSessions.promptCount} + 1`;
-  }
-  
-  // Update message tracking
-  if (params.messageAnalysis.messageHash) {
-    updates.lastUserMessageHash = params.messageAnalysis.messageHash;
-  }
-  if (params.messageAnalysis.messageRole) {
-    updates.lastMessageRole = params.messageAnalysis.messageRole;
-  }
-
-  if (params.contextTokensBefore > 0) {
-    updates.lastContextTokens = params.contextTokensBefore;
-  }
-
-  if (params.contextFingerprint) {
-    updates.contextFingerprint = params.contextFingerprint;
   }
 
   if (params.contextEvent === "compact") {
@@ -736,6 +727,35 @@ proxy.all("/*", async (c) => {
   // Determine if this is a new user prompt (simplified - logic moved to resolveChatSession)
   const isNewPrompt = sessionInfo.isNewUserPrompt;
 
+  // ─── 9b. Immediate sync update of session tracking fields ──────────────────
+  // This MUST happen synchronously (not via the async log write queue) so that
+  // the next request from the same device sees up-to-date lastUserMessageHash,
+  // lastContextTokens etc.  Without this, rapid-fire requests (e.g. IDE sending
+  // 2 requests per prompt) cause race conditions where the second request reads
+  // stale session state and gets double-counted.
+  {
+    const syncUpdates: Record<string, any> = {
+      lastSeenAt: formatSqliteDate(),
+      model,
+    };
+    if (messageAnalysis.messageHash) {
+      syncUpdates.lastUserMessageHash = messageAnalysis.messageHash;
+    }
+    if (messageAnalysis.messageRole) {
+      syncUpdates.lastMessageRole = messageAnalysis.messageRole;
+    }
+    if (contextTokensBefore > 0) {
+      syncUpdates.lastContextTokens = contextTokensBefore;
+    }
+    if (contextFingerprint) {
+      syncUpdates.contextFingerprint = contextFingerprint;
+    }
+    await db.update(chatSessions)
+      .set(syncUpdates)
+      .where(eq(chatSessions.sessionId, sessionInfo.sessionId))
+      .run();
+  }
+
   // ─── 10. Rate Limit & Prompt Limit Checks (ONLY for counted user prompts) ───
   if (isNewPrompt) {
     const effectiveRateLimit = keyRecord.rateLimit && keyRecord.rateLimit > 0 ? keyRecord.rateLimit : config.globalRateLimit;
@@ -779,6 +799,33 @@ proxy.all("/*", async (c) => {
           "x-prompt-limit": String(effectivePromptLimit),
           "x-prompt-remaining": "0",
           "x-prompt-used": String(plCheck.used),
+        });
+      }
+    }
+
+    // ─── Per-Model Prompt Limit Check ───────────────────────────────────
+    // Check if this specific model has exceeded its per-model prompt limit.
+    // Priority: per-key model override > per-key default > global model override > global default
+    {
+      const mlCheck = await checkModelPromptLimit(
+        keyRecord.id,
+        model,
+        keyRecord.perModelPromptLimit || 0,
+        keyRecord.perModelPromptLimitWindow || null,
+        config.globalPerModelPromptLimit || 0,
+        config.globalPerModelPromptLimitWindow || "1d",
+      );
+      if (!mlCheck.allowed) {
+        return c.json({
+          error: {
+            message: `Model prompt limit exceeded for "${model}". Maximum ${mlCheck.effectiveLimit} prompts per window. Used: ${mlCheck.used}.`,
+            type: "rate_limit_error",
+            code: "model_prompt_limit_exceeded"
+          }
+        }, 429, {
+          "x-model-prompt-limit": String(mlCheck.effectiveLimit),
+          "x-model-prompt-remaining": "0",
+          "x-model-prompt-used": String(mlCheck.used),
         });
       }
     }

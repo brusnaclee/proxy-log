@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { db } from "../../db/index.js";
-import { apiKeys, requestLogs, devices, allowedDevices, allowedIdes, chatSessions, adminConfig } from "../../db/schema.js";
+import { apiKeys, requestLogs, devices, allowedDevices, allowedIdes, chatSessions, adminConfig, modelLimits } from "../../db/schema.js";
 import { eq, sql, and } from "drizzle-orm";
 import { generateApiKey, getKeyPrefix, sha256, maskKey } from "../../utils/crypto.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
@@ -232,6 +232,7 @@ keys.get("/keys/:id", async (c) => {
     ipPolicy: key.ipPolicy, idePolicy: key.idePolicy, monthlyTokenLimit: key.monthlyTokenLimit,
     rateLimit: key.rateLimit || 0, rateLimitWindow: key.rateLimitWindow || config?.globalRateLimitWindow || "1h",
     promptLimit: key.promptLimit || 0, promptLimitWindow: key.promptLimitWindow || config?.globalPromptLimitWindow || "1d",
+    perModelPromptLimit: key.perModelPromptLimit || 0, perModelPromptLimitWindow: key.perModelPromptLimitWindow || config?.globalPerModelPromptLimitWindow || "1d",
     createdAt: key.createdAt, updatedAt: key.updatedAt,
     stats: {
       totalRequests: totalStats?.count || 0, totalTokens: totalStats?.tokens || 0,
@@ -288,6 +289,8 @@ keys.put("/keys/:id", async (c) => {
   if (body.rateLimitWindow !== undefined) updates.rateLimitWindow = body.rateLimitWindow || null;
   if (body.promptLimit !== undefined) updates.promptLimit = body.promptLimit;
   if (body.promptLimitWindow !== undefined) updates.promptLimitWindow = body.promptLimitWindow || null;
+  if (body.perModelPromptLimit !== undefined) updates.perModelPromptLimit = body.perModelPromptLimit;
+  if (body.perModelPromptLimitWindow !== undefined) updates.perModelPromptLimitWindow = body.perModelPromptLimitWindow || null;
 
   await db.update(apiKeys).set(updates).where(eq(apiKeys.id, id)).run();
   return c.json({ success: true, message: "API key updated" });
@@ -477,6 +480,50 @@ keys.delete("/keys/:id/policies/ide/:ruleId", async (c) => {
     .run();
 
   return c.json({ success: true, message: "IDE rule removed" });
+});
+
+// ─── Per-Key Model Limits CRUD ─────────────────────────────────────────────────
+
+keys.get("/keys/:id/model-limits", async (c) => {
+  const keyId = parseInt(c.req.param("id"));
+  const rows = await db.select().from(modelLimits)
+    .where(and(eq(modelLimits.scope, "key"), eq(modelLimits.scopeId, keyId)))
+    .all();
+  return c.json({ data: rows });
+});
+
+keys.put("/keys/:id/model-limits", async (c) => {
+  const keyId = parseInt(c.req.param("id"));
+  const body = await c.req.json<{ model: string; promptLimit: number }>();
+  if (!body.model || body.model.trim() === "") return c.json({ error: "model is required" }, 400);
+  const modelName = body.model.trim();
+  const limit = Math.max(0, body.promptLimit || 0);
+
+  // Upsert
+  await db.delete(modelLimits).where(and(
+    eq(modelLimits.scope, "key"),
+    eq(modelLimits.scopeId, keyId),
+    eq(modelLimits.model, modelName),
+  )).run();
+
+  if (limit > 0) {
+    await db.insert(modelLimits).values({
+      scope: "key", scopeId: keyId, model: modelName, promptLimit: limit,
+    }).run();
+  }
+
+  return c.json({ success: true, model: modelName, promptLimit: limit });
+});
+
+keys.delete("/keys/:id/model-limits/:model", async (c) => {
+  const keyId = parseInt(c.req.param("id"));
+  const model = decodeURIComponent(c.req.param("model"));
+  await db.delete(modelLimits).where(and(
+    eq(modelLimits.scope, "key"),
+    eq(modelLimits.scopeId, keyId),
+    eq(modelLimits.model, model),
+  )).run();
+  return c.json({ success: true, message: `Model limit for "${model}" removed` });
 });
 
 export default keys;

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { adminConfig, allowedDevices, allowedIdes, apiKeys, devices, requestLogs } from "../../db/schema.js";
+import { adminConfig, allowedDevices, allowedIdes, apiKeys, devices, requestLogs, modelLimits } from "../../db/schema.js";
 import { generateApiKey, getKeyPrefix, sha256 } from "../../utils/crypto.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
 
@@ -138,6 +138,52 @@ internal.post("/internal/update-key-rate-limit", async (c) => {
   return c.json({ success: true, message: "Rate limit updated" });
 });
 
+internal.post("/internal/update-key-prompt-limit", async (c) => {
+  const body = await c.req.json<{ discordUserId: string; promptLimit: number; promptLimitWindow: string }>();
+  if (!body.discordUserId) return c.json({ error: "discordUserId is required" }, 400);
+
+  const existing = await findKeyByDiscordUser(body.discordUserId);
+  if (!existing) return c.json({ success: false, error: "No key found for discord user" }, 404);
+
+  await db.update(apiKeys)
+    .set({
+      promptLimit: Number(body.promptLimit) || 0,
+      promptLimitWindow: String(body.promptLimitWindow || ""),
+      updatedAt: new Date().toISOString().replace("T", " ").substring(0, 19),
+    })
+    .where(eq(apiKeys.id, existing.id))
+    .run();
+
+  return c.json({ success: true, message: "Prompt limit updated" });
+});
+
+internal.post("/internal/update-key-model-limit", async (c) => {
+  const body = await c.req.json<{ discordUserId: string; model: string; promptLimit: number }>();
+  if (!body.discordUserId) return c.json({ error: "discordUserId is required" }, 400);
+  if (!body.model) return c.json({ error: "model is required" }, 400);
+
+  const existing = await findKeyByDiscordUser(body.discordUserId);
+  if (!existing) return c.json({ success: false, error: "No key found for discord user" }, 404);
+
+  const modelName = body.model.trim();
+  const limit = Math.max(0, Number(body.promptLimit) || 0);
+
+  // Upsert: delete then insert
+  await db.delete(modelLimits).where(and(
+    eq(modelLimits.scope, "key"),
+    eq(modelLimits.scopeId, existing.id),
+    eq(modelLimits.model, modelName),
+  )).run();
+
+  if (limit > 0) {
+    await db.insert(modelLimits).values({
+      scope: "key", scopeId: existing.id, model: modelName, promptLimit: limit,
+    }).run();
+  }
+
+  return c.json({ success: true, model: modelName, promptLimit: limit });
+});
+
 internal.post("/internal/revoke-user", async (c) => {
   const body = await c.req.json<UserBody>();
   if (!body.discordUserId) return c.json({ error: "discordUserId is required" }, 400);
@@ -224,6 +270,12 @@ internal.get("/internal/user/:discordUserId", async (c) => {
       ipPolicy: existing.ipPolicy,
       idePolicy: existing.idePolicy,
       monthlyTokenLimit: existing.monthlyTokenLimit,
+      rateLimit: existing.rateLimit,
+      rateLimitWindow: existing.rateLimitWindow,
+      promptLimit: existing.promptLimit,
+      promptLimitWindow: existing.promptLimitWindow,
+      perModelPromptLimit: existing.perModelPromptLimit,
+      perModelPromptLimitWindow: existing.perModelPromptLimitWindow,
       createdAt: existing.createdAt,
       updatedAt: existing.updatedAt,
     },

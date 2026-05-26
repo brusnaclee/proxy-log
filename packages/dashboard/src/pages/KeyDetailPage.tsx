@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { keys, logs, stats, type ApiKeyDetail, type LogEntry, type SessionDetailResponse } from "@/lib/api";
+import { keys, logs, stats, type ApiKeyDetail, type LogEntry, type SessionDetailResponse, type ModelLimitEntry } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -62,6 +62,12 @@ export default function KeyDetailPage() {
   const [modelTabSort, setModelTabSort] = useState<"tokens" | "requests">("tokens");
   const [modelTabLoading, setModelTabLoading] = useState(false);
 
+  // Per-key model limits state
+  const [keyModelLimits, setKeyModelLimits] = useState<ModelLimitEntry[]>([]);
+  const [keyModelCatalog, setKeyModelCatalog] = useState<string[]>([]);
+  const [newKeyModelOverride, setNewKeyModelOverride] = useState("");
+  const [newKeyModelOverrideLimit, setNewKeyModelOverrideLimit] = useState(0);
+
   useEffect(() => {
     if (id) loadAll();
   }, [id]);
@@ -119,6 +125,14 @@ export default function KeyDetailPage() {
     } catch (err) {
       console.error("[KeyDetail] Failed to load logs:", err);
     }
+    try {
+      const ml = await keys.getModelLimits(parseInt(id));
+      setKeyModelLimits(ml.data || []);
+    } catch {}
+    try {
+      const catalog = await fetch("/v1/models").then(r => r.json());
+      setKeyModelCatalog((catalog?.data || []).map((m: any) => m.id).sort());
+    } catch {}
   };
 
   const loadSessionDetail = async (sessionId: string) => {
@@ -150,6 +164,10 @@ export default function KeyDetailPage() {
         monthlyTokenLimit: editMonthlyLimit,
         rateLimit: keyData?.rateLimit || 0,
         rateLimitWindow: keyData?.rateLimitWindow || "",
+        promptLimit: keyData?.promptLimit || 0,
+        promptLimitWindow: keyData?.promptLimitWindow || "",
+        perModelPromptLimit: keyData?.perModelPromptLimit || 0,
+        perModelPromptLimitWindow: keyData?.perModelPromptLimitWindow || "",
       });
       setEditing(false);
       loadAll();
@@ -483,6 +501,103 @@ export default function KeyDetailPage() {
         disabled={!editing}
         className="mt-1"
       />
+    </div>
+    <div>
+      <Label>Prompt Limit (0 = use global)</Label>
+      <Input
+        type="number"
+        value={keyData?.promptLimit || 0}
+        onChange={(e) => {
+          if (!editing) return;
+          const val = parseInt(e.target.value) || 0;
+          setKeyData(prev => prev ? { ...prev, promptLimit: val } : prev);
+        }}
+        disabled={!editing}
+        className="mt-1"
+      />
+    </div>
+    <div>
+      <Label>Prompt Limit Window</Label>
+      <Input
+        value={keyData?.promptLimitWindow || "1d"}
+        onChange={(e) => {
+          if (!editing) return;
+          setKeyData(prev => prev ? { ...prev, promptLimitWindow: e.target.value } : prev);
+        }}
+        disabled={!editing}
+        className="mt-1"
+      />
+    </div>
+    <div>
+      <Label>Per-Model Limit (0 = use global)</Label>
+      <Input
+        type="number"
+        value={keyData?.perModelPromptLimit || 0}
+        onChange={(e) => {
+          if (!editing) return;
+          const val = parseInt(e.target.value) || 0;
+          setKeyData(prev => prev ? { ...prev, perModelPromptLimit: val } : prev);
+        }}
+        disabled={!editing}
+        className="mt-1"
+      />
+    </div>
+    <div>
+      <Label>Per-Model Window</Label>
+      <Input
+        value={keyData?.perModelPromptLimitWindow || "1d"}
+        onChange={(e) => {
+          if (!editing) return;
+          setKeyData(prev => prev ? { ...prev, perModelPromptLimitWindow: e.target.value } : prev);
+        }}
+        disabled={!editing}
+        className="mt-1"
+      />
+    </div>
+    <div className="md:col-span-2 space-y-2 border border-border/50 rounded-lg p-3">
+      <Label className="text-sm font-medium">Per-Key Model Limit Overrides</Label>
+      <div className="flex gap-2">
+        <select
+          className="flex-1 px-2 py-1.5 text-xs rounded border border-border bg-background"
+          value={newKeyModelOverride}
+          onChange={(e) => setNewKeyModelOverride(e.target.value)}
+        >
+          <option value="">Select model...</option>
+          {keyModelCatalog.filter(m => !keyModelLimits.some(ml => ml.model === m)).map(m => (
+            <option key={m} value={m}>{m}</option>
+          ))}
+        </select>
+        <Input
+          type="number"
+          value={newKeyModelOverrideLimit}
+          onChange={(e) => setNewKeyModelOverrideLimit(parseInt(e.target.value) || 0)}
+          placeholder="Limit"
+          className="w-20 text-xs"
+        />
+        <Button size="sm" variant="outline" onClick={async () => {
+          if (!id || !newKeyModelOverride || newKeyModelOverrideLimit <= 0) return;
+          await keys.setModelLimit(parseInt(id), newKeyModelOverride, newKeyModelOverrideLimit);
+          setNewKeyModelOverride(""); setNewKeyModelOverrideLimit(0);
+          const ml = await keys.getModelLimits(parseInt(id)); setKeyModelLimits(ml.data || []);
+        }}>Add</Button>
+      </div>
+      {keyModelLimits.length > 0 && (
+        <div className="space-y-1">
+          {keyModelLimits.map(ml => (
+            <div key={ml.id} className="flex items-center justify-between px-2 py-1 bg-accent/30 rounded text-xs">
+              <code className="font-mono">{ml.model}</code>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">{ml.promptLimit} prompts</span>
+                <Button size="icon" variant="ghost" className="h-5 w-5" onClick={async () => {
+                  if (!id) return;
+                  await keys.deleteModelLimit(parseInt(id), ml.model);
+                  const r = await keys.getModelLimits(parseInt(id)); setKeyModelLimits(r.data || []);
+                }}><X className="h-3 w-3" /></Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   </div>
             </CardContent>

@@ -161,6 +161,8 @@ async function handleAdminCommand(message) {
 					'`!agcheck` (Tokito Model Status)\n' +
 					'`!agstatus <@user|id>`\n' +
 					'`!agsetratelimit <@user|id> <limit> <window>`\n' +
+					'`!agsetpromptlimit <@user|id> <limit> <window>`\n' +
+					'`!agsetmodellimit <@user|id> <model> <limit>`\n' +
 					'`!agrefresh <@user|id>`\n' +
 					'`!agreset <@user|id>`\n' +
 					'`!agblock <@user|id>`\n' +
@@ -269,6 +271,72 @@ async function handleAdminCommand(message) {
 			return true;
 		}
 
+		if (cmd === '!agsetpromptlimit') {
+			if (!a2 || !parts[3]) {
+				await message.reply(
+					'Gunakan format: !agsetpromptlimit <user> <limit> <window> (contoh: !agsetpromptlimit @user 50 1d)',
+				);
+				return true;
+			}
+			const discordUserId = extractUserId(a1);
+			if (!discordUserId) {
+				await message.reply('Format user tidak valid.');
+				return true;
+			}
+			const limit = parseInt(a2) || 0;
+			const windowStr = parts[3];
+
+			const res = await proxyInternal(
+				'/admin/internal/update-key-prompt-limit',
+				'POST',
+				{ discordUserId, promptLimit: limit, promptLimitWindow: windowStr },
+			);
+
+			if (res.success) {
+				await message.reply(
+					`Prompt limit untuk user diubah menjadi **${limit}** prompts per **${windowStr}**.`,
+				);
+			} else {
+				await message.reply(
+					'Gagal mengubah prompt limit: ' + (res.error || 'Unknown error'),
+				);
+			}
+			return true;
+		}
+
+		if (cmd === '!agsetmodellimit') {
+			if (!a2 || !parts[3]) {
+				await message.reply(
+					'Gunakan format: !agsetmodellimit <user> <model> <limit> (contoh: !agsetmodellimit @user ag/claude-sonnet-4-6 20)',
+				);
+				return true;
+			}
+			const discordUserId = extractUserId(a1);
+			if (!discordUserId) {
+				await message.reply('Format user tidak valid.');
+				return true;
+			}
+			const modelName = a2;
+			const modelLimit = parseInt(parts[3]) || 0;
+
+			const res = await proxyInternal(
+				'/admin/internal/update-key-model-limit',
+				'POST',
+				{ discordUserId, model: modelName, promptLimit: modelLimit },
+			);
+
+			if (res.success) {
+				await message.reply(
+					`Model limit untuk **${modelName}** diubah menjadi **${modelLimit}** prompts per window.`,
+				);
+			} else {
+				await message.reply(
+					'Gagal mengubah model limit: ' + (res.error || 'Unknown error'),
+				);
+			}
+			return true;
+		}
+
 		if (cmd === '!agstats') {
 			const s = await proxyInternal('/admin/internal/stats/overview');
 			await message.reply(
@@ -307,7 +375,9 @@ async function handleAdminCommand(message) {
 					`Tokens: ${data.stats.tokens}\n` +
 					`Devices: ${data.stats.uniqueDevices}\n` +
 					`Policies: device=${data.key.devicePolicy}, ip=${data.key.ipPolicy}, ide=${data.key.idePolicy}\n` +
-					`Rate Limit: ${data.key.rateLimit || 'Global'} per ${data.key.rateLimitWindow || 'Global'}`,
+					`Rate Limit: ${data.key.rateLimit || 'Global'} per ${data.key.rateLimitWindow || 'Global'}\n` +
+					`Prompt Limit: ${data.key.promptLimit || 'Global'} per ${data.key.promptLimitWindow || 'Global'}\n` +
+					`Per-Model Limit: ${data.key.perModelPromptLimit || 'Global'}`,
 			);
 			return true;
 		}
