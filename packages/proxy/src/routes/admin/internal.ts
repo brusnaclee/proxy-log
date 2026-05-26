@@ -526,6 +526,24 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   const todayStr = todayStart.toISOString().replace("T", " ").substring(0, 19);
   const monthStr = monthStart.toISOString().replace("T", " ").substring(0, 19);
 
+  async function getTopModels(since: string) {
+    return db.select({
+      model: requestLogs.model,
+      requests: sql<number>`count(*)`,
+      tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
+    })
+    .from(requestLogs)
+    .where(and(
+      eq(requestLogs.apiKeyId, keyId),
+      sql`created_at >= ${since}`,
+      sql`is_counted_request IS NOT 0`
+    ))
+    .groupBy(requestLogs.model)
+    .orderBy(sql`count(*) DESC`)
+    .limit(3)
+    .all();
+  }
+
   async function getPeriodStats(since: string) {
     return db.select({
       requests: sql<number>`count(*)`,
@@ -544,9 +562,11 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     .get();
   }
 
-  const [todayStats, monthStats] = await Promise.all([
+  const [todayStats, monthStats, todayModels, monthModels] = await Promise.all([
     getPeriodStats(todayStr),
     getPeriodStats(monthStr),
+    getTopModels(todayStr),
+    getTopModels(monthStr),
   ]);
 
   return c.json({
@@ -554,22 +574,24 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     discordUsername: key.discordUsername || key.name,
     isActive: key.isActive,
     keyPrefix: key.keyPrefix,
-    today: {
-      requests: todayStats?.requests || 0,
-      tokens: todayStats?.tokens || 0,
-      promptTokens: todayStats?.promptTokens || 0,
-      completionTokens: todayStats?.completionTokens || 0,
-      contextTokens: todayStats?.contextTokens || 0,
-      estimatedCost: todayStats?.estimatedCost || 0,
-    },
-    month: {
-      requests: monthStats?.requests || 0,
-      tokens: monthStats?.tokens || 0,
-      promptTokens: monthStats?.promptTokens || 0,
-      completionTokens: monthStats?.completionTokens || 0,
-      contextTokens: monthStats?.contextTokens || 0,
-      estimatedCost: monthStats?.estimatedCost || 0,
-    },
+      today: {
+        requests: todayStats?.requests || 0,
+        tokens: todayStats?.tokens || 0,
+        promptTokens: todayStats?.promptTokens || 0,
+        completionTokens: todayStats?.completionTokens || 0,
+        contextTokens: todayStats?.contextTokens || 0,
+        estimatedCost: todayStats?.estimatedCost || 0,
+        topModels: todayModels,
+      },
+      month: {
+        requests: monthStats?.requests || 0,
+        tokens: monthStats?.tokens || 0,
+        promptTokens: monthStats?.promptTokens || 0,
+        completionTokens: monthStats?.completionTokens || 0,
+        contextTokens: monthStats?.contextTokens || 0,
+        estimatedCost: monthStats?.estimatedCost || 0,
+        topModels: monthModels,
+      },
   });
 });
 

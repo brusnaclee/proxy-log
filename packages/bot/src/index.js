@@ -2098,21 +2098,28 @@ async function handleRankingSearchModal(interaction) {
 	const displayName = discordUsername || `User ${discordUserId}`;
 
 	function periodField(p) {
-		return [
+		const lines = [
 			`📨 Requests: **${p.requests.toLocaleString()}**`,
 			`🔢 Total Tokens: **${formatTokens(p.tokens)}**`,
 			`📥 Input: **${formatTokens(p.promptTokens)}**`,
 			`📤 Output: **${formatTokens(p.completionTokens)}**`,
 			`📏 Context: **${formatTokens(p.contextTokens)}**`,
 			`💰 Est. Cost: **${formatCostMicro(p.estimatedCost)}**`,
-		].join('\n');
+		];
+		if (p.topModels && p.topModels.length > 0) {
+			lines.push(`\n**Top Models:**`);
+			p.topModels.forEach((m, i) => {
+				lines.push(`${i + 1}. \`${m.model}\` (${m.requests.toLocaleString()} req, ${formatTokens(m.tokens)} tok)`);
+			});
+		}
+		return lines.join('\n');
 	}
 
 	const embed = new EmbedBuilder()
 		.setTitle(`📊 Usage: ${displayName}`)
 		.setDescription(
 			`**Discord ID:** \`${discordUserId}\`\n` +
-			`**API Key:** \`${keyPrefix || 'N/A'}...\`\n` +
+			`**API Key:** \`[HIDDEN]\`\n` +
 			`**Status:** ${isActive ? '🟢 Active' : '🔴 Disabled'}`,
 		)
 		.setColor(isActive ? 0x57f287 : 0xff6b6b)
