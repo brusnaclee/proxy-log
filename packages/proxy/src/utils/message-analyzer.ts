@@ -31,7 +31,21 @@ export function isTitleGenRequest(requestBody: any): boolean {
  * Analyze request body to detect user messages.
  */
 export function analyzeRequestMessages(requestBody: any): MessageAnalysis {
-  const messages = requestBody?.messages || [];
+  let messages = requestBody?.messages || [];
+
+  // Fallback for /v1/completions or /v1/responses
+  if (messages.length === 0 && requestBody?.prompt) {
+    const p = requestBody.prompt;
+    const content = typeof p === "string" ? p : JSON.stringify(p);
+    return {
+      hasUserMessage: true,
+      messageRole: "user",
+      messageHash: sha256(content),
+      messageContent: content.substring(0, 500),
+      userMessageCount: 1,
+      assistantMessageCount: 0,
+    };
+  }
 
   if (messages.length === 0) {
     return {

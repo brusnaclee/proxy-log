@@ -1,4 +1,5 @@
 ﻿import { Hono } from "hono";
+import * as zlib from "zlib";
 import { db } from "../db/index.js";
 import { apiKeys, devices, allowedDevices, allowedIdes, requestLogs, adminConfig, chatSessions } from "../db/schema.js";
 import { eq, and, sql, desc } from "drizzle-orm";
@@ -740,7 +741,21 @@ proxy.all("/*", async (c) => {
         const isTextLike = contentType.toLowerCase().startsWith("text/");
 
         if (isProbablyJson || isTextLike) {
-          const bodyText = new TextDecoder().decode(requestBodyBytes);
+          let decompressedBytes = requestBodyBytes;
+          const encoding = (c.req.header("Content-Encoding") || "").toLowerCase();
+          try {
+            if (encoding.includes("gzip")) {
+              decompressedBytes = zlib.gunzipSync(requestBodyBytes);
+            } else if (encoding.includes("deflate")) {
+              decompressedBytes = zlib.inflateSync(requestBodyBytes);
+            } else if (encoding.includes("br")) {
+              decompressedBytes = zlib.brotliDecompressSync(requestBodyBytes);
+            }
+          } catch (err) {
+            // Ignore decompression errors and try decoding anyway
+          }
+          
+          const bodyText = new TextDecoder().decode(decompressedBytes);
           if (bodyText) {
             try {
               requestBody = JSON.parse(bodyText);
