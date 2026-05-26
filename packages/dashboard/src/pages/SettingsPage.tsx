@@ -17,12 +17,10 @@ import { Switch } from "@/components/ui/switch";
 export default function SettingsPage() {
   const { realtimeEnabled, setRealtimeEnabled } = useRealtime();
   const [globalMaxDevices, setGlobalMaxDevices] = useState(0);
-  const [globalRateLimit, setGlobalRateLimit] = useState(0);
-  const [globalRateLimitWindow, setGlobalRateLimitWindow] = useState("1h");
-  const [globalPromptLimit, setGlobalPromptLimit] = useState(0);
-  const [globalPromptLimitWindow, setGlobalPromptLimitWindow] = useState("1d");
-  const [globalPerModelPromptLimit, setGlobalPerModelPromptLimit] = useState(0);
-  const [globalPerModelPromptLimitWindow, setGlobalPerModelPromptLimitWindow] = useState("1d");
+  const [globalPromptLimit, setGlobalPromptLimit] = useState(50);
+  const [globalPromptLimitWindow, setGlobalPromptLimitWindow] = useState("30m");
+  const [globalPerModelPromptLimit, setGlobalPerModelPromptLimit] = useState(10);
+  const [globalPerModelPromptLimitWindow, setGlobalPerModelPromptLimitWindow] = useState("30m");
   const [globalModelLimits, setGlobalModelLimits] = useState<ModelLimitEntry[]>([]);
   const [modelCatalog, setModelCatalog] = useState<string[]>([]);
   const [newModelOverride, setNewModelOverride] = useState("");
@@ -84,12 +82,10 @@ export default function SettingsPage() {
     try {
       const g = await globalSettings.get();
       setGlobalMaxDevices(g.globalMaxDevices || 0);
-      setGlobalRateLimit(g.globalRateLimit || 0);
-      setGlobalRateLimitWindow(g.globalRateLimitWindow || "1h");
       setGlobalPromptLimit(g.globalPromptLimit || 0);
-      setGlobalPromptLimitWindow(g.globalPromptLimitWindow || "1d");
+      setGlobalPromptLimitWindow(g.globalPromptLimitWindow || "30m");
       setGlobalPerModelPromptLimit(g.globalPerModelPromptLimit || 0);
-      setGlobalPerModelPromptLimitWindow(g.globalPerModelPromptLimitWindow || "1d");
+      setGlobalPerModelPromptLimitWindow(g.globalPerModelPromptLimitWindow || "30m");
     } catch {}
 
     try {
@@ -98,8 +94,8 @@ export default function SettingsPage() {
     } catch {}
 
     try {
-      const catalog = await fetch("/v1/models").then(r => r.json());
-      setModelCatalog((catalog?.data || []).map((m: any) => m.id).sort());
+      const catalog = await globalSettings.getModels();
+      setModelCatalog(catalog.data || []);
     } catch {}
   };
 
@@ -114,7 +110,7 @@ export default function SettingsPage() {
         updates.upstreamApiKey = upstreamApiKey;
       }
       await settings.update(updates);
-      await globalSettings.update({ globalMaxDevices, globalRateLimit, globalRateLimitWindow, globalPromptLimit, globalPromptLimitWindow, globalPerModelPromptLimit, globalPerModelPromptLimitWindow });
+      await globalSettings.update({ globalMaxDevices, globalPromptLimit, globalPromptLimitWindow, globalPerModelPromptLimit, globalPerModelPromptLimitWindow });
       await request("/settings/bot", {
         method: "POST",
         body: JSON.stringify({
@@ -228,39 +224,12 @@ export default function SettingsPage() {
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <Label>Global Rate Limit</Label>
-                  <Input
-                    type="number"
-                    value={globalRateLimit}
-                    onChange={(e) => setGlobalRateLimit(parseInt(e.target.value) || 0)}
-                    placeholder="0"
-                    className="mt-1"
-                  />
-                  <p className="text-[10px] text-muted-foreground mt-1">
-                    Reqs per window
-                  </p>
-                </div>
-                <div>
-                  <Label>RL Window</Label>
-                  <Input
-                    value={globalRateLimitWindow}
-                    onChange={(e) => setGlobalRateLimitWindow(e.target.value)}
-                    placeholder="1h, 30m"
-                    className="mt-1"
-                  />
-                  <p className="text-[10px] text-muted-foreground mt-1">
-                    Timeframe
-                  </p>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <Label>Global Prompt Limit (All Models)</Label>
+                  <Label>Global Prompt Limit</Label>
                   <Input
                     type="number"
                     value={globalPromptLimit}
                     onChange={(e) => setGlobalPromptLimit(parseInt(e.target.value) || 0)}
-                    placeholder="0"
+                    placeholder="50"
                     className="mt-1"
                   />
                   <p className="text-[10px] text-muted-foreground mt-1">
@@ -268,26 +237,26 @@ export default function SettingsPage() {
                   </p>
                 </div>
                 <div>
-                  <Label>Prompt Limit Window</Label>
+                  <Label>Window</Label>
                   <Input
                     value={globalPromptLimitWindow}
                     onChange={(e) => setGlobalPromptLimitWindow(e.target.value)}
-                    placeholder="1d"
+                    placeholder="30m"
                     className="mt-1"
                   />
                   <p className="text-[10px] text-muted-foreground mt-1">
-                    Timeframe for prompt limit
+                    e.g. 30m, 1h, 1d
                   </p>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <Label>Default Per-Model Prompt Limit</Label>
+                  <Label>Default Per-Model Limit</Label>
                   <Input
                     type="number"
                     value={globalPerModelPromptLimit}
                     onChange={(e) => setGlobalPerModelPromptLimit(parseInt(e.target.value) || 0)}
-                    placeholder="0"
+                    placeholder="10"
                     className="mt-1"
                   />
                   <p className="text-[10px] text-muted-foreground mt-1">
@@ -295,15 +264,15 @@ export default function SettingsPage() {
                   </p>
                 </div>
                 <div>
-                  <Label>Per-Model Window</Label>
+                  <Label>Window</Label>
                   <Input
                     value={globalPerModelPromptLimitWindow}
                     onChange={(e) => setGlobalPerModelPromptLimitWindow(e.target.value)}
-                    placeholder="1d"
+                    placeholder="30m"
                     className="mt-1"
                   />
                   <p className="text-[10px] text-muted-foreground mt-1">
-                    Timeframe for per-model limit
+                    e.g. 30m, 1h, 1d
                   </p>
                 </div>
               </div>

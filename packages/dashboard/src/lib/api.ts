@@ -404,6 +404,8 @@ export const globalSettings = {
   get: () => request<GlobalSettings>("/settings/global"),
   update: (data: Partial<GlobalSettings>) =>
     request<{ success: boolean }>("/settings/global", { method: "PUT", body: JSON.stringify(data) }),
+  getModels: () =>
+    request<{ data: string[] }>("/settings/models"),
   getModelLimits: () =>
     request<{ data: ModelLimitEntry[] }>("/settings/model-limits"),
   setModelLimit: (model: string, promptLimit: number) =>

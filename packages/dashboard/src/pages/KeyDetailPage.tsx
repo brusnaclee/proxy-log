@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { keys, logs, stats, type ApiKeyDetail, type LogEntry, type SessionDetailResponse, type ModelLimitEntry } from "@/lib/api";
+import { keys, logs, stats, type ApiKeyDetail, type LogEntry, type SessionDetailResponse, type ModelLimitEntry, globalSettings } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -130,8 +130,8 @@ export default function KeyDetailPage() {
       setKeyModelLimits(ml.data || []);
     } catch {}
     try {
-      const catalog = await fetch("/v1/models").then(r => r.json());
-      setKeyModelCatalog((catalog?.data || []).map((m: any) => m.id).sort());
+      const catalog = await globalSettings.getModels();
+      setKeyModelCatalog(catalog.data || []);
     } catch {}
   };
 
@@ -466,32 +466,6 @@ export default function KeyDetailPage() {
                     </SelectContent>
                   </Select>
                 </div>
-    <div>
-      <Label>Rate Limit Requests (0 = unlimited)</Label>
-      <Input
-        type="number"
-        value={keyData?.rateLimit || 0}
-        onChange={(e) => {
-          if (!editing) return;
-          const val = parseInt(e.target.value) || 0;
-          setKeyData(prev => prev ? { ...prev, rateLimit: val } : prev);
-        }}
-        disabled={!editing}
-        className="mt-1"
-      />
-    </div>
-    <div>
-      <Label>Rate Limit Window (e.g. 1h, 30m)</Label>
-      <Input
-        value={keyData?.rateLimitWindow || "1h"}
-        onChange={(e) => {
-          if (!editing) return;
-          setKeyData(prev => prev ? { ...prev, rateLimitWindow: e.target.value } : prev);
-        }}
-        disabled={!editing}
-        className="mt-1"
-      />
-    </div>
     <div className="md:col-span-2">
       <Label>Monthly Token Limit (0 = unlimited)</Label>
       <Input

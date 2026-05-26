@@ -144,7 +144,7 @@ export async function checkModelPromptLimit(
   }
 
   // Resolve effective window (per-key window > global window)
-  const effectiveWindow = perKeyDefaultWindow || globalDefaultWindow || "1d";
+  const effectiveWindow = perKeyDefaultWindow || globalDefaultWindow || "30m";
   const windowMs = parseRateLimitWindow(effectiveWindow);
   if (windowMs <= 0) {
     return { allowed: true, remaining: -1, resetMs: 0, used: 0, effectiveLimit };

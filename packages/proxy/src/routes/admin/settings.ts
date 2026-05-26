@@ -3,7 +3,7 @@ import { db } from "../../db/index.js";
 import { adminConfig, apiKeys, requestLogs, chatSessions, devices, allowedDevices, allowedIdes, modelLimits } from "../../db/schema.js";
 import { eq, and, sql } from "drizzle-orm";
 import { maskKey } from "../../utils/crypto.js";
-import { refreshModelCatalog } from "../../utils/model-catalog.js";
+import { refreshModelCatalog, getModelCatalogResponse } from "../../utils/model-catalog.js";
 
 const settings = new Hono();
 
@@ -39,6 +39,42 @@ settings.put("/settings/global", async (c) => {
 
   await db.update(adminConfig).set(updates).where(eq(adminConfig.id, config.id)).run();
   return c.json({ success: true, message: "Global settings updated" });
+});
+
+// Return available model list from catalog + model_monitor for dropdown selects
+settings.get("/settings/models", async (c) => {
+  const modelSet = new Set<string>();
+
+  // From model catalog (upstream /v1/models cache)
+  try {
+    const catalog = await getModelCatalogResponse();
+    for (const m of catalog.data || []) {
+      if (m.id) modelSet.add(m.id);
+    }
+  } catch {}
+
+  // From model_monitor table (models seen by Tokito bot)
+  try {
+    const monitors = await db.select({ modelId: sql<string>`DISTINCT model_id` })
+      .from(sql`model_monitor`)
+      .all();
+    for (const m of monitors) {
+      if (m.modelId) modelSet.add(m.modelId);
+    }
+  } catch {}
+
+  // From request_logs (models actually used)
+  try {
+    const used = await db.select({ model: sql<string>`DISTINCT model` })
+      .from(sql`request_logs`)
+      .all();
+    for (const m of used) {
+      if (m.model && m.model !== "unknown") modelSet.add(m.model);
+    }
+  } catch {}
+
+  const models = Array.from(modelSet).sort();
+  return c.json({ data: models });
 });
 
 settings.get("/settings", async (c) => {
@@ -160,11 +196,11 @@ settings.post("/settings/factory-reset", async (c) => {
       globalMaxDevices: 0,
       realtimeEnabled: false,
       globalRateLimit: 0,
-      globalRateLimitWindow: "1h",
-      globalPromptLimit: 0,
-      globalPromptLimitWindow: "1d",
-      globalPerModelPromptLimit: 0,
-      globalPerModelPromptLimitWindow: "1d",
+      globalRateLimitWindow: "30m",
+      globalPromptLimit: 50,
+      globalPromptLimitWindow: "30m",
+      globalPerModelPromptLimit: 10,
+      globalPerModelPromptLimitWindow: "30m",
       discordBotToken: "",
       agverifChannelId: "",
       tokitoChannelId: "",

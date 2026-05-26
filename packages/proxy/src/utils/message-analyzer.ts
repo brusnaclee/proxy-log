@@ -5,6 +5,12 @@ export interface MessageAnalysis {
   messageRole: "user" | "assistant" | "tool" | "system" | null;
   messageHash: string | null;
   messageContent: string | null;
+  /** Number of user messages in the request */
+  userMessageCount: number;
+  /** Number of assistant messages in the request (indicates conversation history) */
+  assistantMessageCount: number;
+  /** True if this looks like an internal IDE request (title gen, etc.), not a real chat */
+  isInternalRequest: boolean;
 }
 
 /**
@@ -19,7 +25,33 @@ export function analyzeRequestMessages(requestBody: any): MessageAnalysis {
       messageRole: null,
       messageHash: null,
       messageContent: null,
+      userMessageCount: 0,
+      assistantMessageCount: 0,
+      isInternalRequest: false,
     };
+  }
+  
+  // Count message roles
+  let userMessageCount = 0;
+  let assistantMessageCount = 0;
+  let isInternalRequest = false;
+  
+  for (const msg of messages) {
+    const r = String(msg?.role || "").toLowerCase();
+    if (r === "user") userMessageCount++;
+    else if (r === "assistant") assistantMessageCount++;
+    else if (r === "system") {
+      // Detect internal IDE requests like title generators, embeddings, etc.
+      const sysContent = String(msg?.content || "").toLowerCase();
+      if (
+        sysContent.includes("title generator") ||
+        sysContent.includes("generate a title") ||
+        sysContent.includes("you output only a thread title") ||
+        sysContent.includes("generate a brief title")
+      ) {
+        isInternalRequest = true;
+      }
+    }
   }
   
   const lastMessage = messages[messages.length - 1];
@@ -32,13 +64,11 @@ export function analyzeRequestMessages(requestBody: any): MessageAnalysis {
   if (typeof lastMessage?.content === "string") {
     content = lastMessage.content;
   } else if (Array.isArray(lastMessage?.content)) {
-    // Handle multi-part content (text + images + tool results)
     content = lastMessage.content
       .filter((part: any) => part.type === "text")
       .map((part: any) => part.text || "")
       .join("\n");
       
-    // Check if this array contains a tool result
     if (lastMessage.content.some((part: any) => part.type === "tool_result" || part.type === "tool_use")) {
       isToolResultWrapper = true;
     }
@@ -46,17 +76,20 @@ export function analyzeRequestMessages(requestBody: any): MessageAnalysis {
     content = JSON.stringify(lastMessage.content);
   }
   
-  // If role is user but it's just wrapping a tool result, treat it as a tool role functionally
-  // Or simply set hasUserMessage to false.
   const effectiveRole = isToolResultWrapper ? "tool" : role;
-  
   const messageHash = content ? sha256(content) : null;
   
+  // Internal requests (title gen) should NOT be counted as user prompts
+  const hasUserMessage = effectiveRole === "user" && !isInternalRequest;
+  
   return {
-    hasUserMessage: effectiveRole === "user",
+    hasUserMessage,
     messageRole: effectiveRole,
     messageHash,
-    messageContent: content.substring(0, 500), // First 500 chars for preview
+    messageContent: content.substring(0, 500),
+    userMessageCount,
+    assistantMessageCount,
+    isInternalRequest,
   };
 }
 

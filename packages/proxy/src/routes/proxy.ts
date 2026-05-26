@@ -16,7 +16,7 @@ import {
 } from "../utils/telemetry.js";
 import { logEmitter } from "../utils/event-emitter.js";
 import { getModelCatalogResponse } from "../utils/model-catalog.js";
-import { checkRateLimit, checkPromptLimit, checkModelPromptLimit } from "../utils/rate-limit.js";
+import { checkPromptLimit, checkModelPromptLimit } from "../utils/rate-limit.js";
 import { analyzeRequestMessages, detectToolCallsInResponse, type MessageAnalysis } from "../utils/message-analyzer.js";
 
 const proxy = new Hono();
@@ -335,17 +335,11 @@ async function resolveChatSession(params: {
 
   // ─── Within session window: determine new-chat vs continuation ──────────────
   //
-  // Key insight: contextFingerprint is unreliable as a "same conversation" signal because
-  // some IDEs mutate the system prompt on every request (inject model name, timestamps,
-  // tool lists, etc.), changing the fingerprint even mid-conversation.
-  //
-  // The ONLY reliable signals we have are:
-  //   1. contextTokensBefore: if context size resets to near-zero → definitely new chat
-  //   2. messageHash: if the user message changed → user typed something new
-  //   3. gapMs: long gap = new prompt; very short gap = sub-agent/tool follow-up
-  //
-  // We do NOT split sessions based on fingerprint change anymore. A session stays
-  // together as long as it's within the 45-min window. Model changes are transparent.
+  // Reliable signals for detecting new chat:
+  //   1. Context size shrink (history wiped) + hash changed → new chat
+  //   2. No assistant messages in context (fresh chat with only system + 1 user msg) + hash changed → new chat
+  //   3. Internal IDE requests (title gen) → never a new prompt, never a new session
+  //   4. Same hash, short gap → IDE retry / sub-agent → same session
 
   const prevTokens = latest.lastContextTokens || 0;
   const incomingTokens = params.contextTokensBefore;
@@ -354,16 +348,32 @@ async function resolveChatSession(params: {
     params.messageAnalysis.messageHash !== latest.lastUserMessageHash
   );
 
+  // Internal IDE requests (title generator, etc.) → always same session, never counted
+  if (params.messageAnalysis.isInternalRequest) {
+    return { sessionId: latest.sessionId, contextEvent: "append", contextDeltaTokens: incomingTokens - prevTokens, gapMs, isNewUserPrompt: false };
+  }
+
   // ── Detect "New Chat" button pressed ────────────────────────────────────────
-  // Signs: context size dropped dramatically (history wiped) AND the user message
-  // actually changed (different hash).  If the hash is the SAME, this is just
-  // the IDE re-sending the same prompt with different packaging (e.g. without
-  // tool definitions on the first request, then with tools on the second).
+  // Method 1: Context size dropped dramatically (history wiped)
   const contextResetToZero = incomingTokens <= 0 && prevTokens > 0;
   const contextShrankMassively =
     prevTokens > 200 && incomingTokens < prevTokens * 0.4 && incomingTokens <= 200;
 
-  if ((contextResetToZero || contextShrankMassively) && gapMs >= NEW_PROMPT_MIN_GAP_MS && hashChanged) {
+  if ((contextResetToZero || contextShrankMassively) && hashChanged) {
+    const isNewUserPrompt = params.messageAnalysis.hasUserMessage;
+    const sessionId = await createChatSession({ ...params, isUserPrompt: isNewUserPrompt, messageAnalysis: params.messageAnalysis });
+    return { sessionId, contextEvent: "new_session", contextDeltaTokens: 0, gapMs, isNewUserPrompt };
+  }
+
+  // Method 2: No assistant messages in context = fresh chat (user opened new chat,
+  // typed something new). A continuation always has at least 1 assistant reply in history.
+  // This catches model-switch new chats where context size stays large (big system prompt).
+  if (
+    hashChanged &&
+    params.messageAnalysis.assistantMessageCount === 0 &&
+    params.messageAnalysis.userMessageCount <= 2 && // system + 1-2 user messages
+    prevTokens > 0 // had a previous session (not first-ever request)
+  ) {
     const isNewUserPrompt = params.messageAnalysis.hasUserMessage;
     const sessionId = await createChatSession({ ...params, isUserPrompt: isNewUserPrompt, messageAnalysis: params.messageAnalysis });
     return { sessionId, contextEvent: "new_session", contextDeltaTokens: 0, gapMs, isNewUserPrompt };
@@ -756,35 +766,11 @@ proxy.all("/*", async (c) => {
       .run();
   }
 
-  // ─── 10. Rate Limit & Prompt Limit Checks (ONLY for counted user prompts) ───
+  // ─── 10. Prompt Limit Checks (ONLY for counted user prompts) ───────────────
   if (isNewPrompt) {
-    const effectiveRateLimit = keyRecord.rateLimit && keyRecord.rateLimit > 0 ? keyRecord.rateLimit : config.globalRateLimit;
-    const effectiveRateLimitWindow = keyRecord.rateLimitWindow || config.globalRateLimitWindow || "1h";
-
-    if (effectiveRateLimit && effectiveRateLimit > 0) {
-      const rlCheck = await checkRateLimit(keyRecord.id, effectiveRateLimit, effectiveRateLimitWindow);
-      if (!rlCheck.allowed) {
-        const resetTimeStr = new Date(Date.now() + rlCheck.resetMs).toISOString().replace("T", " ").substring(0, 19);
-        return c.json({
-          error: { 
-            message: `Rate limit exceeded. Maximum ${effectiveRateLimit} requests per ${effectiveRateLimitWindow}.`, 
-            type: "rate_limit_error",
-            code: "rate_limit_exceeded"
-          }
-        }, 429, {
-          "x-ratelimit-limit-requests": String(effectiveRateLimit),
-          "x-ratelimit-remaining-requests": "0",
-          "x-ratelimit-reset-requests": resetTimeStr
-        });
-      }
-      
-      // Add rate limit headers to response context if allowed
-      (c as any).set("x-ratelimit-limit-requests", String(effectiveRateLimit));
-      (c as any).set("x-ratelimit-remaining-requests", String(rlCheck.remaining));
-    }
-
+    // ─── Global / Per-Key Prompt Limit (all models combined) ─────────────
     const effectivePromptLimit = keyRecord.promptLimit && keyRecord.promptLimit > 0 ? keyRecord.promptLimit : config.globalPromptLimit;
-    const effectivePromptLimitWindow = keyRecord.promptLimitWindow || config.globalPromptLimitWindow || "1d";
+    const effectivePromptLimitWindow = keyRecord.promptLimitWindow || config.globalPromptLimitWindow || "30m";
 
     if (effectivePromptLimit && effectivePromptLimit > 0) {
       const plCheck = await checkPromptLimit(keyRecord.id, effectivePromptLimit, effectivePromptLimitWindow);
@@ -813,7 +799,7 @@ proxy.all("/*", async (c) => {
         keyRecord.perModelPromptLimit || 0,
         keyRecord.perModelPromptLimitWindow || null,
         config.globalPerModelPromptLimit || 0,
-        config.globalPerModelPromptLimitWindow || "1d",
+        config.globalPerModelPromptLimitWindow || "30m",
       );
       if (!mlCheck.allowed) {
         return c.json({
