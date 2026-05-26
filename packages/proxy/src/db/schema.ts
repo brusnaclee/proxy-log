@@ -34,7 +34,7 @@ export const adminConfig = sqliteTable("admin_config", {
 // ─── API Keys ──────────────────────────────────────────────────────────────────
 export const apiKeys = sqliteTable("api_keys", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  name: text("name").notNull(),
+  name: text("name").notNull().default(""),
   key: text("key").notNull().unique(),             // full key for lookup: sk-proxy-xxxx
   keyPrefix: text("key_prefix").notNull(),          // first 8 chars for display
   keyHash: text("key_hash").notNull(),              // sha256 hash for verification
