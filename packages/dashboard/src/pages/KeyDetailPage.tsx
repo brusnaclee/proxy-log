@@ -845,8 +845,7 @@ export default function KeyDetailPage() {
                     <th className="text-right py-3 px-4 text-muted-foreground font-medium">Tokens</th>
                     <th className="text-right py-3 px-4 text-muted-foreground font-medium">Context</th>
                     <th className="text-left py-3 px-4 text-muted-foreground font-medium">Last Seen</th>
-                  </tr>
-                </thead>
+                  </tr>                </thead>
                 <tbody>
                   {(keyData.analytics?.deviceSessions || []).map((s, idx) => (
                     <tr
@@ -858,7 +857,12 @@ export default function KeyDetailPage() {
                         navigate(`/sessions/${encodeURIComponent(s.sessionId)}`);
                       }}
                     >
-                      <td className="py-2 px-4 text-xs font-mono">{s.sessionId ? `${s.sessionId.substring(0, 16)}...` : "—"}</td>
+                      <td className="py-2 px-4 text-xs">
+                        <div className="font-medium truncate max-w-[220px]" title={s.sessionName || s.sessionId}>
+                          {s.sessionName && s.sessionName.trim() ? s.sessionName : "Untitled Chat"}
+                        </div>
+                        <div className="text-[10px] font-mono text-muted-foreground">{s.sessionId ? `${s.sessionId.substring(0, 16)}…` : "—"}</div>
+                      </td>
                       <td className="py-2 px-4 text-xs font-mono">{s.deviceFingerprint ? `${s.deviceFingerprint.substring(0, 16)}...` : "unknown"}</td>
                       <td className="py-2 px-4 text-xs"><code className="text-[10px] bg-accent/50 px-1.5 py-0.5 rounded">{s.model || "unknown"}</code></td>
                       <td className="py-2 px-4 text-right font-mono text-xs">{s.requestCount || 0}</td>

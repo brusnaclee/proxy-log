@@ -133,6 +133,7 @@ export const chatSessions = sqliteTable("chat_sessions", {
   ideDetected: text("ide_detected"),
   provider: text("provider"),
   model: text("model"),
+  sessionName: text("session_name").default(""),   // human-readable chat title derived from first user message
   contextFingerprint: text("context_fingerprint"),
   lastContextTokens: integer("last_context_tokens").notNull().default(0),
   requestCount: integer("request_count").notNull().default(0),

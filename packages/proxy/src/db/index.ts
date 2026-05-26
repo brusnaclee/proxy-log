@@ -263,6 +263,9 @@ export async function initializeDatabase() {
   await ensureColumnExists("request_logs", "actual_tool_calls_in_response", "INTEGER DEFAULT 0");
   await ensureColumnExists("request_logs", "is_counted_request", "INTEGER DEFAULT 1");
 
+  // Human-readable session name derived from first user message
+  await ensureColumnExists("chat_sessions", "session_name", "TEXT DEFAULT ''");
+
 
   await client.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_session_id_unique ON chat_sessions(session_id)");
   await client.execute("CREATE INDEX IF NOT EXISTS idx_logs_session_id ON request_logs(session_id)");

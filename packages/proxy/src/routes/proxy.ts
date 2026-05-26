@@ -23,6 +23,73 @@ const proxy = new Hono();
 
 type ContextEvent = "new_session" | "append" | "compact" | "switch";
 
+/**
+ * Derive a human-readable session name from the request body.
+ *
+ * Strategy (in priority order):
+ * 1. First non-empty user message content (what the user actually typed).
+ *    This mirrors what most IDE chat panels show as the conversation title.
+ * 2. System message snippet (fallback when there's no user message yet,
+ *    e.g. a sub-agent that only has a system prompt).
+ * 3. requestPreview already extracted by telemetry (last resort).
+ *
+ * The name is trimmed to ≤72 chars so it fits in the UI comfortably.
+ */
+function deriveSessionName(requestBody: any, requestPreview: string): string {
+  const MAX = 72;
+
+  function truncate(s: string): string {
+    const cleaned = s.replace(/\s+/g, " ").trim();
+    if (!cleaned) return "";
+    return cleaned.length > MAX ? cleaned.slice(0, MAX - 1) + "…" : cleaned;
+  }
+
+  function extractText(value: any): string {
+    if (!value) return "";
+    if (typeof value === "string") return value;
+    if (Array.isArray(value)) {
+      return value.map(extractText).filter(Boolean).join(" ");
+    }
+    if (typeof value === "object") {
+      return (
+        extractText(value.text) ||
+        extractText(value.content) ||
+        extractText(value.input_text) ||
+        ""
+      );
+    }
+    return "";
+  }
+
+  if (Array.isArray(requestBody?.messages)) {
+    // Priority 1: first user message
+    const firstUser = requestBody.messages.find(
+      (m: any) => String(m?.role || "").toLowerCase() === "user"
+    );
+    if (firstUser) {
+      const text = truncate(extractText(firstUser?.content ?? firstUser?.text ?? firstUser));
+      if (text) return text;
+    }
+
+    // Priority 2: system message snippet
+    const sys = requestBody.messages.find(
+      (m: any) => String(m?.role || "").toLowerCase() === "system"
+    );
+    if (sys) {
+      const text = truncate(extractText(sys?.content ?? sys?.text ?? sys));
+      if (text) return text;
+    }
+  }
+
+  // Priority 3: requestPreview (already built by telemetry)
+  if (requestPreview) {
+    const text = truncate(requestPreview);
+    if (text) return text;
+  }
+
+  return "Untitled Chat";
+}
+
 const SESSION_GAP_MS = 45 * 60 * 1000;
 const COMPACT_DROP_THRESHOLD = 80;
 // Minimum time gap (ms) to consider a request as a new user prompt rather than
@@ -174,9 +241,11 @@ async function createChatSession(params: {
   requestPreview: string;
   isUserPrompt?: boolean; // false for sub-agent spawned sessions
   messageAnalysis?: MessageAnalysis;
+  requestBody?: any; // raw request body for session name extraction
 }) {
   const sessionId = `chat_${generateSessionId().slice(0, 24)}`;
   const now = formatSqliteDate();
+  const sessionName = deriveSessionName(params.requestBody, params.requestPreview);
   await db.insert(chatSessions).values({
     sessionId,
     apiKeyId: params.apiKeyId,
@@ -186,6 +255,7 @@ async function createChatSession(params: {
     ideDetected: params.ideDetected,
     provider: params.provider,
     model: params.model,
+    sessionName,
     contextFingerprint: params.contextFingerprint || null,
     lastContextTokens: params.contextTokensBefore,
     lastRequestPreview: params.requestPreview || null,
@@ -215,6 +285,7 @@ async function resolveChatSession(params: {
   contextTokensBefore: number;
   requestPreview: string;
   messageAnalysis: MessageAnalysis;
+  requestBody?: any;
 }): Promise<{ sessionId: string; contextEvent: ContextEvent; contextDeltaTokens: number; gapMs: number; isNewUserPrompt: boolean }> {
   // Find the most recent session for this device (across ALL sessions, not just active one)
   const latest = await db
@@ -321,8 +392,39 @@ async function resolveChatSession(params: {
   }
 
   // ── Context switch: context fingerprint changed ───────────────────────────────
-  // Sub-agent (gap < 60s): STAY in the same session, not a new prompt.
-  // Genuine user switch (gap >= 60s): create a new session and count as new prompt.
+  // Distinguish between:
+  //   A) User opened a NEW CHAT quickly (different fingerprint, small/zero context → new session)
+  //   B) Sub-agent spawned a parallel context (different fingerprint, still has large context)
+  //
+  // Heuristic: if the incoming context is very small (≤ 2× the previous delta for a single
+  // message turn, i.e. looks like only 1–2 messages), treat it as a new chat regardless of gap.
+  // Also treat it as new if has user message AND context token count dropped significantly
+  // compared to the previous session (meaning history was wiped, not just switched context).
+  const prevTokens = latest.lastContextTokens || 0;
+  const incomingTokens = params.contextTokensBefore;
+
+  // A new chat sends a very small context (just 1 user message, no assistant history).
+  // A sub-agent typically sends a context that is comparable in size to or larger than
+  // the previous session context.
+  const isLikelyNewChat =
+    params.messageAnalysis.hasUserMessage && (
+      // Context is much smaller than what we had before (history was reset)
+      (prevTokens > 0 && incomingTokens < prevTokens * 0.4) ||
+      // Or context is basically empty (first message only, under ~200 tokens) but previous session had real history
+      (incomingTokens <= 200 && prevTokens > 200)
+    );
+
+  if (isLikelyNewChat) {
+    // Context fingerprint changed AND context looks fresh → new chat, new session
+    const isNewUserPrompt = params.messageAnalysis.hasUserMessage;
+    const sessionId = await createChatSession({
+      ...params,
+      isUserPrompt: isNewUserPrompt,
+      messageAnalysis: params.messageAnalysis,
+    });
+    return { sessionId, contextEvent: "new_session", contextDeltaTokens: 0, gapMs, isNewUserPrompt };
+  }
+
   const isSubAgentSwitch = gapMs < SWITCH_PROMPT_MIN_GAP_MS;
 
   if (isSubAgentSwitch) {
@@ -674,6 +776,7 @@ proxy.all("/*", async (c) => {
     contextTokensBefore,
     requestPreview,
     messageAnalysis,
+    requestBody,
   });
 
   // Determine if this is a new user prompt (simplified - logic moved to resolveChatSession)

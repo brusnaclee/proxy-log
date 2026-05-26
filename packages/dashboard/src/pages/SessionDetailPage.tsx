@@ -151,7 +151,11 @@ export default function SessionDetailPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Session Transcript</h1>
+          <h1 className="text-2xl font-bold tracking-tight">
+            {detail.session.sessionName && detail.session.sessionName.trim()
+              ? detail.session.sessionName
+              : "Session Transcript"}
+          </h1>
           <p className="text-muted-foreground mt-1 font-mono text-xs">{detail.session.sessionId}</p>
         </div>
         <Button variant="outline" onClick={() => navigate(-1)}>

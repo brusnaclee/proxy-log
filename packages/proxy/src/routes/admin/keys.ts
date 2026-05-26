@@ -176,6 +176,7 @@ keys.get("/keys/:id", async (c) => {
 
   const deviceSessions = await db.select({
     sessionId: chatSessions.sessionId,
+    sessionName: chatSessions.sessionName,
     deviceFingerprint: chatSessions.deviceFingerprint,
     ipAddress: chatSessions.ipAddress,
     ideDetected: chatSessions.ideDetected,

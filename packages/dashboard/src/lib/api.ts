@@ -168,6 +168,7 @@ export interface ApiKeyDetail extends ApiKeyListItem {
     }[];
     deviceSessions: {
       sessionId: string;
+      sessionName?: string | null;
       deviceFingerprint: string;
       ipAddress: string;
       ideDetected: string;
@@ -298,6 +299,7 @@ export interface ChatSessionSummary {
   ideDetected: string;
   provider: string;
   model: string;
+  sessionName?: string | null;
   contextFingerprint: string;
   lastContextTokens: number;
   requestCount: number;
