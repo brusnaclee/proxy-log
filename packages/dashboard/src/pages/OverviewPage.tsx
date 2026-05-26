@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+﻿import { useEffect, useState, useCallback } from "react";
 import { stats, logs, type OverviewStats, type LogEntry } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -10,10 +10,10 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { useRealtimeSSE } from "@/lib/use-realtime-sse";
-import { exportCsvMultiSection, buildModelsSection } from "@/lib/export-csv";
+import { exportXlsx, buildModelsSection, fmtCost } from "@/lib/export-xlsx";
 import { formatCost } from "@/lib/utils";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 type PeriodKey = "today" | "7d" | "30d" | "allTime";
 
 const PERIOD_OPTS: { key: PeriodKey; label: string }[] = [
@@ -40,7 +40,7 @@ const TOOLTIP_STYLE = {
 const ITEM_STYLE  = { color: "hsl(var(--foreground))" };
 const LABEL_STYLE = { color: "hsl(var(--foreground))" };
 
-// ── Component ─────────────────────────────────────────────────────────────────
+// â”€â”€ Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export default function OverviewPage() {
   const [overview, setOverview]         = useState<OverviewStats | null>(null);
   const [timeseries, setTimeseries]     = useState<any[]>([]);
@@ -50,7 +50,7 @@ export default function OverviewPage() {
   const [chartPeriod, setChartPeriod]   = useState<PeriodKey>("7d"); // for charts only
   const [modelChartDays, setModelChartDays] = useState(7);
 
-  // Map period → overview sub-object
+  // Map period â†’ overview sub-object
   const periodData = overview
     ? ({
         today:   overview.today,
@@ -97,53 +97,67 @@ export default function OverviewPage() {
     stats.byModel(modelChartDays).then(setModelStats).catch(() => {});
   }, [modelChartDays]);
 
-  // ── Export ──────────────────────────────────────────────────────────────────
+  // â”€â”€ Export â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleExport = () => {
     const activePeriodLabel = PERIOD_OPTS.find(o => o.key === period)?.label || "All Time";
-    const sections = [];
+    const dateStr = new Date().toISOString().split("T")[0];
+    const sheets = [];
+
+    // Sheet 1: Summary stats across all periods
     if (overview) {
-      sections.push({
-        title: "Overview Stats",
-        headers: ["Metric", "Today", "7 Days", "30 Days", "All Time"],
-        notes: "Requests and token counts across all API keys",
+      sheets.push({
+        name: "Summary",
+        note: "Aggregated stats across all API keys and devices",
+        headers: ["Metric", "Today", "Last 7 Days", "Last 30 Days", "All Time"],
         rows: [
-          ["Requests",       overview.today.requests, overview.week?.requests ?? "", overview.month?.requests ?? "", overview.allTime.requests],
-          ["Total Tokens",   overview.today.tokens,   overview.week?.tokens ?? "",   overview.month?.tokens ?? "",   overview.allTime.tokens],
-          ["Input Tokens",   overview.today.promptTokens ?? "",  overview.week?.promptTokens ?? "", overview.month?.promptTokens ?? "", overview.allTime.promptTokens ?? ""],
-          ["Output Tokens",  overview.today.completionTokens ?? "", overview.week?.completionTokens ?? "", overview.month?.completionTokens ?? "", overview.allTime.completionTokens ?? ""],
-          ["Unique Devices", overview.today.uniqueDevices ?? "", "", "", overview.totalDevices],
-          ["Active Keys",    overview.activeKeys, "", "", overview.totalKeys],
-          ["Total Sessions", "", "", "", overview.allTime.totalSessions ?? ""],
-          ["Avg Reqs/Session", "", "", "", (overview.allTime.avgRequestsPerSession || 0).toFixed(2)],
-          ["Est. Cost",      overview.today.totalCost != null ? `$${(overview.today.totalCost/1e6).toFixed(5)}` : "", "", "", overview.allTime.totalCost != null ? `$${(overview.allTime.totalCost/1e6).toFixed(5)}` : ""],
-        ]
+          ["Requests",          overview.today.requests,                                 overview.week?.requests ?? "",              overview.month?.requests ?? "",              overview.allTime.requests],
+          ["Total Tokens",      overview.today.tokens,                                   overview.week?.tokens ?? "",                overview.month?.tokens ?? "",                overview.allTime.tokens],
+          ["Input Tokens",      overview.today.promptTokens ?? "",                       overview.week?.promptTokens ?? "",          overview.month?.promptTokens ?? "",          overview.allTime.promptTokens ?? ""],
+          ["Output Tokens",     overview.today.completionTokens ?? "",                   overview.week?.completionTokens ?? "",      overview.month?.completionTokens ?? "",      overview.allTime.completionTokens ?? ""],
+          ["Unique Devices",    overview.today.uniqueDevices ?? "",                      "",                                        "",                                          overview.totalDevices],
+          ["Active Keys",       overview.activeKeys,                                     "",                                        "",                                          overview.totalKeys],
+          ["Total Sessions",    "",                                                      "",                                        "",                                          overview.allTime.totalSessions ?? ""],
+          ["Avg Reqs/Session",  "",                                                      "",                                        "",                                          (overview.allTime.avgRequestsPerSession || 0).toFixed(2)],
+          ["Est. Cost",         fmtCost(overview.today.totalCost ?? overview.today.estimatedCost), fmtCost(overview.week?.totalCost ?? overview.week?.estimatedCost), fmtCost(overview.month?.totalCost ?? overview.month?.estimatedCost), fmtCost(overview.allTime.totalCost ?? overview.allTime.estimatedCost)],
+        ],
       });
     }
+
+    // Sheet 2: Timeseries
     if (timeseries.length) {
-      sections.push({
-        title: "Timeseries",
-        headers: ["Period", "Requests", "Tokens", "Input Tokens", "Output Tokens", "Est. Cost ($)", "Unique Devices"],
-        notes: "Time-series data — open in Excel/Sheets to chart",
-        rows: timeseries.map((t) => [
-          t.period, t.requests, t.tokens,
-          t.promptTokens ?? "", t.completionTokens ?? "",
-          t.estimatedCost != null ? `$${(t.estimatedCost/1e6).toFixed(5)}` : "",
-          t.uniqueDevices ?? "",
+      sheets.push({
+        name: "Timeseries",
+        note: "Daily/hourly data  -  select columns and Insert â†’ Chart in Excel to visualize",
+        headers: ["Period", "Requests", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost", "Unique Devices"],
+        rows: timeseries.map(t => [
+          t.period,
+          Number(t.requests) || 0,
+          Number(t.tokens) || 0,
+          Number(t.promptTokens) || 0,
+          Number(t.completionTokens) || 0,
+          fmtCost(t.estimatedCost),
+          Number(t.uniqueDevices) || 0,
         ]),
       });
     }
+
+    // Sheet 3: Model breakdown
     if (modelStats.length) {
-      sections.push(buildModelsSection(modelStats, "Model Stats"));
+      sheets.push(buildModelsSection(modelStats, "Models"));
     }
-    exportCsvMultiSection(sections, `gateway-overview-${new Date().toISOString().split("T")[0]}.csv`, activePeriodLabel);
+
+    exportXlsx(sheets, `gateway-overview-${dateStr}`, {
+      title: "AI Proxy Gateway  -  Overview Report",
+      period: activePeriodLabel,
+    });
   };
 
-  // ── Period Toggle component ─────────────────────────────────────────────────
+  // â”€â”€ Period Toggle component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const PeriodToggle = ({
     value, onChange, small = false
   }: { value: PeriodKey | number; onChange: (v: any) => void; small?: boolean; options?: any[] }) => null;
 
-  // ── Stat Cards ──────────────────────────────────────────────────────────────
+  // â”€â”€ Stat Cards â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const dynamicCards = periodData
     ? [
         {
@@ -221,7 +235,7 @@ export default function OverviewPage() {
 
   const allCards = [...dynamicCards, ...staticCards];
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  // â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   return (
     <div className="space-y-8">
       {/* Header */}
@@ -235,7 +249,7 @@ export default function OverviewPage() {
             <RefreshCw className="h-4 w-4 mr-2" />Refresh
           </Button>
           <Button variant="outline" size="sm" onClick={handleExport}>
-            <Download className="h-4 w-4 mr-2" />Export CSV
+            <Download className="h-4 w-4 mr-2" />Export XLSX
           </Button>
         </div>
       </div>
@@ -399,11 +413,11 @@ export default function OverviewPage() {
                     <td className="py-2 px-3 text-xs text-muted-foreground font-mono">
                       {log.createdAt ? formatRelativeTime(log.createdAt) : "just now"}
                     </td>
-                    <td className="py-2 px-3">{log.apiKeyName || "—"}</td>
+                    <td className="py-2 px-3">{log.apiKeyName || " - "}</td>
                     <td className="py-2 px-3">
-                      <code className="text-xs bg-accent/50 px-1.5 py-0.5 rounded">{log.model || "—"}</code>
+                      <code className="text-xs bg-accent/50 px-1.5 py-0.5 rounded">{log.model || " - "}</code>
                     </td>
-                    <td className="py-2 px-3 text-xs">{log.ideDetected || "—"}</td>
+                    <td className="py-2 px-3 text-xs">{log.ideDetected || " - "}</td>
                     <td className="py-2 px-3 text-right font-mono text-xs">
                       {formatNumber(log.totalTokens || 0)}
                     </td>
@@ -415,7 +429,7 @@ export default function OverviewPage() {
                         variant={(log.statusCode || 0) >= 400 ? "destructive" : "success"}
                         className="text-[10px]"
                       >
-                        {log.statusCode || "—"}
+                        {log.statusCode || " - "}
                       </Badge>
                     </td>
                   </tr>
@@ -435,3 +449,4 @@ export default function OverviewPage() {
     </div>
   );
 }
+

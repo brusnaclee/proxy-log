@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+﻿import { useEffect, useState, useCallback } from "react";
 import { monitor, type ModelMonitorEntry } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatRelativeTime, formatDate } from "@/lib/utils";
 import { Download, RefreshCw, Activity, ServerCrash, CheckCircle2, Clock } from "lucide-react";
-import { exportCsvSimple } from "@/lib/export-csv";
+import { exportXlsx } from "@/lib/export-xlsx";
 
 export default function ModelMonitorPage() {
   const [data, setData] = useState<ModelMonitorEntry[]>([]);
@@ -30,18 +30,42 @@ export default function ModelMonitorPage() {
   }, [loadData]);
 
   const handleExport = () => {
-    const headers = ["Model", "Provider", "Status", "Latency (ms)", "HTTP Status", "Error", "Last Checked", "Base URL"];
-    const rows = data.map(d => [
+    const online  = data.filter(d => d.isOnline);
+    const offline = data.filter(d => !d.isOnline);
+    const dateStr = new Date().toISOString().split("T")[0];
+
+    const makeRows = (items: typeof data) => items.map(d => [
       d.modelId,
       d.provider || "unknown",
       d.isOnline ? "Online" : "Offline",
-      d.latencyMs || 0,
-      d.httpStatus || 0,
+      Number(d.latencyMs) || 0,
+      d.httpStatus || "",
       d.errorMessage || "",
       d.checkedAt,
-      d.baseUrl || ""
+      d.baseUrl || "",
     ]);
-    exportCsvSimple(headers, rows, `model-monitor-${new Date().toISOString().split("T")[0]}`);
+
+    exportXlsx([
+      {
+        name: "All Models",
+        note: `${summary.online} online, ${summary.offline} offline, ${summary.timeout} timeout  -  as of ${new Date().toLocaleString()}`,
+        headers: ["Model", "Provider", "Status", "Latency (ms)", "HTTP Status", "Error", "Last Checked", "Base URL"],
+        rows: makeRows(data),
+      },
+      {
+        name: "Online",
+        headers: ["Model", "Provider", "Status", "Latency (ms)", "HTTP Status", "Error", "Last Checked", "Base URL"],
+        rows: makeRows(online),
+      },
+      {
+        name: "Offline",
+        headers: ["Model", "Provider", "Status", "Latency (ms)", "HTTP Status", "Error", "Last Checked", "Base URL"],
+        rows: makeRows(offline),
+      },
+    ], `model-monitor-${dateStr}`, {
+      title: "AI Proxy Gateway  -  Model Health Monitor",
+      period: `Checked at ${new Date().toLocaleTimeString()}`,
+    });
   };
 
   const providers = ["all", ...new Set(data.map(d => d.provider || "unknown"))].sort();
@@ -75,7 +99,7 @@ export default function ModelMonitorPage() {
           </Button>
           <Button variant="outline" size="sm" onClick={handleExport}>
             <Download className="h-4 w-4 mr-2" />
-            Export CSV
+            Export XLSX
           </Button>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+﻿import { useEffect, useState, useCallback } from "react";
 import { stats } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatNumber, formatCost } from "@/lib/utils";
@@ -9,7 +9,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { useRealtimeSSE } from "@/lib/use-realtime-sse";
-import { exportCsvMultiSection, buildModelsSection } from "@/lib/export-csv";
+import { exportXlsx, buildModelsSection, fmtCost } from "@/lib/export-xlsx";
 
 const COLORS = ["#818cf8", "#34d399", "#f59e0b", "#f87171", "#a78bfa", "#38bdf8", "#fb923c", "#e879f9"];
 
@@ -20,7 +20,7 @@ const PERIOD_OPTIONS = [
   { label: "All",     days: 0  },
 ] as const;
 
-// Fix tooltip colours — must override itemStyle/labelStyle too
+// Fix tooltip colours  -  must override itemStyle/labelStyle too
 const TOOLTIP_STYLE  = {
   backgroundColor: "hsl(var(--card))",
   border: "1px solid hsl(var(--border))",
@@ -93,87 +93,90 @@ export default function AnalyticsPage() {
   const handleSSEMessage = useCallback(() => { void loadData(days); }, [days, loadData]);
   useRealtimeSSE(handleSSEMessage, 900);
 
-  // ── Export ──────────────────────────────────────────────────────────────────
+  // â”€â”€ Export â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleExport = () => {
     const pl = periodLabel(days);
     const dateStr = new Date().toISOString().split("T")[0];
-    const sections = [];
+    const sheets = [];
 
-    if (modelData.length) sections.push(buildModelsSection(modelData, "Models by Usage"));
+    if (modelData.length) sheets.push(buildModelsSection(modelData, "Models"));
 
     if (topUsersData.byRequests.length) {
-      sections.push({
-        title: "Top Users by Requests",
-        notes: `Period: ${pl}`,
+      sheets.push({
+        name: "Top Users (Requests)",
+        note: `Period: ${pl}`,
         headers: ["Display Name", "Key Name", "Discord ID", "Requests", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost"],
         rows: topUsersData.byRequests.map(u => [
           u.displayName, u.keyName, u.discordUserId || "",
-          u.requests, u.tokens, u.promptTokens, u.completionTokens,
-          `$${((u.estimatedCost||0)/1e6).toFixed(5)}`,
+          Number(u.requests)||0, Number(u.tokens)||0, Number(u.promptTokens)||0, Number(u.completionTokens)||0,
+          fmtCost(u.estimatedCost),
         ]),
       });
     }
 
     if (topUsersData.byTokens.length) {
-      sections.push({
-        title: "Top Users by Tokens",
-        notes: `Period: ${pl}`,
+      sheets.push({
+        name: "Top Users (Tokens)",
+        note: `Period: ${pl}`,
         headers: ["Display Name", "Key Name", "Discord ID", "Total Tokens", "Input Tokens", "Output Tokens", "Requests", "Est. Cost"],
         rows: topUsersData.byTokens.map(u => [
           u.displayName, u.keyName, u.discordUserId || "",
-          u.tokens, u.promptTokens, u.completionTokens, u.requests,
-          `$${((u.estimatedCost||0)/1e6).toFixed(5)}`,
+          Number(u.tokens)||0, Number(u.promptTokens)||0, Number(u.completionTokens)||0, Number(u.requests)||0,
+          fmtCost(u.estimatedCost),
         ]),
       });
     }
 
     if (keyData.length) {
-      sections.push({
-        title: "API Keys by Usage",
-        notes: `Period: ${pl}`,
+      sheets.push({
+        name: "API Keys",
+        note: `Period: ${pl}`,
         headers: ["Key Name", "Requests", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost", "Unique Devices", "Top Model"],
         rows: keyData.map(k => [
-          k.name, k.requests, k.tokens, k.promptTokens || "", k.completionTokens || "",
-          `$${((k.estimatedCost||0)/1e6).toFixed(5)}`, k.uniqueDevices, k.topModel,
+          k.name, Number(k.requests)||0, Number(k.tokens)||0, Number(k.promptTokens)||0, Number(k.completionTokens)||0,
+          fmtCost(k.estimatedCost), Number(k.uniqueDevices)||0, k.topModel,
         ]),
       });
     }
 
     if (deviceData.length) {
-      sections.push({
-        title: "Top Devices by Usage",
-        notes: `Period: ${pl}`,
+      sheets.push({
+        name: "Devices",
+        note: `Period: ${pl}`,
         headers: ["Fingerprint", "IP Address", "IDE", "Requests", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost", "Last Seen"],
         rows: deviceData.map(d => [
-          d.fingerprint, d.ipAddress, d.ide, d.requests, d.tokens,
-          d.promptTokens || "", d.completionTokens || "",
-          `$${((d.estimatedCost||0)/1e6).toFixed(5)}`, d.lastSeen,
+          d.fingerprint, d.ipAddress, d.ide,
+          Number(d.requests)||0, Number(d.tokens)||0, Number(d.promptTokens)||0, Number(d.completionTokens)||0,
+          fmtCost(d.estimatedCost), d.lastSeen,
         ]),
       });
     }
 
     if (timeseriesData.length) {
-      sections.push({
-        title: "Daily Timeseries",
-        notes: "Each row = one day",
+      sheets.push({
+        name: "Daily Timeseries",
+        note: "Each row = one day  -  select columns and Insert â†’ Chart to visualize",
         headers: ["Date", "Requests", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost", "Unique Devices"],
         rows: timeseriesData.map(t => [
-          t.period, t.requests, t.tokens, t.promptTokens, t.completionTokens,
-          `$${((t.estimatedCost||0)/1e6).toFixed(5)}`, t.uniqueDevices,
+          t.period, Number(t.requests)||0, Number(t.tokens)||0, Number(t.promptTokens)||0, Number(t.completionTokens)||0,
+          fmtCost(t.estimatedCost), Number(t.uniqueDevices)||0,
         ]),
       });
     }
 
     if (hourlyData.length) {
-      sections.push({
-        title: "Hourly Timeseries",
-        notes: "Each row = one hour",
+      sheets.push({
+        name: "Hourly Timeseries",
+        note: "Each row = one hour",
         headers: ["Hour", "Requests", "Total Tokens"],
-        rows: hourlyData.map(t => [t.period, t.requests, t.tokens]),
+        rows: hourlyData.map(t => [t.period, Number(t.requests)||0, Number(t.tokens)||0]),
       });
     }
 
-    exportCsvMultiSection(sections, `analytics-${dateStr}.csv`, pl);
+    exportXlsx(sheets, `analytics-${dateStr}`, {
+      title: "AI Proxy Gateway - Analytics Report",
+      period: pl,
+    });
   };
 
   // IDE distribution from device data
@@ -197,14 +200,14 @@ export default function AnalyticsPage() {
         <div className="flex items-center gap-3">
           <PeriodToggle value={days} onChange={setDays} />
           <Button variant="outline" size="sm" onClick={handleExport}>
-            <Download className="h-4 w-4 mr-2" /> Export CSV
+            <Download className="h-4 w-4 mr-2" /> Export XLSX
           </Button>
         </div>
       </div>
 
       {/* Row 1: Models pie + IDE bar */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Top Models Pie — with By Tokens / By Requests toggle */}
+        {/* Top Models Pie  -  with By Tokens / By Requests toggle */}
         <Card className="border-border/50">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
@@ -462,12 +465,12 @@ export default function AnalyticsPage() {
               {deviceData.slice(0, 20).map((d, i) => (
                 <tr key={i} className="border-b border-border/30 hover:bg-accent/30">
                   <td className="py-2 px-4"><code className="text-xs font-mono">{d.fingerprint?.substring(0, 16)}...</code></td>
-                  <td className="py-2 px-4 text-xs font-mono">{d.ipAddress || "—"}</td>
-                  <td className="py-2 px-4 text-xs">{d.ide || "—"}</td>
+                  <td className="py-2 px-4 text-xs font-mono">{d.ipAddress || " - "}</td>
+                  <td className="py-2 px-4 text-xs">{d.ide || " - "}</td>
                   <td className="py-2 px-4 text-right font-mono">{formatNumber(d.requests)}</td>
                   <td className="py-2 px-4 text-right font-mono">{formatNumber(d.tokens)}</td>
                   <td className="py-2 px-4 text-right font-mono text-emerald-400/90">{formatCost(d.estimatedCost || 0)}</td>
-                  <td className="py-2 px-4 text-xs text-muted-foreground">{d.lastSeen || "—"}</td>
+                  <td className="py-2 px-4 text-xs text-muted-foreground">{d.lastSeen || " - "}</td>
                 </tr>
               ))}
               {deviceData.length === 0 && (
@@ -480,3 +483,4 @@ export default function AnalyticsPage() {
     </div>
   );
 }
+

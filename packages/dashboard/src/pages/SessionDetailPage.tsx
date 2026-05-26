@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { logs, type SessionDetailResponse } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, ChevronDown, ChevronUp, Download } from "lucide-react";
 import { formatDate, formatNumber, formatCost, formatRelativeTime } from "@/lib/utils";
 import { useRealtimeSSE } from "@/lib/use-realtime-sse";
-import { exportCsvMultiSection, buildTimelineSection } from "@/lib/export-csv";
+import { exportXlsx, buildTimelineSection } from "@/lib/export-xlsx";
 import { useCallback } from "react";
 
 type TimelineTurn = {
@@ -118,39 +118,39 @@ export default function SessionDetailPage() {
   const handleExport = () => {
     const sess = detail?.session;
     const dateStr = new Date().toISOString().split("T")[0];
-    const sessionName = sess?.sessionName && sess.sessionName.trim() ? sess.sessionName : "Session";
+    const sessionName = sess?.sessionName?.trim() || "Session";
+    const slug = sessionName.replace(/[^a-z0-9]/gi, "-").toLowerCase().slice(0, 30);
 
-    const sections = [];
+    const sheets = [];
 
-    // Section 1: Session info
+    // Sheet 1: Session metadata
     if (sess) {
-      sections.push({
-        title: "Session Info",
+      sheets.push({
+        name: "Session Info",
         headers: ["Field", "Value"],
         rows: [
-          ["Session Name",  sess.sessionName || "Untitled Chat"],
-          ["Session ID",    sess.sessionId],
-          ["IDE",           sess.ideDetected || "Unknown"],
-          ["Provider",      sess.provider || "Unknown"],
-          ["Model (Last)",  sess.model || "Unknown"],
-          ["Device",        sess.deviceFingerprint || "Unknown"],
-          ["User Prompts",  sess.requestCount],
-          ["Total Tokens",  sess.totalTokens],
-          ["Est. Cost",     `$${((sess.estimatedCost||0)/1e6).toFixed(5)}`],
-          ["First Seen",    sess.firstSeenAt],
-          ["Last Seen",     sess.lastSeenAt],
+          ["Session Name",   sess.sessionName || "Untitled Chat"],
+          ["Session ID",     sess.sessionId],
+          ["IDE",            sess.ideDetected || "Unknown"],
+          ["Provider",       sess.provider || "Unknown"],
+          ["Model (Last)",   sess.model || "Unknown"],
+          ["Device",         sess.deviceFingerprint || "Unknown"],
+          ["User Prompts",   Number(sess.requestCount) || 0],
+          ["Total Tokens",   Number(sess.totalTokens) || 0],
+          ["Est. Cost",      `$${((sess.estimatedCost||0)/1e6).toFixed(5)}`],
+          ["First Seen",     sess.firstSeenAt],
+          ["Last Seen",      sess.lastSeenAt],
         ],
       });
     }
 
-    // Section 2: Timeline
-    sections.push(buildTimelineSection(turns, "Conversation Timeline"));
+    // Sheet 2: Turn-by-turn timeline
+    sheets.push(buildTimelineSection(turns, "Timeline"));
 
-    exportCsvMultiSection(
-      sections,
-      `session-${sessionName.replace(/[^a-z0-9]/gi, "-").toLowerCase()}-${dateStr}.csv`,
-      "Full Session",
-    );
+    exportXlsx(sheets, `session-${slug}-${dateStr}`, {
+      title: `Session: ${sessionName}`,
+      period: "Full Session",
+    });
   };
 
   if (!detail) {
@@ -158,7 +158,7 @@ export default function SessionDetailPage() {
       <div className="space-y-4">
         <div className="flex gap-2">
           <Button variant="outline" onClick={handleExport}>
-            <Download className="h-4 w-4 mr-2" /> Export CSV
+            <Download className="h-4 w-4 mr-2" /> Export XLSX
           </Button>
           <Button variant="outline" onClick={() => navigate(-1)}>
             <ArrowLeft className="h-4 w-4 mr-2" /> Back
@@ -293,7 +293,7 @@ export default function SessionDetailPage() {
                 {turns.map((row, idx) => (
                   <tr key={row.id} className="border-b border-border/30">
                     <td className="py-2 px-3 text-xs text-muted-foreground">{formatDate(row.lastSeenAt || row.createdAt)}</td>
-                    <td className="py-2 px-3 text-xs"><code className="bg-accent/50 px-1 py-0.5 rounded text-[10px]">{row.model || "—"}</code></td>
+                    <td className="py-2 px-3 text-xs"><code className="bg-accent/50 px-1 py-0.5 rounded text-[10px]">{row.model || "â€”"}</code></td>
                     <td className="py-2 px-3 text-xs">{row.contextEvent || "append"}</td>
                     <td className="py-2 px-3 text-xs">{(row.toolsUsed || []).join(", ") || "-"}</td>
                     <td className="py-2 px-3 text-right font-mono text-xs">
@@ -317,3 +317,4 @@ export default function SessionDetailPage() {
     </div>
   );
 }
+

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+﻿import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   logs,
@@ -16,7 +16,7 @@ import { Download, Radio, ChevronLeft, ChevronRight } from "lucide-react";
 import { formatCost } from "@/lib/utils";
 import { useRealtimeSSE } from "@/lib/use-realtime-sse";
 import { useRealtime } from "@/lib/realtime-context";
-import { exportCsvMultiSection, buildLogsSection, buildSessionsSection } from "@/lib/export-csv";
+import { exportXlsx, buildLogsSection } from "@/lib/export-xlsx";
 
 type ViewMode = "requests" | "sessions";
 
@@ -165,11 +165,11 @@ export default function LogsPage() {
 
   const exportCSV = () => {
     const dateStr = new Date().toISOString().split("T")[0];
-    exportCsvMultiSection(
-      [buildLogsSection(requestData, "Request Logs")],
-      `proxy-logs-${dateStr}.csv`,
-      `Current View (${requestData.length} rows)`,
-    );
+    const logSheet = buildLogsSection(requestData, "Request Logs");
+    exportXlsx([logSheet], `proxy-logs-${dateStr}`, {
+      title: "AI Proxy Gateway  -  Request Logs",
+      period: `${requestData.length} rows (current view)`,
+    });
   };
 
   return (
@@ -196,7 +196,7 @@ export default function LogsPage() {
               </Button>
             )}
             <Button variant="outline" size="sm" onClick={exportCSV}>
-              <Download className="h-3 w-3 mr-1" /> Export CSV
+              <Download className="h-3 w-3 mr-1" /> Export XLSX
             </Button>
           </div>
         ) : (
@@ -662,3 +662,4 @@ export default function LogsPage() {
     </div>
   );
 }
+

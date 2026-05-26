@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+﻿import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { keys, logs, stats, type ApiKeyDetail, type KeyPeriodStats, type LogEntry, type SessionDetailResponse, type ModelLimitEntry, globalSettings } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,7 +16,7 @@ import {
   DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { useRealtimeSSE } from "@/lib/use-realtime-sse";
-import { exportCsvMultiSection, buildLogsSection, buildSessionsSection } from "@/lib/export-csv";
+import { exportXlsx, buildLogsSection, buildSessionsSection, fmtCost } from "@/lib/export-xlsx";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
@@ -28,7 +28,7 @@ const MODEL_COLORS   = ["#818cf8", "#34d399", "#f59e0b", "#f87171", "#a78bfa", "
 
 export default function KeyDetailPage() {
   const { id: idSlug } = useParams<{ id: string }>();
-  // Slug format is "{numericId}-{name-slug}" — extract just the numeric ID prefix
+  // Slug format is "{numericId}-{name-slug}" â€” extract just the numeric ID prefix
   const id = idSlug?.split("-")[0];
   const navigate = useNavigate();
   const [keyData, setKeyData] = useState<ApiKeyDetail | null>(null);
@@ -288,76 +288,68 @@ export default function KeyDetailPage() {
   const handleExportLogs = () => {
     const dateStr = new Date().toISOString().split("T")[0];
     const periodLabel = logsPeriod === 0 ? "All Time" : logsPeriod === 1 ? "Today" : `Last ${logsPeriod} Days`;
-    // Full export: 4 periods of summary stats + current log view
-    const sections = [];
 
-    // Stats summary across all periods
+    const sheets = [];
+
+    // Sheet 1: Stats summary across all 4 periods
     if (keyData?.stats) {
       const s = keyData.stats;
-      sections.push({
-        title: "Usage Summary",
-        notes: "Token and request counts across all periods",
+      sheets.push({
+        name: "Summary",
+        note: "Usage stats across all time periods",
         headers: ["Metric", "Today", "Last 7 Days", "Last 30 Days", "All Time"],
         rows: [
-          ["Requests",        s.today.requests,        s.week.requests,        s.month.requests,        s.allTime.requests],
-          ["Total Tokens",    s.today.tokens,          s.week.tokens,          s.month.tokens,          s.allTime.tokens],
-          ["Input Tokens",    s.today.promptTokens,    s.week.promptTokens,    s.month.promptTokens,    s.allTime.promptTokens],
-          ["Output Tokens",   s.today.completionTokens,s.week.completionTokens,s.month.completionTokens,s.allTime.completionTokens],
-          ["Context Tokens",  s.today.contextTokens,   s.week.contextTokens,   s.month.contextTokens,   s.allTime.contextTokens],
-          ["Est. Cost",
-            `$${(s.today.estimatedCost/1e6).toFixed(5)}`,
-            `$${(s.week.estimatedCost/1e6).toFixed(5)}`,
-            `$${(s.month.estimatedCost/1e6).toFixed(5)}`,
-            `$${(s.allTime.estimatedCost/1e6).toFixed(5)}`,
-          ],
+          ["Requests",        s.today.requests,         s.week.requests,         s.month.requests,         s.allTime.requests],
+          ["Total Tokens",    s.today.tokens,           s.week.tokens,           s.month.tokens,           s.allTime.tokens],
+          ["Input Tokens",    s.today.promptTokens,     s.week.promptTokens,     s.month.promptTokens,     s.allTime.promptTokens],
+          ["Output Tokens",   s.today.completionTokens, s.week.completionTokens, s.month.completionTokens, s.allTime.completionTokens],
+          ["Context Tokens",  s.today.contextTokens,    s.week.contextTokens,    s.month.contextTokens,    s.allTime.contextTokens],
+          ["Est. Cost",       fmtCost(s.today.estimatedCost), fmtCost(s.week.estimatedCost), fmtCost(s.month.estimatedCost), fmtCost(s.allTime.estimatedCost)],
         ],
       });
     }
 
-    // Log rows
-    sections.push(buildLogsSection(keyLogs, `Request Logs (${periodLabel})`));
+    // Sheet 2: Request logs (filtered by period)
+    sheets.push(buildLogsSection(keyLogs, `Request Logs (${periodLabel})`));
 
-    exportCsvMultiSection(
-      sections,
-      `key-${id}-logs-${dateStr}.csv`,
-      periodLabel,
-      keyData?.name,
-    );
+    exportXlsx(sheets, `key-${id}-logs-${dateStr}`, {
+      title: `API Key Report: ${keyData?.name || id}`,
+      period: periodLabel,
+      keyName: keyData?.name,
+    });
   };
 
   const handleExportSessions = () => {
     const dateStr = new Date().toISOString().split("T")[0];
     const sessions = keyData?.analytics?.deviceSessions || [];
-    const sections = [];
 
-    // Stats summary
+    const sheets = [];
+
+    // Sheet 1: Stats summary
     if (keyData?.stats) {
       const s = keyData.stats;
-      sections.push({
-        title: "Usage Summary",
-        notes: "All-time stats for this key",
+      sheets.push({
+        name: "Summary",
+        note: "Usage stats for this API key across all time periods",
         headers: ["Metric", "Today", "Last 7 Days", "Last 30 Days", "All Time"],
         rows: [
           ["Requests",   s.today.requests,  s.week.requests,  s.month.requests,  s.allTime.requests],
           ["Tokens",     s.today.tokens,    s.week.tokens,    s.month.tokens,    s.allTime.tokens],
-          ["Est. Cost",
-            `$${(s.today.estimatedCost/1e6).toFixed(5)}`,
-            `$${(s.week.estimatedCost/1e6).toFixed(5)}`,
-            `$${(s.month.estimatedCost/1e6).toFixed(5)}`,
-            `$${(s.allTime.estimatedCost/1e6).toFixed(5)}`,
-          ],
+          ["Input",      s.today.promptTokens, s.week.promptTokens, s.month.promptTokens, s.allTime.promptTokens],
+          ["Output",     s.today.completionTokens, s.week.completionTokens, s.month.completionTokens, s.allTime.completionTokens],
+          ["Est. Cost",  fmtCost(s.today.estimatedCost), fmtCost(s.week.estimatedCost), fmtCost(s.month.estimatedCost), fmtCost(s.allTime.estimatedCost)],
         ],
       });
     }
 
-    sections.push(buildSessionsSection(sessions, "Chat Sessions"));
+    // Sheet 2: Sessions
+    sheets.push(buildSessionsSection(sessions, "Chat Sessions"));
 
-    exportCsvMultiSection(
-      sections,
-      `key-${id}-sessions-${dateStr}.csv`,
-      "All Time",
-      keyData?.name,
-    );
+    exportXlsx(sheets, `key-${id}-sessions-${dateStr}`, {
+      title: `API Key Sessions: ${keyData?.name || id}`,
+      period: "All Time",
+      keyName: keyData?.name,
+    });
   };
 
   if (!keyData) {
@@ -842,17 +834,17 @@ export default function KeyDetailPage() {
                       <td className="py-2 px-4">
                         <code className="text-xs font-mono">{d.fingerprint?.substring(0, 16)}...</code>
                       </td>
-                      <td className="py-2 px-4 text-sm">{d.ipAddress || "—"}</td>
-                      <td className="py-2 px-4 text-sm">{d.ideDetected || "—"}</td>
-                      <td className="py-2 px-4 text-sm">{d.osDetected || "—"}</td>
-                      <td className="py-2 px-4 text-xs">{d.deviceName || "—"}</td>
+                      <td className="py-2 px-4 text-sm">{d.ipAddress || "â€”"}</td>
+                      <td className="py-2 px-4 text-sm">{d.ideDetected || "â€”"}</td>
+                      <td className="py-2 px-4 text-sm">{d.osDetected || "â€”"}</td>
+                      <td className="py-2 px-4 text-xs">{d.deviceName || "â€”"}</td>
                       <td className="py-2 px-4 text-xs text-muted-foreground">
                         {d.firstSeen ? (
                           <>
                             <div>{formatDate(d.firstSeen)}</div>
                             <div className="text-[10px]">{formatRelativeTime(d.firstSeen)}</div>
                           </>
-                        ) : "—"}
+                        ) : "â€”"}
                       </td>
                       <td className="py-2 px-4 text-xs text-muted-foreground">
                         {d.lastSeen ? (
@@ -860,7 +852,7 @@ export default function KeyDetailPage() {
                             <div>{formatDate(d.lastSeen)}</div>
                             <div className="text-[10px]">{formatRelativeTime(d.lastSeen)}</div>
                           </>
-                        ) : "—"}
+                        ) : "â€”"}
                       </td>
                       <td className="py-2 px-4 text-right font-mono">{d.requestCount}</td>
                       <td className="py-2 px-4 text-center">
@@ -905,7 +897,7 @@ export default function KeyDetailPage() {
                 </div>
               </div>
               <Button variant="outline" size="sm" onClick={handleExportLogs}>
-                <Download className="h-4 w-4 mr-2" /> Export CSV
+                <Download className="h-4 w-4 mr-2" /> Export XLSX
               </Button>
             </CardHeader>
             <CardContent className="p-0">
@@ -941,7 +933,7 @@ export default function KeyDetailPage() {
                         <div className="text-[10px]">{log.clientName || "-"}</div>
                       </td>
                       <td className="py-2 px-4 text-xs font-mono">{log.ipAddress}</td>
-                      <td className="py-2 px-4 text-xs">{(log.toolsUsed || []).length ? (log.toolsUsed || []).slice(0, 2).join(", ") : "—"}</td>
+                      <td className="py-2 px-4 text-xs">{(log.toolsUsed || []).length ? (log.toolsUsed || []).slice(0, 2).join(", ") : "â€”"}</td>
                       <td className="py-2 px-4 text-right font-mono text-xs">{formatNumber(log.totalTokens)}</td>
                       <td className="py-2 px-4 text-right text-xs text-muted-foreground">{log.latencyMs}ms</td>
                       <td className="py-2 px-4 text-center">
@@ -980,7 +972,7 @@ export default function KeyDetailPage() {
                   {(keyData.analytics?.topDevices || []).map((d, idx) => (
                     <tr key={`top-device-${idx}`} className="border-b border-border/30 hover:bg-accent/30">
                       <td className="py-2 px-4 text-xs font-mono">{d.deviceFingerprint ? `${d.deviceFingerprint.substring(0, 16)}...` : "unknown"}</td>
-                      <td className="py-2 px-4 text-xs font-mono">{d.ipAddress || "—"}</td>
+                      <td className="py-2 px-4 text-xs font-mono">{d.ipAddress || "â€”"}</td>
                       <td className="py-2 px-4 text-xs">
                         <div>{d.ideDetected || "Unknown IDE"}</div>
                         <div className="text-[10px] text-muted-foreground">{d.osDetected || "Unknown OS"}</div>
@@ -994,7 +986,7 @@ export default function KeyDetailPage() {
                             <div>{formatDate(d.lastSeen)}</div>
                             <div className="text-[10px]">{formatRelativeTime(d.lastSeen)}</div>
                           </>
-                        ) : "—"}
+                        ) : "â€”"}
                       </td>
                     </tr>
                   ))}
@@ -1012,7 +1004,7 @@ export default function KeyDetailPage() {
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-base">Session Timeline per Device</CardTitle>
               <Button variant="outline" size="sm" onClick={handleExportSessions}>
-                <Download className="h-4 w-4 mr-2" /> Export CSV
+                <Download className="h-4 w-4 mr-2" /> Export XLSX
               </Button>
             </CardHeader>
             <CardContent className="p-0">
@@ -1042,7 +1034,7 @@ export default function KeyDetailPage() {
                         <div className="font-medium truncate max-w-[220px]" title={s.sessionName || s.sessionId}>
                           {s.sessionName && s.sessionName.trim() ? s.sessionName : "Untitled Chat"}
                         </div>
-                        <div className="text-[10px] font-mono text-muted-foreground">{s.sessionId ? `${s.sessionId.substring(0, 16)}…` : "—"}</div>
+                        <div className="text-[10px] font-mono text-muted-foreground">{s.sessionId ? `${s.sessionId.substring(0, 16)}â€¦` : "â€”"}</div>
                       </td>
                       <td className="py-2 px-4 text-xs font-mono">{s.deviceFingerprint ? `${s.deviceFingerprint.substring(0, 16)}...` : "unknown"}</td>
                       <td className="py-2 px-4 text-xs"><code className="text-[10px] bg-accent/50 px-1.5 py-0.5 rounded">{s.model || "unknown"}</code></td>
@@ -1055,7 +1047,7 @@ export default function KeyDetailPage() {
                             <div>{formatDate(s.lastSeenAt)}</div>
                             <div className="text-[10px]">{formatRelativeTime(s.lastSeenAt)}</div>
                           </>
-                        ) : "—"}
+                        ) : "â€”"}
                       </td>
                     </tr>
                   ))}
@@ -1164,7 +1156,7 @@ export default function KeyDetailPage() {
           <Card className="border-border/50 mb-4">
             <CardHeader className="pb-2">
               <CardTitle className="text-base font-medium">
-                Model Usage Chart — {modelTabSort === "tokens" ? "By Tokens" : "By Requests"}
+                Model Usage Chart â€” {modelTabSort === "tokens" ? "By Tokens" : "By Requests"}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -1229,7 +1221,7 @@ export default function KeyDetailPage() {
                       <td className="py-2 px-4 text-right font-mono text-xs text-blue-400">{formatNumber(m.promptTokens || 0)}</td>
                       <td className="py-2 px-4 text-right font-mono text-xs text-purple-400">{formatNumber(m.completionTokens || 0)}</td>
                       <td className="py-2 px-4 text-right font-mono text-xs font-semibold">{formatNumber(m.tokens || 0)}</td>
-                      <td className="py-2 px-4 text-right text-xs text-muted-foreground">{m.avgLatency ? `${m.avgLatency}ms` : "—"}</td>
+                      <td className="py-2 px-4 text-right text-xs text-muted-foreground">{m.avgLatency ? `${m.avgLatency}ms` : "â€”"}</td>
                       <td className="py-2 px-4 text-right font-mono text-xs text-emerald-400">{formatCost(m.estimatedCost || 0)}</td>
                     </tr>
                   ))}
@@ -1297,3 +1289,4 @@ export default function KeyDetailPage() {
     </div>
   );
 }
+
