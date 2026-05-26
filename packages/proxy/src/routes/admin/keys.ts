@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { db } from "../../db/index.js";
 import { apiKeys, requestLogs, devices, allowedDevices, allowedIdes, chatSessions, adminConfig, modelLimits } from "../../db/schema.js";
-import { eq, sql, and } from "drizzle-orm";
+import { eq, sql, and, desc } from "drizzle-orm";
 import { generateApiKey, getKeyPrefix, sha256, maskKey } from "../../utils/crypto.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
 import { getModelRates } from "../../utils/cost-calculator.js";

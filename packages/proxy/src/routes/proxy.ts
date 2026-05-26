@@ -430,14 +430,19 @@ async function resolveChatSession(params: {
     if (params.messageAnalysis.assistantMessageCount > 0) {
       // Has conversation history → this is a continuation prompt. Always count.
       isNewUserPrompt = true;
-    } else if (params.contextTokensBefore > 1000) {
-      // No assistant history but large context (>1000 tokens) = has tool definitions.
-      // This is the "full" IDE request for a first prompt. Count it.
+    } else if (params.contextTokensBefore > 50) {
+      // No assistant history but not a tiny ping. Count it.
       isNewUserPrompt = true;
     }
-    // else: no history, small context = IDE compact setup request. Don't count.
+    // else: no history, extremely small context (<50 tokens) = IDE compact setup request. Don't count.
   } else if (params.messageAnalysis.hasUserMessage && !hashChanged && gapMs >= SWITCH_PROMPT_MIN_GAP_MS) {
     // Same hash but very large gap → user re-sent after long pause
+    isNewUserPrompt = true;
+  }
+
+  // FALLBACK PROTEKSI: Jika hash tidak berubah (tool loops) tapi promptCount sesi masih 0
+  // (karena lolos dari aturan ping sebelumnya), paksa hitung sebagai prompt baru agar limit terpotong!
+  if (!isNewUserPrompt && latest && latest.promptCount === 0 && params.contextTokensBefore > 500) {
     isNewUserPrompt = true;
   }
 
