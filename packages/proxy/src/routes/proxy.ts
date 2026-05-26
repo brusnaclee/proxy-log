@@ -287,7 +287,7 @@ async function resolveChatSession(params: {
   messageAnalysis: MessageAnalysis;
   requestBody?: any;
 }): Promise<{ sessionId: string; contextEvent: ContextEvent; contextDeltaTokens: number; gapMs: number; isNewUserPrompt: boolean }> {
-  // Find the most recent session for this device (across ALL sessions, not just active one)
+  // ─── Find the most recent session for this device ───────────────────────────
   const latest = await db
     .select()
     .from(chatSessions)
@@ -311,6 +311,7 @@ async function resolveChatSession(params: {
     .limit(1)
     .get();
 
+  // ─── No session yet → create first one ──────────────────────────────────────
   if (!latest) {
     const isNewUserPrompt = params.messageAnalysis.hasUserMessage;
     const sessionId = await createChatSession({ ...params, isUserPrompt: isNewUserPrompt, messageAnalysis: params.messageAnalysis });
@@ -319,133 +320,80 @@ async function resolveChatSession(params: {
 
   const gapMs = Date.now() - parseDbDate(latest.lastSeenAt);
 
-  // If the most recent session is too old BUT there's a very recent one
-  // (sub-agent race condition: request arrives before previous session update commits)
-  // Use the very recent session instead of creating a new one.
+  // Sub-agent race condition: latest is stale but there's a very recent different session
   if (gapMs > SESSION_GAP_MS && veryRecent && veryRecent.sessionId !== latest.sessionId) {
     const veryRecentGap = Date.now() - parseDbDate(veryRecent.lastSeenAt);
-    // Reuse the very recent session as a sub-agent switch
-    return {
-      sessionId: veryRecent.sessionId,
-      contextEvent: "switch",
-      contextDeltaTokens: 0,
-      gapMs: veryRecentGap,
-      isNewUserPrompt: false,
-    };
+    return { sessionId: veryRecent.sessionId, contextEvent: "switch", contextDeltaTokens: 0, gapMs: veryRecentGap, isNewUserPrompt: false };
   }
 
+  // ─── Gap > 45 min → definitely a new session ────────────────────────────────
   if (gapMs > SESSION_GAP_MS) {
     const isNewUserPrompt = params.messageAnalysis.hasUserMessage;
     const sessionId = await createChatSession({ ...params, isUserPrompt: isNewUserPrompt, messageAnalysis: params.messageAnalysis });
     return { sessionId, contextEvent: "new_session", contextDeltaTokens: 0, gapMs, isNewUserPrompt };
   }
 
-  const hasBothFingerprints = !!(params.contextFingerprint && latest.contextFingerprint);
-  const sameContext = hasBothFingerprints
-    ? params.contextFingerprint === latest.contextFingerprint
-    : true;
-
-  if (sameContext) {
-    if (params.contextTokensBefore <= 0) {
-      // ── New chat detection ──────────────────────────────────────────────────
-      // If context is fresh (0 tokens) but the previous session had context,
-      // AND there's a meaningful gap → this is a new conversation, new session.
-      // This handles "new chat" button presses regardless of model changes.
-      const hadContextBefore = (latest.lastContextTokens || 0) > 0;
-      const newChatDetected = hadContextBefore && gapMs >= NEW_PROMPT_MIN_GAP_MS;
-      if (newChatDetected) {
-        const isNewUserPrompt = params.messageAnalysis.hasUserMessage;
-        const sessionId = await createChatSession({ ...params, isUserPrompt: isNewUserPrompt, messageAnalysis: params.messageAnalysis });
-        return { sessionId, contextEvent: "new_session", contextDeltaTokens: 0, gapMs, isNewUserPrompt };
-      }
-      return { sessionId: latest.sessionId, contextEvent: "append", contextDeltaTokens: 0, gapMs, isNewUserPrompt: false };
-    }
-
-    const previous = latest.lastContextTokens || 0;
-    const delta = params.contextTokensBefore - previous;
-    const contextEvent: ContextEvent = delta <= -COMPACT_DROP_THRESHOLD ? "compact" : "append";
-    
-    // ═══════════════════════════════════════════════════════════
-    // NEW LOGIC: Detect if this is a new user prompt
-    // ═══════════════════════════════════════════════════════════
-    let isNewUserPrompt = false;
-    
-    // Method 1: Message hash comparison (most accurate)
-    if (params.messageAnalysis.hasUserMessage && params.messageAnalysis.messageHash) {
-      if (params.messageAnalysis.messageHash !== latest.lastUserMessageHash) {
-        isNewUserPrompt = true;
-      }
-    }
-    // Method 2: Large gap (user definitely came back) AND has user message
-    else if (gapMs >= SWITCH_PROMPT_MIN_GAP_MS && params.messageAnalysis.hasUserMessage) { // 60 seconds
-      isNewUserPrompt = true;
-    }
-    // Method 3: Context growth + medium gap (likely user prompt) AND has user message
-    else if (delta > 0 && gapMs >= NEW_PROMPT_MIN_GAP_MS && params.messageAnalysis.hasUserMessage) { // 10 seconds
-      // But NOT if previous request had tool calls active
-      if (!latest.lastToolCallsActive) {
-        isNewUserPrompt = true;
-      }
-    }
-    
-    return { sessionId: latest.sessionId, contextEvent, contextDeltaTokens: delta, gapMs, isNewUserPrompt };
-  }
-
-  // ── Context switch: context fingerprint changed ───────────────────────────────
-  // Possible causes:
-  //   A) Model changed: IDE may embed model name in system prompt → different fingerprint,
-  //      but this is still the SAME conversation. Should stay in same session.
-  //   B) User opened a NEW CHAT quickly: fresh context (tiny/zero context size).
-  //   C) Sub-agent spawned: different fingerprint, large context, gap < 60s.
+  // ─── Within session window: determine new-chat vs continuation ──────────────
   //
-  // Rule priority:
-  //   1. If context is tiny relative to previous → new chat (fingerprint + size changed = new conversation)
-  //   2. If gap is within session window AND context is substantial → model change or sub-agent → same session
-  //   3. If gap > session window → definitely new session
+  // Key insight: contextFingerprint is unreliable as a "same conversation" signal because
+  // some IDEs mutate the system prompt on every request (inject model name, timestamps,
+  // tool lists, etc.), changing the fingerprint even mid-conversation.
+  //
+  // The ONLY reliable signals we have are:
+  //   1. contextTokensBefore: if context size resets to near-zero → definitely new chat
+  //   2. messageHash: if the user message changed → user typed something new
+  //   3. gapMs: long gap = new prompt; very short gap = sub-agent/tool follow-up
+  //
+  // We do NOT split sessions based on fingerprint change anymore. A session stays
+  // together as long as it's within the 45-min window. Model changes are transparent.
+
   const prevTokens = latest.lastContextTokens || 0;
   const incomingTokens = params.contextTokensBefore;
 
-  // Detect "new chat opened": context was reset (tiny incoming relative to what we had before).
-  // A model change mid-conversation keeps the full history → context size stays comparable.
-  const isLikelyNewChat =
-    params.messageAnalysis.hasUserMessage && (
-      // History wiped: incoming is tiny fraction of previous context
-      (prevTokens > 0 && incomingTokens < prevTokens * 0.4) ||
-      // Or context is basically empty (first message only) but previous session had real history
-      (incomingTokens <= 200 && prevTokens > 200)
-    );
+  // ── Detect "New Chat" button pressed ────────────────────────────────────────
+  // Signs: context size dropped dramatically (history wiped) with a human-speed gap.
+  const contextResetToZero = incomingTokens <= 0 && prevTokens > 0;
+  const contextShrankMassively =
+    prevTokens > 200 && incomingTokens < prevTokens * 0.4 && incomingTokens <= 200;
 
-  if (isLikelyNewChat) {
-    // Context fingerprint changed AND context looks fresh → new chat, new session
+  if ((contextResetToZero || contextShrankMassively) && gapMs >= NEW_PROMPT_MIN_GAP_MS) {
     const isNewUserPrompt = params.messageAnalysis.hasUserMessage;
-    const sessionId = await createChatSession({
-      ...params,
-      isUserPrompt: isNewUserPrompt,
-      messageAnalysis: params.messageAnalysis,
-    });
+    const sessionId = await createChatSession({ ...params, isUserPrompt: isNewUserPrompt, messageAnalysis: params.messageAnalysis });
     return { sessionId, contextEvent: "new_session", contextDeltaTokens: 0, gapMs, isNewUserPrompt };
   }
 
-  // Context changed but size is comparable → either model switch or sub-agent.
-  // In both cases: stay in the same session as long as we're within the session gap window.
-  if (gapMs <= SESSION_GAP_MS) {
-    // Within active session: treat as a switch event (model change or sub-agent), same session.
-    // Determine if this is a new user prompt: only if gap is large enough and has user message.
-    const isNewUserPrompt =
-      params.messageAnalysis.hasUserMessage &&
-      gapMs >= SWITCH_PROMPT_MIN_GAP_MS &&
+  // ── Same session continuation (model change, context growth, or sub-agent) ──
+  const delta = incomingTokens - prevTokens;
+  const contextEvent: ContextEvent = delta <= -COMPACT_DROP_THRESHOLD ? "compact" : "append";
+
+  // ─── Determine if this is a new user prompt ──────────────────────────────────
+  // Primary signal: message hash changed → user typed something new.
+  //   This works regardless of model, fingerprint, or gap size.
+  // Sub-agent detection: sub-agents fire the SAME message hash repeatedly within seconds,
+  //   or fire tool-result messages (not user messages). Neither counts as new prompt.
+  let isNewUserPrompt = false;
+
+  if (params.messageAnalysis.hasUserMessage) {
+    const hashChanged = params.messageAnalysis.messageHash &&
       params.messageAnalysis.messageHash !== latest.lastUserMessageHash;
-    return { sessionId: latest.sessionId, contextEvent: "switch", contextDeltaTokens: incomingTokens - prevTokens, gapMs, isNewUserPrompt };
+
+    if (hashChanged) {
+      // Hash changed → user typed a new message.
+      // Exception: if gap is extremely short AND previous had active tool calls,
+      // this is likely an agent follow-up (auto-generated user message for tool result).
+      const likelyAgentFollowup =
+        gapMs < NEW_PROMPT_MIN_GAP_MS && latest.lastToolCallsActive;
+      if (!likelyAgentFollowup) {
+        isNewUserPrompt = true;
+      }
+    } else if (!hashChanged && gapMs >= SWITCH_PROMPT_MIN_GAP_MS) {
+      // Same hash but large gap → user re-sent after long pause (e.g. edited & resent)
+      isNewUserPrompt = true;
+    }
+    // else: same hash, short gap → sub-agent or tool retry → not a new prompt
   }
 
-  // Gap exceeded session window → new session
-  const isNewUserPrompt = params.messageAnalysis.hasUserMessage;
-  const sessionId = await createChatSession({
-    ...params,
-    isUserPrompt: isNewUserPrompt,
-    messageAnalysis: params.messageAnalysis,
-  });
-  return { sessionId, contextEvent: "new_session", contextDeltaTokens: 0, gapMs, isNewUserPrompt };
+  return { sessionId: latest.sessionId, contextEvent, contextDeltaTokens: delta, gapMs, isNewUserPrompt };
 }
 
 async function updateSessionAfterRequest(tx: any, params: {
