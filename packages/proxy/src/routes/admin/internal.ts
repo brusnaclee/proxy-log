@@ -4,6 +4,7 @@ import { db } from "../../db/index.js";
 import { adminConfig, allowedDevices, allowedIdes, apiKeys, devices, requestLogs, modelLimits } from "../../db/schema.js";
 import { generateApiKey, getKeyPrefix, sha256 } from "../../utils/crypto.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
+import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindowResetMs } from "../../utils/rate-limit.js";
 
 const internal = new Hono();
 
@@ -571,15 +572,73 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
 
   const config = await db.select().from(adminConfig).get();
 
+  const globalLimit = key.promptLimit && key.promptLimit > 0 ? key.promptLimit : config?.globalPromptLimit || 0;
+  const globalWindow = key.promptLimitWindow || config?.globalPromptLimitWindow || "30m";
+  let globalUsed = 0;
+  let globalResetMins = 0;
+
+  if (globalLimit > 0) {
+    const plCheck = await checkPromptLimit(key.id, globalLimit, globalWindow);
+    globalUsed = plCheck.used;
+    const windowMs = parseRateLimitWindow(globalWindow);
+    const resetMs = await getWindowResetMs(key.id, windowMs);
+    globalResetMins = Math.ceil(resetMs / 60000);
+  }
+
+  // Get active model limits (global overrides)
+  const activeModelLimits = await db.select().from(modelLimits).where(eq(modelLimits.scope, 'global')).all();
+  const perModelLimitFallback = key.perModelPromptLimit && key.perModelPromptLimit > 0 ? key.perModelPromptLimit : config?.globalPerModelPromptLimit || 0;
+  const perModelWindowFallback = key.perModelPromptLimitWindow || config?.globalPerModelPromptLimitWindow || "30m";
+
+  const modelUsage = [];
+  // For models they actually used today, check limits
+  for (const tm of todayModels) {
+    if (!tm.model) continue;
+    const mlCheck = await checkModelPromptLimit(
+      key.id,
+      tm.model,
+      key.perModelPromptLimit || 0,
+      key.perModelPromptLimitWindow || null,
+      config?.globalPerModelPromptLimit || 0,
+      config?.globalPerModelPromptLimitWindow || "30m"
+    );
+    const windowStr = key.perModelPromptLimitWindow || config?.globalPerModelPromptLimitWindow || "30m";
+    const windowMs = parseRateLimitWindow(windowStr);
+    const resetMs = await getWindowResetMs(key.id, windowMs, tm.model);
+    modelUsage.push({
+      model: tm.model,
+      used: mlCheck.used,
+      limit: mlCheck.effectiveLimit,
+      resetMins: Math.ceil(resetMs / 60000),
+      window: windowStr
+    });
+  }
+
+  // Also include models they haven't used today but have explicit limits
+  for (const am of activeModelLimits) {
+    if (!modelUsage.find(m => m.model === am.model)) {
+      modelUsage.push({
+        model: am.model,
+        used: 0,
+        limit: am.promptLimit,
+        resetMins: 0,
+        window: perModelWindowFallback
+      });
+    }
+  }
+
   return c.json({
     discordUserId: key.discordUserId,
     discordUsername: key.discordUsername || key.name,
     isActive: key.isActive,
     keyPrefix: key.keyPrefix,
-    promptLimit: key.promptLimit && key.promptLimit > 0 ? key.promptLimit : config?.globalPromptLimit || 0,
-    promptLimitWindow: key.promptLimitWindow || config?.globalPromptLimitWindow || "30m",
-    perModelPromptLimit: key.perModelPromptLimit && key.perModelPromptLimit > 0 ? key.perModelPromptLimit : config?.globalPerModelPromptLimit || 0,
-    perModelPromptLimitWindow: key.perModelPromptLimitWindow || config?.globalPerModelPromptLimitWindow || "30m",
+    promptLimit: globalLimit,
+    promptLimitWindow: globalWindow,
+    promptUsed: globalUsed,
+    promptResetMins: globalResetMins,
+    modelUsage,
+    perModelPromptLimit: perModelLimitFallback,
+    perModelPromptLimitWindow: perModelWindowFallback,
       today: {
         requests: todayStats?.requests || 0,
         tokens: todayStats?.tokens || 0,
