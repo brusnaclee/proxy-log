@@ -807,6 +807,7 @@ const STATE_PATH = path.join(AGVERIF_DATA_DIR, 'tokito_state.json');
 const tokitoSessions = new Map();
 const runtime = {
 	models: [],
+	modelEntries: [],
 	modelProviderMap: new Map(),
 	status: new Map(),
 	latency: new Map(),
@@ -946,28 +947,37 @@ async function pollModelStatus() {
 	const now = Date.now();
 	const allModels = [];
 	runtime.modelProviderMap.clear();
+	runtime.modelEntries = [];
 
 	for (const prov of providers) {
 		try {
 			const base = prov.endpoint.replace(/\/+$/, '');
-			const url = `${base}/models`;
-			const res = await fetch(url, {
-				headers: { Authorization: `Bearer ${prov.apiKey}` },
-			});
-			if (!res.ok) {
-				console.error(`[tokito-monitor] failed to fetch models from ${prov.name}: HTTP ${res.status}`);
-				continue;
+			const candidates = [`${base}/models`, `${base}/v1/models`];
+			let fetched = false;
+			for (const url of candidates) {
+				try {
+					const res = await fetch(url, {
+						headers: { Authorization: `Bearer ${prov.apiKey}` },
+					});
+					if (!res.ok) continue;
+					const payload = await res.json();
+					const arr = Array.isArray(payload) ? payload : payload?.data || [];
+					for (const m of arr) {
+						const id = m.id || m.name;
+						if (!runtime.modelProviderMap.has(id)) {
+							runtime.modelProviderMap.set(id, { provider: prov.name, baseUrl: base, apiKey: prov.apiKey });
+							allModels.push(id);
+							runtime.modelEntries.push({ modelId: id, provider: prov.name, baseUrl: base, apiKey: prov.apiKey });
+						}
+					}
+					fetched = true;
+					console.log(`[tokito-monitor] fetched ${arr.length} models from provider: ${prov.name} (${url})`);
+					break;
+				} catch (_) {}
 			}
-			const payload = await res.json();
-			const arr = Array.isArray(payload) ? payload : payload?.data || [];
-			for (const m of arr) {
-				const id = m.id || m.name;
-				if (!runtime.modelProviderMap.has(id)) {
-					runtime.modelProviderMap.set(id, { provider: prov.name, baseUrl: base });
-					allModels.push(id);
-				}
+			if (!fetched) {
+				console.error(`[tokito-monitor] failed to fetch models from ${prov.name} (tried: ${candidates.join(', ')})`);
 			}
-			console.log(`[tokito-monitor] fetched ${arr.length} models from provider: ${prov.name}`);
 		} catch (err) {
 			console.error(`[tokito-monitor] error fetching from ${prov.name}:`, err.message);
 		}
@@ -978,18 +988,17 @@ async function pollModelStatus() {
 }
 
 async function pushMetricsToProxy() {
-	const payload = runtime.models.map((modelId) => {
-		const st = runtime.status.get(modelId) || { online: false, status: 0 };
-		const lt = runtime.latency.get(modelId) || { ms: 0 };
-		const info = runtime.modelProviderMap.get(modelId) || {};
+	const payload = runtime.modelEntries.map((entry) => {
+		const st = runtime.status.get(entry.modelId) || { online: false, status: 0 };
+		const lt = runtime.latency.get(entry.modelId) || { ms: 0 };
 		return {
-			modelId,
-			provider: info.provider || providerOf(modelId),
+			modelId: entry.modelId,
+			provider: entry.provider,
 			isOnline: st.online,
 			latencyMs: lt.ms,
 			httpStatus: st.status,
 			errorMessage: st.error || null,
-			baseUrl: info.baseUrl || runtime.lastWorkingBaseUrl,
+			baseUrl: entry.baseUrl,
 		};
 	});
 
@@ -1009,11 +1018,10 @@ async function runLatencyTest() {
 
 	const now = Date.now();
 
-	const jobs = runtime.models.map(async (modelId) => {
-		const info = runtime.modelProviderMap.get(modelId) || {};
-		const baseUrl = info.baseUrl || TOKITO_BASE_URL;
-		const apiKey = info.apiKey || TOKITO_API_KEY;
+	const jobs = runtime.modelEntries.map(async (entry) => {
 		const started = Date.now();
+		const baseUrl = entry.baseUrl;
+		const apiKey = entry.apiKey;
 
 		let result;
 		try {
@@ -1026,7 +1034,7 @@ async function runLatencyTest() {
 					'Content-Type': 'application/json',
 				},
 				body: JSON.stringify({
-					model: modelId,
+					model: entry.modelId,
 					messages: [{ role: 'user', content: 'test' }],
 					max_tokens: 1,
 					temperature: 0,
@@ -1043,13 +1051,13 @@ async function runLatencyTest() {
 		}
 
 		const ms = Date.now() - started;
-		runtime.latency.set(modelId, {
+		runtime.latency.set(entry.modelId, {
 			ok: result.ok,
 			ms,
 			checkedAt: now,
 			status: result.status,
 		});
-		runtime.status.set(modelId, {
+		runtime.status.set(entry.modelId, {
 			online: result.ok && result.status < 500,
 			checkedAt: now,
 			status: result.status,
@@ -1227,7 +1235,7 @@ function buildTokitoRows(
 			.setStyle(ButtonStyle.Danger),
 	);
 
-	const providers = ['all', ...new Set(runtime.models.map(providerOf))].slice(
+	const providers = ['all', ...new Set(runtime.modelEntries.map(e => e.provider))].slice(
 		0,
 		25,
 	);
@@ -1272,9 +1280,9 @@ function buildTokitoRows(
 }
 
 function listModels(kind, provider, sortMode) {
-	let items = [...runtime.models];
+	let items = runtime.modelEntries.map(e => e.modelId);
 	if (provider !== 'all')
-		items = items.filter((m) => providerOf(m) === provider);
+		items = items.filter(m => (runtime.modelProviderMap.get(m)?.provider || providerOf(m)) === provider);
 
 	items.sort((a, b) => a.localeCompare(b));
 	if (sortMode === 'status_online_first') {
