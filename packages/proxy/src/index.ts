@@ -1,4 +1,4 @@
-import { config as loadEnv } from "dotenv";
+﻿import { config as loadEnv } from "dotenv";
 import { existsSync } from "fs";
 import { resolve } from "path";
 import { Hono } from "hono";
@@ -10,6 +10,7 @@ import { authMiddleware } from "./middleware/session.js";
 import proxyRoutes from "./routes/proxy.js";
 import authRoutes from "./routes/admin/auth.js";
 import settingsRoutes from "./routes/admin/settings.js";
+import providersRoutes from "./routes/admin/providers.js";
 import keysRoutes from "./routes/admin/keys.js";
 import logsRoutes from "./routes/admin/logs.js";
 import statsRoutes from "./routes/admin/stats.js";
@@ -57,6 +58,7 @@ app.get("/health", (c) => c.json({ status: "ok", timestamp: new Date().toISOStri
 app.use("/admin/*", authMiddleware);
 app.route("/admin", authRoutes);
 app.route("/admin", settingsRoutes);
+app.route("/admin", providersRoutes);
 app.route("/admin", keysRoutes);
 app.route("/admin", logsRoutes);
 app.route("/admin", statsRoutes);

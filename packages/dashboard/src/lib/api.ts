@@ -389,6 +389,10 @@ export interface GlobalSettings {
   globalPromptLimitWindow: string;
   globalPerModelPromptLimit: number;
   globalPerModelPromptLimitWindow: string;
+  globalDailyTokenLimit: number;
+  globalMonthlyTokenLimit: number;
+  globalDailyInputTokenLimit: number;
+  globalDailyOutputTokenLimit: number;
 }
 
 export interface ModelLimitEntry {

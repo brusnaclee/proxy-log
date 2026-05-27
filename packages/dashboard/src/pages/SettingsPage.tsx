@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { settings, logs, type ModelLimitEntry } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dialog";
 
 import { useRealtime } from "@/lib/realtime-context";
+import { ProvidersManager } from "@/components/ProvidersManager";
 import { globalSettings, request } from "@/lib/api";
 import { Switch } from "@/components/ui/switch";
 
@@ -195,6 +196,8 @@ export default function SettingsPage() {
           {error}
         </div>
       )}
+
+      <ProvidersManager />
 
       {/* Global & Upstream Configuration */}
       <Card className="border-border/50">
