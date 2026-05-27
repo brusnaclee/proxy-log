@@ -212,11 +212,6 @@ export default function OverviewPage() {
           sub: `Cost: ${formatCost(periodData.completionCost || 0)}`,
           color: "text-orange-400",
         },
-        {
-          label: `Context Tokens (${PERIOD_OPTS.find(o => o.key === period)?.label})`,
-          value: formatNumber(periodData.contextTokens || 0),
-          icon: Coins,
-          sub: "Estimated context lengths",
           color: "text-indigo-400",
         },
         {

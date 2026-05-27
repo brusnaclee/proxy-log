@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+﻿import { Hono } from "hono";
 import { db } from "../../db/index.js";
 import { requestLogs, apiKeys, devices, chatSessions } from "../../db/schema.js";
 import { eq, sql, and } from "drizzle-orm";
@@ -56,7 +56,7 @@ stats.get("/stats/overview", async (c) => {
     tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
     promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
     completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
-    contextTokens: sql<number>`COALESCE(SUM(estimated_context_length), 0)`,
+    contextTokens: sql<number>`0`,
     uniqueDevices: sql<number>`COUNT(DISTINCT device_fingerprint)`
   })
   .from(requestLogs)
@@ -80,7 +80,7 @@ stats.get("/stats/overview", async (c) => {
     tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
     promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
     completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
-    contextTokens: sql<number>`COALESCE(SUM(estimated_context_length), 0)`
+    contextTokens: sql<number>`0`
   })
   .from(requestLogs)
   .where(and(sql`created_at >= ${weekStr}`, sql`is_counted_request IS NOT 0`))
@@ -103,7 +103,7 @@ stats.get("/stats/overview", async (c) => {
     tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
     promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
     completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
-    contextTokens: sql<number>`COALESCE(SUM(estimated_context_length), 0)`
+    contextTokens: sql<number>`0`
   })
   .from(requestLogs)
   .where(and(sql`created_at >= ${monthStr}`, sql`is_counted_request IS NOT 0`))
@@ -126,7 +126,7 @@ stats.get("/stats/overview", async (c) => {
     tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
     promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
     completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
-    contextTokens: sql<number>`COALESCE(SUM(estimated_context_length), 0)`
+    contextTokens: sql<number>`0`
   })
   .from(requestLogs)
   .where(sql`is_counted_request IS NOT 0`)

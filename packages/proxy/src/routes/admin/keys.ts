@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+﻿import { Hono } from "hono";
 import { db } from "../../db/index.js";
 import { apiKeys, requestLogs, devices, allowedDevices, allowedIdes, chatSessions, adminConfig, modelLimits } from "../../db/schema.js";
 import { eq, sql, and, desc } from "drizzle-orm";
@@ -106,7 +106,7 @@ keys.get("/keys/:id", async (c) => {
       tokens:          sql<number>`COALESCE(SUM(total_tokens), 0)`,
       promptTokens:    sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
       completionTokens:sql<number>`COALESCE(SUM(completion_tokens), 0)`,
-      contextTokens:   sql<number>`COALESCE(SUM(estimated_context_length), 0)`,
+      contextTokens:   sql<number>`0`,
       estimatedCost:   sql<number>`COALESCE(SUM(estimated_cost), 0)`,
     }).from(requestLogs).where(where).get();
     const breakdown = await db.select({

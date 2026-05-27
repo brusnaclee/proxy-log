@@ -1,4 +1,4 @@
-const {
+﻿const {
 	Client,
 	GatewayIntentBits,
 	Partials,
@@ -2103,7 +2103,7 @@ async function handleRankingSearchModal(interaction) {
 			`🔢 Total Tokens: **${formatTokens(p.tokens)}**`,
 			`📥 Input: **${formatTokens(p.promptTokens)}**`,
 			`📤 Output: **${formatTokens(p.completionTokens)}**`,
-			`📏 Context: **${formatTokens(p.contextTokens)}**`,
+			// Context tokens removed
 			`💰 Est. Cost: **${formatCostMicro(p.estimatedCost)}**`,
 		];
 		if (p.topModels && p.topModels.length > 0) {
