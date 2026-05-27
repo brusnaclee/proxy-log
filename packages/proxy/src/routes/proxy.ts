@@ -1209,8 +1209,18 @@ proxy.all("/*", async (c) => {
                   
                   const deltaContent = data?.choices?.[0]?.delta?.content;
                   if (typeof deltaContent === "string") {
-                    // Do not slice, keep full stream data for responsePreview
                     streamedResponsePreview = `${streamedResponsePreview}${deltaContent}`;
+                  }
+                  // Codex streaming: output_text or content_block delta
+                  if (!deltaContent) {
+                    const outputText = data?.output_text || data?.delta?.text || data?.delta?.content;
+                    if (typeof outputText === "string") {
+                      streamedResponsePreview = `${streamedResponsePreview}${outputText}`;
+                    }
+                    // Claude streaming: content_block_delta
+                    if (data?.type === "content_block_delta" && data?.delta?.text) {
+                      streamedResponsePreview = `${streamedResponsePreview}${data.delta.text}`;
+                    }
                   }
                   if (data.usage) {
                     promptTokens = data.usage.prompt_tokens || 0;
@@ -1304,13 +1314,41 @@ proxy.all("/*", async (c) => {
         errorMessage = parsed.error.message || JSON.stringify(parsed.error);
       }
       const firstChoice = parsed?.choices?.[0];
-      const assistantText = typeof firstChoice?.message?.content === "string"
+      let assistantText = typeof firstChoice?.message?.content === "string"
         ? firstChoice.message.content
         : typeof firstChoice?.text === "string"
           ? firstChoice.text
           : "";
+
+      // Codex /v1/responses format: output is in parsed.output or parsed.output_text
+      if (!assistantText && parsed?.output_text) {
+        assistantText = parsed.output_text;
+      }
+      if (!assistantText && Array.isArray(parsed?.output)) {
+        assistantText = parsed.output
+          .filter((o: any) => o.type === "message" || o.type === "text")
+          .map((o: any) => {
+            if (typeof o.content === "string") return o.content;
+            if (Array.isArray(o.content)) return o.content.map((c: any) => c.text || "").join("");
+            return "";
+          })
+          .join("");
+      }
+
+      // Claude /v1/messages format: content array
+      if (!assistantText && Array.isArray(parsed?.content)) {
+        assistantText = parsed.content
+          .filter((c: any) => c.type === "text")
+          .map((c: any) => c.text || "")
+          .join("");
+      }
+
+      // Fallback: if we still have no text but response is big, estimate from body length
+      if (!assistantText && !completionTokens && responseBody.length > 200) {
+        completionTokens = estimateTokens(responseBody);
+      }
+
       if (assistantText) {
-        // Keep the full response in responsePreview so that tool output is not truncated.
         responsePreview = assistantText || null;
         if (!completionTokens) {
           completionTokens = estimateTokens(assistantText);
