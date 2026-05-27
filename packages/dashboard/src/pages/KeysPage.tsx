@@ -67,15 +67,15 @@ export default function KeysPage() {
   };
 
   const handleExport = () => {
-    const headers = ["Name", "Key Prefix", "Status", "Devices", "Requests Today", "Total Tokens", "Max Devices", "Device Policy", "IP Policy", "IDE Policy", "Created At"];
+    const headers = ["Name", "Key Prefix", "Status", "Devices", "Requests Today", "Tokens Today", "Est. Cost Today", "Max Devices", "Device Policy", "IP Policy", "IDE Policy", "Created At"];
     const rows = allKeys.map((k) => [
       k.name,
       k.keyPrefix,
       k.isActive ? "Active" : "Disabled",
       k.deviceCount,
       k.requestsToday,
-      k.totalTokens,
-      formatCost(k.estimatedCost || 0),
+      k.tokensToday,
+      formatCost(k.estimatedCostToday || 0),
       k.maxDevices || "Unlimited",
       k.devicePolicy,
       k.ipPolicy,
@@ -116,8 +116,8 @@ export default function KeysPage() {
                   <th className="text-center py-3 px-4 text-muted-foreground font-medium">Status</th>
                   <th className="text-right py-3 px-4 text-muted-foreground font-medium">Devices</th>
                   <th className="text-right py-3 px-4 text-muted-foreground font-medium">Requests Today</th>
-                  <th className="text-right py-3 px-4 text-muted-foreground font-medium">Total Tokens</th>
-                  <th className="text-right py-3 px-4 text-muted-foreground font-medium">Est. Cost</th>
+                  <th className="text-right py-3 px-4 text-muted-foreground font-medium">Tokens Today</th>
+                  <th className="text-right py-3 px-4 text-muted-foreground font-medium">Est. Cost Today</th>
                   <th className="text-center py-3 px-4 text-muted-foreground font-medium">Active</th>
                 </tr>
               </thead>
@@ -141,8 +141,8 @@ export default function KeysPage() {
                     </td>
                     <td className="py-3 px-4 text-right">{k.deviceCount}</td>
                     <td className="py-3 px-4 text-right font-mono">{formatNumber(k.requestsToday)}</td>
-                    <td className="py-3 px-4 text-right font-mono">{formatNumber(k.totalTokens)}</td>
-                    <td className="py-3 px-4 text-right font-mono text-emerald-400/90">{formatCost(k.estimatedCost || 0)}</td>
+                    <td className="py-3 px-4 text-right font-mono">{formatNumber(k.tokensToday)}</td>
+                    <td className="py-3 px-4 text-right font-mono text-emerald-400/90">{formatCost(k.estimatedCostToday || 0)}</td>
                     <td className="py-3 px-4 text-center" onClick={(e) => e.stopPropagation()}>
                       <Switch
                         checked={k.isActive}

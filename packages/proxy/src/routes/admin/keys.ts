@@ -35,7 +35,7 @@ keys.get("/keys", async (c) => {
     _wibNow.setUTCHours(0, 0, 0, 0);
     const _d = new Date(_wibNow.getTime() - _wibOffset);
     const todayUtcStr = _d.toISOString().replace('T', ' ').substring(0, 19);
-    const todayStats = await db.select({ count: sql<number>`count(*)`, tokens: sql<number>`COALESCE(SUM(total_tokens), 0)` })
+    const todayStats = await db.select({ count: sql<number>`count(*)`, tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`, cost: sql<number>`COALESCE(SUM(estimated_cost), 0)` })
       .from(requestLogs).where(and(
         eq(requestLogs.apiKeyId, key.id), 
         sql`created_at >= ${todayUtcStr}`,
@@ -58,7 +58,8 @@ keys.get("/keys", async (c) => {
       rateLimit: key.rateLimit || 0, rateLimitWindow: key.rateLimitWindow || config?.globalRateLimitWindow || "1h",
       promptLimit: key.promptLimit || 0, promptLimitWindow: key.promptLimitWindow || config?.globalPromptLimitWindow || "1d",
       deviceCount: deviceCount?.count || 0, requestsToday: todayStats?.count || 0,
-      tokensToday: todayStats?.tokens || 0, totalRequests: totalStats?.count || 0,
+      tokensToday: todayStats?.tokens || 0, estimatedCostToday: todayStats?.cost || 0,
+      totalRequests: totalStats?.count || 0,
       totalTokens: totalStats?.tokens || 0, createdAt: key.createdAt,
     });
   }

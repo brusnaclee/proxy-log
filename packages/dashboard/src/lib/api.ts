@@ -90,6 +90,7 @@ export interface ApiKeyListItem {
   deviceCount: number;
   requestsToday: number;
   tokensToday: number;
+  estimatedCostToday?: number;
   totalRequests: number;
   totalTokens: number;
   estimatedCost?: number;

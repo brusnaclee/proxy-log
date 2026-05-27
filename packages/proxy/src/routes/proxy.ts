@@ -19,6 +19,7 @@ import { logEmitter } from "../utils/event-emitter.js";
 import { getModelCatalogResponse, getProviderForModel, stripProviderPrefix } from "../utils/model-catalog.js";
 import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindowResetMs } from "../utils/rate-limit.js";
 import { analyzeRequestMessages, isTitleGenRequest, detectToolCallsInResponse, type MessageAnalysis } from "../utils/message-analyzer.js";
+import { makeAccumulator, consumeStreamPayload, consumeNonStreamingPayload, finalizeCompletion } from "../utils/token-extractor.js";
 
 const proxy = new Hono();
 
@@ -1227,10 +1228,7 @@ const targetProvider = await getProviderForModel(model);
 
     // ΓöÇΓöÇΓöÇ 12. Handle Streaming Response ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     if (isStreaming && upstreamResponse.body) {
-      let promptTokens = 0;
-      let completionTokens = 0;
-      let totalTokens = 0;
-      let streamedResponsePreview = "";
+      const acc = makeAccumulator();
       let hasActualToolCalls = false;
       const decoder = new TextDecoder();
 
@@ -1247,32 +1245,14 @@ const targetProvider = await getProviderForModel(model);
                 try {
                   const data = JSON.parse(payloadText);
                   appendToolsFromPayload(data);
-                  
+
                   // Detect actual tool calls in response
                   if (detectToolCallsInResponse(data)) {
                     hasActualToolCalls = true;
                   }
-                  
-                  const deltaContent = data?.choices?.[0]?.delta?.content;
-                  if (typeof deltaContent === "string") {
-                    streamedResponsePreview = `${streamedResponsePreview}${deltaContent}`;
-                  }
-                  // Codex streaming: output_text or content_block delta
-                  if (!deltaContent) {
-                    const outputText = data?.output_text || data?.delta?.text || data?.delta?.content;
-                    if (typeof outputText === "string") {
-                      streamedResponsePreview = `${streamedResponsePreview}${outputText}`;
-                    }
-                    // Claude streaming: content_block_delta
-                    if (data?.type === "content_block_delta" && data?.delta?.text) {
-                      streamedResponsePreview = `${streamedResponsePreview}${data.delta.text}`;
-                    }
-                  }
-                  if (data.usage) {
-                    promptTokens = data.usage.prompt_tokens || 0;
-                    completionTokens = data.usage.completion_tokens || 0;
-                    totalTokens = data.usage.total_tokens || 0;
-                  }
+
+                  // Centralized text + tool args + usage extraction.
+                  consumeStreamPayload(acc, data);
                 } catch {
                   // Ignore malformed stream chunks.
                 }
@@ -1283,9 +1263,8 @@ const targetProvider = await getProviderForModel(model);
           }
         },
         flush() {
-          if (!completionTokens && streamedResponsePreview) {
-            completionTokens = estimateTokens(streamedResponsePreview);
-          }
+          const finalized = finalizeCompletion(acc);
+          const completionTokens = finalized.completionTokens || 0;
           const finalPromptTokens = sessionInfo.contextEvent === "new_session" ? contextTokensBefore : sessionInfo.contextDeltaTokens;
           const finalTotalTokens = finalPromptTokens + completionTokens;
           const toolsUsed = Array.from(toolNameSet);
@@ -1298,7 +1277,7 @@ const targetProvider = await getProviderForModel(model);
             toolCount: toolsUsed.length,
             hasToolCalls: toolsUsed.length > 0,
             toolsUsed: toToolJson(toolsUsed),
-            responsePreview: streamedResponsePreview || null,
+            responsePreview: finalized.completionText || null,
             latencyMs: Date.now() - startTime,
             statusCode,
             estimatedCost: calculateEstimatedCost(model, finalPromptTokens, completionTokens),
@@ -1343,62 +1322,28 @@ const targetProvider = await getProviderForModel(model);
     let errorMessage: string | undefined;
     let responsePreview: string | null = null;
     let hasActualToolCalls = false;
+    const acc = makeAccumulator();
 
     try {
       const parsed = JSON.parse(responseBody);
       appendToolsFromPayload(parsed);
-      
+
       // Detect actual tool calls in response
       hasActualToolCalls = detectToolCallsInResponse(parsed);
-      
-      if (parsed.usage) {
-        promptTokens = parsed.usage.prompt_tokens || 0;
-        completionTokens = parsed.usage.completion_tokens || 0;
-        totalTokens = parsed.usage.total_tokens || 0;
-      }
+
       if (parsed.error) {
         errorMessage = parsed.error.message || JSON.stringify(parsed.error);
       }
-      const firstChoice = parsed?.choices?.[0];
-      let assistantText = typeof firstChoice?.message?.content === "string"
-        ? firstChoice.message.content
-        : typeof firstChoice?.text === "string"
-          ? firstChoice.text
-          : "";
 
-      // Codex /v1/responses format: output is in parsed.output or parsed.output_text
-      if (!assistantText && parsed?.output_text) {
-        assistantText = parsed.output_text;
-      }
-      if (!assistantText && Array.isArray(parsed?.output)) {
-        assistantText = parsed.output
-          .filter((o: any) => o.type === "message" || o.type === "text")
-          .map((o: any) => {
-            if (typeof o.content === "string") return o.content;
-            if (Array.isArray(o.content)) return o.content.map((c: any) => c.text || "").join("");
-            return "";
-          })
-          .join("");
-      }
+      consumeNonStreamingPayload(acc, parsed);
+      const finalized = finalizeCompletion(acc);
+      completionTokens = finalized.completionTokens || 0;
+      totalTokens = finalized.totalTokens || 0;
+      responsePreview = finalized.completionText || null;
 
-      // Claude /v1/messages format: content array
-      if (!assistantText && Array.isArray(parsed?.content)) {
-        assistantText = parsed.content
-          .filter((c: any) => c.type === "text")
-          .map((c: any) => c.text || "")
-          .join("");
-      }
-
-      // Fallback: if we still have no text but response is big, estimate from body length
-      if (!assistantText && !completionTokens && responseBody.length > 200) {
+      // Last-resort fallback: response too large to parse text but still long body.
+      if (!completionTokens && !responsePreview && responseBody.length > 200) {
         completionTokens = estimateTokens(responseBody);
-      }
-
-      if (assistantText) {
-        responsePreview = assistantText || null;
-        if (!completionTokens) {
-          completionTokens = estimateTokens(assistantText);
-        }
       }
     } catch {
       // Body might not be JSON.
