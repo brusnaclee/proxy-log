@@ -459,6 +459,8 @@ internal.get("/internal/stats/ranking", async (c) => {
       apiKeyId: requestLogs.apiKeyId,
       requests: sql<number>`count(*)`,
       tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
+      promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
+      completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
     })
     .from(requestLogs)
     .where(and(sql`created_at >= ${since}`, sql`is_counted_request IS NOT 0`))
@@ -478,6 +480,8 @@ internal.get("/internal/stats/ranking", async (c) => {
         discordUsername: key.discordUsername || key.name,
         requests: row.requests,
         tokens: row.tokens,
+        promptTokens: row.promptTokens,
+        completionTokens: row.completionTokens,
       });
       if (result.length >= 10) break;
     }
