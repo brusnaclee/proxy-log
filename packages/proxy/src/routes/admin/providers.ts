@@ -2,6 +2,7 @@
 import { db } from "../../db/index.js";
 import { providers } from "../../db/schema.js";
 import { eq, desc } from "drizzle-orm";
+import { refreshModelCatalog } from "../../utils/model-catalog.js";
 
 const providersApi = new Hono();
 
@@ -22,6 +23,9 @@ providersApi.post("/providers", async (c) => {
     isActive: body.isActive ?? true,
     priority: body.priority || 0,
   }).returning().get();
+
+  void refreshModelCatalog();
+
   return c.json({ success: true, provider: result });
 });
 
@@ -37,12 +41,18 @@ providersApi.put("/providers/:id", async (c) => {
   updates.updatedAt = new Date().toISOString().replace("T", " ").substring(0, 19);
   
   await db.update(providers).set(updates).where(eq(providers.id, id)).run();
+
+  void refreshModelCatalog();
+
   return c.json({ success: true });
 });
 
 providersApi.delete("/providers/:id", async (c) => {
   const id = parseInt(c.req.param("id"));
   await db.delete(providers).where(eq(providers.id, id)).run();
+
+  void refreshModelCatalog();
+
   return c.json({ success: true });
 });
 
