@@ -807,12 +807,14 @@ const STATE_PATH = path.join(AGVERIF_DATA_DIR, 'tokito_state.json');
 const tokitoSessions = new Map();
 const runtime = {
 	models: [],
+	modelProviderMap: new Map(),
 	status: new Map(),
 	latency: new Map(),
 	lastStatusAt: null,
 	lastLatencyAt: null,
 	lastWorkingBaseUrl: TOKITO_BASE_URL,
 	endpointStats: new Map(),
+	activeProviders: [],
 };
 
 function loadTokitoState() {
@@ -910,15 +912,68 @@ function trackEndpointResult(baseUrl, ok) {
 	runtime.endpointStats.set(baseUrl, prev);
 }
 
+async function fetchProvidersFromProxy() {
+	try {
+		const res = await proxyInternal('/admin/internal/providers', 'GET');
+		if (Array.isArray(res) && res.length > 0) {
+			runtime.activeProviders = res;
+			console.log('[tokito-monitor] fetched', res.length, 'providers from proxy');
+			return res;
+		}
+	} catch (err) {
+		console.error('[tokito-monitor] failed to fetch providers:', err.message);
+	}
+	return null;
+}
+
 async function pollModelStatus() {
-	if (!TOKITO_API_KEY) return;
-	const result = await apiFetch('/models');
-	const now = Date.now();
-	if (!result.ok || !result.body || !Array.isArray(result.body.data)) {
+	let providers = await fetchProvidersFromProxy();
+
+	if (!providers || providers.length === 0) {
+		console.log('[tokito-monitor] no providers configured, falling back to TOKITO_BASE_URL');
+		if (!TOKITO_API_KEY) return;
+		const result = await apiFetch('/models');
+		const now = Date.now();
+		if (!result.ok || !result.body || !Array.isArray(result.body.data)) {
+			runtime.lastStatusAt = now;
+			return;
+		}
+		runtime.models = result.body.data.map((m) => m.id);
 		runtime.lastStatusAt = now;
 		return;
 	}
-	runtime.models = result.body.data.map((m) => m.id);
+
+	const now = Date.now();
+	const allModels = [];
+	runtime.modelProviderMap.clear();
+
+	for (const prov of providers) {
+		try {
+			const base = prov.endpoint.replace(/\/+$/, '');
+			const url = `${base}/models`;
+			const res = await fetch(url, {
+				headers: { Authorization: `Bearer ${prov.apiKey}` },
+			});
+			if (!res.ok) {
+				console.error(`[tokito-monitor] failed to fetch models from ${prov.name}: HTTP ${res.status}`);
+				continue;
+			}
+			const payload = await res.json();
+			const arr = Array.isArray(payload) ? payload : payload?.data || [];
+			for (const m of arr) {
+				const id = m.id || m.name;
+				if (!runtime.modelProviderMap.has(id)) {
+					runtime.modelProviderMap.set(id, { provider: prov.name, baseUrl: base });
+					allModels.push(id);
+				}
+			}
+			console.log(`[tokito-monitor] fetched ${arr.length} models from provider: ${prov.name}`);
+		} catch (err) {
+			console.error(`[tokito-monitor] error fetching from ${prov.name}:`, err.message);
+		}
+	}
+
+	runtime.models = allModels;
 	runtime.lastStatusAt = now;
 }
 
@@ -926,14 +981,15 @@ async function pushMetricsToProxy() {
 	const payload = runtime.models.map((modelId) => {
 		const st = runtime.status.get(modelId) || { online: false, status: 0 };
 		const lt = runtime.latency.get(modelId) || { ms: 0 };
+		const info = runtime.modelProviderMap.get(modelId) || {};
 		return {
 			modelId,
-			provider: providerOf(modelId),
+			provider: info.provider || providerOf(modelId),
 			isOnline: st.online,
 			latencyMs: lt.ms,
 			httpStatus: st.status,
 			errorMessage: st.error || null,
-			baseUrl: runtime.lastWorkingBaseUrl,
+			baseUrl: info.baseUrl || runtime.lastWorkingBaseUrl,
 		};
 	});
 
@@ -948,29 +1004,52 @@ async function pushMetricsToProxy() {
 }
 
 async function runLatencyTest() {
-	if (!TOKITO_API_KEY) return;
 	if (!runtime.models.length) await pollModelStatus();
+	if (!runtime.models.length) return;
+
 	const now = Date.now();
 
-	const jobs = runtime.models.map(async (model) => {
+	const jobs = runtime.models.map(async (modelId) => {
+		const info = runtime.modelProviderMap.get(modelId) || {};
+		const baseUrl = info.baseUrl || TOKITO_BASE_URL;
+		const apiKey = info.apiKey || TOKITO_API_KEY;
 		const started = Date.now();
-		const result = await apiFetch('/chat/completions', {
-			method: 'POST',
-			body: JSON.stringify({
-				model,
-				messages: [{ role: 'user', content: 'test' }],
-				max_tokens: 1,
-				temperature: 0,
-			}),
-		});
+
+		let result;
+		try {
+			const controller = new AbortController();
+			const timeout = setTimeout(() => controller.abort(), TOKITO_REQUEST_TIMEOUT_MS);
+			const res = await fetch(`${baseUrl}/chat/completions`, {
+				method: 'POST',
+				headers: {
+					Authorization: `Bearer ${apiKey}`,
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					model: modelId,
+					messages: [{ role: 'user', content: 'test' }],
+					max_tokens: 1,
+					temperature: 0,
+				}),
+				signal: controller.signal,
+			});
+			clearTimeout(timeout);
+			const text = await res.text();
+			let body;
+			try { body = JSON.parse(text); } catch (_) { body = { raw: text }; }
+			result = { ok: res.ok, status: res.status, body };
+		} catch (err) {
+			result = { ok: false, status: 0, body: { error: err.message } };
+		}
+
 		const ms = Date.now() - started;
-		runtime.latency.set(model, {
+		runtime.latency.set(modelId, {
 			ok: result.ok,
 			ms,
 			checkedAt: now,
 			status: result.status,
 		});
-		runtime.status.set(model, {
+		runtime.status.set(modelId, {
 			online: result.ok && result.status < 500,
 			checkedAt: now,
 			status: result.status,

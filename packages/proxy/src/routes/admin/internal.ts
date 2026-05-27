@@ -1,7 +1,7 @@
 ﻿import { Hono } from "hono";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { adminConfig, allowedDevices, allowedIdes, apiKeys, devices, requestLogs, modelLimits } from "../../db/schema.js";
+import { adminConfig, allowedDevices, allowedIdes, apiKeys, devices, requestLogs, modelLimits, providers } from "../../db/schema.js";
 import { generateApiKey, getKeyPrefix, sha256 } from "../../utils/crypto.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
 import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindowResetMs } from "../../utils/rate-limit.js";
