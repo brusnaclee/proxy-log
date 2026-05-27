@@ -17,9 +17,12 @@ function toSqliteUtc(date: Date): string {
  * local-midnight ISO string gives correct "today" results regardless of server TZ.
  */
 function localTodayStart(): Date {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
+  // Use WIB (UTC+7) as the reference timezone
+  const now = new Date();
+  const wibOffset = 7 * 60 * 60 * 1000;
+  const wibNow = new Date(now.getTime() + wibOffset);
+  wibNow.setUTCHours(0, 0, 0, 0);
+  return new Date(wibNow.getTime() - wibOffset);
 }
 
 function calculateBreakdownCosts(modelBreakdown: Array<{ model: string | null, promptTokens: number, completionTokens: number }>) {

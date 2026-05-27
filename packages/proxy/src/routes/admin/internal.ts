@@ -362,8 +362,10 @@ internal.post("/internal/ide-policy", async (c) => {
 
 internal.get("/internal/stats/overview", async (c) => {
   const now = new Date();
-  const todayStart = new Date(now);
-  todayStart.setHours(0, 0, 0, 0);
+  const wibOffset = 7 * 60 * 60 * 1000;
+  const wibNow = new Date(now.getTime() + wibOffset);
+  wibNow.setUTCHours(0, 0, 0, 0);
+  const todayStart = new Date(wibNow.getTime() - wibOffset);
 
   const today = await db.select({
     requests: sql<number>`count(*)`,
@@ -385,10 +387,14 @@ internal.get("/internal/stats/overview", async (c) => {
 // ─── Ranking Endpoint ──────────────────────────────────────────────────────────
 internal.get("/internal/stats/ranking", async (c) => {
   const now = new Date();
-  const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
-  const monthStart = new Date(now); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
+  const wibOffset = 7 * 60 * 60 * 1000;
+  const wibNow = new Date(now.getTime() + wibOffset);
+  wibNow.setUTCHours(0, 0, 0, 0);
+  const todayStart = new Date(wibNow.getTime() - wibOffset);
+  const monthStart = new Date(wibNow); monthStart.setUTCDate(1);
+  const monthStartFinal = new Date(monthStart.getTime() - wibOffset);
   const todayStr = todayStart.toISOString().replace("T", " ").substring(0, 19);
-  const monthStr = monthStart.toISOString().replace("T", " ").substring(0, 19);
+  const monthStr = monthStartFinal.toISOString().replace("T", " ").substring(0, 19);
 
   async function getTopModelsByRequests(since: string) {
     return db.select({
@@ -522,8 +528,12 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
 
   const keyId = key.id;
   const now = new Date();
-  const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
-  const monthStart = new Date(now); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
+  const wibOffset = 7 * 60 * 60 * 1000;
+  const wibNow = new Date(now.getTime() + wibOffset);
+  wibNow.setUTCHours(0, 0, 0, 0);
+  const todayStart = new Date(wibNow.getTime() - wibOffset);
+  const monthWib = new Date(wibNow); monthWib.setUTCDate(1);
+  const monthStart = new Date(monthWib.getTime() - wibOffset);
   const todayStr = todayStart.toISOString().replace("T", " ").substring(0, 19);
   const monthStr = monthStart.toISOString().replace("T", " ").substring(0, 19);
 

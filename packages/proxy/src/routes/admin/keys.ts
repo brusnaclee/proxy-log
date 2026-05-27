@@ -29,7 +29,11 @@ keys.get("/keys", async (c) => {
   const result = [];
 
   for (const key of allKeys) {
-    const _d = new Date(); _d.setHours(0, 0, 0, 0);
+    const _now = new Date();
+    const _wibOffset = 7 * 60 * 60 * 1000;
+    const _wibNow = new Date(_now.getTime() + _wibOffset);
+    _wibNow.setUTCHours(0, 0, 0, 0);
+    const _d = new Date(_wibNow.getTime() - _wibOffset);
     const todayUtcStr = _d.toISOString().replace('T', ' ').substring(0, 19);
     const todayStats = await db.select({ count: sql<number>`count(*)`, tokens: sql<number>`COALESCE(SUM(total_tokens), 0)` })
       .from(requestLogs).where(and(
@@ -84,7 +88,10 @@ keys.get("/keys/:id", async (c) => {
 
   // Period start timestamps
   const now = new Date();
-  const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
+  const wibOffset = 7 * 60 * 60 * 1000;
+  const wibNow = new Date(now.getTime() + wibOffset);
+  wibNow.setUTCHours(0, 0, 0, 0);
+  const todayStart = new Date(wibNow.getTime() - wibOffset);
   const weekStart  = new Date(now); weekStart.setDate(now.getDate() - 7);
   const monthStart = new Date(now); monthStart.setDate(now.getDate() - 30);
 
