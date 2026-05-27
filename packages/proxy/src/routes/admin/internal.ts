@@ -5,8 +5,16 @@ import { adminConfig, allowedDevices, allowedIdes, apiKeys, devices, requestLogs
 import { generateApiKey, getKeyPrefix, sha256 } from "../../utils/crypto.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
 import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindowResetMs } from "../../utils/rate-limit.js";
+import { isInternalRequest } from "../../middleware/session.js";
 
 const internal = new Hono();
+
+const checkInternal = (c: any) => {
+  if (!isInternalRequest(c)) {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+  return null;
+};
 
 type UserBody = {
   discordUserId: string;
@@ -169,7 +177,6 @@ internal.post("/internal/update-key-model-limit", async (c) => {
   const modelName = body.model.trim();
   const limit = Math.max(0, Number(body.promptLimit) || 0);
 
-  // Upsert: delete then insert
   await db.delete(modelLimits).where(and(
     eq(modelLimits.scope, "key"),
     eq(modelLimits.scopeId, existing.id),
@@ -203,10 +210,10 @@ internal.post("/internal/revoke-user", async (c) => {
 
 internal.post("/internal/refresh-user-key", async (c) => {
   const body = await c.req.json<UserBody>();
-  if (!body.discordUserId) return c.json({ error: "discordUserId is required" }, 400);
+  if (!body.discordUserId) return c.json({ error: "No key found for user" }, 404);
 
   const existing = await findKeyByDiscordUser(body.discordUserId);
-  if (!existing) return c.json({ error: "No key found for discord user" }, 404);
+  if (!existing) return c.json({ error: "No key found for user" }, 404);
 
   const newKey = generateApiKey();
   await db.update(apiKeys)
@@ -232,7 +239,7 @@ internal.post("/internal/reset-user", async (c) => {
   if (!body.discordUserId) return c.json({ error: "discordUserId is required" }, 400);
 
   const existing = await findKeyByDiscordUser(body.discordUserId);
-  if (!existing) return c.json({ error: "No key found for discord user" }, 404);
+  if (!existing) return c.json({ error: "No key found for user" }, 404);
 
   await db.delete(requestLogs).where(eq(requestLogs.apiKeyId, existing.id)).run();
   await db.delete(devices).where(eq(devices.apiKeyId, existing.id)).run();
@@ -384,7 +391,6 @@ internal.get("/internal/stats/overview", async (c) => {
   });
 });
 
-// ─── Ranking Endpoint ──────────────────────────────────────────────────────────
 internal.get("/internal/stats/ranking", async (c) => {
   const now = new Date();
   const wibOffset = 7 * 60 * 60 * 1000;
@@ -524,7 +530,6 @@ internal.get("/internal/stats/ranking", async (c) => {
   });
 });
 
-// ─── User Detail Endpoint ──────────────────────────────────────────────────────
 internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   const discordUserId = c.req.param("discordUserId");
   const key = await findKeyByDiscordUser(discordUserId);
@@ -599,13 +604,11 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     globalResetMins = Math.ceil(resetMs / 60000);
   }
 
-  // Get active model limits (global overrides)
   const activeModelLimits = await db.select().from(modelLimits).where(eq(modelLimits.scope, 'global')).all();
   const perModelLimitFallback = key.perModelPromptLimit && key.perModelPromptLimit > 0 ? key.perModelPromptLimit : config?.globalPerModelPromptLimit || 0;
   const perModelWindowFallback = key.perModelPromptLimitWindow || config?.globalPerModelPromptLimitWindow || "30m";
 
   const modelUsage = [];
-  // For models they actually used today, check limits
   for (const tm of todayModels) {
     if (!tm.model) continue;
     const mlCheck = await checkModelPromptLimit(
@@ -628,7 +631,6 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     });
   }
 
-  // Also include models they haven't used today but have explicit limits
   for (const am of activeModelLimits) {
     if (!modelUsage.find(m => m.model === am.model)) {
       modelUsage.push({
