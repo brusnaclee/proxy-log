@@ -689,7 +689,6 @@ internal.get("/internal/providers", async (c) => {
   const provs = await db.select().from(providers).where(eq(providers.isActive, true)).orderBy(providers.priority).all();
   return c.json(provs);
 });
-});
 
 internal.post("/internal/clear-notification/:keyId", async (c) => {
   const keyId = parseInt(c.req.param("keyId"));
