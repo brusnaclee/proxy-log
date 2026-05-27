@@ -1313,18 +1313,19 @@ function buildTokitoEmbed(kind, session) {
 		page * TOKITO_PAGE_SIZE,
 		(page + 1) * TOKITO_PAGE_SIZE,
 	);
-	const lines = slice.map((model) => {
+	const lines = slice.map((modelId) => {
+		// Get the entry for this modelId from modelEntries (first one matching)
+		const entry = runtime.modelEntries.find(e => e.modelId === modelId);
+		const prov = entry?.provider || providerOf(modelId);
 		if (kind === 'status') {
-			const st = runtime.status.get(model);
-			const prov = runtime.modelProviderMap.get(model)?.provider || providerOf(model);
+			const st = runtime.status.get(modelId);
 			const icon = st?.online ? '🟢' : '🔴';
-			return `${icon} \`${prov}/${model}\` | provider: **${prov}**`;
+			return `${icon} \`${prov}/${modelId}\` | provider: **${prov}**`;
 		}
-		const lt = runtime.latency.get(model);
-		const prov = runtime.modelProviderMap.get(model)?.provider || providerOf(model);
-		if (!lt) return `⚪ \`${prov}/${model}\` | not tested yet`;
+		const lt = runtime.latency.get(modelId);
+		if (!lt) return `⚪ \`${prov}/${modelId}\` | not tested yet`;
 		const icon = lt.ok ? '🟢' : '🔴';
-		return `${icon} \`${prov}/${model}\` | ${lt.ms} ms | HTTP ${lt.status}`;
+		return `${icon} \`${prov}/${modelId}\` | ${lt.ms} ms | HTTP ${lt.status}`;
 	});
 
 	const titleStyled =
