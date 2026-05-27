@@ -212,8 +212,6 @@ export default function OverviewPage() {
           sub: `Cost: ${formatCost(periodData.completionCost || 0)}`,
           color: "text-orange-400",
         },
-          color: "text-indigo-400",
-        },
         {
           label: `Est. Cost (${PERIOD_OPTS.find(o => o.key === period)?.label})`,
           value: formatCost((periodData.promptCost || 0) + (periodData.completionCost || 0)),
