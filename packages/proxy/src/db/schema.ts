@@ -15,6 +15,8 @@ export const adminConfig = sqliteTable("admin_config", {
   globalPromptLimitWindow: text("global_prompt_limit_window").default("1d"), // e.g., '1h', '1d'
   globalPerModelPromptLimit: integer("global_per_model_prompt_limit").default(0), // default per-model limit (0 = unlimited)
   globalPerModelPromptLimitWindow: text("global_per_model_prompt_limit_window").default("1d"),
+  globalDailyTokenLimit: integer("global_daily_token_limit").default(0), // daily token limit (0 = unlimited)
+  globalMonthlyTokenLimit: integer("global_monthly_token_limit").default(0), // monthly token limit (0 = unlimited)
   
   // Bot & Tokito Settings
   discordBotToken: text("discord_bot_token").default(""),

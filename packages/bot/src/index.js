@@ -2094,7 +2094,7 @@ async function handleRankingSearchModal(interaction) {
 		return;
 	}
 
-	const { discordUsername, isActive, keyPrefix, today, month, promptLimit, promptLimitWindow, promptUsed, promptResetMins, modelUsage, perModelPromptLimit, perModelPromptLimitWindow } = data;
+	const { discordUsername, isActive, keyPrefix, today, month, promptLimit, promptLimitWindow, promptUsed, promptResetMins, modelUsage, perModelPromptLimit, perModelPromptLimitWindow, dailyTokenLimit, monthlyTokenLimit, dailyTokensUsed, monthlyTokensUsed } = data;
 	const displayName = discordUsername || `User ${discordUserId}`;
 
 	function periodField(p) {
@@ -2133,9 +2133,16 @@ async function handleRankingSearchModal(interaction) {
 		modelLimitStr = perModelPromptLimit > 0 ? `Default: **${perModelPromptLimit}** req (${perModelPromptLimitWindow})` : '**Unlimited**';
 	}
 
+	const dailyTokenStr = dailyTokenLimit > 0
+		? `**${formatTokens(dailyTokensUsed)} / ${formatTokens(dailyTokenLimit)}**` + (dailyTokensUsed >= dailyTokenLimit ? ' 🔴 Limit Reached' : '')
+		: `**${formatTokens(dailyTokensUsed)} / Unlimited**`;
+	const monthlyTokenStr = monthlyTokenLimit > 0
+		? `**${formatTokens(monthlyTokensUsed)} / ${formatTokens(monthlyTokenLimit)}**` + (monthlyTokensUsed >= monthlyTokenLimit ? ' 🔴 Limit Reached' : '')
+		: `**${formatTokens(monthlyTokensUsed)} / Unlimited**`;
+
 	const embed = new EmbedBuilder()
 		.setTitle(`📊 Usage: ${displayName}`)
-		.setDescription(`Discord ID: \`${discordUserId}\`\nAPI Key: \`${keyPrefix}...\`\nStatus: ${isActive ? '🟢 Active' : '🔴 Inactive'}\n\n**🎯 Limits**\nGlobal: ${globalLimitStr}\nPer-Model:\n${modelLimitStr}`)
+		.setDescription(`Discord ID: \`${discordUserId}\`\nAPI Key: \`${keyPrefix}...\`\nStatus: ${isActive ? '🟢 Active' : '🔴 Inactive'}\n\n**🎯 Prompt Limits**\nGlobal: ${globalLimitStr}\nPer-Model:\n${modelLimitStr}\n\n**🔢 Token Limits**\nHarian: ${dailyTokenStr}\nBulanan: ${monthlyTokenStr}`)
 		.setColor(isActive ? 0x57f287 : 0xff6b6b)
 		.addFields(
 			{ name: '📅 Hari Ini', value: periodField(today), inline: true },

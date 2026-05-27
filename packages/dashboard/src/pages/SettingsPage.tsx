@@ -21,6 +21,8 @@ export default function SettingsPage() {
   const [globalPromptLimitWindow, setGlobalPromptLimitWindow] = useState("30m");
   const [globalPerModelPromptLimit, setGlobalPerModelPromptLimit] = useState(10);
   const [globalPerModelPromptLimitWindow, setGlobalPerModelPromptLimitWindow] = useState("30m");
+  const [globalDailyTokenLimit, setGlobalDailyTokenLimit] = useState(0);
+  const [globalMonthlyTokenLimit, setGlobalMonthlyTokenLimit] = useState(0);
   const [globalModelLimits, setGlobalModelLimits] = useState<ModelLimitEntry[]>([]);
   const [modelCatalog, setModelCatalog] = useState<string[]>([]);
   const [newModelOverride, setNewModelOverride] = useState("");
@@ -86,6 +88,8 @@ export default function SettingsPage() {
       setGlobalPromptLimitWindow(g.globalPromptLimitWindow || "30m");
       setGlobalPerModelPromptLimit(g.globalPerModelPromptLimit || 0);
       setGlobalPerModelPromptLimitWindow(g.globalPerModelPromptLimitWindow || "30m");
+      setGlobalDailyTokenLimit(g.globalDailyTokenLimit || 0);
+      setGlobalMonthlyTokenLimit(g.globalMonthlyTokenLimit || 0);
     } catch {}
 
     try {
@@ -110,7 +114,7 @@ export default function SettingsPage() {
         updates.upstreamApiKey = upstreamApiKey;
       }
       await settings.update(updates);
-      await globalSettings.update({ globalMaxDevices, globalPromptLimit, globalPromptLimitWindow, globalPerModelPromptLimit, globalPerModelPromptLimitWindow });
+      await globalSettings.update({ globalMaxDevices, globalPromptLimit, globalPromptLimitWindow, globalPerModelPromptLimit, globalPerModelPromptLimitWindow, globalDailyTokenLimit, globalMonthlyTokenLimit });
       await request("/settings/bot", {
         method: "POST",
         body: JSON.stringify({
@@ -274,6 +278,32 @@ export default function SettingsPage() {
                   <p className="text-[10px] text-muted-foreground mt-1">
                     e.g. 30m, 1h, 1d
                   </p>
+                </div>
+              </div>
+
+              {/* Global Token Limits */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Daily Token Limit</Label>
+                  <Input
+                    type="number"
+                    value={globalDailyTokenLimit}
+                    onChange={(e) => setGlobalDailyTokenLimit(parseInt(e.target.value) || 0)}
+                    placeholder="0 = unlimited"
+                    className="mt-1"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">Max tokens per user per day (0 = unlimited)</p>
+                </div>
+                <div>
+                  <Label>Monthly Token Limit</Label>
+                  <Input
+                    type="number"
+                    value={globalMonthlyTokenLimit}
+                    onChange={(e) => setGlobalMonthlyTokenLimit(parseInt(e.target.value) || 0)}
+                    placeholder="0 = unlimited"
+                    className="mt-1"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">Max tokens per user per month (0 = unlimited)</p>
                 </div>
               </div>
 

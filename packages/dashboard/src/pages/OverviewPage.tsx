@@ -311,8 +311,9 @@ export default function OverviewPage() {
                   <p><strong>User:</strong> {searchUserResult.discordUsername || searchUserResult.discordUserId}</p>
                   <p><strong>Status Key:</strong> {searchUserResult.isActive ? 'Aktif' : 'Nonaktif'}</p>
                   <div className="mt-2 space-y-1">
-                    <p><strong>Global Prompt Limit:</strong> {searchUserResult.promptLimit > 0 ? `${searchUserResult.promptUsed} / ${searchUserResult.promptLimit} (${searchUserResult.promptLimitWindow})` : 'Unlimited'}</p>
-                    <p><strong>Per-Model Usage:</strong></p>
+                    <p className="font-semibold">Prompt Limits:</p>
+                    <p>Global: {searchUserResult.promptLimit > 0 ? `${searchUserResult.promptUsed} / ${searchUserResult.promptLimit} (${searchUserResult.promptLimitWindow})` : 'Unlimited'}</p>
+                    <p className="font-semibold mt-1">Per-Model:</p>
                     <ul className="list-disc list-inside pl-4 text-xs">
                       {searchUserResult.modelUsage?.map((m: any) => (
                         <li key={m.model}><code>{m.model}</code>: {m.used} / {m.limit > 0 ? m.limit : '∞'}</li>
@@ -323,8 +324,9 @@ export default function OverviewPage() {
                     </ul>
                   </div>
                   <div className="mt-2 space-y-1">
-                    <p><strong>Requests Hari Ini:</strong> {formatNumber(searchUserResult.today?.requests || 0)}</p>
-                    <p><strong>Token Hari Ini:</strong> {formatNumber(searchUserResult.today?.tokens || 0)}</p>
+                    <p className="font-semibold">Token Limits:</p>
+                    <p>Harian: {formatNumber(searchUserResult.dailyTokensUsed || 0)} / {searchUserResult.dailyTokenLimit > 0 ? formatNumber(searchUserResult.dailyTokenLimit) : 'Unlimited'}</p>
+                    <p>Bulanan: {formatNumber(searchUserResult.monthlyTokensUsed || 0)} / {searchUserResult.monthlyTokenLimit > 0 ? formatNumber(searchUserResult.monthlyTokenLimit) : 'Unlimited'}</p>
                   </div>
                 </div>
               )}

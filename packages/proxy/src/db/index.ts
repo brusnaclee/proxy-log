@@ -318,6 +318,8 @@ export async function initializeDatabase() {
   // Per-model prompt limit system
   await ensureColumnExists("admin_config", "global_per_model_prompt_limit", "INTEGER DEFAULT 0");
   await ensureColumnExists("admin_config", "global_per_model_prompt_limit_window", "TEXT DEFAULT '1d'");
+  await ensureColumnExists("admin_config", "global_daily_token_limit", "INTEGER DEFAULT 0");
+  await ensureColumnExists("admin_config", "global_monthly_token_limit", "INTEGER DEFAULT 0");
   await ensureColumnExists("api_keys", "per_model_prompt_limit", "INTEGER DEFAULT 0");
   await ensureColumnExists("api_keys", "per_model_prompt_limit_window", "TEXT");
   await ensureColumnExists("api_keys", "pending_notification", "TEXT");

@@ -649,6 +649,10 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     modelUsage,
     perModelPromptLimit: perModelLimitFallback,
     perModelPromptLimitWindow: perModelWindowFallback,
+    dailyTokenLimit: config?.globalDailyTokenLimit || 0,
+    monthlyTokenLimit: config?.globalMonthlyTokenLimit || 0,
+    dailyTokensUsed: todayStats?.tokens || 0,
+    monthlyTokensUsed: monthStats?.tokens || 0,
       today: {
         requests: todayStats?.requests || 0,
         tokens: todayStats?.tokens || 0,

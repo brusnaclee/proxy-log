@@ -1004,6 +1004,71 @@ proxy.all("/*", async (c) => {
         }, 429);
       }
     }
+
+    // ─── Global Daily Token Limit ─────────────────────────────────────
+    const globalDailyTokenLimit = config.globalDailyTokenLimit || 0;
+    if (globalDailyTokenLimit > 0) {
+      const wibOffset = 7 * 60 * 60 * 1000;
+      const wibNow = new Date(Date.now() + wibOffset);
+      wibNow.setUTCHours(0, 0, 0, 0);
+      const dayStartUtc = new Date(wibNow.getTime() - wibOffset);
+      const dayStartStr = dayStartUtc.toISOString().replace("T", " ").substring(0, 19);
+
+      const dailyUsage = await db
+        .select({ total: sql<number>`COALESCE(SUM(total_tokens), 0)` })
+        .from(requestLogs)
+        .where(and(
+          eq(requestLogs.apiKeyId, keyRecord.id),
+          sql`created_at >= ${dayStartStr}`,
+        ))
+        .get();
+
+      if (dailyUsage && dailyUsage.total >= globalDailyTokenLimit) {
+        const usedTokens = dailyUsage.total.toLocaleString();
+        const maxTokens = globalDailyTokenLimit.toLocaleString();
+        const globalMonthlyTokenLimit = config.globalMonthlyTokenLimit || 0;
+        const monthlyStr = globalMonthlyTokenLimit > 0 ? globalMonthlyTokenLimit.toLocaleString() : "Unlimited";
+        return c.json({
+          error: {
+            message: `Daily token limit reached: ${usedTokens}/${maxTokens} tokens used today. Monthly limit: ${monthlyStr}. Resets tomorrow.`,
+            type: "rate_limit_error",
+            code: "daily_token_limit_exceeded",
+          }
+        }, 429);
+      }
+    }
+
+    // ─── Global Monthly Token Limit ───────────────────────────────────
+    const globalMonthlyTokenLimit = config.globalMonthlyTokenLimit || 0;
+    if (globalMonthlyTokenLimit > 0) {
+      const wibOffset = 7 * 60 * 60 * 1000;
+      const wibNow = new Date(Date.now() + wibOffset);
+      wibNow.setUTCDate(1);
+      wibNow.setUTCHours(0, 0, 0, 0);
+      const monthStartUtc = new Date(wibNow.getTime() - wibOffset);
+      const monthStartStr = monthStartUtc.toISOString().replace("T", " ").substring(0, 19);
+
+      const monthlyUsage = await db
+        .select({ total: sql<number>`COALESCE(SUM(total_tokens), 0)` })
+        .from(requestLogs)
+        .where(and(
+          eq(requestLogs.apiKeyId, keyRecord.id),
+          sql`created_at >= ${monthStartStr}`,
+        ))
+        .get();
+
+      if (monthlyUsage && monthlyUsage.total >= globalMonthlyTokenLimit) {
+        const usedTokens = monthlyUsage.total.toLocaleString();
+        const maxTokens = globalMonthlyTokenLimit.toLocaleString();
+        return c.json({
+          error: {
+            message: `Monthly token limit reached: ${usedTokens}/${maxTokens} tokens used this month. Resets on the 1st of next month.`,
+            type: "rate_limit_error",
+            code: "global_monthly_token_limit_exceeded",
+          }
+        }, 429);
+      }
+    }
   }
 
   const upstreamBase = config.upstreamEndpoint.replace(/\/$/, "");
