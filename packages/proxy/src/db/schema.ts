@@ -184,6 +184,18 @@ export const devices = sqliteTable("devices", {
   apiKeyFingerprintIdx: index("idx_devices_api_key_fingerprint").on(table.apiKeyId, table.fingerprint),
 }));
 
+// ─── Providers ───────────────────────────────────────────────────────────────
+export const providers = sqliteTable("providers", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull(),
+  endpoint: text("endpoint").notNull(),
+  apiKey: text("api_key").notNull(),
+  isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+  priority: integer("priority").notNull().default(0), // higher = higher priority
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+});
+
 // ─── Model Monitor ─────────────────────────────────────────────────────────────
 export const modelMonitor = sqliteTable("model_monitor", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -222,6 +234,7 @@ export type AllowedIde = typeof allowedIdes.$inferSelect;
 export type RequestLog = typeof requestLogs.$inferSelect;
 export type ChatSession = typeof chatSessions.$inferSelect;
 export type Device = typeof devices.$inferSelect;
+export type Provider = typeof providers.$inferSelect;
 export type ModelMonitor = typeof modelMonitor.$inferSelect;
 export type ModelLimit = typeof modelLimits.$inferSelect;
 
@@ -232,5 +245,6 @@ export type NewAllowedIde = typeof allowedIdes.$inferInsert;
 export type NewRequestLog = typeof requestLogs.$inferInsert;
 export type NewChatSession = typeof chatSessions.$inferInsert;
 export type NewDevice = typeof devices.$inferInsert;
+export type NewProvider = typeof providers.$inferInsert;
 export type NewModelMonitor = typeof modelMonitor.$inferInsert;
 export type NewModelLimit = typeof modelLimits.$inferInsert;

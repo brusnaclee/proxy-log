@@ -1,4 +1,4 @@
-import { createClient } from "@libsql/client";
+﻿import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { eq } from "drizzle-orm";
 import * as schema from "./schema.js";
@@ -104,6 +104,17 @@ export async function initializeDatabase() {
       ip_policy TEXT NOT NULL DEFAULT 'none',
       ide_policy TEXT NOT NULL DEFAULT 'none',
       monthly_token_limit INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS providers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      endpoint TEXT NOT NULL,
+      api_key TEXT NOT NULL,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      priority INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -424,6 +435,23 @@ export async function initializeDatabase() {
         .where(eq(schema.adminConfig.id, existingAdmin.id))
         .run();
       console.log("✅ Synced .env bot variables to admin_config database");
+    }
+  }
+
+    // Migrate existing upstream to providers table if empty
+  const providerCount = await db.select({ count: sql<number>`count(*)` }).from(schema.providers).get();
+  if (!providerCount || providerCount.count === 0) {
+    const defaultEndpoint = existingAdmin?.upstreamEndpoint || envUpstreamEndpoint || "https://api.openai.com";
+    const defaultApiKey = existingAdmin?.upstreamApiKey || envUpstreamApiKey || "";
+    if (defaultEndpoint && defaultApiKey) {
+      await db.insert(schema.providers).values({
+        name: "Default Provider",
+        endpoint: defaultEndpoint,
+        apiKey: defaultApiKey,
+        isActive: true,
+        priority: 100,
+      }).run();
+      console.log("o. Migrated legacy upstream config to providers table");
     }
   }
 
