@@ -220,10 +220,10 @@ export async function getProviderForModel(modelId: string): Promise<any | null> 
     await refreshModelCatalog();
   }
 
+  const slashIdx = modelId.indexOf('/');
   let cleanModelId = modelId;
   let specifiedProvider: any = null;
 
-  const slashIdx = modelId.indexOf('/');
   if (slashIdx > 0) {
     const prefix = modelId.slice(0, slashIdx);
     const allProvs = await db.select().from(providers).where(eq(providers.isActive, true)).all();
@@ -240,41 +240,23 @@ export async function getProviderForModel(modelId: string): Promise<any | null> 
 
   const allActiveProviders = await db.select().from(providers).where(eq(providers.isActive, true)).orderBy(providers.priority).all();
 
-  const onlineProvidersWithModel: { provider: any, priority: number }[] = [];
-  for (const p of allActiveProviders) {
-    const latestCheck = await db
-      .select()
-      .from(modelMonitor)
-      .where(eq(modelMonitor.provider, p.name))
-      .orderBy(desc(modelMonitor.checkedAt))
-      .limit(10)
-      .all();
-    
-    for (const check of latestCheck) {
-      if (check.isOnline && check.modelId === modelId) {
-        onlineProvidersWithModel.push({ provider: p, priority: p.priority });
-        break;
-      }
-    }
-  }
-
-  if (onlineProvidersWithModel.length > 0) {
-    onlineProvidersWithModel.sort((a, b) => b.priority - a.priority);
-    return onlineProvidersWithModel[0].provider;
-  }
-
   const providerId = cache.modelProviderMap[modelId];
   if (providerId) {
-    return await db.select().from(providers).where(eq(providers.id, providerId)).get();
+    const p = await db.select().from(providers).where(eq(providers.id, providerId)).get();
+    if (p && p.isActive) return p;
   }
 
   for (const [catalogModelId, pId] of Object.entries(cache.modelProviderMap)) {
     if (catalogModelId === modelId || catalogModelId.endsWith('/' + cleanModelId) || catalogModelId.endsWith('/' + modelId)) {
-      return await db.select().from(providers).where(eq(providers.id, pId)).get();
+      const p = await db.select().from(providers).where(eq(providers.id, pId)).get();
+      if (p && p.isActive) return p;
     }
   }
 
-  if (allActiveProviders.length > 0) return allActiveProviders[allActiveProviders.length - 1];
+  for (const p of allActiveProviders) {
+    if (p.isActive) return p;
+  }
+
   return null;
 }
 
