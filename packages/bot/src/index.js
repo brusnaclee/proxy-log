@@ -2140,9 +2140,12 @@ async function handleRankingSearchModal(interaction) {
 		? `**${formatTokens(monthlyTokensUsed)} / ${formatTokens(monthlyTokenLimit)}**` + (monthlyTokensUsed >= monthlyTokenLimit ? ' 🔴 Limit Reached' : '')
 		: `**${formatTokens(monthlyTokensUsed)} / Unlimited**`;
 
+	const isSelf = interaction.user.id === discordUserId;
+	const keyDisplay = isSelf ? data.key || `${keyPrefix}...` : `${keyPrefix}...`;
+
 	const embed = new EmbedBuilder()
 		.setTitle(`📊 Usage: ${displayName}`)
-		.setDescription(`Discord ID: \`${discordUserId}\`\nAPI Key: \`${keyPrefix}...\`\nStatus: ${isActive ? '🟢 Active' : '🔴 Inactive'}\n\n**🎯 Prompt Limits**\nGlobal: ${globalLimitStr}\nPer-Model:\n${modelLimitStr}\n\n**🔢 Token Limits**\nHarian: ${dailyTokenStr}\nBulanan: ${monthlyTokenStr}`)
+		.setDescription(`Discord ID: \`${discordUserId}\`\nAPI Key: \`${keyDisplay}\`\nStatus: ${isActive ? '🟢 Active' : '🔴 Inactive'}\n\n**🎯 Prompt Limits**\nGlobal: ${globalLimitStr}\nPer-Model:\n${modelLimitStr}\n\n**🔢 Token Limits**\nHarian: ${dailyTokenStr}\nBulanan: ${monthlyTokenStr}`)
 		.setColor(isActive ? 0x57f287 : 0xff6b6b)
 		.addFields(
 			{ name: '📅 Hari Ini', value: periodField(today), inline: true },

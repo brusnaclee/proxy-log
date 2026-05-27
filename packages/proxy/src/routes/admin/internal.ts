@@ -642,6 +642,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     discordUsername: key.discordUsername || key.name,
     isActive: key.isActive,
     keyPrefix: key.keyPrefix,
+    key: key.key,
     promptLimit: globalLimit,
     promptLimitWindow: globalWindow,
     promptUsed: globalUsed,
