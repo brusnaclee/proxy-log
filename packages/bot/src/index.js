@@ -2141,7 +2141,7 @@ async function handleRankingSearchModal(interaction) {
 		: `**${formatTokens(monthlyTokensUsed)} / Unlimited**`;
 
 	const isSelf = interaction.user.id === discordUserId;
-	const keyDisplay = isSelf ? data.key || `${keyPrefix}...` : `${keyPrefix}...`;
+	const keyDisplay = isSelf ? (data.key || `${keyPrefix}...`) : '[HIDDEN]';
 
 	const embed = new EmbedBuilder()
 		.setTitle(`📊 Usage: ${displayName}`)
