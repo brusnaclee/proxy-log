@@ -984,7 +984,7 @@ proxy.all("/*", async (c) => {
     if (keyRecord.monthlyTokenLimit && keyRecord.monthlyTokenLimit > 0) {
       const mw = new Date(wibNow); mw.setUTCDate(1); mw.setUTCHours(0, 0, 0, 0);
       const ms = new Date(mw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
-      const mu = await db.select({ total: sql<number>`COALESCE(SUM(total_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms}`)).get();
+      const mu = await db.select({ total: sql<number>`COALESCE(SUM(total_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms}`, sql`is_counted_request = 1`)).get();
       if (mu && mu.total >= keyRecord.monthlyTokenLimit) {
         return c.json({ error: { message: `Monthly token limit reached: ${mu.total.toLocaleString()}/${keyRecord.monthlyTokenLimit.toLocaleString()} tokens.`, type: "rate_limit_error", code: "monthly_token_limit_exceeded" } }, 429);
       }
@@ -994,7 +994,7 @@ proxy.all("/*", async (c) => {
     if (globalDailyTokenLimit > 0) {
       const dw = new Date(wibNow); dw.setUTCHours(0, 0, 0, 0);
       const ds = new Date(dw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
-      const du = await db.select({ total: sql<number>`COALESCE(SUM(total_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`)).get();
+      const du = await db.select({ total: sql<number>`COALESCE(SUM(total_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, sql`is_counted_request = 1`)).get();
       if (du && du.total >= globalDailyTokenLimit) {
         const gml = config.globalMonthlyTokenLimit || 0;
         const mStr = gml > 0 ? gml.toLocaleString() : "Unlimited";
@@ -1006,7 +1006,7 @@ proxy.all("/*", async (c) => {
     if (globalMonthlyTokenLimit > 0) {
       const mw2 = new Date(wibNow); mw2.setUTCDate(1); mw2.setUTCHours(0, 0, 0, 0);
       const ms2 = new Date(mw2.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
-      const mu2 = await db.select({ total: sql<number>`COALESCE(SUM(total_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms2}`)).get();
+      const mu2 = await db.select({ total: sql<number>`COALESCE(SUM(total_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms2}`, sql`is_counted_request = 1`)).get();
       if (mu2 && mu2.total >= globalMonthlyTokenLimit) {
         return c.json({ error: { message: `Monthly token limit reached: ${mu2.total.toLocaleString()}/${globalMonthlyTokenLimit.toLocaleString()} tokens. Resets next month.`, type: "rate_limit_error", code: "global_monthly_token_limit_exceeded" } }, 429);
       }
