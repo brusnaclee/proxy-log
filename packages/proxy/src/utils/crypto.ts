@@ -23,16 +23,33 @@ export function sha256(input: string): string {
 }
 
 /**
- * Generate a device fingerprint from IP, User-Agent, and optionally Device ID
- * If a true device ID is provided, use it instead of IP to allow tracking across networks.
+ * Normalize a User-Agent string by stripping version numbers.
+ * e.g. "Kilo-Code/7.3.12 ai-sdk/provider-utils/4.1" -> "Kilo-Code ai-sdk/provider-utils"
+ * e.g. "Codex Desktop/0.133.0-alpha.1 (Windows 10.0.26200; x86_64)" -> "Codex Desktop (Windows; x86_64)"
+ * This ensures the same app on the same machine generates the same fingerprint
+ * even after IDE updates.
+ */
+function normalizeUserAgent(ua: string): string {
+  return ua
+    .replace(/\/[\d]+[\d.a-zA-Z_-]*/g, '')  // strip /version numbers
+    .replace(/\d+\.\d+[\d.]*/g, '')           // strip remaining version-like numbers
+    .replace(/\s+/g, ' ')                      // collapse whitespace
+    .trim();
+}
+
+/**
+ * Generate a device fingerprint from IP, User-Agent, and optionally Device ID.
+ * - If a device ID header is provided, use it (stable across networks).
+ * - Otherwise, use normalized User-Agent only (no IP at all).
+ *   This way the same laptop on different WiFi networks = same device.
  */
 export function generateFingerprint(ip: string, userAgent: string, deviceId: string = ""): string {
   if (deviceId) {
-    return sha256(`device:${deviceId}:${userAgent}`);
+    return sha256(`device:${deviceId}:${normalizeUserAgent(userAgent)}`);
   }
-  // Use IP subnet (first 3 octets) instead of full IP to group same-network devices
-  const ipSubnet = ip.includes(".") ? ip.split(".").slice(0, 3).join(".") : ip;
-  return sha256(`ip:${ipSubnet}:${userAgent}`);
+  // Use ONLY normalized user-agent. No IP at all.
+  // Same app on same OS = same device, regardless of network.
+  return sha256(`ua:${normalizeUserAgent(userAgent)}`);
 }
 
 /**
