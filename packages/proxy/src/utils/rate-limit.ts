@@ -1,6 +1,7 @@
 import { db } from "../db/index.js";
 import { requestLogs, modelLimits } from "../db/schema.js";
 import { sql, and, eq, gte } from "drizzle-orm";
+import { COUNTED_LOG_SQL } from "./counting.js";
 
 export function parseRateLimitWindow(windowStr: string | null | undefined): number {
   if (!windowStr) return 0;
@@ -37,7 +38,7 @@ export async function checkPromptLimit(
     .where(and(
       eq(requestLogs.apiKeyId, apiKeyId),
       gte(requestLogs.createdAt, windowStart),
-      sql`is_counted_request IS NOT 0`,
+      COUNTED_LOG_SQL,
     ))
     .get();
 
@@ -91,7 +92,7 @@ export async function checkModelPromptLimit(
       eq(requestLogs.apiKeyId, apiKeyId),
       eq(requestLogs.model, model),
       gte(requestLogs.createdAt, windowStart),
-      sql`is_counted_request IS NOT 0`,
+      COUNTED_LOG_SQL,
     ))
     .get();
 
@@ -116,7 +117,7 @@ export async function getWindowResetMs(apiKeyId: number, windowMs: number, model
   const conditions: any[] = [
     eq(requestLogs.apiKeyId, apiKeyId),
     gte(requestLogs.createdAt, windowStart),
-    sql`is_counted_request IS NOT 0`,
+    COUNTED_LOG_SQL,
   ];
   if (model) conditions.push(eq(requestLogs.model, model));
 
