@@ -2,8 +2,7 @@
 import { dirname } from "path";
 import { db } from "../db/index.js";
 import { providers, modelMonitor } from "../db/schema.js";
-import { providers } from "../db/schema.js";
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 8000;
@@ -221,37 +220,62 @@ export async function getProviderForModel(modelId: string): Promise<any | null> 
     await refreshModelCatalog();
   }
 
-  // Strip provider prefix if present: "ProviderName/ModelId" -> "ModelId"
   let cleanModelId = modelId;
   let specifiedProvider: any = null;
 
   const slashIdx = modelId.indexOf('/');
   if (slashIdx > 0) {
     const prefix = modelId.slice(0, slashIdx);
-    cleanModelId = modelId.slice(slashIdx + 1);
-    // Check if prefix matches any active provider name
     const allProvs = await db.select().from(providers).where(eq(providers.isActive, true)).all();
     const matched = allProvs.find(p => p.name === prefix);
     if (matched) {
       specifiedProvider = matched;
+      cleanModelId = modelId.slice(slashIdx + 1);
     }
   }
 
-  // If provider was explicitly specified via prefix, return it
   if (specifiedProvider) {
     return specifiedProvider;
   }
 
-  // No prefix or provider not found: use cached mapping or fallback to highest priority
-  const providerId = cache.modelProviderMap[cleanModelId];
-  if (!providerId) {
-    // Fallback to highest priority active provider
-    const fallback = await db.select().from(providers).where(eq(providers.isActive, true)).orderBy(providers.priority).all();
-    if (fallback.length > 0) return fallback[fallback.length - 1];
-    return null;
+  const allActiveProviders = await db.select().from(providers).where(eq(providers.isActive, true)).orderBy(providers.priority).all();
+
+  const onlineProvidersWithModel: { provider: any, priority: number }[] = [];
+  for (const p of allActiveProviders) {
+    const latestCheck = await db
+      .select()
+      .from(modelMonitor)
+      .where(eq(modelMonitor.provider, p.name))
+      .orderBy(desc(modelMonitor.checkedAt))
+      .limit(10)
+      .all();
+    
+    for (const check of latestCheck) {
+      if (check.isOnline && check.modelId === modelId) {
+        onlineProvidersWithModel.push({ provider: p, priority: p.priority });
+        break;
+      }
+    }
   }
 
-  return await db.select().from(providers).where(eq(providers.id, providerId)).get();
+  if (onlineProvidersWithModel.length > 0) {
+    onlineProvidersWithModel.sort((a, b) => b.priority - a.priority);
+    return onlineProvidersWithModel[0].provider;
+  }
+
+  const providerId = cache.modelProviderMap[modelId];
+  if (providerId) {
+    return await db.select().from(providers).where(eq(providers.id, providerId)).get();
+  }
+
+  for (const [catalogModelId, pId] of Object.entries(cache.modelProviderMap)) {
+    if (catalogModelId === modelId || catalogModelId.endsWith('/' + cleanModelId) || catalogModelId.endsWith('/' + modelId)) {
+      return await db.select().from(providers).where(eq(providers.id, pId)).get();
+    }
+  }
+
+  if (allActiveProviders.length > 0) return allActiveProviders[allActiveProviders.length - 1];
+  return null;
 }
 
 // Helper: extract clean model ID without provider prefix
