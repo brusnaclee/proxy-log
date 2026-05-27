@@ -1315,13 +1315,15 @@ function buildTokitoEmbed(kind, session) {
 	const lines = slice.map((model) => {
 		if (kind === 'status') {
 			const st = runtime.status.get(model);
+			const prov = runtime.modelProviderMap.get(model)?.provider || providerOf(model);
 			const icon = st?.online ? '🟢' : '🔴';
-			return `${icon} \`${model}\` | provider: **${providerOf(model)}**`;
+			return `${icon} \`${prov}/${model}\` | provider: **${prov}**`;
 		}
 		const lt = runtime.latency.get(model);
-		if (!lt) return `⚪ \`${model}\` | not tested yet`;
+		const prov = runtime.modelProviderMap.get(model)?.provider || providerOf(model);
+		if (!lt) return `⚪ \`${prov}/${model}\` | not tested yet`;
 		const icon = lt.ok ? '🟢' : '🔴';
-		return `${icon} \`${model}\` | ${lt.ms} ms | HTTP ${lt.status}`;
+		return `${icon} \`${prov}/${model}\` | ${lt.ms} ms | HTTP ${lt.status}`;
 	});
 
 	const titleStyled =

@@ -35,7 +35,7 @@ let refreshInFlight: Promise<void> | null = null;
 let schedulerStarted = false;
 
 function normalizeBaseUrl(url: string): string {
-  return String(url || "").trim().replace(/\/\$/, "");
+  return String(url || "").trim().replace(/\/$/, "");
 }
 
 function buildCandidateUrls(upstreamEndpoint: string): string[] {
@@ -216,11 +216,22 @@ export async function getModelCatalogResponse() {
 
 export async function getProviderForModel(modelId: string): Promise<any | null> {
   await loadFromDisk();
-  
+
   if (!cache.fetchedAt || cache.models.length === 0) {
     await refreshModelCatalog();
   }
-  
+
+  // Check if model starts with "ProviderName/" format
+  const slashIdx = modelId.indexOf('/');
+  if (slashIdx > 0) {
+    const prefix = modelId.slice(0, slashIdx);
+    const allProviders = await db.select().from(providers).where(eq(providers.isActive, true)).all();
+    const matchedProvider = allProviders.find(p => p.name === prefix);
+    if (matchedProvider) {
+      return matchedProvider;
+    }
+  }
+
   const providerId = cache.modelProviderMap[modelId];
   if (!providerId) {
     // If not mapped, fallback to highest priority active provider
@@ -228,6 +239,6 @@ export async function getProviderForModel(modelId: string): Promise<any | null> 
     if (fallback.length > 0) return fallback[fallback.length - 1]; // orderBy default is ASC. So last is highest.
     return null;
   }
-  
+
   return await db.select().from(providers).where(eq(providers.id, providerId)).get();
 }

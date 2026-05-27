@@ -880,7 +880,7 @@ proxy.all("/*", async (c) => {
   // Wrapped in a per-device lock so concurrent requests from the same device
   // are serialized.  This prevents race conditions where two requests both
   // see "no session" and create duplicate sessions, or both read stale hash.
-  const provider = detectProvider(targetProvider.endpoint, model);
+  const provider = targetProvider.name;
   const deviceLockKey = `${keyRecord.id}:${fingerprint}`;
   const { sessionInfo, isNewPrompt } = await withDeviceLock(deviceLockKey, async () => {
     const sessionInfo = await resolveChatSession({
