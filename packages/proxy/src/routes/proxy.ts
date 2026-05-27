@@ -16,7 +16,7 @@ import {
   toToolJson,
 } from "../utils/telemetry.js";
 import { logEmitter } from "../utils/event-emitter.js";
-import { getModelCatalogResponse, getProviderForModel } from "../utils/model-catalog.js";
+import { getModelCatalogResponse, getProviderForModel, stripProviderPrefix } from "../utils/model-catalog.js";
 import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindowResetMs } from "../utils/rate-limit.js";
 import { analyzeRequestMessages, isTitleGenRequest, detectToolCallsInResponse, type MessageAnalysis } from "../utils/message-analyzer.js";
 
@@ -808,9 +808,20 @@ proxy.all("/*", async (c) => {
   // ─── 8. Analyze Request Messages ───────────────────────────────────────────────
   const messageAnalysis = analyzeRequestMessages(requestBody);
 
-  const targetProvider = await getProviderForModel(model);
+const targetProvider = await getProviderForModel(model);
   if (!targetProvider) {
     return c.json({ error: { message: `No active upstream provider available for model "${model}"`, type: "server_error" } }, 500);
+  }
+
+  // Strip provider prefix for upstream request: "tokito/glm/glm-5.1" -> "glm/glm-5.1"
+  const upstreamModel = stripProviderPrefix(model);
+
+  // Modify requestBody to use clean model name for upstream request
+  if (requestBody && model !== upstreamModel) {
+    requestBody.model = upstreamModel;
+    // Re-encode body bytes with modified model
+    const bodyStr = JSON.stringify(requestBody);
+    requestBodyBytes = new TextEncoder().encode(bodyStr);
   }
 
   // ─── 8a. Model Monitor Check ─────────────────────────────────────────

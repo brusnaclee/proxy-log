@@ -221,24 +221,47 @@ export async function getProviderForModel(modelId: string): Promise<any | null> 
     await refreshModelCatalog();
   }
 
-  // Check if model starts with "ProviderName/" format
+  // Strip provider prefix if present: "ProviderName/ModelId" -> "ModelId"
+  let cleanModelId = modelId;
+  let specifiedProvider: string | null = null;
+
   const slashIdx = modelId.indexOf('/');
   if (slashIdx > 0) {
     const prefix = modelId.slice(0, slashIdx);
+    cleanModelId = modelId.slice(slashIdx + 1);
+    // Check if prefix matches any active provider name
     const allProviders = await db.select().from(providers).where(eq(providers.isActive, true)).all();
     const matchedProvider = allProviders.find(p => p.name === prefix);
     if (matchedProvider) {
-      return matchedProvider;
+      specifiedProvider = matchedProvider.name;
     }
   }
 
-  const providerId = cache.modelProviderMap[modelId];
+  // If provider was explicitly specified, use that provider
+  if (specifiedProvider) {
+    const prov = allProviders || await db.select().from(providers).where(eq(providers.isActive, true)).all();
+    const target = prov.find(p => p.name === specifiedProvider);
+    if (target) return target;
+  }
+
+  // No prefix or provider not found: use cached mapping or fallback to highest priority
+  const providerId = cache.modelProviderMap[cleanModelId];
   if (!providerId) {
-    // If not mapped, fallback to highest priority active provider
+    // Fallback to highest priority active provider
     const fallback = await db.select().from(providers).where(eq(providers.isActive, true)).orderBy(providers.priority).all();
-    if (fallback.length > 0) return fallback[fallback.length - 1]; // orderBy default is ASC. So last is highest.
+    if (fallback.length > 0) return fallback[fallback.length - 1];
     return null;
   }
 
   return await db.select().from(providers).where(eq(providers.id, providerId)).get();
+}
+
+// Helper: extract clean model ID without provider prefix
+export function stripProviderPrefix(modelId: string): string {
+  const slashIdx = modelId.indexOf('/');
+  if (slashIdx > 0) {
+    // Check if first part matches a known provider name
+    return modelId.slice(slashIdx + 1);
+  }
+  return modelId;
 }
