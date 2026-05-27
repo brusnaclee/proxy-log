@@ -1302,10 +1302,6 @@ function listModels(kind, provider, sortMode) {
 	}
 	return items;
 }
-		});
-	}
-	return items;
-}
 
 function buildTokitoEmbed(kind, session) {
 	const models = listModels(kind, session.provider, session.sortMode);
