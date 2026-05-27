@@ -1011,8 +1011,8 @@ proxy.all("/*", async (c) => {
       }
     }
 
-    // Daily Input Token Limit
-    const dailyInputLimit = config.globalDailyInputTokenLimit || 0;
+    // Daily Input Token Limit (per-key override or global)
+    const dailyInputLimit = (keyRecord.dailyInputTokenLimit && keyRecord.dailyInputTokenLimit > 0) ? keyRecord.dailyInputTokenLimit : (config.globalDailyInputTokenLimit || 0);
     if (dailyInputLimit > 0) {
       const dw = new Date(wibNow); dw.setUTCHours(0, 0, 0, 0);
       const ds = new Date(dw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
@@ -1022,8 +1022,8 @@ proxy.all("/*", async (c) => {
       }
     }
 
-    // Daily Output Token Limit
-    const dailyOutputLimit = config.globalDailyOutputTokenLimit || 0;
+    // Daily Output Token Limit (per-key override or global)
+    const dailyOutputLimit = (keyRecord.dailyOutputTokenLimit && keyRecord.dailyOutputTokenLimit > 0) ? keyRecord.dailyOutputTokenLimit : (config.globalDailyOutputTokenLimit || 0);
     if (dailyOutputLimit > 0) {
       const dw = new Date(wibNow); dw.setUTCHours(0, 0, 0, 0);
       const ds = new Date(dw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);

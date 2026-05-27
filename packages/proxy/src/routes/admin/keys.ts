@@ -230,6 +230,8 @@ keys.get("/keys/:id", async (c) => {
     rateLimit: key.rateLimit || 0, rateLimitWindow: key.rateLimitWindow || config?.globalRateLimitWindow || "1h",
     promptLimit: key.promptLimit || 0, promptLimitWindow: key.promptLimitWindow || config?.globalPromptLimitWindow || "1d",
     perModelPromptLimit: key.perModelPromptLimit || 0, perModelPromptLimitWindow: key.perModelPromptLimitWindow || config?.globalPerModelPromptLimitWindow || "1d",
+    dailyInputTokenLimit: key.dailyInputTokenLimit || 0,
+    dailyOutputTokenLimit: key.dailyOutputTokenLimit || 0,
     createdAt: key.createdAt, updatedAt: key.updatedAt,
     stats: {
       today:   { ...todayStats },
@@ -279,6 +281,8 @@ keys.put("/keys/:id", async (c) => {
   if (body.promptLimitWindow !== undefined) updates.promptLimitWindow = body.promptLimitWindow || null;
   if (body.perModelPromptLimit !== undefined) updates.perModelPromptLimit = body.perModelPromptLimit;
   if (body.perModelPromptLimitWindow !== undefined) updates.perModelPromptLimitWindow = body.perModelPromptLimitWindow || null;
+  if (body.dailyInputTokenLimit !== undefined) updates.dailyInputTokenLimit = body.dailyInputTokenLimit;
+  if (body.dailyOutputTokenLimit !== undefined) updates.dailyOutputTokenLimit = body.dailyOutputTokenLimit;
 
   await db.update(apiKeys).set(updates).where(eq(apiKeys.id, id)).run();
   return c.json({ success: true, message: "API key updated" });
