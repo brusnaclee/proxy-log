@@ -1,6 +1,6 @@
 ﻿import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import * as schema from "./schema.js";
 import { existsSync, mkdirSync } from "fs";
 import { dirname } from "path";
