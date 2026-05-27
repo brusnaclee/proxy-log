@@ -21,6 +21,8 @@ settings.get("/settings/global", async (c) => {
     globalPerModelPromptLimitWindow: config.globalPerModelPromptLimitWindow || "1d",
     globalDailyTokenLimit: config.globalDailyTokenLimit || 0,
     globalMonthlyTokenLimit: config.globalMonthlyTokenLimit || 0,
+    globalDailyInputTokenLimit: config.globalDailyInputTokenLimit || 0,
+    globalDailyOutputTokenLimit: config.globalDailyOutputTokenLimit || 0,
   });
 });
 
@@ -40,6 +42,8 @@ settings.put("/settings/global", async (c) => {
   if (body.globalPerModelPromptLimitWindow !== undefined) updates.globalPerModelPromptLimitWindow = body.globalPerModelPromptLimitWindow || "1d";
     if (body.globalDailyTokenLimit !== undefined) updates.globalDailyTokenLimit = body.globalDailyTokenLimit;
     if (body.globalMonthlyTokenLimit !== undefined) updates.globalMonthlyTokenLimit = body.globalMonthlyTokenLimit;
+    if (body.globalDailyInputTokenLimit !== undefined) updates.globalDailyInputTokenLimit = body.globalDailyInputTokenLimit;
+    if (body.globalDailyOutputTokenLimit !== undefined) updates.globalDailyOutputTokenLimit = body.globalDailyOutputTokenLimit;
 
   await db.update(adminConfig).set(updates).where(eq(adminConfig.id, config.id)).run();
   return c.json({ success: true, message: "Global settings updated" });

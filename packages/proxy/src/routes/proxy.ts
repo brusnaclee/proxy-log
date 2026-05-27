@@ -4,7 +4,7 @@ import { db } from "../db/index.js";
 import { apiKeys, devices, allowedDevices, allowedIdes, requestLogs, adminConfig, chatSessions, modelMonitor } from "../db/schema.js";
 import { eq, and, sql, desc } from "drizzle-orm";
 import { generateFingerprint, generateSessionId, generateApiKey, getKeyPrefix, sha256 } from "../utils/crypto.js";
-import { detectIde, estimateTokens, getClientIp, normalizeIdeName } from "../utils/detect-ide.js";
+import { detectIde, detectIdeFromContent, estimateTokens, getClientIp, normalizeIdeName } from "../utils/detect-ide.js";
 import { calculateEstimatedCost } from "../utils/cost-calculator.js";
 import {
   detectProvider,
@@ -548,10 +548,10 @@ proxy.all("/*", async (c) => {
   const deviceId = c.req.header("x-device-id") || c.req.header("device-id") || c.req.header("x-machine-id") || "";
   const clientIp = getClientIp(c.req.raw.headers, c.req.header("x-real-ip") || "127.0.0.1");
   const fingerprint = generateFingerprint(clientIp, userAgent, deviceId);
-  const ide = detectIde(userAgent);
+  let ide = detectIde(userAgent);
   const platformHint = platformHintRaw + " " + deviceName;
   const osDetected = detectOperatingSystem(userAgent, platformHint);
-  const normalizedIde = normalizeIdeName(ide);
+  let normalizedIde = normalizeIdeName(ide);
 
   // ΓöÇΓöÇΓöÇ 4. Device Policy Check ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const existingDevice = await db
@@ -782,7 +782,18 @@ proxy.all("/*", async (c) => {
     requestToolNames = contextInfo.requestToolNames;
   }
 
-  // ΓöÇΓöÇΓöÇ 8. Analyze Request Messages ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  // ─── 7b. Content-based IDE fallback detection ──────────────────────────
+  // When User-Agent is generic (e.g. "node"), try to identify the IDE from
+  // the request body content (system prompt, tool names, transcript).
+  if (ide === "Unknown" && requestBody) {
+    const contentIde = detectIdeFromContent(requestBody, transcriptSnapshot);
+    if (contentIde) {
+      ide = contentIde;
+      normalizedIde = normalizeIdeName(ide);
+    }
+  }
+
+  // ─── 8. Analyze Request Messages ───────────────────────────────────────────────
   const messageAnalysis = analyzeRequestMessages(requestBody);
 
   // ─── 8a. Model Monitor Check ─────────────────────────────────────────
@@ -996,9 +1007,29 @@ proxy.all("/*", async (c) => {
       const ds = new Date(dw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
       const du = await db.select({ total: sql<number>`COALESCE(SUM(total_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, sql`is_counted_request = 1`)).get();
       if (du && du.total >= globalDailyTokenLimit) {
-        const gml = config.globalMonthlyTokenLimit || 0;
-        const mStr = gml > 0 ? gml.toLocaleString() : "Unlimited";
-        return c.json({ error: { message: `Daily token limit reached: ${du.total.toLocaleString()}/${globalDailyTokenLimit.toLocaleString()} tokens today. Monthly: ${mStr}. Resets tomorrow.`, type: "rate_limit_error", code: "daily_token_limit_exceeded" } }, 429);
+        return c.json({ error: { message: `Daily token limit reached: ${du.total.toLocaleString()}/${globalDailyTokenLimit.toLocaleString()} tokens today. Resets tomorrow.`, type: "rate_limit_error", code: "daily_token_limit_exceeded" } }, 429);
+      }
+    }
+
+    // Daily Input Token Limit
+    const dailyInputLimit = config.globalDailyInputTokenLimit || 0;
+    if (dailyInputLimit > 0) {
+      const dw = new Date(wibNow); dw.setUTCHours(0, 0, 0, 0);
+      const ds = new Date(dw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
+      const du = await db.select({ total: sql<number>`COALESCE(SUM(prompt_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`)).get();
+      if (du && du.total >= dailyInputLimit) {
+        return c.json({ error: { message: `Daily input token limit reached: ${du.total.toLocaleString()}/${dailyInputLimit.toLocaleString()} input tokens today. Resets tomorrow.`, type: "rate_limit_error", code: "daily_input_token_limit_exceeded" } }, 429);
+      }
+    }
+
+    // Daily Output Token Limit
+    const dailyOutputLimit = config.globalDailyOutputTokenLimit || 0;
+    if (dailyOutputLimit > 0) {
+      const dw = new Date(wibNow); dw.setUTCHours(0, 0, 0, 0);
+      const ds = new Date(dw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
+      const du = await db.select({ total: sql<number>`COALESCE(SUM(completion_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`)).get();
+      if (du && du.total >= dailyOutputLimit) {
+        return c.json({ error: { message: `Daily output token limit reached: ${du.total.toLocaleString()}/${dailyOutputLimit.toLocaleString()} output tokens today. Resets tomorrow.`, type: "rate_limit_error", code: "daily_output_token_limit_exceeded" } }, 429);
       }
     }
 

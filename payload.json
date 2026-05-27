@@ -1,0 +1,9 @@
+﻿{
+    "model":  "cx/gpt-5.5",
+    "messages":  [
+                     {
+                         "content":  "hello",
+                         "role":  "user"
+                     }
+                 ]
+}

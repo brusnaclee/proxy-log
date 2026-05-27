@@ -652,8 +652,12 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     perModelPromptLimitWindow: perModelWindowFallback,
     dailyTokenLimit: config?.globalDailyTokenLimit || 0,
     monthlyTokenLimit: config?.globalMonthlyTokenLimit || 0,
+    dailyInputTokenLimit: config?.globalDailyInputTokenLimit || 0,
+    dailyOutputTokenLimit: config?.globalDailyOutputTokenLimit || 0,
     dailyTokensUsed: todayStats?.tokens || 0,
     monthlyTokensUsed: monthStats?.tokens || 0,
+    dailyInputUsed: todayStats?.promptTokens || 0,
+    dailyOutputUsed: todayStats?.completionTokens || 0,
       today: {
         requests: todayStats?.requests || 0,
         tokens: todayStats?.tokens || 0,

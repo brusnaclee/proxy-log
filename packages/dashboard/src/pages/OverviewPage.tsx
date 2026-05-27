@@ -317,8 +317,10 @@ export default function OverviewPage() {
                     </ul>
                   </div>
                   <div className="mt-2 space-y-1">
-                    <p className="font-semibold">Token Limits:</p>
-                    <p>Harian: {formatNumber(searchUserResult.dailyTokensUsed || 0)} / {searchUserResult.dailyTokenLimit > 0 ? formatNumber(searchUserResult.dailyTokenLimit) : 'Unlimited'}</p>
+                    <p className="font-semibold">Token Limits (Harian):</p>
+                    <p>Input: {formatNumber(searchUserResult.dailyInputUsed || 0)} / {searchUserResult.dailyInputTokenLimit > 0 ? formatNumber(searchUserResult.dailyInputTokenLimit) : 'Unlimited'}</p>
+                    <p>Output: {formatNumber(searchUserResult.dailyOutputUsed || 0)} / {searchUserResult.dailyOutputTokenLimit > 0 ? formatNumber(searchUserResult.dailyOutputTokenLimit) : 'Unlimited'}</p>
+                    <p>Total: {formatNumber(searchUserResult.dailyTokensUsed || 0)} / {searchUserResult.dailyTokenLimit > 0 ? formatNumber(searchUserResult.dailyTokenLimit) : 'Unlimited'}</p>
                     <p>Bulanan: {formatNumber(searchUserResult.monthlyTokensUsed || 0)} / {searchUserResult.monthlyTokenLimit > 0 ? formatNumber(searchUserResult.monthlyTokenLimit) : 'Unlimited'}</p>
                   </div>
                 </div>

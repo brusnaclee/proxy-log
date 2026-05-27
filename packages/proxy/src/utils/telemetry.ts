@@ -131,12 +131,63 @@ export function extractContextInfo(requestBody: any): ContextInfo {
       .reverse()
       .find((msg) => String(msg?.role || "").toLowerCase() === "user");
     previewSource = extractText(latestUser?.content ?? latestUser) || canonicalContext;
+  } else if (Array.isArray(requestBody?.input)) {
+    // Codex /v1/responses: input is an array of {role, content} messages
+    const messages = requestBody.input as any[];
+    const normalizedMessages = messages.map((msg) => messageLikeToText(msg));
+    canonicalContext = normalizedMessages.join("\n");
+    transcriptSnapshot = canonicalContext;
+
+    const systemMessage = messages.find((msg) => {
+      const r = String(msg?.role || "").toLowerCase();
+      return r === "system" || r === "developer";
+    });
+    const firstUserMessage = messages.find((msg) => String(msg?.role || "").toLowerCase() === "user");
+    const anchorMessages = [systemMessage, firstUserMessage]
+      .filter(Boolean)
+      .map((msg) => messageLikeToText(msg));
+
+    anchorSeed = anchorMessages.join("\n");
+
+    const latestUser = [...messages]
+      .reverse()
+      .find((msg) => String(msg?.role || "").toLowerCase() === "user");
+    previewSource = extractText(latestUser?.content ?? latestUser) || canonicalContext;
   } else if (requestBody?.input !== undefined) {
+    // Codex /v1/responses with string input
     const inputText = extractText(requestBody.input);
     canonicalContext = normalizeWhitespace(inputText);
     anchorSeed = canonicalContext;
     previewSource = canonicalContext;
     transcriptSnapshot = canonicalContext;
+  } else if (requestBody?.request?.contents && Array.isArray(requestBody.request.contents)) {
+    // Antigravity wrapped Gemini format: { project, request: { contents: [{role, parts}] } }
+    const messages = requestBody.request.contents as any[];
+    const normalizedMessages = messages.map((msg: any) => {
+      const role = msg.role === "model" ? "assistant" : msg.role === "function" ? "tool" : (msg.role || "user");
+      const text = Array.isArray(msg.parts) ? msg.parts.map((p: any) => p.text || "").join("\n") : "";
+      return `${role}:${normalizeWhitespace(text)}`;
+    });
+    canonicalContext = normalizedMessages.join("\n");
+    transcriptSnapshot = canonicalContext;
+
+    const firstUserMessage = messages.find((msg: any) => msg.role === "user");
+    if (firstUserMessage) {
+      const text = Array.isArray(firstUserMessage.parts)
+        ? firstUserMessage.parts.map((p: any) => p.text || "").join("\n")
+        : "";
+      anchorSeed = `user:${normalizeWhitespace(text)}`;
+    }
+
+    const latestUser = [...messages].reverse().find((msg: any) => msg.role === "user");
+    if (latestUser) {
+      const text = Array.isArray(latestUser.parts)
+        ? latestUser.parts.map((p: any) => p.text || "").join("\n")
+        : "";
+      previewSource = normalizeWhitespace(text) || canonicalContext;
+    } else {
+      previewSource = canonicalContext;
+    }
   } else {
     canonicalContext = normalizeWhitespace(extractText(requestBody));
     anchorSeed = canonicalContext;
