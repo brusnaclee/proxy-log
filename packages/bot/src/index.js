@@ -964,11 +964,11 @@ async function pollModelStatus() {
 					const arr = Array.isArray(payload) ? payload : payload?.data || [];
 					for (const m of arr) {
 						const id = m.id || m.name;
-						if (!runtime.modelProviderMap.has(id)) {
-							runtime.modelProviderMap.set(id, { provider: prov.name, baseUrl: base, apiKey: prov.apiKey });
-							allModels.push(id);
-							runtime.modelEntries.push({ modelId: id, provider: prov.name, baseUrl: base, apiKey: prov.apiKey });
-						}
+						// Always store - even if duplicate modelId exists from another provider
+						// This allows modelEntries to have multiple entries for same modelId but different providers
+						allModels.push(id);
+						runtime.modelEntries.push({ modelId: id, provider: prov.name, baseUrl: base, apiKey: prov.apiKey });
+						runtime.modelProviderMap.set(id, { provider: prov.name, baseUrl: base, apiKey: prov.apiKey });
 					}
 					fetched = true;
 					console.log(`[tokito-monitor] fetched ${arr.length} models from provider: ${prov.name} (${url})`);
@@ -1280,6 +1280,7 @@ function buildTokitoRows(
 }
 
 function listModels(kind, provider, sortMode) {
+	// Use modelEntries which contains all entries (including duplicate modelIds from different providers)
 	let items = runtime.modelEntries.map(e => e.modelId);
 	if (provider !== 'all')
 		items = items.filter(m => (runtime.modelProviderMap.get(m)?.provider || providerOf(m)) === provider);
@@ -1297,6 +1298,10 @@ function listModels(kind, provider, sortMode) {
 			const am = runtime.latency.get(a)?.ms ?? Number.MAX_SAFE_INTEGER;
 			const bm = runtime.latency.get(b)?.ms ?? Number.MAX_SAFE_INTEGER;
 			return sortMode === 'latency_fastest' ? am - bm : bm - am;
+		});
+	}
+	return items;
+}
 		});
 	}
 	return items;
