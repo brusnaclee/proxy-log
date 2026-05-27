@@ -1,6 +1,7 @@
 ﻿import { mkdir, readFile, writeFile } from "fs/promises";
 import { dirname } from "path";
 import { db } from "../db/index.js";
+import { providers, modelMonitor } from "../db/schema.js";
 import { providers } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 
