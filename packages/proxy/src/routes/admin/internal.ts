@@ -6,6 +6,7 @@ import { generateApiKey, getKeyPrefix, sha256 } from "../../utils/crypto.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
 import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindowResetMs } from "../../utils/rate-limit.js";
 import { isInternalRequest } from "../../middleware/session.js";
+import { COUNTED_LOG_SQL } from "../../utils/counting.js";
 
 const internal = new Hono();
 
@@ -31,9 +32,9 @@ async function findKeyByDiscordUser(discordUserId: string) {
 async function getUserStats(apiKeyId: number) {
   const usage = await db.select({
     requests: sql<number>`COALESCE(SUM(CASE WHEN is_counted_request IS NOT 0 THEN 1 ELSE 0 END), 0)`,
-    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
+    tokens: sql<number>`COALESCE(SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN total_tokens ELSE 0 END), 0)`,
+    promptTokens: sql<number>`COALESCE(SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN prompt_tokens ELSE 0 END), 0)`,
+    completionTokens: sql<number>`COALESCE(SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN completion_tokens ELSE 0 END), 0)`,
   }).from(requestLogs).where(eq(requestLogs.apiKeyId, apiKeyId)).get();
 
   const uniqueDevices = await db.select({ count: sql<number>`count(*)` })
@@ -374,10 +375,11 @@ internal.get("/internal/stats/overview", async (c) => {
   wibNow.setUTCHours(0, 0, 0, 0);
   const todayStart = new Date(wibNow.getTime() - wibOffset);
 
+  const todayStr = todayStart.toISOString().replace("T", " ").substring(0, 19);
   const today = await db.select({
     requests: sql<number>`COALESCE(SUM(CASE WHEN is_counted_request IS NOT 0 THEN 1 ELSE 0 END), 0)`,
-    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-  }).from(requestLogs).where(sql`created_at >= ${todayStart.toISOString()}`).get();
+    tokens: sql<number>`COALESCE(SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN total_tokens ELSE 0 END), 0)`,
+  }).from(requestLogs).where(sql`created_at >= ${todayStr}`).get();
 
   const activeDiscordKeys = await db.select({ count: sql<number>`count(*)` })
     .from(apiKeys)
@@ -464,14 +466,14 @@ internal.get("/internal/stats/ranking", async (c) => {
     const rows = await db.select({
       apiKeyId: requestLogs.apiKeyId,
       requests: sql<number>`COALESCE(SUM(CASE WHEN is_counted_request IS NOT 0 THEN 1 ELSE 0 END), 0)`,
-      tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-      promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-      completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
+      tokens: sql<number>`COALESCE(SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN total_tokens ELSE 0 END), 0)`,
+      promptTokens: sql<number>`COALESCE(SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN prompt_tokens ELSE 0 END), 0)`,
+      completionTokens: sql<number>`COALESCE(SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN completion_tokens ELSE 0 END), 0)`,
     })
     .from(requestLogs)
-    .where(sql`created_at >= ${since}`)
+    .where(and(sql`created_at >= ${since}`, sql`is_counted_request IS NOT 0`))
     .groupBy(requestLogs.apiKeyId)
-    .orderBy(sql`COALESCE(SUM(total_tokens), 0) DESC`)
+    .orderBy(sql`COALESCE(SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN total_tokens ELSE 0 END), 0) DESC`)
     .limit(20)
     .all();
 
@@ -550,7 +552,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     return db.select({
       model: requestLogs.model,
       requests: sql<number>`COALESCE(SUM(CASE WHEN is_counted_request IS NOT 0 THEN 1 ELSE 0 END), 0)`,
-      tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
+      tokens: sql<number>`COALESCE(SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN total_tokens ELSE 0 END), 0)`,
     })
     .from(requestLogs)
     .where(and(
@@ -558,7 +560,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
       sql`created_at >= ${since}`
     ))
     .groupBy(requestLogs.model)
-    .orderBy(sql`COALESCE(SUM(total_tokens), 0) DESC`)
+    .orderBy(sql`COALESCE(SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN total_tokens ELSE 0 END), 0) DESC`)
     .limit(3)
     .all();
   }
@@ -566,11 +568,11 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   async function getPeriodStats(since: string) {
     return db.select({
       requests: sql<number>`COALESCE(SUM(CASE WHEN is_counted_request IS NOT 0 THEN 1 ELSE 0 END), 0)`,
-      tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-      promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-      completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
+      tokens: sql<number>`COALESCE(SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN total_tokens ELSE 0 END), 0)`,
+      promptTokens: sql<number>`COALESCE(SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN prompt_tokens ELSE 0 END), 0)`,
+      completionTokens: sql<number>`COALESCE(SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN completion_tokens ELSE 0 END), 0)`,
       contextTokens: sql<number>`0`,
-      estimatedCost: sql<number>`COALESCE(SUM(estimated_cost), 0)`,
+      estimatedCost: sql<number>`COALESCE(SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN estimated_cost ELSE 0 END), 0)`,
     })
     .from(requestLogs)
     .where(and(

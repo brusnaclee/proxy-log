@@ -7,6 +7,12 @@ rm -f /tmp/check-logs.sh /tmp/curl_test.sh /tmp/fix_proxy.sh /tmp/test-clean-key
   /tmp/test-pending.sh /tmp/test-tokiomni.sh /tmp/test-tokowa-models.sh \
   /root/proxy-log/scripts/quick-verify.sh 2>/dev/null || true
 
+echo "=== Clean /root debug scripts ==="
+rm -f /root/check-db.js /root/check-logs.js /root/patch.js /root/payload.json \
+  /root/test-api3.js /root/test-exact.js /root/test-fetch-detailed.js \
+  /root/test-headers-full.js /root/test-headers.js /root/test-local-proxy.js \
+  /root/test-ps.js 2>/dev/null || true
+
 echo "=== Git pull ==="
 git fetch origin main
 git reset --hard origin/main

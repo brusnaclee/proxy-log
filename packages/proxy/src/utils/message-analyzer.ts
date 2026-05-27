@@ -67,8 +67,18 @@ function isToolResultContent(content: string): boolean {
   if (trimmed.startsWith("[retry after the previous model attempt")) return true;
 
   // Claude Desktop: tool result notifications wrapped as user
-  // e.g. "The file /path/to/file has been updated successfully. (file state is current...)"
   if (/^the file .+ has been (updated|created|written) successfully/i.test(content.trimStart())) return true;
+
+  // OpenCode / Claude Code / generic tool wrappers
+  if (trimmed.startsWith("[tool result]")) return true;
+  if (trimmed.startsWith("tool result:")) return true;
+  if (trimmed.startsWith("called tool")) return true;
+  if (trimmed.startsWith("result of tool")) return true;
+  if (/^tool:\s*\w+/i.test(content.trimStart())) return true;
+
+  // Codex command output
+  if (trimmed.startsWith("command output:")) return true;
+  if (trimmed.startsWith("apply_patch result")) return true;
 
   return false;
 }
@@ -178,10 +188,12 @@ export function analyzeRequestMessages(requestBody: any): MessageAnalysis {
   // ─── Count roles ─────────────────────────────────────────────────────
   let userMessageCount = 0;
   let assistantMessageCount = 0;
+  let toolMessageCount = 0;
   for (const msg of messages) {
     const r = String(msg?.role || "").toLowerCase();
     if (r === "user") userMessageCount++;
     else if (r === "assistant") assistantMessageCount++;
+    else if (r === "tool") toolMessageCount++;
   }
 
   // ─── Analyze last message ────────────────────────────────────────────
@@ -211,6 +223,10 @@ export function analyzeRequestMessages(requestBody: any): MessageAnalysis {
 
   // Determine effective role
   let effectiveRole: string = isToolResultWrapper ? "tool" : role;
+  if (effectiveRole === "user" && toolMessageCount > 0 && assistantMessageCount === 0 && userMessageCount <= 1) {
+    // Single user message in a tool-only turn is often a tool result wrapper.
+    if (isToolResultContent(content)) effectiveRole = "tool";
+  }
 
   // ─── Detect tool-result-in-user-message (content-based) ──────────────
   // Many IDEs send tool outputs as role="user". If content looks like a

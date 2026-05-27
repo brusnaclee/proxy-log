@@ -5,6 +5,7 @@ import { eq, sql, and, desc } from "drizzle-orm";
 import { generateApiKey, getKeyPrefix, sha256, maskKey } from "../../utils/crypto.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
+import { COUNTED_LOG_SQL, wibMonthStartSql } from "../../utils/counting.js";
 
 const keys = new Hono();
 
@@ -39,7 +40,7 @@ keys.get("/keys", async (c) => {
       .from(requestLogs).where(and(
         eq(requestLogs.apiKeyId, key.id), 
         sql`created_at >= ${todayUtcStr}`,
-        sql`is_counted_request IS NOT 0`
+        COUNTED_LOG_SQL,
       )).get();
     const deviceCount = await db.select({ count: sql<number>`count(*)` }).from(devices).where(eq(devices.apiKeyId, key.id)).get();
     const totalStats = await db.select({ count: sql<number>`count(*)`, tokens: sql<number>`COALESCE(SUM(total_tokens), 0)` })
@@ -94,14 +95,14 @@ keys.get("/keys/:id", async (c) => {
   wibNow.setUTCHours(0, 0, 0, 0);
   const todayStart = new Date(wibNow.getTime() - wibOffset);
   const weekStart  = new Date(now); weekStart.setDate(now.getDate() - 7);
-  const monthStart = new Date(now); monthStart.setDate(now.getDate() - 30);
+  const monthStart = new Date(wibMonthStartSql().replace(" ", "T") + "Z");
 
   const toSqlDate = (d: Date) => d.toISOString().replace('T', ' ').substring(0, 19);
 
   const buildPeriodStats = async (since?: string) => {
     const where = since
-      ? and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${since}`, sql`is_counted_request IS NOT 0`)
-      : and(eq(requestLogs.apiKeyId, key.id), sql`is_counted_request IS NOT 0`);
+      ? and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${since}`, COUNTED_LOG_SQL)
+      : and(eq(requestLogs.apiKeyId, key.id), COUNTED_LOG_SQL);
     const s = await db.select({
       count:           sql<number>`count(*)`,
       tokens:          sql<number>`COALESCE(SUM(total_tokens), 0)`,

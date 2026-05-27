@@ -3,6 +3,7 @@ import { db } from "../../db/index.js";
 import { requestLogs, apiKeys, devices, chatSessions } from "../../db/schema.js";
 import { eq, sql, and } from "drizzle-orm";
 import { getModelRates } from "../../utils/cost-calculator.js";
+import { COUNTED_LOG_SQL } from "../../utils/counting.js";
 
 const stats = new Hono();
 
@@ -323,7 +324,7 @@ stats.get("/stats/timeseries", async (c) => {
     promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`, completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
     estimatedCost: sql<number>`COALESCE(SUM(estimated_cost), 0)`,
     uniqueDevices: sql<number>`COUNT(DISTINCT device_fingerprint)`,
-  }).from(requestLogs).where(sql`created_at >= ${startStr}`)
+  }).from(requestLogs).where(and(sql`created_at >= ${startStr}`, COUNTED_LOG_SQL))
     .groupBy(sql.raw(groupExpr)).orderBy(sql.raw(groupExpr)).all();
 
   return c.json(result);
@@ -337,8 +338,8 @@ stats.get("/stats/top-users", async (c) => {
     : null;
 
   const whereClause = startDate
-    ? and(sql`created_at >= ${startDate}`, sql`is_counted_request IS NOT 0`)
-    : sql`is_counted_request IS NOT 0`;
+    ? and(sql`created_at >= ${startDate}`, COUNTED_LOG_SQL)
+    : COUNTED_LOG_SQL;
 
   // Aggregate per api_key_id
   const aggRows = await db.select({

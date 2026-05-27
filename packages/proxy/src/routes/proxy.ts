@@ -20,6 +20,7 @@ import { getModelCatalogResponse, getProviderForModel, stripProviderPrefix } fro
 import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindowResetMs } from "../utils/rate-limit.js";
 import { analyzeRequestMessages, isTitleGenRequest, detectToolCallsInResponse, type MessageAnalysis } from "../utils/message-analyzer.js";
 import { makeAccumulator, consumeStreamPayload, consumeNonStreamingPayload, finalizeCompletion } from "../utils/token-extractor.js";
+import { COUNTED_LOG_SQL } from "../utils/counting.js";
 
 const proxy = new Hono();
 
@@ -312,6 +313,7 @@ async function resolveChatSession(params: {
   requestPreview: string;
   messageAnalysis: MessageAnalysis;
   requestBody?: any;
+  requestToolCount?: number;
 }): Promise<{ sessionId: string; contextEvent: ContextEvent; contextDeltaTokens: number; gapMs: number; isNewUserPrompt: boolean }> {
   // ΓöÇΓöÇΓöÇ Find the most recent session for this device ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const latest = await db
@@ -425,19 +427,24 @@ async function resolveChatSession(params: {
   // This is simple and doesn't depend on gap timing or lastToolCallsActive (which
   // suffers from async write race conditions).
   let isNewUserPrompt = false;
+  const toolCount = params.requestToolCount ?? 0;
+  const role = params.messageAnalysis.messageRole;
 
-  if (params.messageAnalysis.hasUserMessage && hashChanged) {
-    // User typed something new.
+  if (role && role !== "user") {
+    isNewUserPrompt = false;
+  } else if (params.messageAnalysis.hasUserMessage && hashChanged) {
     if (params.messageAnalysis.isRawFormat) {
-      // Codex/Custom endpoints: hash changes on every tool output.
-      // Count as new prompt ONLY if gap > 2 min (user is typing a new prompt after AI finished).
       isNewUserPrompt = gapMs >= 120000;
-    } else {
-      // Standard messages format: hash only changes when user types something new.
+    } else if (params.messageAnalysis.assistantMessageCount > 0) {
       isNewUserPrompt = true;
+    } else {
+      isNewUserPrompt = toolCount > 0;
     }
-  } else if (!hashChanged && params.messageAnalysis.hasUserMessage && gapMs >= SWITCH_PROMPT_MIN_GAP_MS) {
-    // Same hash but very large gap -> user re-sent after long pause
+  } else if (
+    !hashChanged &&
+    params.messageAnalysis.hasUserMessage &&
+    gapMs >= SWITCH_PROMPT_MIN_GAP_MS
+  ) {
     isNewUserPrompt = true;
   }
 
@@ -470,13 +477,12 @@ async function updateSessionAfterRequest(tx: any, params: {
     ideDetected: params.ideDetected,
     provider: params.provider,
     lastRequestPreview: params.requestPreview || null,
-    totalTokens: sql`${chatSessions.totalTokens} + ${Math.max(params.totalTokens || 0, 0)}`,
-    estimatedCost: sql`${chatSessions.estimatedCost} + ${Math.max(params.estimatedCost || 0, 0)}`,
     lastToolCallsActive: params.hasActualToolCalls,
   };
 
-  // Only increment requestCount and promptCount when this is a genuine new user prompt
   if (params.isNewPrompt) {
+    updates.totalTokens = sql`${chatSessions.totalTokens} + ${Math.max(params.totalTokens || 0, 0)}`;
+    updates.estimatedCost = sql`${chatSessions.estimatedCost} + ${Math.max(params.estimatedCost || 0, 0)}`;
     updates.requestCount = sql`${chatSessions.requestCount} + 1`;
     updates.promptCount = sql`${chatSessions.promptCount} + 1`;
   }
@@ -922,24 +928,17 @@ const targetProvider = await getProviderForModel(model);
       requestPreview,
       messageAnalysis,
       requestBody,
+      requestToolCount: requestToolNames.length,
     });
 
     const isNewPrompt = sessionInfo.isNewUserPrompt;
 
-    // Update in-memory hash cache ONLY for counted prompts.
-    // If we cache hash for non-counted requests (like IDE compact setup),
-    if (messageAnalysis.messageHash && isNewPrompt) {
-      sessionHashCache.set(sessionInfo.sessionId, messageAnalysis.messageHash);
-    }
-    // Sync DB tracking fields (only write hash when counted)
+    // Sync non-hash session tracking before upstream (hash updated only after successful count).
     {
       const syncUpdates: Record<string, any> = {
         lastSeenAt: formatSqliteDate(),
         model,
       };
-      if (messageAnalysis.messageHash && isNewPrompt) {
-        syncUpdates.lastUserMessageHash = messageAnalysis.messageHash;
-      }
       if (messageAnalysis.messageRole) {
         syncUpdates.lastMessageRole = messageAnalysis.messageRole;
       }
@@ -1042,7 +1041,7 @@ const targetProvider = await getProviderForModel(model);
     if (keyRecord.monthlyTokenLimit && keyRecord.monthlyTokenLimit > 0) {
       const mw = new Date(wibNow); mw.setUTCDate(1); mw.setUTCHours(0, 0, 0, 0);
       const ms = new Date(mw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
-      const mu = await db.select({ total: sql<number>`COALESCE(SUM(total_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms}`, sql`is_counted_request = 1`)).get();
+      const mu = await db.select({ total: sql<number>`COALESCE(SUM(total_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms}`, COUNTED_LOG_SQL)).get();
       if (mu && mu.total >= keyRecord.monthlyTokenLimit) {
         return c.json({ error: { message: `Monthly token limit reached: ${mu.total.toLocaleString()}/${keyRecord.monthlyTokenLimit.toLocaleString()} tokens.`, type: "rate_limit_error", code: "monthly_token_limit_exceeded" } }, 429);
       }
@@ -1052,7 +1051,7 @@ const targetProvider = await getProviderForModel(model);
     if (globalDailyTokenLimit > 0) {
       const dw = new Date(wibNow); dw.setUTCHours(0, 0, 0, 0);
       const ds = new Date(dw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
-      const du = await db.select({ total: sql<number>`COALESCE(SUM(total_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, sql`is_counted_request = 1`)).get();
+      const du = await db.select({ total: sql<number>`COALESCE(SUM(total_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, COUNTED_LOG_SQL)).get();
       if (du && du.total >= globalDailyTokenLimit) {
         return c.json({ error: { message: `Daily token limit reached: ${du.total.toLocaleString()}/${globalDailyTokenLimit.toLocaleString()} tokens today. Resets tomorrow.`, type: "rate_limit_error", code: "daily_token_limit_exceeded" } }, 429);
       }
@@ -1063,7 +1062,7 @@ const targetProvider = await getProviderForModel(model);
     if (dailyInputLimit > 0) {
       const dw = new Date(wibNow); dw.setUTCHours(0, 0, 0, 0);
       const ds = new Date(dw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
-      const du = await db.select({ total: sql<number>`COALESCE(SUM(prompt_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`)).get();
+      const du = await db.select({ total: sql<number>`COALESCE(SUM(prompt_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, COUNTED_LOG_SQL)).get();
       if (du && du.total >= dailyInputLimit) {
         return c.json({ error: { message: `Daily input token limit reached: ${du.total.toLocaleString()}/${dailyInputLimit.toLocaleString()} input tokens today. Resets tomorrow.`, type: "rate_limit_error", code: "daily_input_token_limit_exceeded" } }, 429);
       }
@@ -1074,7 +1073,7 @@ const targetProvider = await getProviderForModel(model);
     if (dailyOutputLimit > 0) {
       const dw = new Date(wibNow); dw.setUTCHours(0, 0, 0, 0);
       const ds = new Date(dw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
-      const du = await db.select({ total: sql<number>`COALESCE(SUM(completion_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`)).get();
+      const du = await db.select({ total: sql<number>`COALESCE(SUM(completion_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, COUNTED_LOG_SQL)).get();
       if (du && du.total >= dailyOutputLimit) {
         return c.json({ error: { message: `Daily output token limit reached: ${du.total.toLocaleString()}/${dailyOutputLimit.toLocaleString()} output tokens today. Resets tomorrow.`, type: "rate_limit_error", code: "daily_output_token_limit_exceeded" } }, 429);
       }
@@ -1084,7 +1083,7 @@ const targetProvider = await getProviderForModel(model);
     if (globalMonthlyTokenLimit > 0) {
       const mw2 = new Date(wibNow); mw2.setUTCDate(1); mw2.setUTCHours(0, 0, 0, 0);
       const ms2 = new Date(mw2.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
-      const mu2 = await db.select({ total: sql<number>`COALESCE(SUM(total_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms2}`, sql`is_counted_request = 1`)).get();
+      const mu2 = await db.select({ total: sql<number>`COALESCE(SUM(total_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms2}`, COUNTED_LOG_SQL)).get();
       if (mu2 && mu2.total >= globalMonthlyTokenLimit) {
         return c.json({ error: { message: `Monthly token limit reached: ${mu2.total.toLocaleString()}/${globalMonthlyTokenLimit.toLocaleString()} tokens. Resets next month.`, type: "rate_limit_error", code: "global_monthly_token_limit_exceeded" } }, 429);
       }
@@ -1111,18 +1110,40 @@ const targetProvider = await getProviderForModel(model);
     }
   };
 
+  const countedPromptTokens = (): number => {
+    const content = messageAnalysis.messageContent || requestPreview || "";
+    if (!content) return 0;
+    return Math.max(estimateTokens(content), 1);
+  };
+
+  const finalizeCountedCompletion = (completionText: string, upstreamCompletion?: number): number => {
+    if (upstreamCompletion != null && upstreamCompletion > 0) return upstreamCompletion;
+    if (completionText) return Math.max(estimateTokens(completionText), 1);
+    return 0;
+  };
+
   const persistLogAndSession = async (logEntry: Record<string, any>, hasActualToolCalls: boolean, shouldCountRequest: boolean = true) => {
+    const counted = isNewPrompt && shouldCountRequest;
     enqueueLogWrite(async (tx) => {
-      // Set the isCountedRequest column
-      logEntry.isCountedRequest = isNewPrompt && shouldCountRequest ? 1 : 0;
+      logEntry.isCountedRequest = counted ? 1 : 0;
       await tx.insert(requestLogs).values(logEntry).run();
       logEmitter.emit({
         ...logEntry,
         toolsUsed: parseToolJson(logEntry.toolsUsed),
       });
 
-      // Only update session stats if request was successful
-      if (shouldCountRequest) {
+      if (counted && messageAnalysis.messageHash) {
+        sessionHashCache.set(sessionInfo.sessionId, messageAnalysis.messageHash);
+        await tx.update(chatSessions)
+          .set({
+            lastUserMessageHash: messageAnalysis.messageHash,
+            lastMessageRole: messageAnalysis.messageRole || null,
+          })
+          .where(eq(chatSessions.sessionId, sessionInfo.sessionId))
+          .run();
+      }
+
+      if (shouldCountRequest && isNewPrompt) {
         await updateSessionAfterRequest(tx, {
           sessionId: sessionInfo.sessionId,
           ipAddress: clientIp,
@@ -1264,8 +1285,11 @@ const targetProvider = await getProviderForModel(model);
         },
         flush() {
           const finalized = finalizeCompletion(acc);
-          const completionTokens = finalized.completionTokens || 0;
-          const finalPromptTokens = sessionInfo.contextEvent === "new_session" ? contextTokensBefore : sessionInfo.contextDeltaTokens;
+          const completionTokens = finalizeCountedCompletion(
+            finalized.completionText,
+            finalized.completionTokens,
+          );
+          const finalPromptTokens = countedPromptTokens();
           const finalTotalTokens = finalPromptTokens + completionTokens;
           const toolsUsed = Array.from(toolNameSet);
 
@@ -1337,19 +1361,20 @@ const targetProvider = await getProviderForModel(model);
 
       consumeNonStreamingPayload(acc, parsed);
       const finalized = finalizeCompletion(acc);
-      completionTokens = finalized.completionTokens || 0;
-      totalTokens = finalized.totalTokens || 0;
+      completionTokens = finalizeCountedCompletion(
+        finalized.completionText,
+        finalized.completionTokens,
+      );
       responsePreview = finalized.completionText || null;
 
-      // Last-resort fallback: response too large to parse text but still long body.
       if (!completionTokens && !responsePreview && responseBody.length > 200) {
-        completionTokens = estimateTokens(responseBody);
+        completionTokens = Math.max(estimateTokens(responseBody), 1);
       }
     } catch {
       // Body might not be JSON.
     }
 
-    promptTokens = sessionInfo.contextEvent === "new_session" ? contextTokensBefore : sessionInfo.contextDeltaTokens;
+    promptTokens = countedPromptTokens();
     totalTokens = promptTokens + completionTokens;
 
     const toolsUsed = Array.from(toolNameSet);

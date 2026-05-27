@@ -905,12 +905,9 @@ function entryKey(entry) {
 	return `${entry.provider}:${entry.modelId}`;
 }
 
-/** Server reachable if it responded; only timeout/5xx/auth = offline. */
+/** Model is online only when chat/completions returned HTTP 2xx. */
 function isMonitorOnline(status) {
-	if (!status || status === 0) return false;
-	if (status >= 500) return false;
-	if (status === 401 || status === 403) return false;
-	return true;
+	return status >= 200 && status < 300;
 }
 
 function trackEndpointResult(baseUrl, ok) {
@@ -1007,10 +1004,10 @@ async function pollModelStatus() {
 				runtime.modelProviderMap.set(id, { provider: prov.name, baseUrl, apiKey });
 				const key = entryKey(entry);
 				runtime.status.set(key, {
-					online: true,
+					online: false,
 					checkedAt: now,
-					status: 200,
-					error: null,
+					status: null,
+					error: 'not tested',
 				});
 			}
 			console.log(`[tokito-monitor] fetched ${arr.length} models from provider: ${prov.name} (${url})`);
@@ -1372,8 +1369,12 @@ function buildTokitoEmbed(kind, session) {
 		const vendor = providerOf(entry.modelId);
 		if (kind === 'status') {
 			const st = runtime.status.get(key);
-			const icon = st?.online ? '🟢' : '🔴';
-			return `${icon} \`${entry.provider}/${entry.modelId}\` | upstream: **${entry.provider}** | vendor: **${vendor}**`;
+			if (!st || st.status == null) {
+				return `⚪ \`${entry.provider}/${entry.modelId}\` | not tested yet | vendor: **${vendor}**`;
+			}
+			const icon = st.online ? '🟢' : '🔴';
+			const httpInfo = st.status ? `HTTP ${st.status}` : 'timeout';
+			return `${icon} \`${entry.provider}/${entry.modelId}\` | ${httpInfo} | vendor: **${vendor}**`;
 		}
 		const lt = runtime.latency.get(key);
 		if (!lt) return `⚪ \`${entry.provider}/${entry.modelId}\` | not tested yet`;
@@ -1390,14 +1391,31 @@ function buildTokitoEmbed(kind, session) {
 
 	let online = 0,
 		down = 0,
-		timeout = 0;
+		timeout = 0,
+		untested = 0;
 	for (const entry of runtime.modelEntries) {
-		const st = runtime.status.get(entryKey(entry));
-		if (!st) continue;
-		if (st.status === 0) timeout += 1;
-		else if (st.online) online += 1;
-		else down += 1;
+		const key = entryKey(entry);
+		if (kind === 'latency') {
+			const lt = runtime.latency.get(key);
+			if (!lt) {
+				untested += 1;
+				continue;
+			}
+			if (lt.status === 0) timeout += 1;
+			else if (lt.ok) online += 1;
+			else down += 1;
+		} else {
+			const st = runtime.status.get(key);
+			if (!st) continue;
+			if (st.status == null) untested += 1;
+			else if (st.status === 0) timeout += 1;
+			else if (st.online) online += 1;
+			else down += 1;
+		}
 	}
+
+	const summaryParts = [`Online: ${online}`, `Down: ${down}`, `Timeout: ${timeout}`];
+	if (untested > 0) summaryParts.push(`Untested: ${untested}`);
 
 	const embed = new EmbedBuilder()
 		.setTitle(titleStyled)
@@ -1406,7 +1424,7 @@ function buildTokitoEmbed(kind, session) {
 		.addFields(
 			{
 				name: 'Summary',
-				value: `Online: ${online} | Down: ${down} | Timeout: ${timeout}`,
+				value: summaryParts.join(' | '),
 				inline: false,
 			},
 			{ name: 'Page', value: `${page + 1}/${totalPages}`, inline: true },
