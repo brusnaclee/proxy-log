@@ -3,18 +3,26 @@ set -e
 DB=/root/proxy-log/packages/proxy/data/gateway.db
 ENV=/root/proxy-log/.env
 
-echo "=== API key check ==="
-sqlite3 "$DB" "SELECT id, key_prefix, is_active FROM api_keys WHERE key='REDACTED_PROXY_KEY';"
+if [ ! -f "$ENV" ]; then
+  echo "ERROR: $ENV not found" >&2
+  exit 1
+fi
+
+UPSTREAM_KEY=$(grep '^UPSTREAM_API_KEY=' "$ENV" | cut -d= -f2-)
+TOKIOMNI_KEY=$(grep '^TOKIOMNI_API_KEY=' "$ENV" | cut -d= -f2-)
+PROXY_TEST_KEY=$(grep '^PROXY_TEST_KEY=' "$ENV" | cut -d= -f2-)
+
+if [ -z "$UPSTREAM_KEY" ] || [ -z "$TOKIOMNI_KEY" ]; then
+  echo "ERROR: UPSTREAM_API_KEY and TOKIOMNI_API_KEY must be set in $ENV" >&2
+  exit 1
+fi
 
 echo "=== Providers before ==="
 sqlite3 "$DB" "SELECT id, name, endpoint, substr(api_key,1,20), priority FROM providers;"
 
-UPSTREAM_KEY=$(grep '^UPSTREAM_API_KEY=' "$ENV" | cut -d= -f2-)
-
 # Fix tokito provider: was pointing to proxy itself (loop). Use 9router on localhost.
 TOKITO_ENDPOINT="http://127.0.0.1:20128/v1"
 TOKIOMNI_ENDPOINT="http://127.0.0.1:3060/v1"
-TOKIOMNI_KEY="REDACTED_TOKIOMNI_KEY"
 
 echo "=== Updating providers ==="
 sqlite3 "$DB" "UPDATE providers SET endpoint='$TOKITO_ENDPOINT', api_key='$UPSTREAM_KEY', is_active=1, priority=100 WHERE name='tokito';"
@@ -43,12 +51,16 @@ if grep -q '^DATABASE_URL=\./data/gateway.db' "$ENV"; then
   echo "Updated DATABASE_URL to absolute path"
 fi
 
-echo "=== Test proxy key ==="
-HTTP=$(curl -s -o /tmp/proxy-test.json -w '%{http_code}' \
-  -H "Authorization: Bearer REDACTED_PROXY_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"ag/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"max_tokens":1}' \
-  http://127.0.0.1:3000/v1/chat/completions)
-echo "HTTP $HTTP"
-head -c 400 /tmp/proxy-test.json
-echo
+if [ -n "$PROXY_TEST_KEY" ]; then
+  echo "=== Test proxy key ==="
+  HTTP=$(curl -s -o /tmp/proxy-test.json -w '%{http_code}' \
+    -H "Authorization: Bearer $PROXY_TEST_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{"model":"ag/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"max_tokens":1}' \
+    http://127.0.0.1:3000/v1/chat/completions)
+  echo "HTTP $HTTP"
+  head -c 400 /tmp/proxy-test.json
+  echo
+else
+  echo "=== Skipping proxy key test (PROXY_TEST_KEY not set in $ENV) ==="
+fi

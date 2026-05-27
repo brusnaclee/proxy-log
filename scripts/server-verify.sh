@@ -1,7 +1,16 @@
 #!/bin/bash
 set -e
 
-PROXY_KEY="REDACTED_PROXY_KEY"
+# Reads PROXY_KEY from env or .env in repo root.
+ENV_FILE="${ENV_FILE:-/root/proxy-log/.env}"
+if [ -z "${PROXY_KEY:-}" ] && [ -f "$ENV_FILE" ]; then
+  PROXY_KEY=$(grep '^PROXY_TEST_KEY=' "$ENV_FILE" | cut -d= -f2-)
+fi
+if [ -z "${PROXY_KEY:-}" ]; then
+  echo "ERROR: PROXY_KEY env var or PROXY_TEST_KEY in $ENV_FILE is required" >&2
+  exit 1
+fi
+
 BASE="http://127.0.0.1:3000/v1/chat/completions"
 
 test_model() {
