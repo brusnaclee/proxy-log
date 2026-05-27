@@ -30,7 +30,9 @@ export function generateFingerprint(ip: string, userAgent: string, deviceId: str
   if (deviceId) {
     return sha256(`device:${deviceId}:${userAgent}`);
   }
-  return sha256(`ip:${ip}:${userAgent}`);
+  // Use IP subnet (first 3 octets) instead of full IP to group same-network devices
+  const ipSubnet = ip.includes(".") ? ip.split(".").slice(0, 3).join(".") : ip;
+  return sha256(`ip:${ipSubnet}:${userAgent}`);
 }
 
 /**
