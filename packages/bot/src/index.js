@@ -2321,7 +2321,7 @@ client.once('clientReady', async () => {
 								const embed = new EmbedBuilder()
 									.setTitle('⚠️ New Device Detected — Key Rotated')
 									.setDescription(
-										`A new device connected to your key. Only **1 device** is allowed.\n\n` +
+										`A new device connected to your key and exceeded your maximum device limit.\n\n` +
 										`Your API key has been **rotated automatically**. Check your DMs for the new key.\n\n` +
 										`If this wasn't you, contact an admin immediately.`
 									)
