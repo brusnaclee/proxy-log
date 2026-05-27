@@ -223,25 +223,23 @@ export async function getProviderForModel(modelId: string): Promise<any | null> 
 
   // Strip provider prefix if present: "ProviderName/ModelId" -> "ModelId"
   let cleanModelId = modelId;
-  let specifiedProvider: string | null = null;
+  let specifiedProvider: any = null;
 
   const slashIdx = modelId.indexOf('/');
   if (slashIdx > 0) {
     const prefix = modelId.slice(0, slashIdx);
     cleanModelId = modelId.slice(slashIdx + 1);
     // Check if prefix matches any active provider name
-    const allProviders = await db.select().from(providers).where(eq(providers.isActive, true)).all();
-    const matchedProvider = allProviders.find(p => p.name === prefix);
-    if (matchedProvider) {
-      specifiedProvider = matchedProvider.name;
+    const allProvs = await db.select().from(providers).where(eq(providers.isActive, true)).all();
+    const matched = allProvs.find(p => p.name === prefix);
+    if (matched) {
+      specifiedProvider = matched;
     }
   }
 
-  // If provider was explicitly specified, use that provider
+  // If provider was explicitly specified via prefix, return it
   if (specifiedProvider) {
-    const prov = allProviders || await db.select().from(providers).where(eq(providers.isActive, true)).all();
-    const target = prov.find(p => p.name === specifiedProvider);
-    if (target) return target;
+    return specifiedProvider;
   }
 
   // No prefix or provider not found: use cached mapping or fallback to highest priority
@@ -260,8 +258,11 @@ export async function getProviderForModel(modelId: string): Promise<any | null> 
 export function stripProviderPrefix(modelId: string): string {
   const slashIdx = modelId.indexOf('/');
   if (slashIdx > 0) {
-    // Check if first part matches a known provider name
-    return modelId.slice(slashIdx + 1);
+    // Only strip if first part looks like a provider name (lowercase alphanumeric)
+    const prefix = modelId.slice(0, slashIdx).toLowerCase();
+    if (/^[a-z0-9]+$/.test(prefix)) {
+      return modelId.slice(slashIdx + 1);
+    }
   }
   return modelId;
 }
