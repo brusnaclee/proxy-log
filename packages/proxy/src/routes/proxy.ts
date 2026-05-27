@@ -517,16 +517,26 @@ proxy.all("/*", async (c) => {
       401
     );
   }
-  const clientKey = authHeader.replace("Bearer ", "").trim();
+  const clientKey = authHeader.replace(/^Bearer\s+/i, "").trim();
 
   // ΓöÇΓöÇΓöÇ 2. Validate API Key ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-  const keyRecord = await db
+  let keyRecord = await db
     .select()
     .from(apiKeys)
     .where(eq(apiKeys.key, clientKey))
     .get();
 
   if (!keyRecord) {
+    keyRecord = await db
+      .select()
+      .from(apiKeys)
+      .where(eq(apiKeys.keyHash, sha256(clientKey)))
+      .get();
+  }
+
+  if (!keyRecord) {
+    const keyPrefix = clientKey.slice(0, 12);
+    console.warn(`[auth] API key lookup failed for prefix: ${keyPrefix}`);
     return c.json(
       { error: { message: "Invalid API key.", type: "auth_error" } },
       401
@@ -814,7 +824,7 @@ const targetProvider = await getProviderForModel(model);
   }
 
   // Strip provider prefix for upstream request: "tokito/glm/glm-5.1" -> "glm/glm-5.1"
-  const upstreamModel = stripProviderPrefix(model);
+  const upstreamModel = await stripProviderPrefix(model);
 
   // Modify requestBody to use clean model name for upstream request
   if (requestBody && model !== upstreamModel) {
@@ -825,39 +835,43 @@ const targetProvider = await getProviderForModel(model);
   }
 
   // ─── 8a. Model Monitor Check ─────────────────────────────────────────
-  if (model && model !== "unknown") {
-    const latestCheck = await db
+  // Block only when monitor has data for this model AND none of the latest checks are online.
+  if (upstreamModel && upstreamModel !== "unknown") {
+    const monitorRows = await db
       .select()
       .from(modelMonitor)
-      .where(eq(modelMonitor.modelId, model))
+      .where(eq(modelMonitor.modelId, upstreamModel))
       .orderBy(desc(modelMonitor.checkedAt))
-      .limit(1)
-      .get();
+      .limit(20)
+      .all();
 
-    if (latestCheck && !latestCheck.isOnline) {
-      const onlineModels = await db
-        .select({ modelId: modelMonitor.modelId })
-        .from(modelMonitor)
-        .where(eq(modelMonitor.isOnline, true))
-        .orderBy(modelMonitor.modelId)
-        .all();
+    if (monitorRows.length > 0) {
+      const hasOnline = monitorRows.some((row) => row.isOnline && row.httpStatus === 200);
+      if (!hasOnline) {
+        const onlineModels = await db
+          .select({ modelId: modelMonitor.modelId })
+          .from(modelMonitor)
+          .where(eq(modelMonitor.isOnline, true))
+          .orderBy(modelMonitor.modelId)
+          .all();
 
-      const seen = new Set<string>();
-      const uniqueOnline: string[] = [];
-      for (const m of onlineModels) {
-        if (!seen.has(m.modelId)) {
-          seen.add(m.modelId);
-          uniqueOnline.push(m.modelId);
+        const seen = new Set<string>();
+        const uniqueOnline: string[] = [];
+        for (const m of onlineModels) {
+          if (!seen.has(m.modelId)) {
+            seen.add(m.modelId);
+            uniqueOnline.push(m.modelId);
+          }
         }
+
+        return c.json({
+          error: {
+            message: `Model "${model}" is currently offline. Try another model.`,
+            type: "model_offline",
+            available_models: uniqueOnline,
+          }
+        }, 503);
       }
-
-      return c.json({
-        error: {
-          message: `Model "${model}" is currently offline. Try another model.`,
-          type: "model_offline",
-          available_models: uniqueOnline,
-        }
-      }, 503);
     }
   }
 
@@ -1077,7 +1091,7 @@ const targetProvider = await getProviderForModel(model);
   }
 
 
-  const upstreamBase = targetProvider.endpoint.replace(/\/\$/, "");
+  const upstreamBase = targetProvider.endpoint.replace(/\/$/, "");
   let upstreamPath = path;
   // Avoid /v1 duplication if upstream endpoint already ends with /v1
   if (upstreamBase.endsWith("/v1") && upstreamPath.startsWith("/v1/")) {

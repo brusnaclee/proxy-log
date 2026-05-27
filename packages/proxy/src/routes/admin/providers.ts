@@ -3,6 +3,7 @@ import { db } from "../../db/index.js";
 import { providers } from "../../db/schema.js";
 import { eq, desc } from "drizzle-orm";
 import { refreshModelCatalog } from "../../utils/model-catalog.js";
+import { sanitizeProviderApiKey } from "../../utils/crypto.js";
 
 const providersApi = new Hono();
 
@@ -19,7 +20,7 @@ providersApi.post("/providers", async (c) => {
   const result = await db.insert(providers).values({
     name: body.name,
     endpoint: body.endpoint,
-    apiKey: body.apiKey,
+    apiKey: sanitizeProviderApiKey(body.apiKey),
     isActive: body.isActive ?? true,
     priority: body.priority || 0,
   }).returning().get();
@@ -35,7 +36,7 @@ providersApi.put("/providers/:id", async (c) => {
   const updates: any = {};
   if (body.name !== undefined) updates.name = body.name;
   if (body.endpoint !== undefined) updates.endpoint = body.endpoint;
-  if (body.apiKey !== undefined) updates.apiKey = body.apiKey;
+  if (body.apiKey !== undefined) updates.apiKey = sanitizeProviderApiKey(body.apiKey);
   if (body.isActive !== undefined) updates.isActive = body.isActive;
   if (body.priority !== undefined) updates.priority = body.priority;
   updates.updatedAt = new Date().toISOString().replace("T", " ").substring(0, 19);

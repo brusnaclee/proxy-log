@@ -3,9 +3,10 @@ import { drizzle } from "drizzle-orm/libsql";
 import { eq, sql } from "drizzle-orm";
 import * as schema from "./schema.js";
 import { existsSync, mkdirSync } from "fs";
-import { dirname } from "path";
+import { dirname, isAbsolute, resolve } from "path";
 
-const DB_PATH = process.env.DATABASE_URL || "./data/gateway.db";
+const rawDbPath = process.env.DATABASE_URL || "./data/gateway.db";
+const DB_PATH = isAbsolute(rawDbPath) ? rawDbPath : resolve(process.cwd(), rawDbPath);
 
 // Ensure directory exists
 const dbDir = dirname(DB_PATH);
@@ -34,11 +35,14 @@ export async function initializeDatabase() {
   const apiKeysPragma = await client.execute(`PRAGMA table_info(api_keys)`);
   const hasPasswordHash = apiKeysPragma.rows.some((row: any) => String(row.name) === "password_hash");
   if (hasPasswordHash) {
-    console.log("o. Detected broken api_keys table schema. Recreating and migrating data...");
+    const brokenCount = await client.execute("SELECT COUNT(*) as cnt FROM api_keys");
+    const rowCount = Number((brokenCount.rows[0] as any)?.cnt || 0);
+    const backupName = `api_keys_broken_${Date.now()}`;
+
+    console.warn(`⚠️  Detected broken api_keys schema (${rowCount} rows). Renaming to ${backupName} for manual recovery.`);
     await client.execute("PRAGMA foreign_keys = OFF");
-    await client.execute("ALTER TABLE api_keys RENAME TO api_keys_broken");
-    
-    // Create the proper api_keys table
+    await client.execute(`ALTER TABLE api_keys RENAME TO ${backupName}`);
+
     await client.execute(`
       CREATE TABLE api_keys (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,13 +71,14 @@ export async function initializeDatabase() {
       )
     `);
 
-    // We copy the data we can (if any exists).
-    // The broken table had: id, password_hash, upstream_endpoint, upstream_api_key, created_at, updated_at
-    // But none of the valid columns. So if there's data, we can't really copy it cleanly because name, key etc are NOT NULL.
-    // However, since it was broken, it's very likely empty. We will just drop the broken table.
-    await client.execute("DROP TABLE api_keys_broken");
+    if (rowCount > 0) {
+      console.warn(`⚠️  Broken api_keys had ${rowCount} rows — NOT auto-dropped. Inspect table "${backupName}" and restore manually if needed.`);
+    } else {
+      await client.execute(`DROP TABLE ${backupName}`);
+    }
+
     await client.execute("PRAGMA foreign_keys = ON");
-    console.log("o. Fixed api_keys table schema.");
+    console.log("✅ Recreated api_keys table with correct schema.");
   }
 
   // Create all tables directly using SQL (auto-migration)

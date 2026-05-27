@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, useCallback } from "react";
+﻿import { useEffect, useState, useCallback, useMemo } from "react";
 import { monitor, type ModelMonitorEntry } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -8,12 +8,17 @@ import { formatRelativeTime, formatDate } from "@/lib/utils";
 import { Download, RefreshCw, Activity, ServerCrash, CheckCircle2, Clock } from "lucide-react";
 import { exportXlsx } from "@/lib/export-xlsx";
 
+function modelVendorOf(modelId: string) {
+  return modelId.includes("/") ? modelId.split("/")[0] : "unknown";
+}
+
 export default function ModelMonitorPage() {
   const [data, setData] = useState<ModelMonitorEntry[]>([]);
   const [summary, setSummary] = useState({ total: 0, online: 0, offline: 0, timeout: 0 });
   const [loading, setLoading] = useState(true);
-  const [providerFilter, setProviderFilter] = useState("all");
-  const [sortMode, setSortMode] = useState("status"); // name, status, latency
+  const [upstreamFilter, setUpstreamFilter] = useState("all");
+  const [modelVendorFilter, setModelVendorFilter] = useState("all");
+  const [sortMode, setSortMode] = useState("status");
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -37,6 +42,7 @@ export default function ModelMonitorPage() {
     const makeRows = (items: typeof data) => items.map(d => [
       d.modelId,
       d.provider || "unknown",
+      modelVendorOf(d.modelId),
       d.isOnline ? "Online" : "Offline",
       Number(d.latencyMs) || 0,
       d.httpStatus || "",
@@ -49,17 +55,17 @@ export default function ModelMonitorPage() {
       {
         name: "All Models",
         note: `${summary.online} online, ${summary.offline} offline, ${summary.timeout} timeout  -  as of ${new Date().toLocaleString()}`,
-        headers: ["Model", "Provider", "Status", "Latency (ms)", "HTTP Status", "Error", "Last Checked", "Base URL"],
+        headers: ["Model", "Upstream", "Vendor", "Status", "Latency (ms)", "HTTP Status", "Error", "Last Checked", "Base URL"],
         rows: makeRows(data),
       },
       {
         name: "Online",
-        headers: ["Model", "Provider", "Status", "Latency (ms)", "HTTP Status", "Error", "Last Checked", "Base URL"],
+        headers: ["Model", "Upstream", "Vendor", "Status", "Latency (ms)", "HTTP Status", "Error", "Last Checked", "Base URL"],
         rows: makeRows(online),
       },
       {
         name: "Offline",
-        headers: ["Model", "Provider", "Status", "Latency (ms)", "HTTP Status", "Error", "Last Checked", "Base URL"],
+        headers: ["Model", "Upstream", "Vendor", "Status", "Latency (ms)", "HTTP Status", "Error", "Last Checked", "Base URL"],
         rows: makeRows(offline),
       },
     ], `model-monitor-${dateStr}`, {
@@ -68,17 +74,36 @@ export default function ModelMonitorPage() {
     });
   };
 
-  const providers = ["all", ...new Set(data.map(d => d.provider || "unknown"))].sort();
+  const upstreamOptions = useMemo(
+    () => ["all", ...new Set(data.map(d => d.provider || "unknown"))].sort(),
+    [data],
+  );
+
+  const vendorOptions = useMemo(() => {
+    let rows = data;
+    if (upstreamFilter !== "all") {
+      rows = rows.filter(d => (d.provider || "unknown") === upstreamFilter);
+    }
+    return ["all", ...new Set(rows.map(d => modelVendorOf(d.modelId)))].sort();
+  }, [data, upstreamFilter]);
+
+  useEffect(() => {
+    if (modelVendorFilter !== "all" && !vendorOptions.includes(modelVendorFilter)) {
+      setModelVendorFilter("all");
+    }
+  }, [vendorOptions, modelVendorFilter]);
 
   let filtered = [...data];
-  if (providerFilter !== "all") {
-    filtered = filtered.filter(d => (d.provider || "unknown") === providerFilter);
+  if (upstreamFilter !== "all") {
+    filtered = filtered.filter(d => (d.provider || "unknown") === upstreamFilter);
+  }
+  if (modelVendorFilter !== "all") {
+    filtered = filtered.filter(d => modelVendorOf(d.modelId) === modelVendorFilter);
   }
 
   filtered.sort((a, b) => {
     if (sortMode === "name") return a.modelId.localeCompare(b.modelId);
     if (sortMode === "latency") return (a.latencyMs || 999999) - (b.latencyMs || 999999);
-    // status: online first, then by latency
     if (a.isOnline && !b.isOnline) return -1;
     if (!a.isOnline && b.isOnline) return 1;
     return (a.latencyMs || 0) - (b.latencyMs || 0);
@@ -148,13 +173,30 @@ export default function ModelMonitorPage() {
       <Card className="border-border/50">
         <CardContent className="p-4 flex flex-wrap gap-4">
           <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">Provider:</span>
-            <Select value={providerFilter} onValueChange={setProviderFilter}>
+            <span className="text-sm text-muted-foreground">Upstream:</span>
+            <Select
+              value={upstreamFilter}
+              onValueChange={(v) => {
+                setUpstreamFilter(v);
+                setModelVendorFilter("all");
+              }}
+            >
               <SelectTrigger className="w-[180px] h-9">
-                <SelectValue placeholder="All Providers" />
+                <SelectValue placeholder="All Upstreams" />
               </SelectTrigger>
               <SelectContent>
-                {providers.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                {upstreamOptions.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">Vendor:</span>
+            <Select value={modelVendorFilter} onValueChange={setModelVendorFilter}>
+              <SelectTrigger className="w-[180px] h-9">
+                <SelectValue placeholder="All Vendors" />
+              </SelectTrigger>
+              <SelectContent>
+                {vendorOptions.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -182,7 +224,8 @@ export default function ModelMonitorPage() {
               <thead>
                 <tr className="border-b border-border/50 bg-muted/20">
                   <th className="text-left py-3 px-4 font-medium text-muted-foreground">Model</th>
-                  <th className="text-left py-3 px-4 font-medium text-muted-foreground">Provider</th>
+                  <th className="text-left py-3 px-4 font-medium text-muted-foreground">Upstream</th>
+                  <th className="text-left py-3 px-4 font-medium text-muted-foreground">Vendor</th>
                   <th className="text-center py-3 px-4 font-medium text-muted-foreground">Status</th>
                   <th className="text-right py-3 px-4 font-medium text-muted-foreground">Latency</th>
                   <th className="text-left py-3 px-4 font-medium text-muted-foreground">HTTP</th>
@@ -191,9 +234,10 @@ export default function ModelMonitorPage() {
               </thead>
               <tbody>
                 {filtered.map((d) => (
-                  <tr key={d.modelId} className="data-row hover:bg-muted/10 transition-colors border-b border-border/30">
+                  <tr key={`${d.provider || "unknown"}:${d.modelId}`} className="data-row hover:bg-muted/10 transition-colors border-b border-border/30">
                     <td className="py-3 px-4 font-mono text-xs">{d.modelId}</td>
                     <td className="py-3 px-4 text-xs text-muted-foreground">{d.provider || "-"}</td>
+                    <td className="py-3 px-4 text-xs text-muted-foreground">{modelVendorOf(d.modelId)}</td>
                     <td className="py-3 px-4 text-center">
                       <Badge variant={d.isOnline ? "success" : "destructive"} className="text-[10px]">
                         {d.isOnline ? "Online" : "Offline"}
@@ -227,7 +271,7 @@ export default function ModelMonitorPage() {
                 ))}
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="text-center py-12 text-muted-foreground">
+                    <td colSpan={7} className="text-center py-12 text-muted-foreground">
                       No model data available.
                     </td>
                   </tr>

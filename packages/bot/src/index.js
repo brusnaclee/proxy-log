@@ -901,6 +901,18 @@ function providerOf(modelId) {
 	return modelId.split('/')[0];
 }
 
+function entryKey(entry) {
+	return `${entry.provider}:${entry.modelId}`;
+}
+
+/** Server reachable if it responded; only timeout/5xx/auth = offline. */
+function isMonitorOnline(status) {
+	if (!status || status === 0) return false;
+	if (status >= 500) return false;
+	if (status === 401 || status === 403) return false;
+	return true;
+}
+
 function trackEndpointResult(baseUrl, ok) {
 	const prev = runtime.endpointStats.get(baseUrl) || {
 		ok: 0,
@@ -923,6 +935,36 @@ async function fetchProvidersFromProxy() {
 		}
 	} catch (err) {
 		console.error('[tokito-monitor] failed to fetch providers:', err.message);
+	}
+	return null;
+}
+
+function sanitizeProviderApiKey(raw) {
+	return String(raw || '')
+		.trim()
+		.replace(/^Bearer\s+/i, '')
+		.replace(/^key:\s*/i, '');
+}
+
+async function fetchProviderModelList(prov) {
+	const base = prov.endpoint.replace(/\/+$/, '');
+	const candidates = [`${base}/models`, `${base}/v1/models`];
+	const cleanKey = sanitizeProviderApiKey(prov.apiKey);
+	const authAttempts = cleanKey ? [cleanKey, ''] : [''];
+
+	for (const url of candidates) {
+		for (const key of authAttempts) {
+			try {
+				const headers = { Accept: 'application/json' };
+				if (key) headers.Authorization = `Bearer ${key}`;
+				const res = await fetch(url, { headers });
+				if (!res.ok) continue;
+				const payload = await res.json();
+				const arr = Array.isArray(payload) ? payload : payload?.data || [];
+				if (arr.length === 0) continue;
+				return { arr, url, baseUrl: base, apiKey: key || cleanKey || prov.apiKey };
+			} catch (_) {}
+		}
 	}
 	return null;
 }
@@ -951,33 +993,27 @@ async function pollModelStatus() {
 
 	for (const prov of providers) {
 		try {
-			const base = prov.endpoint.replace(/\/+$/, '');
-			const candidates = [`${base}/models`, `${base}/v1/models`];
-			let fetched = false;
-			for (const url of candidates) {
-				try {
-					const res = await fetch(url, {
-						headers: { Authorization: `Bearer ${prov.apiKey}` },
-					});
-					if (!res.ok) continue;
-					const payload = await res.json();
-					const arr = Array.isArray(payload) ? payload : payload?.data || [];
-					for (const m of arr) {
-						const id = m.id || m.name;
-						// Always store - even if duplicate modelId exists from another provider
-						// This allows modelEntries to have multiple entries for same modelId but different providers
-						allModels.push(id);
-						runtime.modelEntries.push({ modelId: id, provider: prov.name, baseUrl: base, apiKey: prov.apiKey });
-						runtime.modelProviderMap.set(id, { provider: prov.name, baseUrl: base, apiKey: prov.apiKey });
-					}
-					fetched = true;
-					console.log(`[tokito-monitor] fetched ${arr.length} models from provider: ${prov.name} (${url})`);
-					break;
-				} catch (_) {}
+			const result = await fetchProviderModelList(prov);
+			if (!result) {
+				console.error(`[tokito-monitor] failed to fetch models from ${prov.name}`);
+				continue;
 			}
-			if (!fetched) {
-				console.error(`[tokito-monitor] failed to fetch models from ${prov.name} (tried: ${candidates.join(', ')})`);
+			const { arr, url, baseUrl, apiKey } = result;
+			for (const m of arr) {
+				const id = m.id || m.name;
+				allModels.push(id);
+				const entry = { modelId: id, provider: prov.name, baseUrl, apiKey };
+				runtime.modelEntries.push(entry);
+				runtime.modelProviderMap.set(id, { provider: prov.name, baseUrl, apiKey });
+				const key = entryKey(entry);
+				runtime.status.set(key, {
+					online: true,
+					checkedAt: now,
+					status: 200,
+					error: null,
+				});
 			}
+			console.log(`[tokito-monitor] fetched ${arr.length} models from provider: ${prov.name} (${url})`);
 		} catch (err) {
 			console.error(`[tokito-monitor] error fetching from ${prov.name}:`, err.message);
 		}
@@ -989,11 +1025,13 @@ async function pollModelStatus() {
 
 async function pushMetricsToProxy() {
 	const payload = runtime.modelEntries.map((entry) => {
-		const st = runtime.status.get(entry.modelId) || { online: false, status: 0 };
-		const lt = runtime.latency.get(entry.modelId) || { ms: 0 };
+		const key = entryKey(entry);
+		const st = runtime.status.get(key) || { online: false, status: 0 };
+		const lt = runtime.latency.get(key) || { ms: 0 };
 		return {
 			modelId: entry.modelId,
 			provider: entry.provider,
+			modelVendor: providerOf(entry.modelId),
 			isOnline: st.online,
 			latencyMs: lt.ms,
 			httpStatus: st.status,
@@ -1051,14 +1089,15 @@ async function runLatencyTest() {
 		}
 
 		const ms = Date.now() - started;
-		runtime.latency.set(entry.modelId, {
+		const key = entryKey(entry);
+		runtime.latency.set(key, {
 			ok: result.ok,
 			ms,
 			checkedAt: now,
 			status: result.status,
 		});
-		runtime.status.set(entry.modelId, {
-			online: result.ok && result.status < 500,
+		runtime.status.set(key, {
+			online: isMonitorOnline(result.status),
 			checkedAt: now,
 			status: result.status,
 			error: result.body?.error?.message || (result.ok ? null : 'Failed'),
@@ -1201,7 +1240,8 @@ function createTokitoSession(userId, kind) {
 		userId,
 		kind,
 		page: 0,
-		provider: 'all',
+		upstreamProvider: 'all',
+		modelVendor: 'all',
 		sortMode: kind === 'status' ? 'status_online_first' : 'latency_fastest',
 		expiresAt: Date.now() + TOKITO_SESSION_TIMEOUT_MS,
 	};
@@ -1215,7 +1255,8 @@ function buildTokitoRows(
 	sessionId,
 	page,
 	totalPages,
-	provider,
+	upstreamProvider,
+	modelVendor,
 	sortMode,
 ) {
 	const nav = new ActionRowBuilder().addComponents(
@@ -1235,15 +1276,24 @@ function buildTokitoRows(
 			.setStyle(ButtonStyle.Danger),
 	);
 
-	const providers = ['all', ...new Set(runtime.modelEntries.map(e => e.provider))].slice(
-		0,
-		25,
-	);
-	const providerMenu = new StringSelectMenuBuilder()
-		.setCustomId(`tokito_filter_provider_${sessionId}`)
-		.setPlaceholder('Filter by provider')
+	const upstreamOptions = ['all', ...new Set(runtime.modelEntries.map(e => e.provider))].slice(0, 25);
+	const upstreamMenu = new StringSelectMenuBuilder()
+		.setCustomId(`tokito_filter_upstream_${sessionId}`)
+		.setPlaceholder('Upstream provider')
 		.addOptions(
-			providers.map((p) => ({ label: p, value: p, default: p === provider })),
+			upstreamOptions.map((p) => ({ label: p, value: p, default: p === upstreamProvider })),
+		);
+
+	let vendorSource = runtime.modelEntries;
+	if (upstreamProvider !== 'all') {
+		vendorSource = vendorSource.filter((e) => e.provider === upstreamProvider);
+	}
+	const vendorOptions = ['all', ...new Set(vendorSource.map((e) => providerOf(e.modelId)))].slice(0, 25);
+	const vendorMenu = new StringSelectMenuBuilder()
+		.setCustomId(`tokito_filter_vendor_${sessionId}`)
+		.setPlaceholder('Model vendor (ag/minimax/...)')
+		.addOptions(
+			vendorOptions.map((v) => ({ label: v, value: v, default: v === modelVendor })),
 		);
 
 	const sortMenu = new StringSelectMenuBuilder()
@@ -1274,29 +1324,33 @@ function buildTokitoRows(
 
 	return [
 		nav,
-		new ActionRowBuilder().addComponents(providerMenu),
+		new ActionRowBuilder().addComponents(upstreamMenu),
+		new ActionRowBuilder().addComponents(vendorMenu),
 		new ActionRowBuilder().addComponents(sortMenu),
 	];
 }
 
-function listModels(kind, provider, sortMode) {
-	// Use modelEntries which contains all entries (including duplicate modelIds from different providers)
-	let items = runtime.modelEntries.map(e => e.modelId);
-	if (provider !== 'all')
-		items = items.filter(m => (runtime.modelProviderMap.get(m)?.provider || providerOf(m)) === provider);
+function listModels(kind, upstreamProvider, modelVendor, sortMode) {
+	let items = [...runtime.modelEntries];
+	if (upstreamProvider !== 'all') {
+		items = items.filter((e) => e.provider === upstreamProvider);
+	}
+	if (modelVendor !== 'all') {
+		items = items.filter((e) => providerOf(e.modelId) === modelVendor);
+	}
 
-	items.sort((a, b) => a.localeCompare(b));
+	items.sort((a, b) => a.modelId.localeCompare(b.modelId));
 	if (sortMode === 'status_online_first') {
 		items.sort(
 			(a, b) =>
-				Number(!runtime.status.get(a)?.online) -
-				Number(!runtime.status.get(b)?.online),
+				Number(!runtime.status.get(entryKey(a))?.online) -
+				Number(!runtime.status.get(entryKey(b))?.online),
 		);
 	}
 	if (sortMode === 'latency_fastest' || sortMode === 'latency_slowest') {
 		items.sort((a, b) => {
-			const am = runtime.latency.get(a)?.ms ?? Number.MAX_SAFE_INTEGER;
-			const bm = runtime.latency.get(b)?.ms ?? Number.MAX_SAFE_INTEGER;
+			const am = runtime.latency.get(entryKey(a))?.ms ?? Number.MAX_SAFE_INTEGER;
+			const bm = runtime.latency.get(entryKey(b))?.ms ?? Number.MAX_SAFE_INTEGER;
 			return sortMode === 'latency_fastest' ? am - bm : bm - am;
 		});
 	}
@@ -1304,28 +1358,27 @@ function listModels(kind, provider, sortMode) {
 }
 
 function buildTokitoEmbed(kind, session) {
-	const models = listModels(kind, session.provider, session.sortMode);
-	const totalPages = Math.max(1, Math.ceil(models.length / TOKITO_PAGE_SIZE));
+	const entries = listModels(kind, session.upstreamProvider, session.modelVendor, session.sortMode);
+	const totalPages = Math.max(1, Math.ceil(entries.length / TOKITO_PAGE_SIZE));
 	const page = Math.max(0, Math.min(session.page, totalPages - 1));
 	session.page = page;
 
-	const slice = models.slice(
+	const slice = entries.slice(
 		page * TOKITO_PAGE_SIZE,
 		(page + 1) * TOKITO_PAGE_SIZE,
 	);
-	const lines = slice.map((modelId) => {
-		// Get the entry for this modelId from modelEntries (first one matching)
-		const entry = runtime.modelEntries.find(e => e.modelId === modelId);
-		const prov = entry?.provider || providerOf(modelId);
+	const lines = slice.map((entry) => {
+		const key = entryKey(entry);
+		const vendor = providerOf(entry.modelId);
 		if (kind === 'status') {
-			const st = runtime.status.get(modelId);
+			const st = runtime.status.get(key);
 			const icon = st?.online ? '🟢' : '🔴';
-			return `${icon} \`${prov}/${modelId}\` | provider: **${prov}**`;
+			return `${icon} \`${entry.provider}/${entry.modelId}\` | upstream: **${entry.provider}** | vendor: **${vendor}**`;
 		}
-		const lt = runtime.latency.get(modelId);
-		if (!lt) return `⚪ \`${prov}/${modelId}\` | not tested yet`;
+		const lt = runtime.latency.get(key);
+		if (!lt) return `⚪ \`${entry.provider}/${entry.modelId}\` | not tested yet`;
 		const icon = lt.ok ? '🟢' : '🔴';
-		return `${icon} \`${prov}/${modelId}\` | ${lt.ms} ms | HTTP ${lt.status}`;
+		return `${icon} \`${entry.provider}/${entry.modelId}\` | ${lt.ms} ms | HTTP ${lt.status}`;
 	});
 
 	const titleStyled =
@@ -1338,8 +1391,8 @@ function buildTokitoEmbed(kind, session) {
 	let online = 0,
 		down = 0,
 		timeout = 0;
-	for (const model of runtime.models) {
-		const st = runtime.status.get(model);
+	for (const entry of runtime.modelEntries) {
+		const st = runtime.status.get(entryKey(entry));
 		if (!st) continue;
 		if (st.status === 0) timeout += 1;
 		else if (st.online) online += 1;
@@ -1357,7 +1410,9 @@ function buildTokitoEmbed(kind, session) {
 				inline: false,
 			},
 			{ name: 'Page', value: `${page + 1}/${totalPages}`, inline: true },
-			{ name: 'Provider', value: session.provider, inline: true },
+			{ name: 'Upstream', value: session.upstreamProvider, inline: true },
+			{ name: 'Vendor', value: session.modelVendor, inline: true },
+			{ name: 'Sort', value: session.sortMode, inline: true },
 			{
 				name: 'Last Update',
 				value: updatedAt ? `${formatRelative(updatedAt)}` : 'never',
@@ -1370,7 +1425,8 @@ function buildTokitoEmbed(kind, session) {
 		session.id,
 		page,
 		totalPages,
-		session.provider,
+		session.upstreamProvider,
+		session.modelVendor,
 		session.sortMode,
 	);
 	return { embed, components };
@@ -2391,41 +2447,84 @@ client.once('clientReady', async () => {
 			for (const notif of notifications) {
 				if (!notif.discordUserId || !notif.newKey) continue;
 				try {
-					const dmText =
-						`⚠️ **New Device Detected — API Key Rotated**\n\n` +
-						`A new device attempted to connect to your API key, but only **1 device** is allowed.\n\n` +
-						`Your key has been **automatically rotated**. Here are your new credentials:\n\n` +
-						`**Endpoint:** \`${notif.endpoint}\`\n` +
-						`**Authorization:** \`Bearer ${notif.newKey}\`\n\n` +
-						`Your old device has been removed. Configure your IDE with the new key above.\n\n` +
-						`If you need more than 1 device, please contact an admin.`;
+					if (notif.type === 'admin_bulk_rotate') {
+						const dmText =
+							`🔄 **API Key Di-rotate (Admin)**\n\n` +
+							`Semua API key telah di-rotate untuk keamanan. Gunakan kredensial baru di bawah:\n\n` +
+							`**Endpoint:** \`${notif.endpoint}\`\n` +
+							`**Authorization:** \`Bearer ${notif.newKey}\`\n\n` +
+							`Key lama sudah tidak valid. Update IDE/client Anda segera.\n` +
+							`Device lama juga sudah di-reset (max 1 device per key).`;
 
-					await sendDMToUser(notif.discordUserId, '🔑 API Key Rotated — New Device Detected', dmText, 0xf59e0b);
+						await sendDMToUser(
+							notif.discordUserId,
+							'🔑 API Key Baru — Rotasi Massal',
+							dmText,
+							0x5865f2,
+						);
 
-					// Also post in verification thread if it exists
-					const threadId = client.agverifData?.verifiedUsers?.[notif.discordUserId]?.threadId;
-					if (threadId) {
-						try {
-							const thread = await client.channels.fetch(threadId);
-							if (thread && thread.send) {
-								const { EmbedBuilder } = await import('discord.js');
-								const embed = new EmbedBuilder()
-									.setTitle('⚠️ New Device Detected — Key Rotated')
-									.setDescription(
-										`A new device connected to your key and exceeded your maximum device limit.\n\n` +
-										`Your API key has been **rotated automatically**. Check your DMs for the new key.\n\n` +
-										`If this wasn't you, contact an admin immediately.`
-									)
-									.setColor(0xf59e0b)
-									.setTimestamp();
-								await thread.send({ embeds: [embed] });
+						const threadId =
+							client.agverifData?.verifiedUsers?.[notif.discordUserId]?.threadId ||
+							Object.entries(client.agverifData?.threads || {}).find(
+								([, data]) => data.userId === notif.discordUserId,
+							)?.[0];
+
+						if (threadId) {
+							try {
+								const thread = await client.channels.fetch(threadId);
+								if (thread && thread.send) {
+									const { EmbedBuilder } = await import('discord.js');
+									const embed = new EmbedBuilder()
+										.setTitle('🔄 API Key Di-rotate — Kredensial Baru')
+										.setDescription(
+											`Admin telah melakukan rotasi massal API key.\n\n` +
+												`**Endpoint:** \`${notif.endpoint}\`\n` +
+												`**Authorization:** \`Bearer ${notif.newKey}\`\n\n` +
+												`Key lama sudah tidak berlaku. Update IDE/client Anda.`,
+										)
+										.setColor(0x5865f2)
+										.setTimestamp();
+									await thread.send({ embeds: [embed] });
+								}
+							} catch (err) {
+								console.error(`[notify] Failed to send bulk rotate thread for ${notif.discordUserId}:`, err.message);
 							}
-						} catch (err) {
-							console.error(`[notify] Failed to send thread message for ${notif.discordUserId}:`, err.message);
+						}
+					} else {
+						const dmText =
+							`⚠️ **New Device Detected — API Key Rotated**\n\n` +
+							`A new device attempted to connect to your API key, but only **1 device** is allowed.\n\n` +
+							`Your key has been **automatically rotated**. Here are your new credentials:\n\n` +
+							`**Endpoint:** \`${notif.endpoint}\`\n` +
+							`**Authorization:** \`Bearer ${notif.newKey}\`\n\n` +
+							`Your old device has been removed. Configure your IDE with the new key above.\n\n` +
+							`If you need more than 1 device, please contact an admin.`;
+
+						await sendDMToUser(notif.discordUserId, '🔑 API Key Rotated — New Device Detected', dmText, 0xf59e0b);
+
+						const threadId = client.agverifData?.verifiedUsers?.[notif.discordUserId]?.threadId;
+						if (threadId) {
+							try {
+								const thread = await client.channels.fetch(threadId);
+								if (thread && thread.send) {
+									const { EmbedBuilder } = await import('discord.js');
+									const embed = new EmbedBuilder()
+										.setTitle('⚠️ New Device Detected — Key Rotated')
+										.setDescription(
+											`A new device connected to your key and exceeded your maximum device limit.\n\n` +
+												`Your API key has been **rotated automatically**. Check your DMs for the new key.\n\n` +
+												`If this wasn't you, contact an admin immediately.`,
+										)
+										.setColor(0xf59e0b)
+										.setTimestamp();
+									await thread.send({ embeds: [embed] });
+								}
+							} catch (err) {
+								console.error(`[notify] Failed to send thread message for ${notif.discordUserId}:`, err.message);
+							}
 						}
 					}
 
-					// Clear the notification from DB
 					await proxyInternal(`/admin/internal/clear-notification/${notif.keyId}`, 'POST');
 				} catch (err) {
 					console.error(`[notify] Failed to process notification for ${notif.discordUserId}:`, err.message);
@@ -2859,11 +2958,14 @@ client.on('interactionCreate', async (interaction) => {
 		}
 
 		if (interaction.isStringSelectMenu()) {
-			const providerMatch = interaction.customId.match(
-				/^tokito_filter_provider_(.+)$/,
+			const upstreamMatch = interaction.customId.match(
+				/^tokito_filter_upstream_(.+)$/,
+			);
+			const vendorMatch = interaction.customId.match(
+				/^tokito_filter_vendor_(.+)$/,
 			);
 			const sortMatch = interaction.customId.match(/^tokito_filter_sort_(.+)$/);
-			const sessionId = providerMatch?.[1] || sortMatch?.[1];
+			const sessionId = upstreamMatch?.[1] || vendorMatch?.[1] || sortMatch?.[1];
 			if (!sessionId) return;
 
 			const session = tokitoSessions.get(sessionId);
@@ -2879,8 +2981,13 @@ client.on('interactionCreate', async (interaction) => {
 				return;
 			}
 
-			if (providerMatch) {
-				session.provider = interaction.values[0] || 'all';
+			if (upstreamMatch) {
+				session.upstreamProvider = interaction.values[0] || 'all';
+				session.modelVendor = 'all';
+				session.page = 0;
+			}
+			if (vendorMatch) {
+				session.modelVendor = interaction.values[0] || 'all';
 				session.page = 0;
 			}
 			if (sortMatch) {

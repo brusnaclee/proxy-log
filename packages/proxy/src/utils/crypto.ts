@@ -60,6 +60,14 @@ export function maskKey(key: string): string {
   return key.substring(0, 12) + "..." + key.substring(key.length - 4);
 }
 
+/** Strip common paste artifacts from provider upstream keys. */
+export function sanitizeProviderApiKey(raw: string): string {
+  return String(raw || "")
+    .trim()
+    .replace(/^Bearer\s+/i, "")
+    .replace(/^key:\s*/i, "");
+}
+
 /**
  * Generate a random session ID
  */

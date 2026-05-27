@@ -690,6 +690,74 @@ internal.get("/internal/providers", async (c) => {
   return c.json(provs);
 });
 
+internal.get("/internal/pending-notifications", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+
+  const rows = await db
+    .select({ id: apiKeys.id, pendingNotification: apiKeys.pendingNotification })
+    .from(apiKeys)
+    .all();
+
+  const notifications = rows
+    .filter((r) => r.pendingNotification)
+    .map((r) => {
+      try {
+        const parsed = JSON.parse(r.pendingNotification!);
+        return { keyId: r.id, ...parsed };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+
+  return c.json({ notifications });
+});
+
+internal.post("/internal/rotate-all-keys", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+
+  const endpoint = `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`;
+  const activeKeys = await db.select().from(apiKeys).where(eq(apiKeys.isActive, true)).all();
+  const now = new Date().toISOString().replace("T", " ").substring(0, 19);
+
+  let rotated = 0;
+  let notified = 0;
+
+  for (const key of activeKeys) {
+    const newKey = generateApiKey();
+    const notification = key.discordUserId
+      ? JSON.stringify({
+          type: "admin_bulk_rotate",
+          discordUserId: key.discordUserId,
+          newKey,
+          endpoint,
+          keyId: key.id,
+        })
+      : null;
+
+    await db
+      .update(apiKeys)
+      .set({
+        key: newKey,
+        keyPrefix: getKeyPrefix(newKey),
+        keyHash: sha256(newKey),
+        isActive: true,
+        pendingNotification: notification,
+        updatedAt: now,
+      })
+      .where(eq(apiKeys.id, key.id))
+      .run();
+
+    await db.delete(devices).where(eq(devices.apiKeyId, key.id)).run();
+    rotated += 1;
+    if (key.discordUserId) notified += 1;
+  }
+
+  return c.json({ success: true, rotated, notified, endpoint });
+});
+
 internal.post("/internal/clear-notification/:keyId", async (c) => {
   const keyId = parseInt(c.req.param("keyId"));
   await db.update(apiKeys)

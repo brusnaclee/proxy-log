@@ -361,6 +361,7 @@ export interface ModelMonitorEntry {
   id: number;
   modelId: string;
   provider: string | null;
+  modelVendor?: string | null;
   isOnline: boolean;
   latencyMs: number | null;
   httpStatus: number | null;

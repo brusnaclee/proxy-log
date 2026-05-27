@@ -105,10 +105,11 @@ monitor.get("/monitor/models", async (c) => {
   const latestSubquery = db
     .select({
       modelId: modelMonitor.modelId,
+      provider: modelMonitor.provider,
       maxCheckedAt: sql<string>`MAX(checked_at)`.as('max_checked_at'),
     })
     .from(modelMonitor)
-    .groupBy(modelMonitor.modelId)
+    .groupBy(modelMonitor.modelId, modelMonitor.provider)
     .as('latest');
 
   const rows = await db
@@ -116,9 +117,9 @@ monitor.get("/monitor/models", async (c) => {
     .from(modelMonitor)
     .innerJoin(
       latestSubquery,
-      sql`${modelMonitor.modelId} = ${latestSubquery.modelId} AND ${modelMonitor.checkedAt} = ${latestSubquery.maxCheckedAt}`
+      sql`${modelMonitor.modelId} = ${latestSubquery.modelId} AND COALESCE(${modelMonitor.provider}, '') = COALESCE(${latestSubquery.provider}, '') AND ${modelMonitor.checkedAt} = ${latestSubquery.maxCheckedAt}`
     )
-    .orderBy(modelMonitor.modelId)
+    .orderBy(modelMonitor.provider, modelMonitor.modelId)
     .all();
 
   const data = rows.map(r => r.model_monitor);

@@ -5,13 +5,17 @@ async function fix() {
 
   console.log("Checking api_keys schema...");
   const pragma = await db.execute("PRAGMA table_info(api_keys)");
-  const hasPass = pragma.rows.some(r => r.name === "password_hash");
-  
+  const hasPass = pragma.rows.some((r: any) => r.name === "password_hash");
+
   if (hasPass) {
-    console.log("Found broken api_keys table! Fixing...");
+    const countRes = await db.execute("SELECT COUNT(*) as cnt FROM api_keys");
+    const rowCount = Number((countRes.rows[0] as any)?.cnt || 0);
+    const backupName = `api_keys_broken_${Date.now()}`;
+
+    console.log(`Found broken api_keys table (${rowCount} rows). Backing up as ${backupName}...`);
     await db.execute("PRAGMA foreign_keys = OFF;");
-    await db.execute("ALTER TABLE api_keys RENAME TO api_keys_broken;");
-    
+    await db.execute(`ALTER TABLE api_keys RENAME TO ${backupName};`);
+
     await db.execute(`
       CREATE TABLE api_keys (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,8 +43,14 @@ async function fix() {
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       )
     `);
-    
-    await db.execute("DROP TABLE api_keys_broken;");
+
+    if (rowCount > 0) {
+      console.warn(`WARNING: ${rowCount} rows in ${backupName} — restore manually if needed. Table NOT dropped.`);
+    } else {
+      await db.execute(`DROP TABLE ${backupName};`);
+    }
+
+    await db.execute("PRAGMA foreign_keys = ON;");
     console.log("api_keys table recreated successfully!");
   } else {
     console.log("api_keys table is already fine.");
