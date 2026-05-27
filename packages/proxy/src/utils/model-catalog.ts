@@ -1,30 +1,32 @@
-import { mkdir, readFile, writeFile } from "fs/promises";
+﻿import { mkdir, readFile, writeFile } from "fs/promises";
 import { dirname } from "path";
 import { db } from "../db/index.js";
-import { adminConfig } from "../db/schema.js";
+import { providers } from "../db/schema.js";
+import { eq } from "drizzle-orm";
 
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 8000;
 const CACHE_FILE_PATH = process.env.MODEL_CATALOG_CACHE_PATH || "./data/model_catalog_cache.json";
 
-interface ModelRecord {
+export interface ModelRecord {
   id: string;
   object: "model";
   created: number;
   owned_by: string;
+  provider_id?: number;
 }
 
 interface CatalogCache {
   fetchedAt: string | null;
-  upstreamEndpoint: string;
   models: ModelRecord[];
   lastError?: string;
+  modelProviderMap: Record<string, number>;
 }
 
 const cache: CatalogCache = {
   fetchedAt: null,
-  upstreamEndpoint: "",
   models: [],
+  modelProviderMap: {},
 };
 
 let loadedFromDisk = false;
@@ -32,7 +34,7 @@ let refreshInFlight: Promise<void> | null = null;
 let schedulerStarted = false;
 
 function normalizeBaseUrl(url: string): string {
-  return String(url || "").trim().replace(/\/$/, "");
+  return String(url || "").trim().replace(/\/\$/, "");
 }
 
 function buildCandidateUrls(upstreamEndpoint: string): string[] {
@@ -40,17 +42,17 @@ function buildCandidateUrls(upstreamEndpoint: string): string[] {
   if (!base) return [];
 
   const candidates = new Set<string>();
-  candidates.add(`${base}/models`);
-  candidates.add(`${base}/v1/models`);
+  candidates.add(base + "/models");
+  candidates.add(base + "/v1/models");
 
   if (base.endsWith("/v1")) {
-    candidates.add(`${base}/models`);
+    candidates.add(base + "/models");
   }
 
   return Array.from(candidates);
 }
 
-function normalizeModelItem(item: any): ModelRecord | null {
+function normalizeModelItem(item: any, providerId: number): ModelRecord | null {
   const id = String(item?.id || item?.name || "").trim();
   if (!id) return null;
 
@@ -58,48 +60,32 @@ function normalizeModelItem(item: any): ModelRecord | null {
     id,
     object: "model",
     created: typeof item?.created === "number" ? item.created : Math.floor(Date.now() / 1000),
-    owned_by: String(item?.owned_by || item?.provider || "upstream"),
+    owned_by: String(item?.owned_by || item?.owner || "system").trim(),
+    provider_id: providerId,
   };
 }
 
-function extractModelList(payload: any): ModelRecord[] {
-  let rawList: any[] = [];
-
-  if (Array.isArray(payload?.data)) {
-    rawList = payload.data;
-  } else if (Array.isArray(payload?.models)) {
-    rawList = payload.models;
-  } else if (Array.isArray(payload)) {
-    rawList = payload;
-  }
-
-  const normalized = rawList
-    .map((item) => normalizeModelItem(item))
-    .filter((item): item is ModelRecord => !!item);
-
-  const dedup = new Map<string, ModelRecord>();
-  for (const model of normalized) {
-    dedup.set(model.id, model);
-  }
-
-  return Array.from(dedup.values()).sort((a, b) => a.id.localeCompare(b.id));
+function extractModelList(payload: any, providerId: number): ModelRecord[] {
+  const arr = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : [];
+  return arr.map((i: any) => normalizeModelItem(i, providerId)).filter(Boolean) as ModelRecord[];
 }
 
 async function loadFromDisk() {
   if (loadedFromDisk) return;
   loadedFromDisk = true;
-
   try {
     const raw = await readFile(CACHE_FILE_PATH, "utf8");
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed?.models)) {
-      cache.models = extractModelList(parsed.models);
-      cache.fetchedAt = typeof parsed?.fetchedAt === "string" ? parsed.fetchedAt : null;
-      cache.upstreamEndpoint = typeof parsed?.upstreamEndpoint === "string" ? parsed.upstreamEndpoint : "";
-      cache.lastError = typeof parsed?.lastError === "string" ? parsed.lastError : undefined;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed?.models)) {
+        cache.models = parsed.models;
+        cache.fetchedAt = typeof parsed?.fetchedAt === "string" ? parsed.fetchedAt : null;
+        cache.modelProviderMap = parsed.modelProviderMap || {};
+        cache.lastError = typeof parsed?.lastError === "string" ? parsed.lastError : undefined;
+      }
     }
   } catch {
-    // Ignore missing or invalid cache file.
+    // Ignore
   }
 }
 
@@ -108,25 +94,25 @@ async function persistToDisk() {
   await writeFile(CACHE_FILE_PATH, JSON.stringify(cache, null, 2), "utf8");
 }
 
-async function fetchModelsFromUpstream(url: string, apiKey: string): Promise<ModelRecord[]> {
+async function fetchModelsFromUpstream(url: string, apiKey: string, providerId: number): Promise<ModelRecord[]> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
     const res = await fetch(url, {
       method: "GET",
       headers: {
-        "Authorization": `Bearer ${apiKey}`,
+        "Authorization": "Bearer " + apiKey,
         "Accept": "application/json",
       },
       signal: controller.signal,
     });
 
     if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
+      throw new Error("HTTP " + res.status);
     }
 
     const payload = await res.json();
-    const models = extractModelList(payload);
+    const models = extractModelList(payload, providerId);
     if (models.length === 0) {
       throw new Error("No models returned by upstream");
     }
@@ -143,31 +129,43 @@ export async function refreshModelCatalog(): Promise<void> {
   refreshInFlight = (async () => {
     await loadFromDisk();
 
-    const config = await db.select().from(adminConfig).get();
-    if (!config?.upstreamApiKey) {
-      cache.lastError = "Upstream API key not configured";
-      await persistToDisk();
+    const activeProviders = await db.select().from(providers).where(eq(providers.isActive, true)).orderBy(providers.priority).all();
+    if (activeProviders.length === 0) {
+      cache.lastError = "No active providers configured";
       return;
     }
 
-    const candidates = buildCandidateUrls(config.upstreamEndpoint);
-    let lastError = "Unable to fetch model catalog";
+    const allModels: ModelRecord[] = [];
+    const modelProviderMap: Record<string, number> = {};
+    let lastError = "";
 
-    for (const url of candidates) {
-      try {
-        const models = await fetchModelsFromUpstream(url, config.upstreamApiKey);
-        cache.models = models;
-        cache.fetchedAt = new Date().toISOString();
-        cache.upstreamEndpoint = normalizeBaseUrl(config.upstreamEndpoint);
-        cache.lastError = undefined;
-        await persistToDisk();
-        return;
-      } catch (error: any) {
-        lastError = error?.message || "Unknown upstream fetch error";
+    for (const provider of activeProviders) {
+      const candidates = buildCandidateUrls(provider.endpoint);
+      let success = false;
+      for (const url of candidates) {
+        try {
+          const models = await fetchModelsFromUpstream(url, provider.apiKey, provider.id);
+          for (const m of models) {
+            if (!modelProviderMap[m.id]) {
+              allModels.push(m);
+              modelProviderMap[m.id] = provider.id;
+            }
+          }
+          success = true;
+          break; // move to next provider
+        } catch (error: any) {
+          lastError = error?.message || "Unknown upstream fetch error";
+        }
+      }
+      if (!success) {
+        console.error("Failed to fetch models from provider " + provider.name + ": ", lastError);
       }
     }
 
-    cache.lastError = lastError;
+    cache.models = allModels;
+    cache.modelProviderMap = modelProviderMap;
+    cache.fetchedAt = new Date().toISOString();
+    cache.lastError = lastError || undefined;
     await persistToDisk();
   })();
 
@@ -204,11 +202,31 @@ export async function getModelCatalogResponse() {
     }
   }
 
+  // Hide provider_id from public response
+  const publicModels = cache.models.map(({ provider_id, ...rest }) => rest);
+
   return {
     object: "list",
-    data: cache.models,
+    data: publicModels,
     cached_at: cache.fetchedAt,
-    upstream_endpoint: cache.upstreamEndpoint,
     last_error: cache.lastError,
   };
+}
+
+export async function getProviderForModel(modelId: string): Promise<any | null> {
+  await loadFromDisk();
+  
+  if (!cache.fetchedAt || cache.models.length === 0) {
+    await refreshModelCatalog();
+  }
+  
+  const providerId = cache.modelProviderMap[modelId];
+  if (!providerId) {
+    // If not mapped, fallback to highest priority active provider
+    const fallback = await db.select().from(providers).where(eq(providers.isActive, true)).orderBy(providers.priority).all();
+    if (fallback.length > 0) return fallback[fallback.length - 1]; // orderBy default is ASC. So last is highest.
+    return null;
+  }
+  
+  return await db.select().from(providers).where(eq(providers.id, providerId)).get();
 }
