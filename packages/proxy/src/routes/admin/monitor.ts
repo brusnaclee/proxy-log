@@ -8,6 +8,9 @@ import {
   getActiveProviderNames,
   monitorStaleCutoffIso,
   replaceModelMonitorSnapshot,
+  upsertModelStatus,
+  getModelTestStates,
+  resetAllTestStates,
   type MonitorSnapshotRow,
 } from "../../utils/model-monitor-store.js";
 
@@ -104,7 +107,6 @@ monitor.post("/settings/bot", async (c) => {
 
 monitor.get("/monitor/models", async (c) => {
   const activeNames = await getActiveProviderNames();
-  const staleCutoff = monitorStaleCutoffIso();
 
   const latestSubquery = db
     .select({
@@ -128,7 +130,7 @@ monitor.get("/monitor/models", async (c) => {
 
   const data = rows
     .map((r) => r.model_monitor)
-    .filter((d) => d.provider && activeNames.has(d.provider) && d.checkedAt >= staleCutoff);
+    .filter((d) => d.provider && activeNames.has(d.provider));
 
   const summary = {
     total: data.length,
@@ -201,6 +203,47 @@ monitor.post("/monitor/models/single", async (c) => {
     checkedAt: now,
   }).run();
 
+  return c.json({ success: true });
+});
+
+// ─── Smart Retry Endpoints ──────────────────────────────────────────────────────
+
+// PATCH single model status with retry tracking
+monitor.patch("/internal/monitor/models/status", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+
+  const item = await c.req.json<any>();
+  if (!item.modelId) return c.json({ error: "modelId required" }, 400);
+
+  await upsertModelStatus({
+    modelId: String(item.modelId),
+    provider: item.provider ? String(item.provider) : null,
+    isOnline: Boolean(item.isOnline),
+    latencyMs: Number(item.latencyMs) || 0,
+    httpStatus: Number(item.httpStatus) || 0,
+    errorMessage: item.errorMessage ? String(item.errorMessage) : null,
+    baseUrl: item.baseUrl ? String(item.baseUrl) : null,
+  });
+
+  return c.json({ success: true });
+});
+
+// GET all model test states (bot uses on startup to recover retry state)
+monitor.get("/internal/monitor/models/state", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+
+  const states = await getModelTestStates();
+  return c.json({ states });
+});
+
+// PATCH reset all test states (midnight reset)
+monitor.patch("/internal/monitor/models/state/reset", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+
+  await resetAllTestStates();
   return c.json({ success: true });
 });
 

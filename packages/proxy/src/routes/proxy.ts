@@ -1,7 +1,7 @@
 ﻿import { Hono } from "hono";
 import * as zlib from "zlib";
 import { db } from "../db/index.js";
-import { apiKeys, devices, allowedDevices, allowedIdes, requestLogs, adminConfig, chatSessions, modelMonitor } from "../db/schema.js";
+import { apiKeys, devices, allowedDevices, allowedIdes, requestLogs, adminConfig, chatSessions, modelMonitor, providers } from "../db/schema.js";
 import { eq, and, sql, desc } from "drizzle-orm";
 import { generateFingerprint, generateSessionId, generateApiKey, getKeyPrefix, sha256 } from "../utils/crypto.js";
 import { detectIde, detectIdeFromContent, estimateTokens, getClientIp, normalizeIdeName } from "../utils/detect-ide.js";
@@ -16,7 +16,7 @@ import {
   toToolJson,
 } from "../utils/telemetry.js";
 import { logEmitter } from "../utils/event-emitter.js";
-import { getModelCatalogResponse, getProviderForModel, stripProviderPrefix } from "../utils/model-catalog.js";
+import { getModelCatalogResponse, getProviderForModel, stripProviderPrefix, getOnlineModelsByLatency } from "../utils/model-catalog.js";
 import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindowResetMs } from "../utils/rate-limit.js";
 import { analyzeRequestMessages, isTitleGenRequest, detectToolCallsInResponse, getLastTurnTextForTokenEstimate, type MessageAnalysis } from "../utils/message-analyzer.js";
 import { makeAccumulator, consumeStreamPayload, consumeNonStreamingPayload, finalizeCompletion, resolveBillableTokens } from "../utils/token-extractor.js";
@@ -824,6 +824,146 @@ proxy.all("/*", async (c) => {
 
   // ─── 8. Analyze Request Messages ───────────────────────────────────────────────
   const messageAnalysis = analyzeRequestMessages(requestBody);
+
+  // ─── 8-auto. Auto Model Handler ────────────────────────────────────────────────
+  // Virtual "auto" model: try online models in order of lowest latency until one works.
+  if (model === "auto") {
+    const onlineModels = await getOnlineModelsByLatency();
+    if (onlineModels.length === 0) {
+      return c.json({ error: { message: "No online models available for auto selection", type: "model_offline" } }, 503);
+    }
+
+    const wantedStream = requestBody?.stream === true;
+    const tried: string[] = [];
+
+    // Build blocked headers set once
+    const blockedHeaders = new Set(["host", "content-length", "authorization", "cookie", "connection", "keep-alive", "transfer-encoding", "upgrade"]);
+    const baseHeaders: Record<string, string> = {};
+    for (const [k, v] of c.req.raw.headers.entries()) {
+      if (!blockedHeaders.has(k.toLowerCase())) baseHeaders[k] = v;
+    }
+    baseHeaders["x-forwarded-for"] = clientIp;
+
+    for (const candidate of onlineModels) {
+      // Resolve provider to get API key
+      const providerRow = await db
+        .select()
+        .from(providers)
+        .where(and(eq(providers.name, candidate.provider), eq(providers.isActive, true)))
+        .limit(1)
+        .get();
+
+      if (!providerRow) {
+        tried.push(`${candidate.provider}/${candidate.modelId} (no provider)`);
+        continue;
+      }
+
+      const upstreamBase = providerRow.endpoint.replace(/\/$/, "");
+      let upstreamPath = path;
+      if (upstreamBase.endsWith("/v1") && upstreamPath.startsWith("/v1/")) {
+        upstreamPath = upstreamPath.slice(3);
+      } else if (upstreamBase.endsWith("/v1") && upstreamPath === "/v1") {
+        upstreamPath = "";
+      }
+      const upstreamUrl = `${upstreamBase}${upstreamPath}`;
+
+      const upstreamHeaders: Record<string, string> = { ...baseHeaders };
+      upstreamHeaders["Authorization"] = `Bearer ${providerRow.apiKey}`;
+      if (contentType) upstreamHeaders["Content-Type"] = contentType;
+
+      // Build body with this specific model
+      const trialBody = { ...requestBody, model: candidate.modelId, stream: false };
+      const trialBodyBytes = new TextEncoder().encode(JSON.stringify(trialBody));
+
+      try {
+        const trialResponse = await fetchUpstreamWithRetry(upstreamUrl, {
+          method: c.req.method,
+          headers: upstreamHeaders,
+          body: trialBodyBytes as any,
+        }, false, c.req.raw.signal);
+
+        if (trialResponse.status >= 400) {
+          tried.push(`${candidate.provider}/${candidate.modelId} (HTTP ${trialResponse.status})`);
+          try { await trialResponse.body?.cancel(); } catch {}
+          continue;
+        }
+
+        // Check if response has actual content
+        const trialText = await trialResponse.text();
+        let hasContent = false;
+        try {
+          const parsed = JSON.parse(trialText);
+          const choice0 = parsed?.choices?.[0];
+          const msgContent = choice0?.message?.content;
+          const toolCalls = choice0?.message?.tool_calls;
+          hasContent = !!(msgContent || toolCalls);
+        } catch {
+          // Not JSON or unparseable — treat as no content
+        }
+
+        if (!hasContent) {
+          tried.push(`${candidate.provider}/${candidate.modelId} (empty response)`);
+          continue;
+        }
+
+        // ── Success! This model works ──────────────────────────────────────
+        const actualModel = `${candidate.provider}/${candidate.modelId}`;
+
+        if (wantedStream) {
+          // Client wants streaming: re-request as streaming from this provider
+          const streamBody = { ...requestBody, model: candidate.modelId, stream: true };
+          const streamBodyBytes = new TextEncoder().encode(JSON.stringify(streamBody));
+          const streamHeaders: Record<string, string> = { ...baseHeaders };
+          streamHeaders["Authorization"] = `Bearer ${providerRow.apiKey}`;
+          if (contentType) streamHeaders["Content-Type"] = contentType;
+
+          const streamResponse = await fetchUpstreamWithRetry(upstreamUrl, {
+            method: c.req.method,
+            headers: streamHeaders,
+            body: streamBodyBytes as any,
+          }, true, c.req.raw.signal);
+
+          const responseHeaders: Record<string, string> = {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "x-model-used": actualModel,
+          };
+          if (tried.length > 0) responseHeaders["x-auto-model-tried"] = tried.join(", ");
+
+          return new Response(streamResponse.body, { status: streamResponse.status, headers: responseHeaders });
+        }
+
+        // Non-streaming: return the validated response with model info injected
+        let responseJson: any;
+        try { responseJson = JSON.parse(trialText); } catch { responseJson = null; }
+        if (responseJson && typeof responseJson === "object") {
+          responseJson.model = `auto (${candidate.modelId})`;
+        }
+        const finalBody = responseJson ? JSON.stringify(responseJson) : trialText;
+
+        const responseHeaders: Record<string, string> = {
+          "Content-Type": "application/json",
+          "x-model-used": actualModel,
+        };
+        if (tried.length > 0) responseHeaders["x-auto-model-tried"] = tried.join(", ");
+
+        return new Response(finalBody, { status: 200, headers: responseHeaders });
+      } catch (err: any) {
+        tried.push(`${candidate.provider}/${candidate.modelId} (error: ${err?.message || "unknown"})`);
+        continue;
+      }
+    }
+
+    // All models exhausted
+    return c.json({
+      error: {
+        message: `Auto model: all ${onlineModels.length} online models failed`,
+        type: "model_offline",
+        tried,
+      }
+    }, 503);
+  }
 
 const targetProvider = await getProviderForModel(model);
   if (!targetProvider) {

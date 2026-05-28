@@ -241,6 +241,16 @@ export async function initializeDatabase() {
     );
     CREATE INDEX IF NOT EXISTS idx_monitor_model_id ON model_monitor(model_id);
     CREATE INDEX IF NOT EXISTS idx_monitor_checked_at ON model_monitor(checked_at);
+
+    CREATE TABLE IF NOT EXISTS model_test_state (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      model_id TEXT NOT NULL,
+      provider TEXT,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      last_test_at TEXT,
+      suspended_until TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_test_state_model ON model_test_state(model_id, provider);
   `);
 
   // Backward-compatible column migration for existing databases

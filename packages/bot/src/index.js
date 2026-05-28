@@ -814,6 +814,7 @@ const runtime = {
 	lastWorkingBaseUrl: TOKITO_BASE_URL,
 	endpointStats: new Map(),
 	activeProviders: [],
+	modelRetryState: new Map(), // entryKey -> { retryCount, lastTestAt, suspendedUntil }
 };
 
 function loadTokitoState() {
@@ -1039,6 +1040,26 @@ async function pushMetricsToProxy() {
 	}
 }
 
+/** Push a single model result to the proxy with retry tracking. */
+async function pushSingleModelStatus(entry, latencyResult) {
+	try {
+		await proxyInternal('/admin/internal/monitor/models/status', 'PATCH', {
+			modelId: entry.modelId,
+			provider: entry.provider,
+			isOnline: Boolean(latencyResult.ok),
+			latencyMs: latencyResult.ms,
+			httpStatus: latencyResult.status,
+			errorMessage: latencyResult.error || null,
+			baseUrl: entry.baseUrl,
+		});
+	} catch (err) {
+		console.error(
+			`[tokito-monitor] failed to push status for ${entry.modelId}:`,
+			err.message,
+		);
+	}
+}
+
 async function runLatencyTest() {
 	await pollModelStatus();
 	if (!runtime.models.length) return;
@@ -1092,6 +1113,203 @@ async function runLatencyTest() {
 	runtime.lastLatencyAt = now;
 
 	await pushMetricsToProxy();
+}
+
+// ─── Smart Retry: Test a single model and return latency result ────────────────
+
+async function testSingleModel(entry) {
+	const started = Date.now();
+	const baseUrl = entry.baseUrl;
+	const apiKey = entry.apiKey;
+
+	let result;
+	try {
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), TOKITO_REQUEST_TIMEOUT_MS);
+		const res = await fetch(`${baseUrl}/chat/completions`, {
+			method: 'POST',
+			headers: {
+				Authorization: `Bearer ${apiKey}`,
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({
+				model: entry.modelId,
+				messages: [{ role: 'user', content: 'test' }],
+				max_tokens: 1,
+				temperature: 0,
+			}),
+			signal: controller.signal,
+		});
+		clearTimeout(timeout);
+		const text = await res.text();
+		let body;
+		try { body = JSON.parse(text); } catch (_) { body = { raw: text }; }
+		result = { ok: res.ok, status: res.status, body };
+	} catch (err) {
+		result = { ok: false, status: 0, body: { error: err.message } };
+	}
+
+	const ms = Date.now() - started;
+	return {
+		ok: result.ok,
+		ms,
+		checkedAt: Date.now(),
+		status: result.status,
+		error: result.body?.error?.message || (result.ok ? null : 'Failed'),
+	};
+}
+
+// ─── Smart Retry: Full sweep — test ALL models, push results individually ─────
+
+async function runFullSweep() {
+	await pollModelStatus();
+	if (!runtime.modelEntries.length) return;
+
+	console.log(`[tokito-monitor] full sweep: testing ${runtime.modelEntries.length} models`);
+
+	for (const entry of runtime.modelEntries) {
+		const key = entryKey(entry);
+
+		// Skip models currently suspended (waiting for midnight reset)
+		const retryState = runtime.modelRetryState.get(key);
+		if (retryState?.suspendedUntil) {
+			const suspendedUntil = new Date(retryState.suspendedUntil).getTime();
+			if (Date.now() < suspendedUntil) {
+				continue;
+			}
+		}
+
+		const latency = await testSingleModel(entry);
+		runtime.latency.set(key, latency);
+		await pushSingleModelStatus(entry, latency);
+
+		if (latency.ok) {
+			runtime.modelRetryState.delete(key);
+		} else {
+			const current = runtime.modelRetryState.get(key) || { retryCount: 0 };
+			runtime.modelRetryState.set(key, {
+				retryCount: current.retryCount + 1,
+				lastTestAt: new Date().toISOString(),
+				suspendedUntil: null, // proxy handles suspension logic
+			});
+		}
+	}
+
+	runtime.lastLatencyAt = Date.now();
+	console.log('[tokito-monitor] full sweep complete');
+}
+
+// ─── Smart Retry: Retry sweep — test only offline models that aren't suspended ─
+
+async function runRetrySweep() {
+	if (!runtime.modelEntries.length) return;
+
+	const entriesToRetry = [];
+	for (const entry of runtime.modelEntries) {
+		const key = entryKey(entry);
+		const retryState = runtime.modelRetryState.get(key);
+
+		if (!retryState) continue; // not tracked as offline
+		if (retryState.retryCount >= 3) continue; // max retries reached, wait for midnight
+
+		if (retryState.suspendedUntil) {
+			const suspendedUntil = new Date(retryState.suspendedUntil).getTime();
+			if (Date.now() < suspendedUntil) continue; // still suspended
+		}
+
+		entriesToRetry.push(entry);
+	}
+
+	if (entriesToRetry.length === 0) return;
+
+	console.log(`[tokito-monitor] retry sweep: testing ${entriesToRetry.length} offline models`);
+
+	for (const entry of entriesToRetry) {
+		const key = entryKey(entry);
+		const latency = await testSingleModel(entry);
+		runtime.latency.set(key, latency);
+		await pushSingleModelStatus(entry, latency);
+
+		if (latency.ok) {
+			runtime.modelRetryState.delete(key);
+			console.log(`[tokito-monitor] model back online: ${entry.modelId}`);
+		} else {
+			const current = runtime.modelRetryState.get(key) || { retryCount: 0 };
+			runtime.modelRetryState.set(key, {
+				retryCount: current.retryCount + 1,
+				lastTestAt: new Date().toISOString(),
+				suspendedUntil: null,
+			});
+		}
+	}
+
+	runtime.lastLatencyAt = Date.now();
+	console.log('[tokito-monitor] retry sweep complete');
+}
+
+// ─── Smart Retry: Midnight reset — clear all retry states ─────────────────────
+
+async function midnightReset() {
+	try {
+		await proxyInternal('/admin/internal/monitor/models/state/reset', 'PATCH');
+		runtime.modelRetryState.clear();
+		console.log('[tokito-monitor] midnight reset complete — all models eligible for testing');
+	} catch (err) {
+		console.error('[tokito-monitor] midnight reset failed:', err.message);
+	}
+}
+
+// ─── Smart Retry: Recover retry state from proxy on bot startup ───────────────
+
+async function recoverRetryState() {
+	try {
+		const data = await proxyInternal('/admin/internal/monitor/models/state', 'GET');
+		const states = data?.states || [];
+		for (const s of states) {
+			const entry = runtime.modelEntries.find(
+				(e) => e.modelId === s.modelId && e.provider === s.provider,
+			);
+			if (entry) {
+				const key = entryKey(entry);
+				runtime.modelRetryState.set(key, {
+					retryCount: s.retryCount || 0,
+					lastTestAt: s.lastTestAt || null,
+					suspendedUntil: s.suspendedUntil || null,
+				});
+			}
+		}
+		if (states.length > 0) {
+			console.log(`[tokito-monitor] recovered retry state for ${states.length} models`);
+		}
+	} catch (err) {
+		console.error('[tokito-monitor] failed to recover retry state:', err.message);
+	}
+}
+
+// ─── Smart Retry: Schedule midnight reset at 00:00 Asia/Jakarta (UTC+7) ───────
+
+function scheduleMidnightReset() {
+	function msUntilMidnight() {
+		const now = new Date();
+		const jakartaOffset = 7 * 60 * 60000;
+		const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
+		const jakartaMs = utcMs + jakartaOffset;
+		const jakartaDate = new Date(jakartaMs);
+		jakartaDate.setHours(24, 0, 0, 0);
+		const midnightUtcMs = jakartaDate.getTime() - jakartaOffset;
+		return midnightUtcMs - now.getTime();
+	}
+
+	function scheduleNext() {
+		const delay = msUntilMidnight();
+		console.log(`[tokito-monitor] next midnight reset in ${Math.round(delay / 60000)} minutes`);
+		setTimeout(async () => {
+			await midnightReset();
+			scheduleNext(); // schedule the next one
+		}, delay);
+	}
+
+	scheduleNext();
 }
 
 function buildPanelRow() {
@@ -2414,13 +2632,25 @@ client.once('clientReady', async () => {
 		console.log(`[tokito] Monitor active. Panel Channel ID: ${TOKITO_CHANNEL_ID}`);
 		await ensurePanelMessage();
 		await pollModelStatus();
-		await runLatencyTest();
+		await recoverRetryState();
+		await runFullSweep();
 
+		// Full sweep: every 1 hour (test all models)
 		setInterval(() => {
-			runLatencyTest().catch((err) =>
-				console.error('runLatencyTest error:', err.message),
+			runFullSweep().catch((err) =>
+				console.error('runFullSweep error:', err.message),
 			);
-		}, TOKITO_LATENCY_INTERVAL_MS);
+		}, 3600000);
+
+		// Retry sweep: every 10 minutes (test only offline models)
+		setInterval(() => {
+			runRetrySweep().catch((err) =>
+				console.error('runRetrySweep error:', err.message),
+			);
+		}, 600000);
+
+		// Midnight reset: reset retry counts at 00:00 Asia/Jakarta
+		scheduleMidnightReset();
 	}
 
 	console.log('Antigravity Verification Bot is ready!');
@@ -2902,9 +3132,7 @@ client.on('interactionCreate', async (interaction) => {
 				// Immediately acknowledge to prevent 10s timeout
 				await interaction.deferReply({ ephemeral: true });
 				
-				// Now poll can take as long as needed
-				await pollModelStatus();
-				
+				// Use cached data — no fetch on button click
 				const session = createTokitoSession(interaction.user.id, kind);
 				const { embed, components } = buildTokitoEmbed(kind, session);
 				

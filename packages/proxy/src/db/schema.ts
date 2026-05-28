@@ -213,6 +213,18 @@ export const modelMonitor = sqliteTable("model_monitor", {
   checkedAtIdx: index("idx_monitor_checked_at").on(table.checkedAt),
 }));
 
+// ─── Model Test State (retry tracking for offline models) ──────────────────────
+export const modelTestState = sqliteTable("model_test_state", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  modelId: text("model_id").notNull(),
+  provider: text("provider"),
+  retryCount: integer("retry_count").notNull().default(0),
+  lastTestAt: text("last_test_at"),
+  suspendedUntil: text("suspended_until"), // null = not suspended; ISO datetime = paused until then
+}, (table) => ({
+  uniqueModel: index("idx_test_state_model").on(table.modelId, table.provider),
+}));
+
 // ─── Model Prompt Limits (per-model overrides) ─────────────────────────────────
 // scope="global" scopeId=0 → global override for a specific model
 // scope="key"    scopeId=apiKeyId → per-key override for a specific model
@@ -249,6 +261,7 @@ export type ChatSession = typeof chatSessions.$inferSelect;
 export type Device = typeof devices.$inferSelect;
 export type Provider = typeof providers.$inferSelect;
 export type ModelMonitor = typeof modelMonitor.$inferSelect;
+export type ModelTestState = typeof modelTestState.$inferSelect;
 export type ModelLimit = typeof modelLimits.$inferSelect;
 export type CleanupState = typeof cleanupState.$inferSelect;
 
@@ -261,5 +274,6 @@ export type NewChatSession = typeof chatSessions.$inferInsert;
 export type NewDevice = typeof devices.$inferInsert;
 export type NewProvider = typeof providers.$inferInsert;
 export type NewModelMonitor = typeof modelMonitor.$inferInsert;
+export type NewModelTestState = typeof modelTestState.$inferInsert;
 export type NewModelLimit = typeof modelLimits.$inferInsert;
 export type NewCleanupState = typeof cleanupState.$inferInsert;

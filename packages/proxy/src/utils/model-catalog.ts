@@ -2,7 +2,7 @@
 import { dirname } from "path";
 import { db } from "../db/index.js";
 import { providers, modelMonitor } from "../db/schema.js";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, sql, asc } from "drizzle-orm";
 import { sanitizeProviderApiKey } from "./crypto.js";
 
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
@@ -423,4 +423,43 @@ export function stripProviderPrefixSync(modelId: string, providerNames: Set<stri
     return modelId.slice(slashIdx + 1);
   }
   return modelId;
+}
+
+/** Get all online models from model_monitor, sorted by latency ascending. */
+export async function getOnlineModelsByLatency(): Promise<Array<{
+  modelId: string;
+  provider: string;
+  latencyMs: number;
+  baseUrl: string;
+}>> {
+  // Get latest check per model+provider, then filter to online only
+  const latestSubquery = db
+    .select({
+      modelId: modelMonitor.modelId,
+      provider: modelMonitor.provider,
+      maxCheckedAt: sql<string>`MAX(checked_at)`.as("max_checked_at"),
+    })
+    .from(modelMonitor)
+    .groupBy(modelMonitor.modelId, modelMonitor.provider)
+    .as("latest");
+
+  const rows = await db
+    .select()
+    .from(modelMonitor)
+    .innerJoin(
+      latestSubquery,
+      sql`${modelMonitor.modelId} = ${latestSubquery.modelId} AND COALESCE(${modelMonitor.provider}, '') = COALESCE(${latestSubquery.provider}, '') AND ${modelMonitor.checkedAt} = ${latestSubquery.maxCheckedAt}`,
+    )
+    .all();
+
+  return rows
+    .map((r) => r.model_monitor)
+    .filter((d) => d.isOnline && d.httpStatus === 200 && d.provider)
+    .sort((a, b) => (a.latencyMs ?? 999999) - (b.latencyMs ?? 999999))
+    .map((d) => ({
+      modelId: d.modelId,
+      provider: d.provider!,
+      latencyMs: d.latencyMs ?? 0,
+      baseUrl: d.baseUrl ?? "",
+    }));
 }
