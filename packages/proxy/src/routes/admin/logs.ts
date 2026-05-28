@@ -4,6 +4,7 @@ import { chatSessions, requestLogs, apiKeys, devices, allowedDevices, allowedIde
 import { eq, sql, and, desc } from "drizzle-orm";
 import { logEmitter } from "../../utils/event-emitter.js";
 import { parseToolJson } from "../../utils/telemetry.js";
+import { forceTranscriptCleanup, forceCleanMonth, getCleanupStatus } from "../../utils/cleanup.js";
 
 const logs = new Hono();
 
@@ -247,70 +248,38 @@ logs.delete("/logs", async (c) => {
   return c.json({ success: true, message: `Deleted logs older than ${days} days`, deletedCount: result.rowsAffected });
 });
 
-// Periodic cleanup endpoint
-// Clears heavy TEXT fields from rows older than 24 hours to save SQLite space
-// PRESERVES all metadata (tokens, cost, status, counts) for leaderboard, stats, rate limiting
+// Manual transcript cleanup endpoint (force run)
 logs.post("/logs/cleanup-transcripts", async (c) => {
   try {
-    // Tier 2: Clear heavy fields from rows older than 24 hours
-    // Keep all metadata: tokens, cost, status_code, is_counted_request, etc.
-    const res = await db.update(requestLogs)
-      .set({
-        transcriptSnapshot: "",
-        requestPreview: "",
-        responsePreview: "",
-        errorMessage: ""
-      })
-      .where(sql`
-        created_at < datetime('now', '-1 day')
-        AND (
-          transcript_snapshot != ''
-          OR request_preview != ''
-          OR response_preview != ''
-          OR error_message IS NOT NULL AND error_message != ''
-        )
-      `)
-      .run();
-
-    // Also clean session previews
-    await db.update(chatSessions)
-      .set({ lastRequestPreview: "" })
-      .where(sql`last_seen_at < datetime('now', '-1 day') AND last_request_preview != ''`)
-      .run();
-
-    return c.json({ success: true, clearedCount: res.rowsAffected });
+    const result = await forceTranscriptCleanup();
+    return c.json(result);
   } catch (error: any) {
     return c.json({ error: "Failed to cleanup transcripts", details: error.message }, 500);
   }
 });
 
-// Delete data older than 3 months (runs monthly via scheduler)
-logs.delete("/logs/older-than-3months", async (c) => {
+// Manual 3-month cleanup for a specific month
+logs.post("/logs/clean-month/:yearMonth", async (c) => {
   try {
-    const cutoff = new Date();
-    cutoff.setMonth(cutoff.getMonth() - 3);
-    const cutoffStr = cutoff.toISOString().replace("T", " ").substring(0, 19);
-
-    // Delete request logs older than 3 months
-    const deletedLogs = await db.delete(requestLogs)
-      .where(sql`created_at < ${cutoffStr}`)
-      .run();
-
-    // Delete sessions older than 3 months
-    const deletedSessions = await db.delete(chatSessions)
-      .where(sql`last_seen_at < ${cutoffStr}`)
-      .run();
-
-    // Run VACUUM to reclaim disk space
-    await db.run(sql`VACUUM`);
-
-    return c.json({
-      success: true,
-      deletedLogs: deletedLogs.rowsAffected,
-      deletedSessions: deletedSessions.rowsAffected
-    });
+    const yearMonth = c.req.param("yearMonth");
+    // Validate format YYYY-MM
+    if (!/^\d{4}-\d{2}$/.test(yearMonth)) {
+      return c.json({ error: "Invalid format. Use YYYY-MM (e.g., 2026-01)" }, 400);
+    }
+    const result = await forceCleanMonth(yearMonth);
+    return c.json(result);
   } catch (error: any) {
-    return c.json({ error: "Failed to delete old data", details: error.message }, 500);
+    return c.json({ error: "Failed to clean month", details: error.message }, 500);
+  }
+});
+
+// Get cleanup status
+logs.get("/logs/cleanup-status", async (c) => {
+  try {
+    const status = await getCleanupStatus();
+    return c.json({ success: true, ...status });
+  } catch (error: any) {
+    return c.json({ error: "Failed to get cleanup status", details: error.message }, 500);
   }
 });
 

@@ -227,6 +227,18 @@ export const modelLimits = sqliteTable("model_limits", {
   scopeModelIdx: index("idx_model_limits_scope_model").on(table.scope, table.scopeId, table.model),
 }));
 
+// ─── Cleanup State (tracks what has been cleaned) ──────────────────────────────
+export const cleanupState = sqliteTable("cleanup_state", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  cleanupType: text("cleanup_type").notNull(),           // "transcripts" | "3month"
+  lastCleanupAt: text("last_cleanup_at"),                 // when last cleanup ran
+  lastProcessedMonth: text("last_processed_month"),       // "2026-01" format for 3-month cleanup
+  cleanedMonths: text("cleaned_months").default("[]"),    // JSON array of cleaned months ["2026-01", "2026-02"]
+  cleanedDays: text("cleaned_days").default("[]"),        // JSON array of cleaned days ["2026-05-27", "2026-05-28"]
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+});
+
 // ─── Type exports ──────────────────────────────────────────────────────────────
 export type AdminConfig = typeof adminConfig.$inferSelect;
 export type ApiKey = typeof apiKeys.$inferSelect;
@@ -238,6 +250,7 @@ export type Device = typeof devices.$inferSelect;
 export type Provider = typeof providers.$inferSelect;
 export type ModelMonitor = typeof modelMonitor.$inferSelect;
 export type ModelLimit = typeof modelLimits.$inferSelect;
+export type CleanupState = typeof cleanupState.$inferSelect;
 
 export type NewAdminConfig = typeof adminConfig.$inferInsert;
 export type NewApiKey = typeof apiKeys.$inferInsert;
@@ -249,3 +262,4 @@ export type NewDevice = typeof devices.$inferInsert;
 export type NewProvider = typeof providers.$inferInsert;
 export type NewModelMonitor = typeof modelMonitor.$inferInsert;
 export type NewModelLimit = typeof modelLimits.$inferInsert;
+export type NewCleanupState = typeof cleanupState.$inferInsert;

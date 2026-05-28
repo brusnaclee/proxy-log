@@ -357,6 +357,28 @@ export async function initializeDatabase() {
   `);
   await client.execute("CREATE INDEX IF NOT EXISTS idx_model_limits_scope_model ON model_limits(scope, scope_id, model)");
 
+  // cleanup_state table to track cleanup history
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS cleanup_state (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      cleanup_type TEXT NOT NULL,
+      last_cleanup_at TEXT,
+      last_processed_month TEXT,
+      cleaned_months TEXT DEFAULT '[]',
+      cleaned_days TEXT DEFAULT '[]',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
+  await client.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_cleanup_state_type ON cleanup_state(cleanup_type)");
+
+  // Add cleaned_days column if not exists (for existing databases)
+  await ensureColumnExists("cleanup_state", "cleaned_days", "TEXT DEFAULT '[]'");
+
+  // Insert default cleanup states if not exists
+  await client.execute(`INSERT OR IGNORE INTO cleanup_state (cleanup_type, cleaned_months, cleaned_days) VALUES ('transcripts', '[]', '[]')`);
+  await client.execute(`INSERT OR IGNORE INTO cleanup_state (cleanup_type, cleaned_months, cleaned_days) VALUES ('3month', '[]', '[]')`);
 
   await client.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_session_id_unique ON chat_sessions(session_id)");
   await client.execute("CREATE INDEX IF NOT EXISTS idx_logs_session_id ON request_logs(session_id)");

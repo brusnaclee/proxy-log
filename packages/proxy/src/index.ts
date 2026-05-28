@@ -5,9 +5,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { serve } from "@hono/node-server";
-import { initializeDatabase, db } from "./db/index.js";
-import { sql } from "drizzle-orm";
-import { requestLogs, chatSessions } from "./db/schema.js";
+import { initializeDatabase } from "./db/index.js";
 import { authMiddleware } from "./middleware/session.js";
 import proxyRoutes from "./routes/proxy.js";
 import authRoutes from "./routes/admin/auth.js";
@@ -19,6 +17,7 @@ import statsRoutes from "./routes/admin/stats.js";
 import internalRoutes from "./routes/admin/internal.js";
 import monitorRoutes from "./routes/admin/monitor.js";
 import { initializeModelCatalogScheduler } from "./utils/model-catalog.js";
+import { runTranscriptCleanup, run3MonthCleanup } from "./utils/cleanup.js";
 
 // Load environment from root .env regardless of current working directory.
 const envCandidates = [
@@ -99,70 +98,18 @@ async function main() {
   await initializeDatabase();
   await initializeModelCatalogScheduler();
 
-  // Clean heavy TEXT fields every 2 hours (runs in background)
-  // Clears transcript_snapshot, request_preview, response_preview, error_message
-  // from rows older than 24 hours while preserving all metadata (tokens, cost, status)
+  // Check every 3 hours if yesterday's data needs cleanup
+  // Only clears YESTERDAY's heavy fields, NEVER touches today's data
+  // Skips if yesterday already cleaned (stateful)
   setInterval(async () => {
-    try {
-      const res = await db.update(requestLogs)
-        .set({
-          transcriptSnapshot: "",
-          requestPreview: "",
-          responsePreview: "",
-          errorMessage: ""
-        })
-        .where(sql`
-          created_at < datetime('now', '-1 day')
-          AND (
-            transcript_snapshot != ''
-            OR request_preview != ''
-            OR response_preview != ''
-            OR error_message IS NOT NULL AND error_message != ''
-          )
-        `)
-        .run();
+    await runTranscriptCleanup();
+  }, 3 * 60 * 60 * 1000); // 3 hours
 
-      await db.update(chatSessions)
-        .set({ lastRequestPreview: "" })
-        .where(sql`last_seen_at < datetime('now', '-1 day') AND last_request_preview != ''`)
-        .run();
-
-      console.log(`[proxy] Automatic cleanup completed. Cleared ${res.rowsAffected} rows.`);
-    } catch (err) {
-      console.error("[proxy] Automatic cleanup failed:", err);
-    }
-  }, 2 * 60 * 60 * 1000); // 2 hours
-
-  // Check daily and delete data older than 3 months on the 1st of each month
-  // Using daily check to avoid setInterval overflow (>24.8 days)
-  let lastCleanupMonth = -1;
+  // 3-month rolling cleanup - runs daily, deletes months that are 3+ months old
+  // Stateful - tracks which months have been cleaned to avoid duplicates
   setInterval(async () => {
-    try {
-      const now = new Date();
-      // Only run on the 1st day of month, and only once per month
-      if (now.getDate() === 1 && lastCleanupMonth !== now.getMonth()) {
-        lastCleanupMonth = now.getMonth();
-
-        const cutoff = new Date();
-        cutoff.setMonth(cutoff.getMonth() - 3);
-        const cutoffStr = cutoff.toISOString().replace("T", " ").substring(0, 19);
-
-        const deletedLogs = await db.delete(requestLogs)
-          .where(sql`created_at < ${cutoffStr}`)
-          .run();
-
-        const deletedSessions = await db.delete(chatSessions)
-          .where(sql`last_seen_at < ${cutoffStr}`)
-          .run();
-
-        await db.run(sql`VACUUM`);
-
-        console.log(`[proxy] Monthly 3-month cleanup completed. Deleted ${deletedLogs.rowsAffected} logs, ${deletedSessions.rowsAffected} sessions.`);
-      }
-    } catch (err) {
-      console.error("[proxy] 3-month cleanup failed:", err);
-    }
-  }, 24 * 60 * 60 * 1000); // Check daily (24 hours)
+    await run3MonthCleanup();
+  }, 24 * 60 * 60 * 1000); // 24 hours
 
   serve({
     fetch: app.fetch,
