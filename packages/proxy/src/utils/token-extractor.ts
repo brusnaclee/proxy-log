@@ -171,3 +171,32 @@ export function finalizeCompletion(acc: CompletionAccumulator): {
     hasUpstreamUsage: acc.hadUsage,
   };
 }
+
+/**
+ * Resolves billable prompt tokens and completion tokens.
+ * Priority for prompt tokens:
+ * 1. Upstream usage (if provided and valid)
+ * 2. Delta mechanism (if contextDelta > 0 is passed)
+ * 3. Text estimation using the full recent turn
+ */
+export function resolveBillableTokens(
+  finalized: { promptTokens?: number, completionTokens?: number },
+  contextDeltaTokens: number,
+  fullLastUserTurnText: string
+): { promptTokens: number, completionTokens: number, totalTokens: number } {
+  let pToks = 0;
+  if (typeof finalized.promptTokens === "number" && finalized.promptTokens > 0) {
+    pToks = finalized.promptTokens;
+  } else if (contextDeltaTokens > 0) {
+    pToks = contextDeltaTokens;
+  } else {
+    pToks = estimateTokens(fullLastUserTurnText);
+  }
+
+  const cToks = finalized.completionTokens || 0;
+  return {
+    promptTokens: pToks,
+    completionTokens: cToks,
+    totalTokens: pToks + cToks
+  };
+}

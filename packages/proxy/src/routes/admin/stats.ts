@@ -3,7 +3,7 @@ import { db } from "../../db/index.js";
 import { requestLogs, apiKeys, devices, chatSessions } from "../../db/schema.js";
 import { eq, sql, and } from "drizzle-orm";
 import { getModelRates } from "../../utils/cost-calculator.js";
-import { COUNTED_LOG_SQL } from "../../utils/counting.js";
+import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, wibTodayStartSql } from "../../utils/counting.js";
 
 const stats = new Hono();
 
@@ -53,10 +53,10 @@ stats.get("/stats/overview", async (c) => {
 
   // Today
   const todayStats = await db.select({
-    requests: sql<number>`count(*)`,
-    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
+    requests: sql<number>`SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN 1 ELSE 0 END)`,
+    tokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN total_tokens ELSE 0 END), 0)`,
+    promptTokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN prompt_tokens ELSE 0 END), 0)`,
+    completionTokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN completion_tokens ELSE 0 END), 0)`,
     contextTokens: sql<number>`0`,
     uniqueDevices: sql<number>`COUNT(DISTINCT device_fingerprint)`
   })
@@ -77,10 +77,10 @@ stats.get("/stats/overview", async (c) => {
 
   // Week
   const weekStats = await db.select({
-    requests: sql<number>`count(*)`,
-    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
+    requests: sql<number>`SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN 1 ELSE 0 END)`,
+    tokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN total_tokens ELSE 0 END), 0)`,
+    promptTokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN prompt_tokens ELSE 0 END), 0)`,
+    completionTokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN completion_tokens ELSE 0 END), 0)`,
     contextTokens: sql<number>`0`
   })
   .from(requestLogs)
@@ -100,10 +100,10 @@ stats.get("/stats/overview", async (c) => {
 
   // Month
   const monthStats = await db.select({
-    requests: sql<number>`count(*)`,
-    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
+    requests: sql<number>`SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN 1 ELSE 0 END)`,
+    tokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN total_tokens ELSE 0 END), 0)`,
+    promptTokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN prompt_tokens ELSE 0 END), 0)`,
+    completionTokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN completion_tokens ELSE 0 END), 0)`,
     contextTokens: sql<number>`0`
   })
   .from(requestLogs)
@@ -123,10 +123,10 @@ stats.get("/stats/overview", async (c) => {
 
   // All Time
   const allTimeStats = await db.select({
-    requests: sql<number>`count(*)`,
-    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
+    requests: sql<number>`SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN 1 ELSE 0 END)`,
+    tokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN total_tokens ELSE 0 END), 0)`,
+    promptTokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN prompt_tokens ELSE 0 END), 0)`,
+    completionTokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN completion_tokens ELSE 0 END), 0)`,
     contextTokens: sql<number>`0`
   })
   .from(requestLogs)
@@ -257,7 +257,7 @@ stats.get("/stats/by-model", async (c) => {
 
   const conditions = [];
   if (startDate) conditions.push(sql`created_at >= ${startDate}`);
-  conditions.push(sql`is_counted_request IS NOT 0`);
+  conditions.push(VALID_LOG_SQL);
   if (apiKeyId) conditions.push(eq(requestLogs.apiKeyId, apiKeyId));
   const whereClause = conditions.length > 1 ? and(...(conditions as [any, ...any[]])) : conditions[0];
 
@@ -287,8 +287,8 @@ stats.get("/stats/by-device", async (c) => {
     : null;
 
   const whereClause = startDate
-    ? and(sql`created_at >= ${startDate}`, sql`is_counted_request IS NOT 0`)
-    : sql`is_counted_request IS NOT 0`;
+    ? and(sql`created_at >= ${startDate}`, VALID_LOG_SQL)
+    : VALID_LOG_SQL;
 
   const rows = await db.select({
     fingerprint: requestLogs.deviceFingerprint, ipAddress: requestLogs.ipAddress, ide: requestLogs.ideDetected,
@@ -324,7 +324,7 @@ stats.get("/stats/timeseries", async (c) => {
     promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`, completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
     estimatedCost: sql<number>`COALESCE(SUM(estimated_cost), 0)`,
     uniqueDevices: sql<number>`COUNT(DISTINCT device_fingerprint)`,
-  }).from(requestLogs).where(and(sql`created_at >= ${startStr}`, COUNTED_LOG_SQL))
+  }).from(requestLogs).where(and(sql`created_at >= ${startStr}`, VALID_LOG_SQL))
     .groupBy(sql.raw(groupExpr)).orderBy(sql.raw(groupExpr)).all();
 
   return c.json(result);
@@ -338,16 +338,16 @@ stats.get("/stats/top-users", async (c) => {
     : null;
 
   const whereClause = startDate
-    ? and(sql`created_at >= ${startDate}`, COUNTED_LOG_SQL)
-    : COUNTED_LOG_SQL;
+    ? and(sql`created_at >= ${startDate}`, VALID_LOG_SQL)
+    : VALID_LOG_SQL;
 
   // Aggregate per api_key_id
   const aggRows = await db.select({
     apiKeyId: requestLogs.apiKeyId,
-    requests: sql<number>`count(*)`,
-    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
+    requests: sql<number>`SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN 1 ELSE 0 END)`,
+    tokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN total_tokens ELSE 0 END), 0)`,
+    promptTokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN prompt_tokens ELSE 0 END), 0)`,
+    completionTokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN completion_tokens ELSE 0 END), 0)`,
   })
   .from(requestLogs)
   .where(whereClause)

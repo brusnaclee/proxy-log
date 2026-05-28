@@ -18,9 +18,9 @@ import {
 import { logEmitter } from "../utils/event-emitter.js";
 import { getModelCatalogResponse, getProviderForModel, stripProviderPrefix } from "../utils/model-catalog.js";
 import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindowResetMs } from "../utils/rate-limit.js";
-import { analyzeRequestMessages, isTitleGenRequest, detectToolCallsInResponse, type MessageAnalysis } from "../utils/message-analyzer.js";
-import { makeAccumulator, consumeStreamPayload, consumeNonStreamingPayload, finalizeCompletion } from "../utils/token-extractor.js";
-import { COUNTED_LOG_SQL } from "../utils/counting.js";
+import { analyzeRequestMessages, isTitleGenRequest, detectToolCallsInResponse, getLastTurnTextForTokenEstimate, type MessageAnalysis } from "../utils/message-analyzer.js";
+import { makeAccumulator, consumeStreamPayload, consumeNonStreamingPayload, finalizeCompletion, resolveBillableTokens } from "../utils/token-extractor.js";
+import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL } from "../utils/counting.js";
 
 const proxy = new Hono();
 
@@ -1041,7 +1041,7 @@ const targetProvider = await getProviderForModel(model);
     if (keyRecord.monthlyTokenLimit && keyRecord.monthlyTokenLimit > 0) {
       const mw = new Date(wibNow); mw.setUTCDate(1); mw.setUTCHours(0, 0, 0, 0);
       const ms = new Date(mw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
-      const mu = await db.select({ total: sql<number>`COALESCE(SUM(total_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms}`, COUNTED_LOG_SQL)).get();
+      const mu = await db.select({ total: sql<number>`COALESCE(SUM(total_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms}`, BILLABLE_LOG_SQL)).get();
       if (mu && mu.total >= keyRecord.monthlyTokenLimit) {
         return c.json({ error: { message: `Monthly token limit reached: ${mu.total.toLocaleString()}/${keyRecord.monthlyTokenLimit.toLocaleString()} tokens.`, type: "rate_limit_error", code: "monthly_token_limit_exceeded" } }, 429);
       }
@@ -1051,7 +1051,7 @@ const targetProvider = await getProviderForModel(model);
     if (globalDailyTokenLimit > 0) {
       const dw = new Date(wibNow); dw.setUTCHours(0, 0, 0, 0);
       const ds = new Date(dw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
-      const du = await db.select({ total: sql<number>`COALESCE(SUM(total_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, COUNTED_LOG_SQL)).get();
+      const du = await db.select({ total: sql<number>`COALESCE(SUM(total_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).get();
       if (du && du.total >= globalDailyTokenLimit) {
         return c.json({ error: { message: `Daily token limit reached: ${du.total.toLocaleString()}/${globalDailyTokenLimit.toLocaleString()} tokens today. Resets tomorrow.`, type: "rate_limit_error", code: "daily_token_limit_exceeded" } }, 429);
       }
@@ -1062,7 +1062,7 @@ const targetProvider = await getProviderForModel(model);
     if (dailyInputLimit > 0) {
       const dw = new Date(wibNow); dw.setUTCHours(0, 0, 0, 0);
       const ds = new Date(dw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
-      const du = await db.select({ total: sql<number>`COALESCE(SUM(prompt_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, COUNTED_LOG_SQL)).get();
+      const du = await db.select({ total: sql<number>`COALESCE(SUM(prompt_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).get();
       if (du && du.total >= dailyInputLimit) {
         return c.json({ error: { message: `Daily input token limit reached: ${du.total.toLocaleString()}/${dailyInputLimit.toLocaleString()} input tokens today. Resets tomorrow.`, type: "rate_limit_error", code: "daily_input_token_limit_exceeded" } }, 429);
       }
@@ -1073,7 +1073,7 @@ const targetProvider = await getProviderForModel(model);
     if (dailyOutputLimit > 0) {
       const dw = new Date(wibNow); dw.setUTCHours(0, 0, 0, 0);
       const ds = new Date(dw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
-      const du = await db.select({ total: sql<number>`COALESCE(SUM(completion_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, COUNTED_LOG_SQL)).get();
+      const du = await db.select({ total: sql<number>`COALESCE(SUM(completion_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).get();
       if (du && du.total >= dailyOutputLimit) {
         return c.json({ error: { message: `Daily output token limit reached: ${du.total.toLocaleString()}/${dailyOutputLimit.toLocaleString()} output tokens today. Resets tomorrow.`, type: "rate_limit_error", code: "daily_output_token_limit_exceeded" } }, 429);
       }
@@ -1083,7 +1083,7 @@ const targetProvider = await getProviderForModel(model);
     if (globalMonthlyTokenLimit > 0) {
       const mw2 = new Date(wibNow); mw2.setUTCDate(1); mw2.setUTCHours(0, 0, 0, 0);
       const ms2 = new Date(mw2.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
-      const mu2 = await db.select({ total: sql<number>`COALESCE(SUM(total_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms2}`, COUNTED_LOG_SQL)).get();
+      const mu2 = await db.select({ total: sql<number>`COALESCE(SUM(total_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms2}`, BILLABLE_LOG_SQL)).get();
       if (mu2 && mu2.total >= globalMonthlyTokenLimit) {
         return c.json({ error: { message: `Monthly token limit reached: ${mu2.total.toLocaleString()}/${globalMonthlyTokenLimit.toLocaleString()} tokens. Resets next month.`, type: "rate_limit_error", code: "global_monthly_token_limit_exceeded" } }, 429);
       }
@@ -1101,6 +1101,7 @@ const targetProvider = await getProviderForModel(model);
   }
   const upstreamUrl = `${upstreamBase}${upstreamPath}`;
   const isStreaming = requestBody?.stream === true;
+  const fullLastUserTurnText = getLastTurnTextForTokenEstimate(requestBody);
 
   const toolNameSet = new Set<string>(requestToolNames);
   const appendToolsFromPayload = (payload: any) => {
@@ -1110,23 +1111,20 @@ const targetProvider = await getProviderForModel(model);
     }
   };
 
-  const countedPromptTokens = (): number => {
-    const content = messageAnalysis.messageContent || requestPreview || "";
-    if (!content) return 0;
-    return Math.max(estimateTokens(content), 1);
-  };
-
-  const finalizeCountedCompletion = (completionText: string, upstreamCompletion?: number, hasActualToolCallsFromResponse?: boolean): number => {
-    if (upstreamCompletion != null && upstreamCompletion > 0) return upstreamCompletion;
-    if (completionText) return Math.max(estimateTokens(completionText), 1);
-    if (hasActualToolCallsFromResponse) return 150; // tool-only response fallback
-    return 1; // counted row minimum (empty text + no tools still had a successful response)
-  };
-
   const persistLogAndSession = async (logEntry: Record<string, any>, hasActualToolCalls: boolean, shouldCountRequest: boolean = true) => {
     const counted = isNewPrompt && shouldCountRequest;
+    
+    // Calculate billable flat. Billable if it's counting a new prompt, or it's a tool-follow up, or has tool calls inside it.
+    let isBillableToken = false;
+    if (shouldCountRequest) {
+      if (counted) isBillableToken = true;
+      else if (messageAnalysis.turnKind === "tool_followup" || messageAnalysis.messageRole === "tool") isBillableToken = true;
+      else if (hasActualToolCalls || logEntry.hasToolCalls) isBillableToken = true;
+    }
+
     enqueueLogWrite(async (tx) => {
       logEntry.isCountedRequest = counted ? 1 : 0;
+      logEntry.isBillableToken = isBillableToken ? 1 : 0;
       await tx.insert(requestLogs).values(logEntry).run();
       logEmitter.emit({
         ...logEntry,
@@ -1286,27 +1284,30 @@ const targetProvider = await getProviderForModel(model);
         },
         flush() {
           const finalized = finalizeCompletion(acc);
-          const completionTokens = finalizeCountedCompletion(
+          const rawCompletionTokens = finalizeCountedCompletion(
             finalized.completionText,
             finalized.completionTokens,
             hasActualToolCalls,
           );
-          const finalPromptTokens = countedPromptTokens();
-          const finalTotalTokens = finalPromptTokens + completionTokens;
+          const billableTokens = resolveBillableTokens(
+            { promptTokens: finalized.promptTokens, completionTokens: rawCompletionTokens },
+            sessionInfo.contextDeltaTokens,
+            fullLastUserTurnText
+          );
           const toolsUsed = Array.from(toolNameSet);
 
           const logEntry = {
             ...baseLogEntry,
-            promptTokens: finalPromptTokens,
-            completionTokens,
-            totalTokens: finalTotalTokens,
+            promptTokens: billableTokens.promptTokens,
+            completionTokens: billableTokens.completionTokens,
+            totalTokens: billableTokens.totalTokens,
             toolCount: toolsUsed.length,
             hasToolCalls: toolsUsed.length > 0,
             toolsUsed: toToolJson(toolsUsed),
             responsePreview: finalized.completionText || null,
             latencyMs: Date.now() - startTime,
             statusCode,
-            estimatedCost: calculateEstimatedCost(model, finalPromptTokens, completionTokens),
+            estimatedCost: calculateEstimatedCost(model, billableTokens.promptTokens, billableTokens.completionTokens),
             messageRole: messageAnalysis.messageRole,
             userMessageHash: messageAnalysis.messageHash,
             actualToolCallsInResponse: hasActualToolCalls,
@@ -1348,6 +1349,7 @@ const targetProvider = await getProviderForModel(model);
     let errorMessage: string | undefined;
     let responsePreview: string | null = null;
     let hasActualToolCalls = false;
+    let finalizedUsage: any = {};
     const acc = makeAccumulator();
 
     try {
@@ -1363,6 +1365,7 @@ const targetProvider = await getProviderForModel(model);
 
       consumeNonStreamingPayload(acc, parsed);
       const finalized = finalizeCompletion(acc);
+      finalizedUsage = finalized;
       completionTokens = finalizeCountedCompletion(
         finalized.completionText,
         finalized.completionTokens,
@@ -1377,8 +1380,14 @@ const targetProvider = await getProviderForModel(model);
       // Body might not be JSON.
     }
 
-    promptTokens = countedPromptTokens();
-    totalTokens = promptTokens + completionTokens;
+    const billableTokens = resolveBillableTokens(
+      { promptTokens: finalizedUsage.promptTokens, completionTokens },
+      sessionInfo.contextDeltaTokens,
+      fullLastUserTurnText
+    );
+    promptTokens = billableTokens.promptTokens;
+    completionTokens = billableTokens.completionTokens;
+    totalTokens = billableTokens.totalTokens;
 
     const toolsUsed = Array.from(toolNameSet);
 

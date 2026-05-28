@@ -2,9 +2,9 @@ import mysql.connector, json, sys
 
 try:
     conn = mysql.connector.connect(
-        host='146.190.102.65',
-        user='root',
-        password='rendang123',
+        host=sys.argv[1] if len(sys.argv) > 1 else 'localhost',
+        user=sys.argv[2] if len(sys.argv) > 2 else 'root',
+        password=sys.argv[3] if len(sys.argv) > 3 else '',
         database='gateway'
     )
 except mysql.connector.Error as err:

@@ -119,6 +119,7 @@ export const requestLogs = sqliteTable("request_logs", {
   userMessageHash: text("user_message_hash"),
   actualToolCallsInResponse: integer("actual_tool_calls_in_response", { mode: "boolean" }).default(false),
   isCountedRequest: integer("is_counted_request", { mode: "boolean" }).default(true),
+  isBillableToken: integer("is_billable_token", { mode: "boolean" }).default(false),
   latencyMs: integer("latency_ms").default(0),
   statusCode: integer("status_code").default(0),
   errorMessage: text("error_message"),

@@ -8,6 +8,7 @@ export interface MessageAnalysis {
   userMessageCount: number;
   assistantMessageCount: number;
   isRawFormat?: boolean;
+  turnKind?: "user_prompt" | "tool_followup" | "internal";
 }
 
 /**
@@ -78,6 +79,7 @@ function isToolResultContent(content: string): boolean {
   if (trimmed.startsWith("called tool")) return true;
   if (trimmed.startsWith("result of tool")) return true;
   if (/^tool:\s*\w+/i.test(content.trimStart())) return true;
+  if (trimmed.includes("todowrite") && (trimmed.includes("successfully updated") || trimmed.includes("todos"))) return true;
 
   // Codex command output
   if (trimmed.startsWith("command output:")) return true;
@@ -240,6 +242,10 @@ export function analyzeRequestMessages(requestBody: any): MessageAnalysis {
 
   const messageHash = content ? sha256(content) : null;
   const finalHasUserMessage = effectiveRole === "user";
+  
+  let turnKind: MessageAnalysis["turnKind"] = "internal";
+  if (finalHasUserMessage) turnKind = "user_prompt";
+  else if (effectiveRole === "tool") turnKind = "tool_followup";
 
   return {
     hasUserMessage: finalHasUserMessage,
@@ -248,7 +254,47 @@ export function analyzeRequestMessages(requestBody: any): MessageAnalysis {
     messageContent: content.substring(0, 500),
     userMessageCount,
     assistantMessageCount,
+    turnKind,
   };
+}
+
+/**
+ * Extract the full text of the last turn (or all messages if not large) for a more accurate token estimate,
+ * without the 500-char UI limit.
+ */
+export function getLastTurnTextForTokenEstimate(requestBody: any): string {
+  if (!requestBody) return "";
+  
+  if (requestBody.input != null) {
+    if (typeof requestBody.input === "string") return requestBody.input;
+    if (Array.isArray(requestBody.input)) {
+        const last = requestBody.input[requestBody.input.length - 1];
+        if (last && typeof last.content === "string") return last.content;
+    }
+  }
+
+  let messages = requestBody.messages || requestBody?.request?.contents || requestBody.contents;
+  if (!Array.isArray(messages) || messages.length === 0) {
+      if (typeof requestBody === "string") return requestBody;
+      return JSON.stringify(requestBody);
+  }
+
+  const lastMessage = messages[messages.length - 1];
+  let content = "";
+  if (typeof lastMessage?.content === "string") {
+    content = lastMessage.content;
+  } else if (Array.isArray(lastMessage?.content)) {
+    content = lastMessage.content
+      .filter((part: any) => part.type === "text" || part.text)
+      .map((part: any) => part.text || part.type || JSON.stringify(part))
+      .join("\\n");
+  } else if (lastMessage?.parts && Array.isArray(lastMessage.parts)) {
+    content = lastMessage.parts.map((p: any) => p.text || "").join("\\n");
+  } else if (lastMessage?.content) {
+    content = JSON.stringify(lastMessage.content);
+  }
+  
+  return content;
 }
 
 /**
