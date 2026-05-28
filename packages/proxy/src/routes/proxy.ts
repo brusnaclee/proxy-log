@@ -919,6 +919,7 @@ proxy.all("/*", async (c) => {
 
   // ─── 8. Analyze Request Messages ───────────────────────────────────────────────
   const messageAnalysis = analyzeRequestMessages(requestBody);
+  const fullLastUserTurnText = getLastTurnTextForTokenEstimate(requestBody);
 
   // ─── 8-auto. Auto Model Handler ────────────────────────────────────────────────
   // Virtual "auto" model: try online models in order of lowest latency until one works.
@@ -1036,34 +1037,80 @@ proxy.all("/*", async (c) => {
           };
           if (tried.length > 0) responseHeaders["x-auto-model-tried"] = tried.join(", ");
 
-          // Log the auto model streaming request
-          const latencyMs = Date.now() - startTime;
-          enqueueLogWrite(async (tx) => {
-            await tx.insert(requestLogs).values({
-              apiKeyId: keyRecord.id,
-              apiKeyName: keyRecord.name,
-              userAgentRaw: userAgent || null,
-              osDetected,
-              clientName: clientName || ide,
-              ipAddress: clientIp,
-              deviceFingerprint: fingerprint,
-              ideDetected: ide,
-              provider: candidate.provider,
-              endpointPath: path,
-              model: `auto (${candidate.modelId}) [stream]`,
-              latencyMs,
-              statusCode: streamResponse.status,
-              requestPreview: requestPreview || null,
-              isCountedRequest: 1,
-              isBillableToken: 0,
-            }).run();
-            logEmitter.emit({
-              model: `auto (${candidate.modelId}) [stream]`,
-              provider: candidate.provider,
-              statusCode: streamResponse.status,
-              latencyMs,
+          // Add TransformStream to accumulate tokens for logging
+          if (streamResponse.body) {
+            const acc = makeAccumulator();
+            const decoder = new TextDecoder();
+            const logModel = `auto (${candidate.modelId}) [stream]`;
+
+            const { readable, writable } = new TransformStream({
+              transform(chunk, controller) {
+                controller.enqueue(chunk);
+                try {
+                  const text = decoder.decode(chunk, { stream: true });
+                  const lines = text.split("\n");
+                  for (const line of lines) {
+                    if (line.startsWith("data: ") && line !== "data: [DONE]") {
+                      const payloadText = line.slice(6).trim();
+                      if (!payloadText || payloadText === "[DONE]") continue;
+                      try {
+                        const data = JSON.parse(payloadText);
+                        consumeStreamPayload(acc, data);
+                      } catch {}
+                    }
+                  }
+                } catch {}
+              },
+              flush() {
+                const finalized = finalizeCompletion(acc);
+                const rawCompletionTokens = finalized.completionTokens
+                  ? finalized.completionTokens
+                  : (finalized.completionText ? Math.max(estimateTokens(finalized.completionText), 1) : 0);
+                const billableTokens = resolveBillableTokens(
+                  { promptTokens: finalized.promptTokens, completionTokens: rawCompletionTokens },
+                  contextTokensBefore,
+                  fullLastUserTurnText
+                );
+                const latencyMs = Date.now() - startTime;
+                enqueueLogWrite(async (tx) => {
+                  await tx.insert(requestLogs).values({
+                    apiKeyId: keyRecord.id,
+                    apiKeyName: keyRecord.name,
+                    userAgentRaw: userAgent || null,
+                    osDetected,
+                    clientName: clientName || ide,
+                    ipAddress: clientIp,
+                    deviceFingerprint: fingerprint,
+                    ideDetected: ide,
+                    provider: candidate.provider,
+                    endpointPath: path,
+                    model: logModel,
+                    promptTokens: billableTokens.promptTokens,
+                    completionTokens: billableTokens.completionTokens,
+                    totalTokens: billableTokens.totalTokens,
+                    latencyMs,
+                    statusCode: streamResponse.status,
+                    requestPreview: requestPreview || null,
+                    responsePreview: finalized.completionText?.substring(0, 200) || null,
+                    isCountedRequest: 1,
+                    isBillableToken: 1,
+                    estimatedCost: calculateEstimatedCost(candidate.modelId, billableTokens.promptTokens, billableTokens.completionTokens),
+                  }).run();
+                  logEmitter.emit({
+                    model: logModel,
+                    provider: candidate.provider,
+                    statusCode: streamResponse.status,
+                    latencyMs,
+                  });
+                });
+              },
             });
-          });
+
+            streamResponse.body.pipeTo(writable).catch((err) => {
+              console.error('[auto-stream] pipeTo error:', err?.message || err);
+            });
+            return new Response(readable, { status: streamResponse.status, headers: responseHeaders });
+          }
 
           return new Response(streamResponse.body, { status: streamResponse.status, headers: responseHeaders });
         }
@@ -1419,7 +1466,6 @@ const targetProvider = await getProviderForModel(model);
   }
   const upstreamUrl = `${upstreamBase}${upstreamPath}`;
   const isStreaming = requestBody?.stream === true;
-  const fullLastUserTurnText = getLastTurnTextForTokenEstimate(requestBody);
 
   const toolNameSet = new Set<string>(requestToolNames);
   const appendToolsFromPayload = (payload: any) => {
@@ -1738,7 +1784,9 @@ const targetProvider = await getProviderForModel(model);
         },
       });
 
-      upstreamResponse.body.pipeTo(writable).catch(() => {});
+      upstreamResponse.body.pipeTo(writable).catch((err) => {
+        console.error('[proxy-stream] pipeTo error:', err?.message || err);
+      });
 
       const responseHeaders: Record<string, string> = {
         "Content-Type": "text/event-stream",

@@ -318,6 +318,7 @@ function collectProviderIdsForModel(modelId: string, upstreamModel: string): num
 }
 
 async function isProviderOnlineForModel(providerName: string, upstreamModel: string): Promise<boolean> {
+  // Check exact match first
   const latest = await db
     .select()
     .from(modelMonitor)
@@ -333,6 +334,24 @@ async function isProviderOnlineForModel(providerName: string, upstreamModel: str
 
   if (latest) {
     return Boolean(latest.isOnline) && latest.httpStatus === 200;
+  }
+
+  // Also check with provider prefix (e.g., "mimo-v2.5-pro" -> "mimo/mimo-v2.5-pro")
+  const withPrefix = await db
+    .select()
+    .from(modelMonitor)
+    .where(
+      and(
+        eq(modelMonitor.modelId, `${providerName}/${upstreamModel}`),
+        eq(modelMonitor.provider, providerName),
+      ),
+    )
+    .orderBy(desc(modelMonitor.checkedAt))
+    .limit(1)
+    .get();
+
+  if (withPrefix) {
+    return Boolean(withPrefix.isOnline) && withPrefix.httpStatus === 200;
   }
 
   // Fallback: any monitor row for this model (legacy rows without provider)
