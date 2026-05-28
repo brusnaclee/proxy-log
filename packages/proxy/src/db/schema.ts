@@ -203,6 +203,7 @@ export const providerApiKeys = sqliteTable("provider_api_keys", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   providerId: integer("provider_id").notNull().references(() => providers.id, { onDelete: "cascade" }),
   apiKey: text("api_key").notNull(),
+  isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
   isLimited: integer("is_limited", { mode: "boolean" }).notNull().default(false),
   limitedAt: text("limited_at"),                       // when rate limit was detected
   requestCount: integer("request_count").notNull().default(0), // for load balancing

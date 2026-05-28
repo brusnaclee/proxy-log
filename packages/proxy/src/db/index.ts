@@ -256,6 +256,7 @@ export async function initializeDatabase() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       provider_id INTEGER NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
       api_key TEXT NOT NULL,
+      is_active INTEGER NOT NULL DEFAULT 1,
       is_limited INTEGER NOT NULL DEFAULT 0,
       limited_at TEXT,
       request_count INTEGER NOT NULL DEFAULT 0,
@@ -512,6 +513,7 @@ export async function initializeDatabase() {
 
   // provider_api_keys table for multi-key rotation per provider
   await ensureColumnExists("providers", "endpoint_type", "TEXT NOT NULL DEFAULT 'openai'");
+  await ensureColumnExists("provider_api_keys", "is_active", "INTEGER NOT NULL DEFAULT 1");
 
   // Migrate existing provider api_key values into provider_api_keys table (one-time)
   try {

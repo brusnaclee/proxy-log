@@ -2,7 +2,7 @@
 import { db } from "../../db/index.js";
 import { providers } from "../../db/schema.js";
 import { eq, desc } from "drizzle-orm";
-import { refreshModelCatalog, getProviderApiKeys, addProviderApiKey, resetKeyLimited, deleteApiKey } from "../../utils/model-catalog.js";
+import { refreshModelCatalog, getProviderApiKeys, addProviderApiKey, resetKeyLimited, deleteApiKey, toggleKeyActive, updateApiKey } from "../../utils/model-catalog.js";
 import { sanitizeProviderApiKey } from "../../utils/crypto.js";
 import { purgeMonitorForProvider } from "../../utils/model-monitor-store.js";
 
@@ -103,6 +103,22 @@ providersApi.post("/providers/:id/keys", async (c) => {
 providersApi.patch("/providers/:id/keys/:keyId/reset", async (c) => {
   const keyId = parseInt(c.req.param("keyId"));
   await resetKeyLimited(keyId);
+  return c.json({ success: true });
+});
+
+// Toggle a key's active status (Enable/Disable button)
+providersApi.patch("/providers/:id/keys/:keyId/toggle", async (c) => {
+  const keyId = parseInt(c.req.param("keyId"));
+  const newActive = await toggleKeyActive(keyId);
+  return c.json({ success: true, isActive: newActive });
+});
+
+// Update a key's value (Edit key)
+providersApi.put("/providers/:id/keys/:keyId", async (c) => {
+  const keyId = parseInt(c.req.param("keyId"));
+  const body = await c.req.json<{ apiKey: string }>();
+  if (!body.apiKey) return c.json({ error: "apiKey is required" }, 400);
+  await updateApiKey(keyId, body.apiKey);
   return c.json({ success: true });
 });
 

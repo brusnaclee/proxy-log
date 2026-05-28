@@ -470,6 +470,7 @@ export interface ProviderApiKeyRow {
   id: number;
   providerId: number;
   apiKey: string;
+  isActive: boolean;
   isLimited: boolean;
   limitedAt: string | null;
   requestCount: number;
@@ -479,7 +480,7 @@ export interface ProviderApiKeyRow {
 /**
  * Get the next available API key for a provider.
  * Uses least-used-first (by requestCount) for even load distribution.
- * Skips keys marked as limited.
+ * Skips keys marked as limited or inactive.
  * Falls back to the provider's legacy api_key column if no keys in the new table.
  */
 export async function getNextApiKey(providerId: number): Promise<{ keyId: number; apiKey: string } | null> {
@@ -490,6 +491,7 @@ export async function getNextApiKey(providerId: number): Promise<{ keyId: number
       and(
         eq(providerApiKeys.providerId, providerId),
         eq(providerApiKeys.isLimited, false),
+        eq(providerApiKeys.isActive, true),
       ),
     )
     .orderBy(asc(providerApiKeys.requestCount))
@@ -556,6 +558,32 @@ export async function deleteApiKey(keyId: number): Promise<void> {
 }
 
 /**
+ * Toggle a key's active status (Enable/Disable button in dashboard).
+ */
+export async function toggleKeyActive(keyId: number): Promise<boolean> {
+  const key = await db.select().from(providerApiKeys).where(eq(providerApiKeys.id, keyId)).get();
+  if (!key) return false;
+  const newActive = !key.isActive;
+  await db
+    .update(providerApiKeys)
+    .set({ isActive: newActive })
+    .where(eq(providerApiKeys.id, keyId))
+    .run();
+  return newActive;
+}
+
+/**
+ * Update a key's value (Edit key in dashboard).
+ */
+export async function updateApiKey(keyId: number, newApiKey: string): Promise<void> {
+  await db
+    .update(providerApiKeys)
+    .set({ apiKey: sanitizeProviderApiKey(newApiKey) })
+    .where(eq(providerApiKeys.id, keyId))
+    .run();
+}
+
+/**
  * Get all API keys for a provider (for dashboard display).
  */
 export async function getProviderApiKeys(providerId: number): Promise<ProviderApiKeyRow[]> {
@@ -570,6 +598,7 @@ export async function getProviderApiKeys(providerId: number): Promise<ProviderAp
     id: r.id,
     providerId: r.providerId,
     apiKey: r.apiKey,
+    isActive: Boolean(r.isActive),
     isLimited: Boolean(r.isLimited),
     limitedAt: r.limitedAt,
     requestCount: r.requestCount ?? 0,

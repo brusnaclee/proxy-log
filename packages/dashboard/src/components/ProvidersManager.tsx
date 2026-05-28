@@ -4,12 +4,13 @@ import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Trash, Plus, ChevronDown, ChevronRight, RotateCcw, Key } from "lucide-react";
+import { Trash, Plus, ChevronDown, ChevronRight, RotateCcw, Key, Copy, Eye, EyeOff, Pencil, Check, X } from "lucide-react";
 
 interface ProviderApiKey {
   id: number;
   providerId: number;
   apiKey: string;
+  isActive: boolean;
   isLimited: boolean;
   limitedAt: string | null;
   requestCount: number;
@@ -22,6 +23,9 @@ export function ProvidersManager() {
   const [expandedProvider, setExpandedProvider] = useState<number | null>(null);
   const [providerKeys, setProviderKeys] = useState<Record<number, ProviderApiKey[]>>({});
   const [newKeyInputs, setNewKeyInputs] = useState<Record<number, string>>({});
+  const [showKeys, setShowKeys] = useState<Record<number, boolean>>({});
+  const [editingKey, setEditingKey] = useState<number | null>(null);
+  const [editValue, setEditValue] = useState("");
 
   const [name, setName] = useState("");
   const [endpoint, setEndpoint] = useState("");
@@ -109,6 +113,15 @@ export function ProvidersManager() {
     }
   };
 
+  const handleToggleKey = async (providerId: number, keyId: number) => {
+    try {
+      await request(`/providers/${providerId}/keys/${keyId}/toggle`, { method: "PATCH" });
+      loadKeys(providerId);
+    } catch (e: any) {
+      alert("Error: " + e.message);
+    }
+  };
+
   const handleDeleteKey = async (providerId: number, keyId: number) => {
     if (!window.confirm("Delete this API key?")) return;
     try {
@@ -119,9 +132,44 @@ export function ProvidersManager() {
     }
   };
 
+  const handleUpdateKey = async (providerId: number, keyId: number) => {
+    if (!editValue) return;
+    try {
+      await request(`/providers/${providerId}/keys/${keyId}`, {
+        method: "PUT",
+        body: JSON.stringify({ apiKey: editValue }),
+      });
+      setEditingKey(null);
+      setEditValue("");
+      loadKeys(providerId);
+    } catch (e: any) {
+      alert("Error: " + e.message);
+    }
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      // Brief visual feedback could be added here
+    }).catch(() => {
+      // Fallback
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    });
+  };
+
   const maskKey = (key: string) => {
     if (key.length <= 8) return "****";
     return key.substring(0, 4) + "..." + key.substring(key.length - 4);
+  };
+
+  const getKeyStatus = (k: ProviderApiKey) => {
+    if (!k.isActive) return { label: "Disabled", color: "bg-gray-500/20 text-gray-400" };
+    if (k.isLimited) return { label: "Limited", color: "bg-red-500/20 text-red-400" };
+    return { label: "Active", color: "bg-green-500/20 text-green-400" };
   };
 
   return (
@@ -187,37 +235,128 @@ export function ProvidersManager() {
                     <p className="text-sm text-muted-foreground mb-3">No keys configured. Add one below.</p>
                   ) : (
                     <div className="space-y-2 mb-3">
-                      {(providerKeys[p.id] || []).map((k) => (
-                        <div key={k.id} className="flex items-center gap-3 p-2 bg-background rounded border border-border/50">
-                          <code className="text-xs font-mono">{maskKey(k.apiKey)}</code>
-                          <span className={`px-1.5 py-0.5 rounded text-xs ${k.isLimited ? "bg-red-500/20 text-red-400" : "bg-green-500/20 text-green-400"}`}>
-                            {k.isLimited ? "Limited" : "Active"}
-                          </span>
-                          <span className="text-xs text-muted-foreground">Requests: {k.requestCount}</span>
-                          {k.lastUsedAt && (
-                            <span className="text-xs text-muted-foreground">Last: {new Date(k.lastUsedAt).toLocaleTimeString()}</span>
-                          )}
-                          <div className="ml-auto flex gap-1">
-                            {k.isLimited && (
-                              <Button variant="outline" size="sm" onClick={() => handleResetKey(p.id, k.id)} title="Retry (reset limited status)">
-                                <RotateCcw className="w-3 h-3 mr-1" /> Retry
-                              </Button>
+                      {(providerKeys[p.id] || []).map((k) => {
+                        const status = getKeyStatus(k);
+                        const isEditing = editingKey === k.id;
+                        return (
+                          <div key={k.id} className="flex items-center gap-2 p-2 bg-background rounded border border-border/50">
+                            {/* Key display / edit */}
+                            <div className="flex-1 min-w-0">
+                              {isEditing ? (
+                                <div className="flex items-center gap-1">
+                                  <Input
+                                    value={editValue}
+                                    onChange={e => setEditValue(e.target.value)}
+                                    className="text-xs font-mono h-7"
+                                    type="text"
+                                    autoFocus
+                                  />
+                                  <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => handleUpdateKey(p.id, k.id)}>
+                                    <Check className="w-3 h-3 text-green-500" />
+                                  </Button>
+                                  <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => { setEditingKey(null); setEditValue(""); }}>
+                                    <X className="w-3 h-3 text-red-500" />
+                                  </Button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-2">
+                                  <code className="text-xs font-mono truncate">
+                                    {showKeys[k.id] ? k.apiKey : maskKey(k.apiKey)}
+                                  </code>
+                                  <button
+                                    onClick={() => setShowKeys(prev => ({ ...prev, [k.id]: !prev[k.id] }))}
+                                    className="text-muted-foreground hover:text-foreground"
+                                    title={showKeys[k.id] ? "Hide key" : "Show key"}
+                                  >
+                                    {showKeys[k.id] ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                                  </button>
+                                  <button
+                                    onClick={() => copyToClipboard(k.apiKey)}
+                                    className="text-muted-foreground hover:text-foreground"
+                                    title="Copy key"
+                                  >
+                                    <Copy className="w-3 h-3" />
+                                  </button>
+                                  <button
+                                    onClick={() => { setEditingKey(k.id); setEditValue(k.apiKey); }}
+                                    className="text-muted-foreground hover:text-foreground"
+                                    title="Edit key"
+                                  >
+                                    <Pencil className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Status badge */}
+                            <span className={`px-1.5 py-0.5 rounded text-xs whitespace-nowrap ${status.color}`}>
+                              {status.label}
+                            </span>
+
+                            {/* Stats */}
+                            <span className="text-xs text-muted-foreground whitespace-nowrap">
+                              {k.requestCount} reqs
+                            </span>
+                            {k.lastUsedAt && (
+                              <span className="text-xs text-muted-foreground whitespace-nowrap">
+                                {new Date(k.lastUsedAt).toLocaleTimeString()}
+                              </span>
                             )}
-                            <Button variant="ghost" size="sm" onClick={() => handleDeleteKey(p.id, k.id)} title="Delete key">
-                              <Trash className="w-3 h-3 text-red-500" />
-                            </Button>
+
+                            {/* Action buttons */}
+                            <div className="flex gap-1 ml-auto">
+                              {/* Enable/Disable toggle */}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2"
+                                onClick={() => handleToggleKey(p.id, k.id)}
+                                title={k.isActive ? "Disable key" : "Enable key"}
+                              >
+                                {k.isActive ? (
+                                  <Eye className="w-3 h-3 text-green-500" />
+                                ) : (
+                                  <EyeOff className="w-3 h-3 text-gray-400" />
+                                )}
+                              </Button>
+
+                              {/* Retry (only for limited keys) */}
+                              {k.isLimited && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 px-2"
+                                  onClick={() => handleResetKey(p.id, k.id)}
+                                  title="Retry (reset limited status)"
+                                >
+                                  <RotateCcw className="w-3 h-3 mr-1" /> Retry
+                                </Button>
+                              )}
+
+                              {/* Delete */}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2"
+                                onClick={() => handleDeleteKey(p.id, k.id)}
+                                title="Delete key"
+                              >
+                                <Trash className="w-3 h-3 text-red-500" />
+                              </Button>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
 
-                  <div className="flex gap-2">
+                  {/* Add new key */}
+                  <div className="flex gap-2 mt-2">
                     <Input
                       value={newKeyInputs[p.id] || ""}
                       onChange={e => setNewKeyInputs(prev => ({ ...prev, [p.id]: e.target.value }))}
-                      placeholder="Add new API key..."
-                      type="password"
+                      placeholder="Paste new API key here..."
+                      type="text"
                       className="text-sm"
                     />
                     <Button size="sm" onClick={() => handleAddKey(p.id)} disabled={!newKeyInputs[p.id]}>
