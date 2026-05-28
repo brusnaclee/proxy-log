@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+﻿import { Hono } from "hono";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { adminConfig, allowedDevices, allowedIdes, apiKeys, devices, requestLogs, modelLimits, providers } from "../../db/schema.js";
@@ -6,7 +6,7 @@ import { generateApiKey, getKeyPrefix, sha256 } from "../../utils/crypto.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
 import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindowResetMs } from "../../utils/rate-limit.js";
 import { isInternalRequest } from "../../middleware/session.js";
-import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL } from "../../utils/counting.js";
+import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL, VALID_LOG_SQL } from "../../utils/counting.js";
 
 const internal = new Hono();
 
