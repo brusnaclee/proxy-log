@@ -1112,11 +1112,19 @@ const targetProvider = await getProviderForModel(model);
   };
 
   const persistLogAndSession = async (logEntry: Record<string, any>, hasActualToolCalls: boolean, shouldCountRequest: boolean = true) => {
-    const counted = isNewPrompt && shouldCountRequest;
+    // Filter out empty responses (200 OK but no actual AI response)
+    const hasActualContent = (entry: Record<string, any>): boolean => {
+      const completionTokens = entry.completionTokens || 0;
+      const promptTokens = entry.promptTokens || 0;
+      // Don't count if both are zero (empty response with no tokens)
+      return completionTokens > 0 || promptTokens > 0;
+    };
+
+    const counted = isNewPrompt && shouldCountRequest && hasActualContent(logEntry);
     
     // Calculate billable flat. Every successful request to upstream uses tokens.
     let isBillableToken = false;
-    if (shouldCountRequest) {
+    if (shouldCountRequest && hasActualContent(logEntry)) {
       isBillableToken = true;
     }
 
