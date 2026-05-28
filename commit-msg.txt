@@ -1,0 +1,9 @@
+fix(billing): correct is_billable_token = shouldCountRequest and finalizeCountedCompletion
+
+- is_billable_token was always set equal to shouldCountRequest (same value),
+  even though the comment said "every successful request". Now explicitly set
+  to statusCode >= 200 && statusCode < 300 so all 2xx responses are billable.
+- BILLABLE_LOG_SQL always uses status_code BETWEEN 200 AND 299 directly.
+- VALID_LOG_SQL simplified to same condition for consistency.
+- finalizeCountedCompletion() was referenced but never exported from
+  token-extractor.ts; inline its logic directly where used.
