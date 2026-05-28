@@ -809,9 +809,7 @@ const runtime = {
 	models: [],
 	modelEntries: [],
 	modelProviderMap: new Map(),
-	status: new Map(),
 	latency: new Map(),
-	lastStatusAt: null,
 	lastLatencyAt: null,
 	lastWorkingBaseUrl: TOKITO_BASE_URL,
 	endpointStats: new Map(),
@@ -973,13 +971,10 @@ async function pollModelStatus() {
 		console.log('[tokito-monitor] no providers configured, falling back to TOKITO_BASE_URL');
 		if (!TOKITO_API_KEY) return;
 		const result = await apiFetch('/models');
-		const now = Date.now();
 		if (!result.ok || !result.body || !Array.isArray(result.body.data)) {
-			runtime.lastStatusAt = now;
 			return;
 		}
 		runtime.models = result.body.data.map((m) => m.id);
-		runtime.lastStatusAt = now;
 		return;
 	}
 
@@ -1002,13 +997,6 @@ async function pollModelStatus() {
 				const entry = { modelId: id, provider: prov.name, baseUrl, apiKey };
 				runtime.modelEntries.push(entry);
 				runtime.modelProviderMap.set(id, { provider: prov.name, baseUrl, apiKey });
-				const key = entryKey(entry);
-				runtime.status.set(key, {
-					online: false,
-					checkedAt: now,
-					status: null,
-					error: 'not tested',
-				});
 			}
 			console.log(`[tokito-monitor] fetched ${arr.length} models from provider: ${prov.name} (${url})`);
 		} catch (err) {
@@ -1017,13 +1005,9 @@ async function pollModelStatus() {
 	}
 
 	runtime.models = allModels;
-	runtime.lastStatusAt = now;
 
-	// Drop cached status/latency for providers no longer active
+	// Drop cached latency for providers no longer active
 	const validKeys = new Set(runtime.modelEntries.map(entryKey));
-	for (const key of runtime.status.keys()) {
-		if (!validKeys.has(key)) runtime.status.delete(key);
-	}
 	for (const key of runtime.latency.keys()) {
 		if (!validKeys.has(key)) runtime.latency.delete(key);
 	}
@@ -1032,16 +1016,15 @@ async function pollModelStatus() {
 async function pushMetricsToProxy() {
 	const payload = runtime.modelEntries.map((entry) => {
 		const key = entryKey(entry);
-		const st = runtime.status.get(key) || { online: false, status: 0 };
-		const lt = runtime.latency.get(key) || { ms: 0 };
+		const lt = runtime.latency.get(key) || { ms: 0, status: 0, ok: false, error: null };
 		return {
 			modelId: entry.modelId,
 			provider: entry.provider,
 			modelVendor: providerOf(entry.modelId),
-			isOnline: st.online,
+			isOnline: Boolean(lt.ok),
 			latencyMs: lt.ms,
-			httpStatus: st.status,
-			errorMessage: st.error || null,
+			httpStatus: lt.status,
+			errorMessage: lt.error || null,
 			baseUrl: entry.baseUrl,
 		};
 	});
@@ -1101,18 +1084,12 @@ async function runLatencyTest() {
 			ms,
 			checkedAt: now,
 			status: result.status,
-		});
-		runtime.status.set(key, {
-			online: isMonitorOnline(result.status),
-			checkedAt: now,
-			status: result.status,
 			error: result.body?.error?.message || (result.ok ? null : 'Failed'),
 		});
 	});
 
 	await Promise.all(jobs);
 	runtime.lastLatencyAt = now;
-	runtime.lastStatusAt = now;
 
 	await pushMetricsToProxy();
 }
@@ -1349,8 +1326,8 @@ function listModels(kind, upstreamProvider, modelVendor, sortMode) {
 	if (sortMode === 'status_online_first') {
 		items.sort(
 			(a, b) =>
-				Number(!runtime.status.get(entryKey(a))?.online) -
-				Number(!runtime.status.get(entryKey(b))?.online),
+				Number(!runtime.latency.get(entryKey(a))?.ok) -
+				Number(!runtime.latency.get(entryKey(b))?.ok),
 		);
 	}
 	if (sortMode === 'latency_fastest' || sortMode === 'latency_slowest') {
@@ -1376,16 +1353,17 @@ function buildTokitoEmbed(kind, session) {
 	const lines = slice.map((entry) => {
 		const key = entryKey(entry);
 		const vendor = providerOf(entry.modelId);
+		const lt = runtime.latency.get(key);
+		
 		if (kind === 'status') {
-			const st = runtime.status.get(key);
-			if (!st || st.status == null) {
+			if (!lt || lt.status == null) {
 				return `⚪ \`${entry.provider}/${entry.modelId}\` | not tested yet | vendor: **${vendor}**`;
 			}
-			const icon = st.online ? '🟢' : '🔴';
-			const httpInfo = st.status ? `HTTP ${st.status}` : 'timeout';
+			const icon = lt.ok ? '🟢' : '🔴';
+			const httpInfo = lt.status ? `HTTP ${lt.status}` : 'timeout';
 			return `${icon} \`${entry.provider}/${entry.modelId}\` | ${httpInfo} | vendor: **${vendor}**`;
 		}
-		const lt = runtime.latency.get(key);
+		
 		if (!lt) return `⚪ \`${entry.provider}/${entry.modelId}\` | not tested yet`;
 		const icon = lt.ok ? '🟢' : '🔴';
 		return `${icon} \`${entry.provider}/${entry.modelId}\` | ${lt.ms} ms | HTTP ${lt.status}`;
@@ -1395,8 +1373,7 @@ function buildTokitoEmbed(kind, session) {
 		kind === 'status'
 			? 'Tokito API • Model Status'
 			: 'Tokito API • Latency Benchmark';
-	const updatedAt =
-		kind === 'status' ? runtime.lastStatusAt : runtime.lastLatencyAt;
+	const updatedAt = runtime.lastLatencyAt;
 
 	let online = 0,
 		down = 0,
@@ -1404,23 +1381,14 @@ function buildTokitoEmbed(kind, session) {
 		untested = 0;
 	for (const entry of runtime.modelEntries) {
 		const key = entryKey(entry);
-		if (kind === 'latency') {
-			const lt = runtime.latency.get(key);
-			if (!lt) {
-				untested += 1;
-				continue;
-			}
-			if (lt.status === 0) timeout += 1;
-			else if (lt.ok) online += 1;
-			else down += 1;
-		} else {
-			const st = runtime.status.get(key);
-			if (!st) continue;
-			if (st.status == null) untested += 1;
-			else if (st.status === 0) timeout += 1;
-			else if (st.online) online += 1;
-			else down += 1;
+		const lt = runtime.latency.get(key);
+		if (!lt) {
+			untested += 1;
+			continue;
 		}
+		if (lt.status === 0 || lt.status == null) timeout += 1;
+		else if (lt.ok) online += 1;
+		else down += 1;
 	}
 
 	const summaryParts = [`Online: ${online}`, `Down: ${down}`, `Timeout: ${timeout}`];
@@ -2447,12 +2415,6 @@ client.once('clientReady', async () => {
 		await ensurePanelMessage();
 		await pollModelStatus();
 		await runLatencyTest();
-
-		setInterval(() => {
-			pollModelStatus().catch((err) =>
-				console.error('pollModelStatus error:', err.message),
-			);
-		}, TOKITO_STATUS_INTERVAL_MS);
 
 		setInterval(() => {
 			runLatencyTest().catch((err) =>
