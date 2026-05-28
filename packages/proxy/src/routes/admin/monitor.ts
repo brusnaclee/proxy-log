@@ -247,4 +247,38 @@ monitor.patch("/internal/monitor/models/state/reset", async (c) => {
   return c.json({ success: true });
 });
 
+// GET internal model status (for bot to read fresh data from DB)
+monitor.get("/internal/monitor/models", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+
+  const activeNames = await getActiveProviderNames();
+
+  const latestSubquery = db
+    .select({
+      modelId: modelMonitor.modelId,
+      provider: modelMonitor.provider,
+      maxCheckedAt: sql<string>`MAX(checked_at)`.as('max_checked_at'),
+    })
+    .from(modelMonitor)
+    .groupBy(modelMonitor.modelId, modelMonitor.provider)
+    .as('latest');
+
+  const rows = await db
+    .select()
+    .from(modelMonitor)
+    .innerJoin(
+      latestSubquery,
+      sql`${modelMonitor.modelId} = ${latestSubquery.modelId} AND COALESCE(${modelMonitor.provider}, '') = COALESCE(${latestSubquery.provider}, '') AND ${modelMonitor.checkedAt} = ${latestSubquery.maxCheckedAt}`
+    )
+    .orderBy(modelMonitor.provider, modelMonitor.modelId)
+    .all();
+
+  const data = rows
+    .map((r) => r.model_monitor)
+    .filter((d) => d.provider && activeNames.has(d.provider));
+
+  return c.json({ data });
+});
+
 export default monitor;

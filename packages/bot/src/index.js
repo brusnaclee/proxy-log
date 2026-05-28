@@ -120,7 +120,7 @@ function extractUserId(raw) {
 }
 
 async function sendApiCredentialsDm(userId, apiKey, endpoint) {
-	return sendDMToUser(
+	const result = await sendDMToUser(
 		userId,
 		'🔑 API Key Proxy Anda',
 		`Verifikasi Anda berhasil. Berikut kredensial akses API proxy:\n\n` +
@@ -135,6 +135,10 @@ async function sendApiCredentialsDm(userId, apiKey, endpoint) {
 			`Simpan key ini baik-baik. Jika bocor, hubungi admin untuk rotate key.`,
 		0x57f287,
 	);
+	if (!result) {
+		throw new Error('Failed to send DM — user may have DMs disabled');
+	}
+	return result;
 }
 
 function normalizeIdeNameForCommand(raw) {
@@ -383,24 +387,31 @@ async function handleAdminCommand(message) {
 		}
 
 		if (cmd === '!agrefresh') {
-			const data = await proxyInternal(
-				'/admin/internal/refresh-user-key',
-				'POST',
-				{ discordUserId },
-			);
 			try {
-				await sendApiCredentialsDm(
-					discordUserId,
-					data.apiKey,
-					data.endpoint || `${PROXY_PUBLIC_BASE_URL}/v1`,
+				const data = await proxyInternal(
+					'/admin/internal/refresh-user-key',
+					'POST',
+					{ discordUserId },
 				);
+				try {
+					await sendApiCredentialsDm(
+						discordUserId,
+						data.apiKey,
+						data.endpoint || `${PROXY_PUBLIC_BASE_URL}/v1`,
+					);
+					await message.reply(
+						'API key berhasil di-refresh dan dikirim via DM ke user.',
+					);
+				} catch (dmErr) {
+					console.warn('[agrefresh] DM failed, sending key in channel:', dmErr.message);
+					await message.reply(
+						`API key berhasil di-refresh. DM gagal, dikirim di sini:\n\n**Endpoint**: \`${data.endpoint || `${PROXY_PUBLIC_BASE_URL}/v1`}\`\n**Authorization**: \`Bearer ${data.apiKey}\``,
+					);
+				}
+			} catch (err) {
+				console.error('[agrefresh] failed to refresh key:', err.message);
 				await message.reply(
-					'API key berhasil di-refresh dan dikirim via DM ke user.',
-				);
-			} catch (dmErr) {
-				console.warn('[agrefresh] DM failed, sending key in channel:', dmErr.message);
-				await message.reply(
-					`API key berhasil di-refresh. DM gagal, dikirim di sini:\n\n**Endpoint**: \`${data.endpoint || `${PROXY_PUBLIC_BASE_URL}/v1`}\`\n**Authorization**: \`Bearer ${data.apiKey}\``,
+					`Gagal refresh API key: ${err.message}. Pastikan user sudah terverifikasi dan punya API key.`,
 				);
 			}
 			return true;
@@ -1071,6 +1082,48 @@ async function pushSingleModelStatus(entry, latencyResult) {
 			`[tokito-monitor] failed to push status for ${entry.modelId}:`,
 			err.message,
 		);
+	}
+}
+
+/** Refresh runtime.latency from proxy database (for fresh data on button click). */
+async function refreshLatencyFromProxy() {
+	try {
+		const result = await proxyInternal('/admin/internal/monitor/models', 'GET');
+		if (result?.data && Array.isArray(result.data)) {
+			// Update model entries and latency cache from DB
+			const newEntries = [];
+			const newLatency = new Map();
+
+			for (const row of result.data) {
+				const entry = {
+					modelId: row.modelId,
+					provider: row.provider,
+					baseUrl: row.baseUrl || '',
+					apiKey: '',
+				};
+				newEntries.push(entry);
+				const key = entryKey(entry);
+				newLatency.set(key, {
+					ok: Boolean(row.isOnline),
+					ms: row.latencyMs || 0,
+					checkedAt: row.checkedAt ? new Date(row.checkedAt).getTime() : Date.now(),
+					status: row.httpStatus || 0,
+					error: row.errorMessage || null,
+				});
+			}
+
+			// Update runtime with fresh data from DB
+			if (newEntries.length > 0) {
+				runtime.modelEntries = newEntries;
+				runtime.latency = newLatency;
+				runtime.models = [...new Set(newEntries.map(e => e.modelId))];
+				runtime.lastLatencyAt = Date.now();
+			}
+
+			console.log(`[tokito-monitor] refreshed ${newEntries.length} models from proxy DB`);
+		}
+	} catch (err) {
+		console.error('[tokito-monitor] failed to refresh from proxy:', err.message);
 	}
 }
 
@@ -3146,7 +3199,9 @@ client.on('interactionCreate', async (interaction) => {
 				// Immediately acknowledge to prevent 10s timeout
 				await interaction.deferReply({ ephemeral: true });
 				
-				// Use cached data — no fetch on button click
+				// Refresh data from proxy DB for fresh results
+				await refreshLatencyFromProxy();
+				
 				const session = createTokitoSession(interaction.user.id, kind);
 				const { embed, components } = buildTokitoEmbed(kind, session);
 				
