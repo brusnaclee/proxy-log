@@ -16,7 +16,8 @@ import {
   toToolJson,
 } from "../utils/telemetry.js";
 import { logEmitter } from "../utils/event-emitter.js";
-import { getModelCatalogResponse, getProviderForModel, stripProviderPrefix, getOnlineModelsByLatency } from "../utils/model-catalog.js";
+import { getModelCatalogResponse, getProviderForModel, stripProviderPrefix, getOnlineModelsByLatency, getNextApiKey, markKeyAsLimited } from "../utils/model-catalog.js";
+import { convertRequestToAnthropic, convertResponseToOpenAI, convertStreamEvent, createStreamState } from "../utils/anthropic-adapter.js";
 import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindowResetMs } from "../utils/rate-limit.js";
 import { analyzeRequestMessages, isTitleGenRequest, detectToolCallsInResponse, getLastTurnTextForTokenEstimate, type MessageAnalysis } from "../utils/message-analyzer.js";
 import { makeAccumulator, consumeStreamPayload, consumeNonStreamingPayload, finalizeCompletion, resolveBillableTokens } from "../utils/token-extractor.js";
@@ -253,6 +254,50 @@ async function fetchUpstreamWithRetry(url: string, init: RequestInit, isStreamin
   }
 
   throw lastError || new Error("Upstream request failed");
+}
+
+/**
+ * Fetch upstream with API key rotation and retry-on-429 logic.
+ * If the response is 429 (rate limited), marks the key as limited and retries with the next available key.
+ * Returns { response, apiKeyId } so callers know which key was used.
+ */
+async function fetchWithKeyRotation(
+  providerId: number,
+  url: string,
+  initFn: (apiKey: string) => RequestInit,
+  isStreaming: boolean,
+  clientSignal?: AbortSignal,
+): Promise<{ response: Response; keyId: number; apiKey: string }> {
+  const MAX_KEY_ATTEMPTS = 10; // don't loop forever
+  const triedKeyIds = new Set<number>();
+
+  for (let attempt = 0; attempt < MAX_KEY_ATTEMPTS; attempt++) {
+    const keyResult = await getNextApiKey(providerId);
+    if (!keyResult) {
+      throw new Error("All API keys for this provider are rate-limited. Reset keys in the dashboard.");
+    }
+
+    if (triedKeyIds.has(keyResult.keyId)) {
+      // Already tried this key (shouldn't happen with proper filtering, but safety)
+      throw new Error("No new API keys available. All have been tried.");
+    }
+    triedKeyIds.add(keyResult.keyId);
+
+    const init = initFn(keyResult.apiKey);
+    const response = await fetchUpstreamWithRetry(url, init, isStreaming, clientSignal);
+
+    if (response.status === 429) {
+      // Rate limited — mark this key and try the next one
+      console.warn(`[key-rotation] Key ${keyResult.keyId} for provider ${providerId} returned 429, marking as limited`);
+      await markKeyAsLimited(keyResult.keyId);
+      try { await response.body?.cancel(); } catch {}
+      continue;
+    }
+
+    return { response, keyId: keyResult.keyId, apiKey: keyResult.apiKey };
+  }
+
+  throw new Error("All API keys exhausted after rate-limit retries.");
 }
 
 async function createChatSession(params: {
@@ -868,7 +913,13 @@ proxy.all("/*", async (c) => {
       const upstreamUrl = `${upstreamBase}${upstreamPath}`;
 
       const upstreamHeaders: Record<string, string> = { ...baseHeaders };
-      upstreamHeaders["Authorization"] = `Bearer ${providerRow.apiKey}`;
+      // Use key rotation for auto-model trials too
+      const trialKeyResult = await getNextApiKey(providerRow.id);
+      if (!trialKeyResult) {
+        tried.push(`${candidate.provider}/${candidate.modelId} (no available keys)`);
+        continue;
+      }
+      upstreamHeaders["Authorization"] = `Bearer ${trialKeyResult.apiKey}`;
       if (contentType) upstreamHeaders["Content-Type"] = contentType;
 
       // Build body with this specific model
@@ -882,6 +933,10 @@ proxy.all("/*", async (c) => {
           body: trialBodyBytes as any,
         }, false, c.req.raw.signal);
 
+        if (trialResponse.status === 429) {
+          // Rate limited — mark key and try next model
+          await markKeyAsLimited(trialKeyResult.keyId);
+        }
         if (trialResponse.status >= 400) {
           tried.push(`${candidate.provider}/${candidate.modelId} (HTTP ${trialResponse.status})`);
           try { await trialResponse.body?.cancel(); } catch {}
@@ -1037,11 +1092,19 @@ const targetProvider = await getProviderForModel(model);
     const upstreamHeaders2: Record<string, string> = {};
     const blocked2 = new Set(["host","content-length","authorization","cookie","connection","keep-alive","transfer-encoding","upgrade"]);
     for (const [k, v] of c.req.raw.headers.entries()) { if (!blocked2.has(k.toLowerCase())) upstreamHeaders2[k] = v; }
-    upstreamHeaders2["Authorization"] = `Bearer ${targetProvider2.apiKey}`;
     upstreamHeaders2["x-forwarded-for"] = clientIp;
     if (contentType) upstreamHeaders2["Content-Type"] = contentType;
     try {
-      const resp = await fetchUpstreamWithRetry(upstreamUrl2, { method: c.req.method, headers: upstreamHeaders2, body: requestBodyBytes as any }, requestBody?.stream === true, c.req.raw.signal);
+      const { response: resp } = await fetchWithKeyRotation(
+        targetProvider2.id,
+        upstreamUrl2,
+        (apiKey) => {
+          const headers = { ...upstreamHeaders2, Authorization: `Bearer ${apiKey}` };
+          return { method: c.req.method, headers, body: requestBodyBytes as any };
+        },
+        requestBody?.stream === true,
+        c.req.raw.signal,
+      );
       return new Response(resp.body, { status: resp.status, headers: resp.headers });
     } catch {
       return c.json({ error: { message: "Upstream request failed", type: "server_error" } }, 502);
@@ -1351,16 +1414,49 @@ const targetProvider = await getProviderForModel(model);
     }
   }
 
-  upstreamHeaders["Authorization"] = `Bearer ${targetProvider.apiKey}`;
   upstreamHeaders["x-forwarded-for"] = clientIp;
   if (contentType) upstreamHeaders["Content-Type"] = contentType;
 
+  // Detect Anthropic provider
+  const isAnthropicProvider = targetProvider.endpointType === "anthropic";
+  let anthropicRequestBody: string | null = null;
+  let actualUpstreamUrl = upstreamUrl;
+  let actualUpstreamPath = upstreamPath;
+
+  if (isAnthropicProvider) {
+    // Convert OpenAI request to Anthropic format
+    const openaiBody = requestBody;
+    const anthropicBody = convertRequestToAnthropic(openaiBody);
+    anthropicRequestBody = JSON.stringify(anthropicBody);
+
+    // Redirect path to /v1/messages for Anthropic
+    actualUpstreamPath = "/v1/messages";
+    const upstreamBase = targetProvider.endpoint.replace(/\/$/, "");
+    actualUpstreamUrl = `${upstreamBase}${actualUpstreamPath}`;
+  }
+
   try {
-    const upstreamResponse = await fetchUpstreamWithRetry(upstreamUrl, {
-      method: c.req.method,
-      headers: upstreamHeaders,
-      body: requestBodyBytes as any,
-    }, isStreaming, c.req.raw.signal);
+    const { response: upstreamResponse, keyId: usedKeyId } = await fetchWithKeyRotation(
+      targetProvider.id,
+      isAnthropicProvider ? actualUpstreamUrl : upstreamUrl,
+      (apiKey) => {
+        const headers = { ...upstreamHeaders };
+        if (isAnthropicProvider) {
+          headers["x-api-key"] = apiKey;
+          headers["anthropic-version"] = "2023-06-01";
+          delete headers["Authorization"];
+        } else {
+          headers["Authorization"] = `Bearer ${apiKey}`;
+        }
+        return {
+          method: c.req.method,
+          headers,
+          body: isAnthropicProvider ? anthropicRequestBody! : (requestBodyBytes as any),
+        };
+      },
+      isStreaming,
+      c.req.raw.signal,
+    );
 
     const latencyMs = Date.now() - startTime;
     const statusCode = upstreamResponse.status;
@@ -1397,35 +1493,53 @@ const targetProvider = await getProviderForModel(model);
       const acc = makeAccumulator();
       let hasActualToolCalls = false;
       const decoder = new TextDecoder();
+      const anthropicStreamState = isAnthropicProvider ? createStreamState(model) : null;
+      let anthropicBuffer = "";
 
       const { readable, writable } = new TransformStream({
         transform(chunk, controller) {
-          controller.enqueue(chunk);
-          try {
-            const text = decoder.decode(chunk, { stream: true });
-            const lines = text.split("\n");
-            for (const line of lines) {
-              if (line.startsWith("data: ") && line !== "data: [DONE]") {
-                const payloadText = line.slice(6).trim();
-                if (!payloadText || payloadText === "[DONE]") continue;
-                try {
-                  const data = JSON.parse(payloadText);
-                  appendToolsFromPayload(data);
+          if (isAnthropicProvider && anthropicStreamState) {
+            // Anthropic streaming: convert SSE events to OpenAI format
+            anthropicBuffer += decoder.decode(chunk, { stream: true });
+            const events = anthropicBuffer.split("\n\n");
+            anthropicBuffer = events.pop() || ""; // Keep incomplete event in buffer
 
-                  // Detect actual tool calls in response
-                  if (detectToolCallsInResponse(data)) {
-                    hasActualToolCalls = true;
-                  }
+            for (const event of events) {
+              const openaiLines = convertStreamEvent(event, anthropicStreamState);
+              for (const line of openaiLines) {
+                const encoded = new TextEncoder().encode(line + "\n\n");
+                controller.enqueue(encoded);
 
-                  // Centralized text + tool args + usage extraction.
-                  consumeStreamPayload(acc, data);
-                } catch {
-                  // Ignore malformed stream chunks.
+                // Also accumulate for logging
+                if (line.startsWith("data: ") && line !== "data: [DONE]") {
+                  try {
+                    const data = JSON.parse(line.slice(6));
+                    appendToolsFromPayload(data);
+                    if (detectToolCallsInResponse(data)) hasActualToolCalls = true;
+                    consumeStreamPayload(acc, data);
+                  } catch {}
                 }
               }
             }
-          } catch {
-            // Ignore decoder errors.
+          } else {
+            // OpenAI streaming: pass through as-is
+            controller.enqueue(chunk);
+            try {
+              const text = decoder.decode(chunk, { stream: true });
+              const lines = text.split("\n");
+              for (const line of lines) {
+                if (line.startsWith("data: ") && line !== "data: [DONE]") {
+                  const payloadText = line.slice(6).trim();
+                  if (!payloadText || payloadText === "[DONE]") continue;
+                  try {
+                    const data = JSON.parse(payloadText);
+                    appendToolsFromPayload(data);
+                    if (detectToolCallsInResponse(data)) hasActualToolCalls = true;
+                    consumeStreamPayload(acc, data);
+                  } catch {}
+                }
+              }
+            } catch {}
           }
         },
         flush() {
@@ -1487,7 +1601,7 @@ const targetProvider = await getProviderForModel(model);
     }
 
     // ΓöÇΓöÇΓöÇ 13. Handle Non-Streaming Response ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-    const responseBody = await upstreamResponse.text();
+    let responseBody = await upstreamResponse.text();
     let promptTokens = 0;
     let completionTokens = 0;
     let totalTokens = 0;
@@ -1496,6 +1610,17 @@ const targetProvider = await getProviderForModel(model);
     let hasActualToolCalls = false;
     let finalizedUsage: any = {};
     const acc = makeAccumulator();
+
+    // Convert Anthropic response to OpenAI format
+    if (isAnthropicProvider && statusCode >= 200 && statusCode < 300) {
+      try {
+        const anthropicParsed = JSON.parse(responseBody);
+        const openaiResponse = convertResponseToOpenAI(anthropicParsed);
+        responseBody = JSON.stringify(openaiResponse);
+      } catch (convErr) {
+        console.error("[anthropic-adapter] Failed to convert response:", convErr);
+      }
+    }
 
     try {
       const parsed = JSON.parse(responseBody);

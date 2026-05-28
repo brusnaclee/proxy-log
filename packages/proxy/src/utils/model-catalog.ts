@@ -1,7 +1,7 @@
 ﻿import { mkdir, readFile, writeFile } from "fs/promises";
 import { dirname } from "path";
 import { db } from "../db/index.js";
-import { providers, modelMonitor } from "../db/schema.js";
+import { providers, modelMonitor, providerApiKeys } from "../db/schema.js";
 import { eq, and, desc, sql, asc } from "drizzle-orm";
 import { sanitizeProviderApiKey } from "./crypto.js";
 
@@ -462,4 +462,131 @@ export async function getOnlineModelsByLatency(): Promise<Array<{
       latencyMs: d.latencyMs ?? 0,
       baseUrl: d.baseUrl ?? "",
     }));
+}
+
+// ─── Provider API Key Rotation (multi-key load balancing) ────────────────────
+
+export interface ProviderApiKeyRow {
+  id: number;
+  providerId: number;
+  apiKey: string;
+  isLimited: boolean;
+  limitedAt: string | null;
+  requestCount: number;
+  lastUsedAt: string | null;
+}
+
+/**
+ * Get the next available API key for a provider.
+ * Uses least-used-first (by requestCount) for even load distribution.
+ * Skips keys marked as limited.
+ * Falls back to the provider's legacy api_key column if no keys in the new table.
+ */
+export async function getNextApiKey(providerId: number): Promise<{ keyId: number; apiKey: string } | null> {
+  const keys = await db
+    .select()
+    .from(providerApiKeys)
+    .where(
+      and(
+        eq(providerApiKeys.providerId, providerId),
+        eq(providerApiKeys.isLimited, false),
+      ),
+    )
+    .orderBy(asc(providerApiKeys.requestCount))
+    .all();
+
+  if (keys.length > 0) {
+    const chosen = keys[0];
+    // Increment requestCount and update lastUsedAt
+    await db
+      .update(providerApiKeys)
+      .set({
+        requestCount: (chosen.requestCount ?? 0) + 1,
+        lastUsedAt: new Date().toISOString(),
+      })
+      .where(eq(providerApiKeys.id, chosen.id))
+      .run();
+
+    return { keyId: chosen.id, apiKey: chosen.apiKey };
+  }
+
+  // Fallback: use the legacy api_key from the providers table
+  const provider = await db.select().from(providers).where(eq(providers.id, providerId)).get();
+  if (provider?.apiKey) {
+    return { keyId: -1, apiKey: provider.apiKey }; // -1 = legacy key
+  }
+
+  return null;
+}
+
+/**
+ * Mark a key as rate-limited so it won't be selected again until reset.
+ */
+export async function markKeyAsLimited(keyId: number): Promise<void> {
+  if (keyId < 0) return; // legacy key, can't mark
+  await db
+    .update(providerApiKeys)
+    .set({
+      isLimited: true,
+      limitedAt: new Date().toISOString(),
+    })
+    .where(eq(providerApiKeys.id, keyId))
+    .run();
+}
+
+/**
+ * Reset a key's limited status (Retry button in dashboard).
+ */
+export async function resetKeyLimited(keyId: number): Promise<void> {
+  await db
+    .update(providerApiKeys)
+    .set({
+      isLimited: false,
+      limitedAt: null,
+    })
+    .where(eq(providerApiKeys.id, keyId))
+    .run();
+}
+
+/**
+ * Delete an API key (Delete button in dashboard).
+ */
+export async function deleteApiKey(keyId: number): Promise<void> {
+  await db.delete(providerApiKeys).where(eq(providerApiKeys.id, keyId)).run();
+}
+
+/**
+ * Get all API keys for a provider (for dashboard display).
+ */
+export async function getProviderApiKeys(providerId: number): Promise<ProviderApiKeyRow[]> {
+  const rows = await db
+    .select()
+    .from(providerApiKeys)
+    .where(eq(providerApiKeys.providerId, providerId))
+    .orderBy(providerApiKeys.id)
+    .all();
+
+  return rows.map((r) => ({
+    id: r.id,
+    providerId: r.providerId,
+    apiKey: r.apiKey,
+    isLimited: Boolean(r.isLimited),
+    limitedAt: r.limitedAt,
+    requestCount: r.requestCount ?? 0,
+    lastUsedAt: r.lastUsedAt,
+  }));
+}
+
+/**
+ * Add a new API key to a provider.
+ */
+export async function addProviderApiKey(providerId: number, apiKey: string): Promise<number> {
+  const result = await db.insert(providerApiKeys).values({
+    providerId,
+    apiKey: sanitizeProviderApiKey(apiKey),
+    requestCount: 0,
+    isLimited: false,
+  }).run();
+
+  return Number(result.lastInsertRowid);
 }

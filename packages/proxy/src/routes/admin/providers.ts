@@ -2,7 +2,7 @@
 import { db } from "../../db/index.js";
 import { providers } from "../../db/schema.js";
 import { eq, desc } from "drizzle-orm";
-import { refreshModelCatalog } from "../../utils/model-catalog.js";
+import { refreshModelCatalog, getProviderApiKeys, addProviderApiKey, resetKeyLimited, deleteApiKey } from "../../utils/model-catalog.js";
 import { sanitizeProviderApiKey } from "../../utils/crypto.js";
 import { purgeMonitorForProvider } from "../../utils/model-monitor-store.js";
 
@@ -14,7 +14,7 @@ providersApi.get("/providers", async (c) => {
 });
 
 providersApi.post("/providers", async (c) => {
-  const body = await c.req.json<{ name: string; endpoint: string; apiKey: string; isActive?: boolean; priority?: number }>();
+  const body = await c.req.json<{ name: string; endpoint: string; apiKey: string; isActive?: boolean; priority?: number; endpointType?: string }>();
   if (!body.name || !body.endpoint || !body.apiKey) {
     return c.json({ error: "Missing required fields" }, 400);
   }
@@ -22,9 +22,13 @@ providersApi.post("/providers", async (c) => {
     name: body.name,
     endpoint: body.endpoint,
     apiKey: sanitizeProviderApiKey(body.apiKey),
+    endpointType: body.endpointType || "openai",
     isActive: body.isActive ?? true,
     priority: body.priority || 0,
   }).returning().get();
+
+  // Also add the key to the providerApiKeys table for rotation
+  await addProviderApiKey(result.id, body.apiKey);
 
   void refreshModelCatalog();
 
@@ -36,13 +40,14 @@ providersApi.put("/providers/:id", async (c) => {
   const existing = await db.select().from(providers).where(eq(providers.id, id)).get();
   if (!existing) return c.json({ error: "Provider not found" }, 404);
 
-  const body = await c.req.json<{ name?: string; endpoint?: string; apiKey?: string; isActive?: boolean; priority?: number }>();
+  const body = await c.req.json<{ name?: string; endpoint?: string; apiKey?: string; isActive?: boolean; priority?: number; endpointType?: string }>();
   const updates: any = {};
   if (body.name !== undefined) updates.name = body.name;
   if (body.endpoint !== undefined) updates.endpoint = body.endpoint;
   if (body.apiKey !== undefined) updates.apiKey = sanitizeProviderApiKey(body.apiKey);
   if (body.isActive !== undefined) updates.isActive = body.isActive;
   if (body.priority !== undefined) updates.priority = body.priority;
+  if (body.endpointType !== undefined) updates.endpointType = body.endpointType;
   updates.updatedAt = new Date().toISOString().replace("T", " ").substring(0, 19);
 
   await db.update(providers).set(updates).where(eq(providers.id, id)).run();
@@ -66,6 +71,45 @@ providersApi.delete("/providers/:id", async (c) => {
 
   void refreshModelCatalog();
 
+  return c.json({ success: true });
+});
+
+// ─── Provider API Key Management ──────────────────────────────────────────────
+
+// Get all keys for a provider
+providersApi.get("/providers/:id/keys", async (c) => {
+  const id = parseInt(c.req.param("id"));
+  const existing = await db.select().from(providers).where(eq(providers.id, id)).get();
+  if (!existing) return c.json({ error: "Provider not found" }, 404);
+
+  const keys = await getProviderApiKeys(id);
+  return c.json(keys);
+});
+
+// Add a new key to a provider
+providersApi.post("/providers/:id/keys", async (c) => {
+  const id = parseInt(c.req.param("id"));
+  const existing = await db.select().from(providers).where(eq(providers.id, id)).get();
+  if (!existing) return c.json({ error: "Provider not found" }, 404);
+
+  const body = await c.req.json<{ apiKey: string }>();
+  if (!body.apiKey) return c.json({ error: "apiKey is required" }, 400);
+
+  const keyId = await addProviderApiKey(id, body.apiKey);
+  return c.json({ success: true, keyId });
+});
+
+// Reset a key's limited status (Retry button)
+providersApi.patch("/providers/:id/keys/:keyId/reset", async (c) => {
+  const keyId = parseInt(c.req.param("keyId"));
+  await resetKeyLimited(keyId);
+  return c.json({ success: true });
+});
+
+// Delete a key (Delete button)
+providersApi.delete("/providers/:id/keys/:keyId", async (c) => {
+  const keyId = parseInt(c.req.param("keyId"));
+  await deleteApiKey(keyId);
   return c.json({ success: true });
 });
 

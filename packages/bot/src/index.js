@@ -388,14 +388,21 @@ async function handleAdminCommand(message) {
 				'POST',
 				{ discordUserId },
 			);
-			await sendApiCredentialsDm(
-				discordUserId,
-				data.apiKey,
-				data.endpoint || `${PROXY_PUBLIC_BASE_URL}/v1`,
-			);
-			await message.reply(
-				'API key berhasil di-refresh dan dikirim via DM ke user.',
-			);
+			try {
+				await sendApiCredentialsDm(
+					discordUserId,
+					data.apiKey,
+					data.endpoint || `${PROXY_PUBLIC_BASE_URL}/v1`,
+				);
+				await message.reply(
+					'API key berhasil di-refresh dan dikirim via DM ke user.',
+				);
+			} catch (dmErr) {
+				console.warn('[agrefresh] DM failed, sending key in channel:', dmErr.message);
+				await message.reply(
+					`API key berhasil di-refresh. DM gagal, dikirim di sini:\n\n**Endpoint**: \`${data.endpoint || `${PROXY_PUBLIC_BASE_URL}/v1`}\`\n**Authorization**: \`Bearer ${data.apiKey}\``,
+				);
+			}
 			return true;
 		}
 
@@ -435,14 +442,21 @@ async function handleAdminCommand(message) {
 				sourceGuildId: message.guild.id,
 				sourceThreadId: message.channel.id,
 			});
-			await sendApiCredentialsDm(
-				discordUserId,
-				data.apiKey,
-				data.endpoint || `${PROXY_PUBLIC_BASE_URL}/v1`,
-			);
-			await message.reply(
-				'API key user berhasil diaktifkan dan dikirim via DM.',
-			);
+			try {
+				await sendApiCredentialsDm(
+					discordUserId,
+					data.apiKey,
+					data.endpoint || `${PROXY_PUBLIC_BASE_URL}/v1`,
+				);
+				await message.reply(
+					'API key user berhasil diaktifkan dan dikirim via DM.',
+				);
+			} catch (dmErr) {
+				console.warn('[agunblock] DM failed, sending key in channel:', dmErr.message);
+				await message.reply(
+					`API key user berhasil diaktifkan. DM gagal, dikirim di sini:\n\n**Endpoint**: \`${data.endpoint || `${PROXY_PUBLIC_BASE_URL}/v1`}\`\n**Authorization**: \`Bearer ${data.apiKey}\``,
+				);
+			}
 			return true;
 		}
 
@@ -3331,33 +3345,14 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 						);
 
 						// Auto-provision proxy API key for verified Discord user
+						let provision;
 						try {
-							const provision = await provisionApiKeyForVerifiedUser(
+							provision = await provisionApiKeyForVerifiedUser(
 								newMember.id,
 								newMember.user.username,
 								threadId,
 								newMember.guild.id,
 							);
-							await sendApiCredentialsDm(
-								newMember.id,
-								provision.apiKey,
-								provision.endpoint || `${PROXY_PUBLIC_BASE_URL}/v1`,
-							);
-							const endpoint =
-								provision.endpoint || `${PROXY_PUBLIC_BASE_URL}/v1`;
-							await thread.send({
-								embeds: [
-									new EmbedBuilder()
-										.setTitle('🔑 API Key Dibuat')
-										.setDescription(
-											`API key proxy otomatis sudah dibuat untuk <@${newMember.id}> dan dikirim via DM.\n\n` +
-												`Endpoint: \`${endpoint}\`\n` +
-												`Kebijakan: max 1 device (multi-device => revoke/rotate).`,
-										)
-										.setColor(0x57f287)
-										.setTimestamp(),
-								],
-							});
 						} catch (err) {
 							console.error('[agverif] failed to provision proxy key:', err);
 							await thread.send({
@@ -3371,6 +3366,38 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 										.setTimestamp(),
 								],
 							});
+							provision = null;
+						}
+
+						if (provision) {
+							const endpoint = provision.endpoint || `${PROXY_PUBLIC_BASE_URL}/v1`;
+							// Send DM (non-critical — may fail if user has DMs disabled)
+							try {
+								await sendApiCredentialsDm(
+									newMember.id,
+									provision.apiKey,
+									endpoint,
+								);
+								await thread.send({
+									embeds: [
+										new EmbedBuilder()
+											.setTitle('🔑 API Key Dibuat')
+											.setDescription(
+												`API key proxy otomatis sudah dibuat untuk <@${newMember.id}> dan dikirim via DM.\n\n` +
+													`Endpoint: \`${endpoint}\`\n` +
+													`Kebijakan: max 1 device (multi-device => revoke/rotate).`,
+											)
+											.setColor(0x57f287)
+											.setTimestamp(),
+									],
+								});
+							} catch (dmErr) {
+								console.warn('[agverif] DM failed, sending key in thread:', dmErr.message);
+								// DM failed — send credentials in thread instead
+								await thread.send({
+									content: `🔑 API key untuk <@${newMember.id}> (DM gagal, dikirim di sini):\n\n**Endpoint**: \`${endpoint}\`\n**Authorization**: \`Bearer ${provision.apiKey}\``,
+								});
+							}
 						}
 
 						// Setelah verifikasi berhasil, ubah autoArchiveDuration menjadi 1 jam

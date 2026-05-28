@@ -251,6 +251,18 @@ export async function initializeDatabase() {
       suspended_until TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_test_state_model ON model_test_state(model_id, provider);
+
+    CREATE TABLE IF NOT EXISTS provider_api_keys (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider_id INTEGER NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+      api_key TEXT NOT NULL,
+      is_limited INTEGER NOT NULL DEFAULT 0,
+      limited_at TEXT,
+      request_count INTEGER NOT NULL DEFAULT 0,
+      last_used_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_provider_keys_provider_id ON provider_api_keys(provider_id);
   `);
 
   // Backward-compatible column migration for existing databases
@@ -496,6 +508,25 @@ export async function initializeDatabase() {
       }).run();
       console.log("o. Migrated legacy upstream config to providers table");
     }
+  }
+
+  // provider_api_keys table for multi-key rotation per provider
+  await ensureColumnExists("providers", "endpoint_type", "TEXT NOT NULL DEFAULT 'openai'");
+
+  // Migrate existing provider api_key values into provider_api_keys table (one-time)
+  try {
+    const existingKeys = await client.execute("SELECT COUNT(*) as cnt FROM provider_api_keys");
+    const keyCount = Number((existingKeys.rows[0] as any)?.cnt || 0);
+    if (keyCount === 0) {
+      // No keys in the new table yet — migrate from providers.api_key
+      await client.execute(`
+        INSERT INTO provider_api_keys (provider_id, api_key, request_count, created_at)
+        SELECT id, api_key, 0, datetime('now') FROM providers WHERE api_key IS NOT NULL AND api_key != ''
+      `);
+      console.log("✅ Migrated existing provider API keys to provider_api_keys table");
+    }
+  } catch (err) {
+    console.warn("⚠️  Could not migrate provider API keys (table may not exist yet):", err);
   }
 
   console.log("✅ Database initialized successfully");

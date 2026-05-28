@@ -190,12 +190,27 @@ export const providers = sqliteTable("providers", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   name: text("name").notNull(),
   endpoint: text("endpoint").notNull(),
-  apiKey: text("api_key").notNull(),
+  apiKey: text("api_key").notNull(),                   // legacy single key (kept for backward compat)
+  endpointType: text("endpoint_type").notNull().default("openai"), // "openai" | "anthropic"
   isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
   priority: integer("priority").notNull().default(0), // higher = higher priority
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 });
+
+// ─── Provider API Keys (multi-key rotation per provider) ────────────────────
+export const providerApiKeys = sqliteTable("provider_api_keys", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  providerId: integer("provider_id").notNull().references(() => providers.id, { onDelete: "cascade" }),
+  apiKey: text("api_key").notNull(),
+  isLimited: integer("is_limited", { mode: "boolean" }).notNull().default(false),
+  limitedAt: text("limited_at"),                       // when rate limit was detected
+  requestCount: integer("request_count").notNull().default(0), // for load balancing
+  lastUsedAt: text("last_used_at"),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+}, (table) => ({
+  providerIdIdx: index("idx_provider_keys_provider_id").on(table.providerId),
+}));
 
 // ─── Model Monitor ─────────────────────────────────────────────────────────────
 export const modelMonitor = sqliteTable("model_monitor", {
@@ -260,6 +275,7 @@ export type RequestLog = typeof requestLogs.$inferSelect;
 export type ChatSession = typeof chatSessions.$inferSelect;
 export type Device = typeof devices.$inferSelect;
 export type Provider = typeof providers.$inferSelect;
+export type ProviderApiKey = typeof providerApiKeys.$inferSelect;
 export type ModelMonitor = typeof modelMonitor.$inferSelect;
 export type ModelTestState = typeof modelTestState.$inferSelect;
 export type ModelLimit = typeof modelLimits.$inferSelect;
@@ -273,6 +289,7 @@ export type NewRequestLog = typeof requestLogs.$inferInsert;
 export type NewChatSession = typeof chatSessions.$inferInsert;
 export type NewDevice = typeof devices.$inferInsert;
 export type NewProvider = typeof providers.$inferInsert;
+export type NewProviderApiKey = typeof providerApiKeys.$inferInsert;
 export type NewModelMonitor = typeof modelMonitor.$inferInsert;
 export type NewModelTestState = typeof modelTestState.$inferInsert;
 export type NewModelLimit = typeof modelLimits.$inferInsert;
