@@ -856,6 +856,56 @@ proxy.all("/*", async (c) => {
     requestToolNames = contextInfo.requestToolNames;
   }
 
+  // ─── 7a. Responses API Conversion (/v1/responses -> /v1/chat/completions) ───
+  // Codex CLI and some clients use the OpenAI Responses API format.
+  // Convert to Chat Completions format for upstream providers that don't support it.
+  const isResponsesApi = normalizedPath === "/v1/responses";
+  let forwardPath = path; // path to forward to upstream
+
+  if (isResponsesApi && requestBody) {
+    // Convert Responses API input to Chat Completions messages
+    let messages: any[] = [];
+    const input = requestBody.input;
+
+    if (typeof input === "string") {
+      messages = [{ role: "user", content: input }];
+    } else if (Array.isArray(input)) {
+      for (const item of input) {
+        if (item.role && item.content) {
+          // Standard message format
+          messages.push({ role: item.role, content: typeof item.content === "string" ? item.content : JSON.stringify(item.content) });
+        } else if (item.type === "message" && item.content) {
+          // Responses API message block
+          const textContent = Array.isArray(item.content)
+            ? item.content.filter((c: any) => c.type === "output_text" || c.type === "input_text").map((c: any) => c.text).join("")
+            : String(item.content);
+          messages.push({ role: item.role || "user", content: textContent });
+        }
+      }
+    }
+
+    // Build Chat Completions request body
+    const chatBody: any = {
+      model: requestBody.model,
+      messages,
+      stream: requestBody.stream ?? false,
+    };
+    if (requestBody.temperature !== undefined) chatBody.temperature = requestBody.temperature;
+    if (requestBody.max_output_tokens !== undefined) chatBody.max_tokens = requestBody.max_output_tokens;
+    if (requestBody.max_tokens !== undefined) chatBody.max_tokens = requestBody.max_tokens;
+    if (requestBody.top_p !== undefined) chatBody.top_p = requestBody.top_p;
+    if (requestBody.tools) chatBody.tools = requestBody.tools;
+    if (requestBody.stop) chatBody.stop = requestBody.stop;
+
+    requestBody = chatBody;
+    // Re-encode body bytes with converted format
+    const convertedBodyStr = JSON.stringify(chatBody);
+    requestBodyBytes = new TextEncoder().encode(convertedBodyStr);
+
+    // Change forward path to chat/completions
+    forwardPath = path.replace("/v1/responses", "/v1/chat/completions");
+  }
+
   // ─── 7b. Content-based IDE fallback detection ──────────────────────────
   // When User-Agent is generic (e.g. "node"), try to identify the IDE from
   // the request body content (system prompt, tool names, transcript).
@@ -904,7 +954,7 @@ proxy.all("/*", async (c) => {
       }
 
       const upstreamBase = providerRow.endpoint.replace(/\/$/, "");
-      let upstreamPath = path;
+      let upstreamPath = forwardPath; // use forwardPath (may be converted from /v1/responses)
       if (upstreamBase.endsWith("/v1") && upstreamPath.startsWith("/v1/")) {
         upstreamPath = upstreamPath.slice(3);
       } else if (upstreamBase.endsWith("/v1") && upstreamPath === "/v1") {
@@ -1086,7 +1136,7 @@ const targetProvider = await getProviderForModel(model);
       return c.json({ error: { message: `No active upstream provider`, type: "server_error" } }, 500);
     }
     const upstreamBase2 = targetProvider2.endpoint.replace(/\/$/, "");
-    let upstreamPath2 = path;
+    let upstreamPath2 = forwardPath; // use forwardPath (may be converted from /v1/responses)
     if (upstreamBase2.endsWith("/v1") && upstreamPath2.startsWith("/v1/")) upstreamPath2 = upstreamPath2.slice(3);
     const upstreamUrl2 = `${upstreamBase2}${upstreamPath2}`;
     const upstreamHeaders2: Record<string, string> = {};
@@ -1295,7 +1345,7 @@ const targetProvider = await getProviderForModel(model);
 
 
   const upstreamBase = targetProvider.endpoint.replace(/\/$/, "");
-  let upstreamPath = path;
+  let upstreamPath = forwardPath; // use forwardPath (may be converted from /v1/responses)
   // Avoid /v1 duplication if upstream endpoint already ends with /v1
   if (upstreamBase.endsWith("/v1") && upstreamPath.startsWith("/v1/")) {
     upstreamPath = upstreamPath.slice(3);
@@ -1495,6 +1545,9 @@ const targetProvider = await getProviderForModel(model);
       const decoder = new TextDecoder();
       const anthropicStreamState = isAnthropicProvider ? createStreamState(model) : null;
       let anthropicBuffer = "";
+      let responsesBuffer = ""; // for Responses API SSE conversion
+      let responsesResponseId = `resp-${Date.now()}`;
+      let responsesSentCreated = false;
 
       const { readable, writable } = new TransformStream({
         transform(chunk, controller) {
@@ -1520,6 +1573,47 @@ const targetProvider = await getProviderForModel(model);
                   } catch {}
                 }
               }
+            }
+          } else if (isResponsesApi) {
+            // Responses API streaming: convert Chat Completions SSE to Responses API SSE
+            responsesBuffer += decoder.decode(chunk, { stream: true });
+            const lines = responsesBuffer.split("\n");
+            responsesBuffer = lines.pop() || "";
+
+            for (const line of lines) {
+              if (!line.startsWith("data: ") || line === "data: [DONE]") {
+                if (line === "data: [DONE]") {
+                  // Send response.completed event
+                  const completedEvent = `event: response.completed\ndata: ${JSON.stringify({ type: "response.completed", response: { id: responsesResponseId, object: "response", status: "completed" } })}\n\n`;
+                  controller.enqueue(new TextEncoder().encode(completedEvent));
+                }
+                continue;
+              }
+
+              const payloadText = line.slice(6).trim();
+              if (!payloadText) continue;
+
+              try {
+                const data = JSON.parse(payloadText);
+                appendToolsFromPayload(data);
+                if (detectToolCallsInResponse(data)) hasActualToolCalls = true;
+                consumeStreamPayload(acc, data);
+
+                // Send response.created on first chunk
+                if (!responsesSentCreated) {
+                  responsesSentCreated = true;
+                  responsesResponseId = data.id?.replace("chatcmpl", "resp") || responsesResponseId;
+                  const createdEvent = `event: response.created\ndata: ${JSON.stringify({ type: "response.created", response: { id: responsesResponseId, object: "response", status: "in_progress" } })}\n\n`;
+                  controller.enqueue(new TextEncoder().encode(createdEvent));
+                }
+
+                // Convert delta to Responses API format
+                const delta = data.choices?.[0]?.delta;
+                if (delta?.content) {
+                  const deltaEvent = `event: response.output_text.delta\ndata: ${JSON.stringify({ type: "response.output_text.delta", item_id: `msg-${Date.now()}`, output_index: 0, content_index: 0, delta: delta.content })}\n\n`;
+                  controller.enqueue(new TextEncoder().encode(deltaEvent));
+                }
+              } catch {}
             }
           } else {
             // OpenAI streaming: pass through as-is
@@ -1619,6 +1713,57 @@ const targetProvider = await getProviderForModel(model);
         responseBody = JSON.stringify(openaiResponse);
       } catch (convErr) {
         console.error("[anthropic-adapter] Failed to convert response:", convErr);
+      }
+    }
+
+    // Convert Chat Completions response to Responses API format if needed
+    if (isResponsesApi && statusCode >= 200 && statusCode < 300) {
+      try {
+        const chatParsed = JSON.parse(responseBody);
+        const responsesOutput: any[] = [];
+
+        if (chatParsed.choices && chatParsed.choices.length > 0) {
+          const choice = chatParsed.choices[0];
+          const contentBlocks: any[] = [];
+
+          if (choice.message?.content) {
+            contentBlocks.push({
+              type: "output_text",
+              text: choice.message.content,
+            });
+          }
+
+          if (choice.message?.tool_calls) {
+            for (const tc of choice.message.tool_calls) {
+              contentBlocks.push({
+                type: "tool_call",
+                id: tc.id,
+                name: tc.function?.name,
+                arguments: tc.function?.arguments,
+              });
+            }
+          }
+
+          responsesOutput.push({
+            type: "message",
+            role: "assistant",
+            content: contentBlocks,
+            status: choice.finish_reason === "stop" ? "completed" : "incomplete",
+          });
+        }
+
+        const responsesBody = {
+          id: chatParsed.id?.replace("chatcmpl", "resp") || `resp-${Date.now()}`,
+          object: "response",
+          created: chatParsed.created || Math.floor(Date.now() / 1000),
+          model: chatParsed.model || model,
+          output: responsesOutput,
+          usage: chatParsed.usage || null,
+          status: "completed",
+        };
+        responseBody = JSON.stringify(responsesBody);
+      } catch (convErr) {
+        console.error("[responses-adapter] Failed to convert response:", convErr);
       }
     }
 

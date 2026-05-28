@@ -244,6 +244,15 @@ export async function getModelCatalogResponse() {
   // Deduplicate by model id for public listing (first occurrence wins for display)
   const seen = new Set<string>();
   const publicModels: Omit<ModelRecord, "provider_id">[] = [];
+
+  // Add virtual "auto" model (proxy-level auto-selection)
+  publicModels.push({
+    id: "auto",
+    object: "model",
+    created: Math.floor(Date.now() / 1000),
+    owned_by: "proxy",
+  });
+
   for (const m of cache.models) {
     if (seen.has(m.id)) continue;
     seen.add(m.id);
