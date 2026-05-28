@@ -4,9 +4,9 @@ import { sql } from "drizzle-orm";
 export const COUNTED_LOG_SQL = sql`is_counted_request IS NOT 0 AND status_code BETWEEN 200 AND 299`;
 
 /** Rows that count toward token billing (prompts + tool followups). */
-export const BILLABLE_LOG_SQL = sql`is_billable_token IS NOT 0 AND status_code BETWEEN 200 AND 299`;
+export const BILLABLE_LOG_SQL = sql`status_code BETWEEN 200 AND 299`;
 
-export const VALID_LOG_SQL = sql`(is_counted_request IS NOT 0 OR is_billable_token IS NOT 0) AND status_code BETWEEN 200 AND 299`;
+export const VALID_LOG_SQL = sql`status_code BETWEEN 200 AND 299`;
 
 /** WIB midnight as SQLite datetime string (UTC storage). */
 export function wibTodayStartSql(): string {

@@ -1,4 +1,4 @@
-﻿import { Hono } from "hono";
+import { Hono } from "hono";
 import { db } from "../../db/index.js";
 import { apiKeys, requestLogs, devices, allowedDevices, allowedIdes, chatSessions, adminConfig, modelLimits } from "../../db/schema.js";
 import { eq, sql, and, desc } from "drizzle-orm";
@@ -40,13 +40,13 @@ keys.get("/keys", async (c) => {
       .from(requestLogs).where(and(
         eq(requestLogs.apiKeyId, key.id), 
         sql`created_at >= ${todayUtcStr}`,
-        COUNTED_LOG_SQL,
+        VALID_LOG_SQL,
       )).get();
     const deviceCount = await db.select({ count: sql<number>`count(*)` }).from(devices).where(eq(devices.apiKeyId, key.id)).get();
     const totalStats = await db.select({ count: sql<number>`count(*)`, tokens: sql<number>`COALESCE(SUM(total_tokens), 0)` })
       .from(requestLogs).where(and(
         eq(requestLogs.apiKeyId, key.id),
-        sql`is_counted_request IS NOT 0`
+        VALID_LOG_SQL
       )).get();
 
     result.push({
@@ -104,17 +104,17 @@ keys.get("/keys/:id", async (c) => {
       ? and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${since}`, VALID_LOG_SQL)
       : and(eq(requestLogs.apiKeyId, key.id), VALID_LOG_SQL);
     const s = await db.select({
-      count:           sql<number>`SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN 1 ELSE 0 END)`,
-      tokens:          sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN total_tokens ELSE 0 END), 0)`,
-      promptTokens:    sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN prompt_tokens ELSE 0 END), 0)`,
-      completionTokens:sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN completion_tokens ELSE 0 END), 0)`,
+      count:           sql<number>`count(*)`,
+      tokens:          sql<number>`COALESCE(SUM(total_tokens), 0)`,
+      promptTokens:    sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
+      completionTokens:sql<number>`COALESCE(SUM(completion_tokens), 0)`,
       contextTokens:   sql<number>`0`,
-      estimatedCost:   sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN estimated_cost ELSE 0 END), 0)`,
+      estimatedCost:   sql<number>`COALESCE(SUM(estimated_cost), 0)`,
     }).from(requestLogs).where(where).get();
     const breakdown = await db.select({
       model: requestLogs.model,
-      promptTokens:    sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN prompt_tokens ELSE 0 END), 0)`,
-      completionTokens:sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN completion_tokens ELSE 0 END), 0)`,
+      promptTokens:    sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
+      completionTokens:sql<number>`COALESCE(SUM(completion_tokens), 0)`,
     }).from(requestLogs).where(where).groupBy(requestLogs.model).all();
     const costs = calculateBreakdownCosts(breakdown);
     return {
@@ -145,13 +145,13 @@ keys.get("/keys/:id", async (c) => {
 
   const topModelsByTokens = await db.select({
     model: requestLogs.model,
-    requests: sql<number>`SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN 1 ELSE 0 END)`,
-    tokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN total_tokens ELSE 0 END), 0)`,
-    estimatedCost: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN estimated_cost ELSE 0 END), 0)`,
+    requests: sql<number>`count(*)`,
+    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
+    estimatedCost: sql<number>`COALESCE(SUM(estimated_cost), 0)`,
   }).from(requestLogs)
     .where(and(eq(requestLogs.apiKeyId, key.id), VALID_LOG_SQL))
     .groupBy(requestLogs.model)
-    .orderBy(sql`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN total_tokens ELSE 0 END), 0) DESC`)
+    .orderBy(sql`COALESCE(SUM(total_tokens), 0) DESC`)
     .limit(10)
     .all();
 
@@ -161,15 +161,15 @@ keys.get("/keys/:id", async (c) => {
     ideDetected: sql<string>`MAX(ide_detected)`,
     osDetected: sql<string>`MAX(os_detected)`,
     clientName: sql<string>`MAX(client_name)`,
-    requests: sql<number>`SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN 1 ELSE 0 END)`,
+    requests: sql<number>`count(*)`,
     sessions: sql<number>`COUNT(DISTINCT session_id)`,
-    tokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN total_tokens ELSE 0 END), 0)`,
-    estimatedCost: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN estimated_cost ELSE 0 END), 0)`,
+    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
+    estimatedCost: sql<number>`COALESCE(SUM(estimated_cost), 0)`,
     lastSeen: sql<string>`MAX(created_at)`,
   }).from(requestLogs)
     .where(and(eq(requestLogs.apiKeyId, key.id), VALID_LOG_SQL))
     .groupBy(requestLogs.deviceFingerprint)
-    .orderBy(sql`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN total_tokens ELSE 0 END), 0) DESC`)
+    .orderBy(sql`COALESCE(SUM(total_tokens), 0) DESC`)
     .limit(20)
     .all();
 

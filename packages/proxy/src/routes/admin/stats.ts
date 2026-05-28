@@ -1,4 +1,4 @@
-﻿import { Hono } from "hono";
+import { Hono } from "hono";
 import { db } from "../../db/index.js";
 import { requestLogs, apiKeys, devices, chatSessions } from "../../db/schema.js";
 import { eq, sql, and } from "drizzle-orm";
@@ -53,15 +53,15 @@ stats.get("/stats/overview", async (c) => {
 
   // Today
   const todayStats = await db.select({
-    requests: sql<number>`SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN 1 ELSE 0 END)`,
-    tokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN total_tokens ELSE 0 END), 0)`,
-    promptTokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN prompt_tokens ELSE 0 END), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN completion_tokens ELSE 0 END), 0)`,
+    requests: sql<number>`count(*)`,
+    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
+    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
+    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
     contextTokens: sql<number>`0`,
     uniqueDevices: sql<number>`COUNT(DISTINCT device_fingerprint)`
   })
   .from(requestLogs)
-  .where(and(sql`created_at >= ${todayStr}`, sql`is_counted_request IS NOT 0`))
+  .where(and(sql`created_at >= ${todayStr}`, VALID_LOG_SQL))
   .get();
 
   const todayBreakdown = await db.select({
@@ -70,21 +70,21 @@ stats.get("/stats/overview", async (c) => {
     completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`
   })
   .from(requestLogs)
-  .where(and(sql`created_at >= ${todayStr}`, sql`is_counted_request IS NOT 0`))
+  .where(and(sql`created_at >= ${todayStr}`, VALID_LOG_SQL))
   .groupBy(requestLogs.model)
   .all();
   const todayCosts = calculateBreakdownCosts(todayBreakdown);
 
   // Week
   const weekStats = await db.select({
-    requests: sql<number>`SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN 1 ELSE 0 END)`,
-    tokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN total_tokens ELSE 0 END), 0)`,
-    promptTokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN prompt_tokens ELSE 0 END), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN completion_tokens ELSE 0 END), 0)`,
+    requests: sql<number>`count(*)`,
+    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
+    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
+    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
     contextTokens: sql<number>`0`
   })
   .from(requestLogs)
-  .where(and(sql`created_at >= ${weekStr}`, sql`is_counted_request IS NOT 0`))
+  .where(and(sql`created_at >= ${weekStr}`, VALID_LOG_SQL))
   .get();
 
   const weekBreakdown = await db.select({
@@ -93,21 +93,21 @@ stats.get("/stats/overview", async (c) => {
     completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`
   })
   .from(requestLogs)
-  .where(and(sql`created_at >= ${weekStr}`, sql`is_counted_request IS NOT 0`))
+  .where(and(sql`created_at >= ${weekStr}`, VALID_LOG_SQL))
   .groupBy(requestLogs.model)
   .all();
   const weekCosts = calculateBreakdownCosts(weekBreakdown);
 
   // Month
   const monthStats = await db.select({
-    requests: sql<number>`SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN 1 ELSE 0 END)`,
-    tokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN total_tokens ELSE 0 END), 0)`,
-    promptTokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN prompt_tokens ELSE 0 END), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN completion_tokens ELSE 0 END), 0)`,
+    requests: sql<number>`count(*)`,
+    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
+    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
+    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
     contextTokens: sql<number>`0`
   })
   .from(requestLogs)
-  .where(and(sql`created_at >= ${monthStr}`, sql`is_counted_request IS NOT 0`))
+  .where(and(sql`created_at >= ${monthStr}`, VALID_LOG_SQL))
   .get();
 
   const monthBreakdown = await db.select({
@@ -116,21 +116,21 @@ stats.get("/stats/overview", async (c) => {
     completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`
   })
   .from(requestLogs)
-  .where(and(sql`created_at >= ${monthStr}`, sql`is_counted_request IS NOT 0`))
+  .where(and(sql`created_at >= ${monthStr}`, VALID_LOG_SQL))
   .groupBy(requestLogs.model)
   .all();
   const monthCosts = calculateBreakdownCosts(monthBreakdown);
 
   // All Time
   const allTimeStats = await db.select({
-    requests: sql<number>`SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN 1 ELSE 0 END)`,
-    tokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN total_tokens ELSE 0 END), 0)`,
-    promptTokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN prompt_tokens ELSE 0 END), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN completion_tokens ELSE 0 END), 0)`,
+    requests: sql<number>`count(*)`,
+    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
+    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
+    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
     contextTokens: sql<number>`0`
   })
   .from(requestLogs)
-  .where(sql`is_counted_request IS NOT 0`)
+  .where(VALID_LOG_SQL)
   .get();
 
   const allTimeBreakdown = await db.select({
@@ -139,7 +139,7 @@ stats.get("/stats/overview", async (c) => {
     completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`
   })
   .from(requestLogs)
-  .where(sql`is_counted_request IS NOT 0`)
+  .where(VALID_LOG_SQL)
   .groupBy(requestLogs.model)
   .all();
   const allTimeCosts = calculateBreakdownCosts(allTimeBreakdown);
@@ -211,8 +211,8 @@ stats.get("/stats/by-key", async (c) => {
   const result = [];
   for (const key of allKeys) {
     const whereClause = startDate
-      ? and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${startDate}`, sql`is_counted_request IS NOT 0`)
-      : and(eq(requestLogs.apiKeyId, key.id), sql`is_counted_request IS NOT 0`);
+      ? and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${startDate}`, VALID_LOG_SQL)
+      : and(eq(requestLogs.apiKeyId, key.id), VALID_LOG_SQL);
 
     const keyStats = await db.select({
       requests: sql<number>`count(*)`,
@@ -344,10 +344,10 @@ stats.get("/stats/top-users", async (c) => {
   // Aggregate per api_key_id
   const aggRows = await db.select({
     apiKeyId: requestLogs.apiKeyId,
-    requests: sql<number>`SUM(CASE WHEN ${COUNTED_LOG_SQL} THEN 1 ELSE 0 END)`,
-    tokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN total_tokens ELSE 0 END), 0)`,
-    promptTokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN prompt_tokens ELSE 0 END), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(CASE WHEN ${BILLABLE_LOG_SQL} THEN completion_tokens ELSE 0 END), 0)`,
+    requests: sql<number>`count(*)`,
+    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
+    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
+    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
   })
   .from(requestLogs)
   .where(whereClause)

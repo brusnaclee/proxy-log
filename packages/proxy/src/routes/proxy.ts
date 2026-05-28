@@ -1114,12 +1114,10 @@ const targetProvider = await getProviderForModel(model);
   const persistLogAndSession = async (logEntry: Record<string, any>, hasActualToolCalls: boolean, shouldCountRequest: boolean = true) => {
     const counted = isNewPrompt && shouldCountRequest;
     
-    // Calculate billable flat. Billable if it's counting a new prompt, or it's a tool-follow up, or has tool calls inside it.
+    // Calculate billable flat. Every successful request to upstream uses tokens.
     let isBillableToken = false;
     if (shouldCountRequest) {
-      if (counted) isBillableToken = true;
-      else if (messageAnalysis.turnKind === "tool_followup" || messageAnalysis.messageRole === "tool") isBillableToken = true;
-      else if (hasActualToolCalls || logEntry.hasToolCalls) isBillableToken = true;
+      isBillableToken = true;
     }
 
     enqueueLogWrite(async (tx) => {
@@ -1284,11 +1282,10 @@ const targetProvider = await getProviderForModel(model);
         },
         flush() {
           const finalized = finalizeCompletion(acc);
-          const rawCompletionTokens = finalizeCountedCompletion(
-            finalized.completionText,
-            finalized.completionTokens,
-            hasActualToolCalls,
-          );
+            // Inlined: finalizeCountedCompletion was never exported from token-extractor.ts
+            const rawCompletionTokens = finalized.completionTokens
+              ? finalized.completionTokens
+              : (finalized.completionText ? Math.max(estimateTokens(finalized.completionText), 1) : 0);
           const billableTokens = resolveBillableTokens(
             { promptTokens: finalized.promptTokens, completionTokens: rawCompletionTokens },
             sessionInfo.contextDeltaTokens,
@@ -1366,11 +1363,9 @@ const targetProvider = await getProviderForModel(model);
       consumeNonStreamingPayload(acc, parsed);
       const finalized = finalizeCompletion(acc);
       finalizedUsage = finalized;
-      completionTokens = finalizeCountedCompletion(
-        finalized.completionText,
-        finalized.completionTokens,
-        hasActualToolCalls,
-      );
+      completionTokens = finalized.completionTokens
+        ? finalized.completionTokens
+        : (finalized.completionText ? Math.max(estimateTokens(finalized.completionText), 1) : 0);
       responsePreview = finalized.completionText || null;
 
       if (!completionTokens && !responsePreview && responseBody.length > 200) {
