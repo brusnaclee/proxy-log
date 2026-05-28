@@ -1600,23 +1600,41 @@ function buildTokitoRows(
 
 function listModels(kind, upstreamProvider, modelVendor, sortMode) {
 	let items = [...runtime.modelEntries];
+
+	// Add auto model as a special entry at the beginning
+	const autoEntry = {
+		modelId: 'auto',
+		provider: 'proxy',
+		baseUrl: '',
+		apiKey: '',
+	};
+	items.unshift(autoEntry);
+
 	if (upstreamProvider !== 'all') {
-		items = items.filter((e) => e.provider === upstreamProvider);
+		items = items.filter((e) => e.provider === upstreamProvider || e.modelId === 'auto');
 	}
 	if (modelVendor !== 'all') {
-		items = items.filter((e) => providerOf(e.modelId) === modelVendor);
+		items = items.filter((e) => providerOf(e.modelId) === modelVendor || e.modelId === 'auto');
 	}
 
 	items.sort((a, b) => a.modelId.localeCompare(b.modelId));
+	// Keep auto at the top
+	items.sort((a, b) => (a.modelId === 'auto' ? -1 : b.modelId === 'auto' ? 1 : 0));
+
 	if (sortMode === 'status_online_first') {
 		items.sort(
-			(a, b) =>
-				Number(!runtime.latency.get(entryKey(a))?.ok) -
-				Number(!runtime.latency.get(entryKey(b))?.ok),
+			(a, b) => {
+				if (a.modelId === 'auto') return -1;
+				if (b.modelId === 'auto') return 1;
+				return Number(!runtime.latency.get(entryKey(a))?.ok) -
+					Number(!runtime.latency.get(entryKey(b))?.ok);
+			},
 		);
 	}
 	if (sortMode === 'latency_fastest' || sortMode === 'latency_slowest') {
 		items.sort((a, b) => {
+			if (a.modelId === 'auto') return -1;
+			if (b.modelId === 'auto') return 1;
 			const am = runtime.latency.get(entryKey(a))?.ms ?? Number.MAX_SAFE_INTEGER;
 			const bm = runtime.latency.get(entryKey(b))?.ms ?? Number.MAX_SAFE_INTEGER;
 			return sortMode === 'latency_fastest' ? am - bm : bm - am;
@@ -1636,6 +1654,11 @@ function buildTokitoEmbed(kind, session) {
 		(page + 1) * TOKITO_PAGE_SIZE,
 	);
 	const lines = slice.map((entry) => {
+		// Auto model: show special description
+		if (entry.modelId === 'auto') {
+			return `🤖 \`auto\` | **Auto-select**: picks fastest online model automatically | Use \`model: auto\` in your request`;
+		}
+
 		const key = entryKey(entry);
 		const vendor = providerOf(entry.modelId);
 		const lt = runtime.latency.get(key);
@@ -1665,6 +1688,8 @@ function buildTokitoEmbed(kind, session) {
 		timeout = 0,
 		untested = 0;
 	for (const entry of runtime.modelEntries) {
+		// Skip auto model in counts
+		if (entry.modelId === 'auto') continue;
 		const key = entryKey(entry);
 		const lt = runtime.latency.get(key);
 		if (!lt) {

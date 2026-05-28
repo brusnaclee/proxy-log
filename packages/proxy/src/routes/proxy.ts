@@ -932,7 +932,7 @@ proxy.all("/*", async (c) => {
     const tried: string[] = [];
 
     // Build blocked headers set once
-    const blockedHeaders = new Set(["host", "content-length", "authorization", "cookie", "connection", "keep-alive", "transfer-encoding", "upgrade"]);
+    const blockedHeaders = new Set(["host", "content-length", "content-encoding", "authorization", "cookie", "connection", "keep-alive", "transfer-encoding", "upgrade"]);
     const baseHeaders: Record<string, string> = {};
     for (const [k, v] of c.req.raw.headers.entries()) {
       if (!blockedHeaders.has(k.toLowerCase())) baseHeaders[k] = v;
@@ -1036,6 +1036,35 @@ proxy.all("/*", async (c) => {
           };
           if (tried.length > 0) responseHeaders["x-auto-model-tried"] = tried.join(", ");
 
+          // Log the auto model streaming request
+          const latencyMs = Date.now() - startTime;
+          enqueueLogWrite(async (tx) => {
+            await tx.insert(requestLogs).values({
+              apiKeyId: keyRecord.id,
+              apiKeyName: keyRecord.name,
+              userAgentRaw: userAgent || null,
+              osDetected,
+              clientName: clientName || ide,
+              ipAddress: clientIp,
+              deviceFingerprint: fingerprint,
+              ideDetected: ide,
+              provider: candidate.provider,
+              endpointPath: path,
+              model: `auto (${candidate.modelId}) [stream]`,
+              latencyMs,
+              statusCode: streamResponse.status,
+              requestPreview: requestPreview || null,
+              isCountedRequest: 1,
+              isBillableToken: 0,
+            }).run();
+            logEmitter.emit({
+              model: `auto (${candidate.modelId}) [stream]`,
+              provider: candidate.provider,
+              statusCode: streamResponse.status,
+              latencyMs,
+            });
+          });
+
           return new Response(streamResponse.body, { status: streamResponse.status, headers: responseHeaders });
         }
 
@@ -1052,6 +1081,42 @@ proxy.all("/*", async (c) => {
           "x-model-used": actualModel,
         };
         if (tried.length > 0) responseHeaders["x-auto-model-tried"] = tried.join(", ");
+
+        // Log the auto model request
+        const latencyMs = Date.now() - startTime;
+        const completionTokens = responseJson?.usage?.completion_tokens || estimateTokens(trialText);
+        const promptTokens = responseJson?.usage?.prompt_tokens || 0;
+        enqueueLogWrite(async (tx) => {
+          await tx.insert(requestLogs).values({
+            apiKeyId: keyRecord.id,
+            apiKeyName: keyRecord.name,
+            userAgentRaw: userAgent || null,
+            osDetected,
+            clientName: clientName || ide,
+            ipAddress: clientIp,
+            deviceFingerprint: fingerprint,
+            ideDetected: ide,
+            provider: candidate.provider,
+            endpointPath: path,
+            model: `auto (${candidate.modelId})`,
+            promptTokens,
+            completionTokens,
+            totalTokens: promptTokens + completionTokens,
+            latencyMs,
+            statusCode: 200,
+            estimatedCost: calculateEstimatedCost(candidate.modelId, promptTokens, completionTokens),
+            requestPreview: requestPreview || null,
+            responsePreview: responseJson?.choices?.[0]?.message?.content?.substring(0, 200) || null,
+            isCountedRequest: 1,
+            isBillableToken: 1,
+          }).run();
+          logEmitter.emit({
+            model: `auto (${candidate.modelId})`,
+            provider: candidate.provider,
+            statusCode: 200,
+            latencyMs,
+          });
+        });
 
         return new Response(finalBody, { status: 200, headers: responseHeaders });
       } catch (err: any) {
@@ -1140,7 +1205,7 @@ const targetProvider = await getProviderForModel(model);
     if (upstreamBase2.endsWith("/v1") && upstreamPath2.startsWith("/v1/")) upstreamPath2 = upstreamPath2.slice(3);
     const upstreamUrl2 = `${upstreamBase2}${upstreamPath2}`;
     const upstreamHeaders2: Record<string, string> = {};
-    const blocked2 = new Set(["host","content-length","authorization","cookie","connection","keep-alive","transfer-encoding","upgrade"]);
+    const blocked2 = new Set(["host","content-length","content-encoding","authorization","cookie","connection","keep-alive","transfer-encoding","upgrade"]);
     for (const [k, v] of c.req.raw.headers.entries()) { if (!blocked2.has(k.toLowerCase())) upstreamHeaders2[k] = v; }
     upstreamHeaders2["x-forwarded-for"] = clientIp;
     if (contentType) upstreamHeaders2["Content-Type"] = contentType;
@@ -1450,6 +1515,7 @@ const targetProvider = await getProviderForModel(model);
   const blockedHeaders = new Set([
     "host",
     "content-length",
+    "content-encoding",
     "authorization",
     "cookie",
     "connection",
