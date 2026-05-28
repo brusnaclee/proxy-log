@@ -5,7 +5,9 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { serve } from "@hono/node-server";
-import { initializeDatabase } from "./db/index.js";
+import { initializeDatabase, db } from "./db/index.js";
+import { sql } from "drizzle-orm";
+import { requestLogs, chatSessions } from "./db/schema.js";
 import { authMiddleware } from "./middleware/session.js";
 import proxyRoutes from "./routes/proxy.js";
 import authRoutes from "./routes/admin/auth.js";
@@ -102,28 +104,65 @@ async function main() {
   // from rows older than 24 hours while preserving all metadata (tokens, cost, status)
   setInterval(async () => {
     try {
-      await fetch(`http://localhost:${PORT}/admin/logs/cleanup-transcripts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" }
-      });
-      console.log("[proxy] Automatic cleanup completed.");
+      const res = await db.update(requestLogs)
+        .set({
+          transcriptSnapshot: "",
+          requestPreview: "",
+          responsePreview: "",
+          errorMessage: ""
+        })
+        .where(sql`
+          created_at < datetime('now', '-1 day')
+          AND (
+            transcript_snapshot != ''
+            OR request_preview != ''
+            OR response_preview != ''
+            OR error_message IS NOT NULL AND error_message != ''
+          )
+        `)
+        .run();
+
+      await db.update(chatSessions)
+        .set({ lastRequestPreview: "" })
+        .where(sql`last_seen_at < datetime('now', '-1 day') AND last_request_preview != ''`)
+        .run();
+
+      console.log(`[proxy] Automatic cleanup completed. Cleared ${res.rowsAffected} rows.`);
     } catch (err) {
       console.error("[proxy] Automatic cleanup failed:", err);
     }
   }, 2 * 60 * 60 * 1000); // 2 hours
 
-  // Delete data older than 3 months monthly (runs in background)
+  // Check daily and delete data older than 3 months on the 1st of each month
+  // Using daily check to avoid setInterval overflow (>24.8 days)
+  let lastCleanupMonth = -1;
   setInterval(async () => {
     try {
-      await fetch(`http://localhost:${PORT}/admin/logs/older-than-3months`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" }
-      });
-      console.log("[proxy] Monthly 3-month cleanup completed.");
+      const now = new Date();
+      // Only run on the 1st day of month, and only once per month
+      if (now.getDate() === 1 && lastCleanupMonth !== now.getMonth()) {
+        lastCleanupMonth = now.getMonth();
+
+        const cutoff = new Date();
+        cutoff.setMonth(cutoff.getMonth() - 3);
+        const cutoffStr = cutoff.toISOString().replace("T", " ").substring(0, 19);
+
+        const deletedLogs = await db.delete(requestLogs)
+          .where(sql`created_at < ${cutoffStr}`)
+          .run();
+
+        const deletedSessions = await db.delete(chatSessions)
+          .where(sql`last_seen_at < ${cutoffStr}`)
+          .run();
+
+        await db.run(sql`VACUUM`);
+
+        console.log(`[proxy] Monthly 3-month cleanup completed. Deleted ${deletedLogs.rowsAffected} logs, ${deletedSessions.rowsAffected} sessions.`);
+      }
     } catch (err) {
       console.error("[proxy] 3-month cleanup failed:", err);
     }
-  }, 30 * 24 * 60 * 60 * 1000); // 30 days
+  }, 24 * 60 * 60 * 1000); // Check daily (24 hours)
 
   serve({
     fetch: app.fetch,
