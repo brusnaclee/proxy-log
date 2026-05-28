@@ -18,6 +18,8 @@ module.exports = {
 			max_memory_restart: '500M',
 			env: {
 				NODE_ENV: 'production',
+				INTERNAL_API_SECRET: 'change-me-in-production',
+				PROXY_INTERNAL_BASE_URL: 'http://localhost:3000',
 			},
 			error_file: './logs/err.log',
 			out_file: './logs/out.log',
