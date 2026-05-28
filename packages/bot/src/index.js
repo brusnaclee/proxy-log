@@ -1134,7 +1134,7 @@ function buildPanelEmbed() {
 			},
 		)
 		.setFooter({
-			text: `Groupy API: ${runtime.lastWorkingBaseUrl || TOKITO_BASE_URL}`,
+			text: `Groupy API: ${PROXY_PUBLIC_BASE_URL}`,
 		});
 }
 
