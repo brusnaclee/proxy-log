@@ -4,6 +4,7 @@ import { providers } from "../../db/schema.js";
 import { eq, desc } from "drizzle-orm";
 import { refreshModelCatalog } from "../../utils/model-catalog.js";
 import { sanitizeProviderApiKey } from "../../utils/crypto.js";
+import { purgeMonitorForProvider } from "../../utils/model-monitor-store.js";
 
 const providersApi = new Hono();
 
@@ -32,6 +33,9 @@ providersApi.post("/providers", async (c) => {
 
 providersApi.put("/providers/:id", async (c) => {
   const id = parseInt(c.req.param("id"));
+  const existing = await db.select().from(providers).where(eq(providers.id, id)).get();
+  if (!existing) return c.json({ error: "Provider not found" }, 404);
+
   const body = await c.req.json<{ name?: string; endpoint?: string; apiKey?: string; isActive?: boolean; priority?: number }>();
   const updates: any = {};
   if (body.name !== undefined) updates.name = body.name;
@@ -40,8 +44,12 @@ providersApi.put("/providers/:id", async (c) => {
   if (body.isActive !== undefined) updates.isActive = body.isActive;
   if (body.priority !== undefined) updates.priority = body.priority;
   updates.updatedAt = new Date().toISOString().replace("T", " ").substring(0, 19);
-  
+
   await db.update(providers).set(updates).where(eq(providers.id, id)).run();
+
+  if (body.isActive === false) {
+    await purgeMonitorForProvider(existing.name);
+  }
 
   void refreshModelCatalog();
 
@@ -50,6 +58,10 @@ providersApi.put("/providers/:id", async (c) => {
 
 providersApi.delete("/providers/:id", async (c) => {
   const id = parseInt(c.req.param("id"));
+  const existing = await db.select().from(providers).where(eq(providers.id, id)).get();
+  if (existing) {
+    await purgeMonitorForProvider(existing.name);
+  }
   await db.delete(providers).where(eq(providers.id, id)).run();
 
   void refreshModelCatalog();

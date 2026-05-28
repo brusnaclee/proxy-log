@@ -1,9 +1,15 @@
 import { Hono } from "hono";
 import { db } from "../../db/index.js";
 import { modelMonitor } from "../../db/schema.js";
-import { eq, sql, desc, max } from "drizzle-orm";
+import { eq, sql, desc } from "drizzle-orm";
 import { isInternalRequest, isAuthenticated } from "../../middleware/session.js";
 import { adminConfig } from "../../db/schema.js";
+import {
+  getActiveProviderNames,
+  monitorStaleCutoffIso,
+  replaceModelMonitorSnapshot,
+  type MonitorSnapshotRow,
+} from "../../utils/model-monitor-store.js";
 
 const monitor = new Hono();
 
@@ -31,8 +37,8 @@ monitor.post("/internal/monitor/models", async (c) => {
   if (!Array.isArray(body)) return c.json({ error: "Expected array of monitor data" }, 400);
 
   const now = new Date().toISOString().replace("T", " ").substring(0, 19);
-  
-  const values = body.map(item => ({
+
+  const values: MonitorSnapshotRow[] = body.map((item) => ({
     modelId: String(item.modelId),
     provider: item.provider ? String(item.provider) : null,
     isOnline: Boolean(item.isOnline),
@@ -43,12 +49,9 @@ monitor.post("/internal/monitor/models", async (c) => {
     checkedAt: now,
   }));
 
-  if (values.length > 0) {
-    // Sqlite max vars limit is usually 999 or 32766, chunking if huge might be needed, but usually we send <100 models
-    await db.insert(modelMonitor).values(values).run();
-  }
+  const count = await replaceModelMonitorSnapshot(values);
 
-  return c.json({ success: true, count: values.length });
+  return c.json({ success: true, count });
 });
 
 // GET latest status per model
@@ -100,8 +103,9 @@ monitor.post("/settings/bot", async (c) => {
 });
 
 monitor.get("/monitor/models", async (c) => {
-  // Query to get the latest entry for each model
-  // SQLite doesn't have DISTINCT ON, so we use a subquery to get max checked_at per model
+  const activeNames = await getActiveProviderNames();
+  const staleCutoff = monitorStaleCutoffIso();
+
   const latestSubquery = db
     .select({
       modelId: modelMonitor.modelId,
@@ -122,13 +126,15 @@ monitor.get("/monitor/models", async (c) => {
     .orderBy(modelMonitor.provider, modelMonitor.modelId)
     .all();
 
-  const data = rows.map(r => r.model_monitor);
+  const data = rows
+    .map((r) => r.model_monitor)
+    .filter((d) => d.provider && activeNames.has(d.provider) && d.checkedAt >= staleCutoff);
 
   const summary = {
     total: data.length,
-    online: data.filter(d => d.isOnline).length,
-    offline: data.filter(d => !d.isOnline && d.httpStatus !== 0).length,
-    timeout: data.filter(d => !d.isOnline && d.httpStatus === 0).length,
+    online: data.filter((d) => d.isOnline).length,
+    offline: data.filter((d) => !d.isOnline && d.httpStatus !== 0).length,
+    timeout: data.filter((d) => !d.isOnline && d.httpStatus === 0).length,
   };
 
   return c.json({ data, summary });
@@ -157,8 +163,8 @@ monitor.post("/monitor/models", async (c) => {
   if (!Array.isArray(body)) return c.json({ error: "Expected array of monitor data" }, 400);
 
   const now = new Date().toISOString().replace("T", " ").substring(0, 19);
-  
-  const values = body.map(item => ({
+
+  const values: MonitorSnapshotRow[] = body.map((item) => ({
     modelId: String(item.modelId),
     provider: item.provider ? String(item.provider) : null,
     isOnline: Boolean(item.isOnline),
@@ -169,12 +175,9 @@ monitor.post("/monitor/models", async (c) => {
     checkedAt: now,
   }));
 
-  if (values.length > 0) {
-    // Sqlite max vars limit is usually 999 or 32766, chunking if huge might be needed, but usually we send <100 models
-    await db.insert(modelMonitor).values(values).run();
-  }
+  const count = await replaceModelMonitorSnapshot(values);
 
-  return c.json({ success: true, count: values.length });
+  return c.json({ success: true, count });
 });
 
 // POST single update from bot

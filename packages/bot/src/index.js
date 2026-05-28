@@ -1018,6 +1018,15 @@ async function pollModelStatus() {
 
 	runtime.models = allModels;
 	runtime.lastStatusAt = now;
+
+	// Drop cached status/latency for providers no longer active
+	const validKeys = new Set(runtime.modelEntries.map(entryKey));
+	for (const key of runtime.status.keys()) {
+		if (!validKeys.has(key)) runtime.status.delete(key);
+	}
+	for (const key of runtime.latency.keys()) {
+		if (!validKeys.has(key)) runtime.latency.delete(key);
+	}
 }
 
 async function pushMetricsToProxy() {
@@ -1048,7 +1057,7 @@ async function pushMetricsToProxy() {
 }
 
 async function runLatencyTest() {
-	if (!runtime.models.length) await pollModelStatus();
+	await pollModelStatus();
 	if (!runtime.models.length) return;
 
 	const now = Date.now();
@@ -2927,6 +2936,7 @@ client.on('interactionCreate', async (interaction) => {
 			) {
 				const kind =
 					interaction.customId === PANEL_STATUS ? 'status' : 'latency';
+				await pollModelStatus();
 				const session = createTokitoSession(interaction.user.id, kind);
 				const { embed, components } = buildTokitoEmbed(kind, session);
 				await interaction.reply({
