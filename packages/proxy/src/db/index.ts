@@ -366,6 +366,12 @@ export async function initializeDatabase() {
   await client.execute("CREATE INDEX IF NOT EXISTS idx_sessions_last_seen_at ON chat_sessions(last_seen_at)");
   await client.execute("CREATE INDEX IF NOT EXISTS idx_sessions_context_fingerprint ON chat_sessions(context_fingerprint)");
 
+  // Composite indexes for rate limiting performance (speed up queries that run on every request)
+  await client.execute("CREATE INDEX IF NOT EXISTS idx_logs_key_created ON request_logs(api_key_id, created_at)");
+  await client.execute("CREATE INDEX IF NOT EXISTS idx_logs_key_created_counted ON request_logs(api_key_id, created_at, is_counted_request)");
+  await client.execute("CREATE INDEX IF NOT EXISTS idx_logs_key_created_model ON request_logs(api_key_id, created_at, model)");
+  await client.execute("CREATE INDEX IF NOT EXISTS idx_logs_key_created_status ON request_logs(api_key_id, created_at, status_code)");
+
   const envUpstreamEndpoint = (process.env.UPSTREAM_ENDPOINT || "").trim().replace(/\/$/, "");
   const envUpstreamApiKey = (process.env.UPSTREAM_API_KEY || "").trim();
 

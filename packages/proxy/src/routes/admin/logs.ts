@@ -248,16 +248,31 @@ logs.delete("/logs", async (c) => {
 });
 
 // Periodic cleanup endpoint
+// Clears heavy TEXT fields from rows older than 24 hours to save SQLite space
+// PRESERVES all metadata (tokens, cost, status, counts) for leaderboard, stats, rate limiting
 logs.post("/logs/cleanup-transcripts", async (c) => {
   try {
-    // Delete full transcripts & previews older than 24 hours to save SQLite space
-    // but KEEP the request log row to maintain token counts and latency statistics
+    // Tier 2: Clear heavy fields from rows older than 24 hours
+    // Keep all metadata: tokens, cost, status_code, is_counted_request, etc.
     const res = await db.update(requestLogs)
-      .set({ transcriptSnapshot: "", requestPreview: "", responsePreview: "" })
-      .where(sql`created_at < datetime('now', '-1 day') AND (transcript_snapshot != '' OR request_preview != '')`)
+      .set({
+        transcriptSnapshot: "",
+        requestPreview: "",
+        responsePreview: "",
+        errorMessage: ""
+      })
+      .where(sql`
+        created_at < datetime('now', '-1 day')
+        AND (
+          transcript_snapshot != ''
+          OR request_preview != ''
+          OR response_preview != ''
+          OR error_message IS NOT NULL AND error_message != ''
+        )
+      `)
       .run();
-      
-    // Optionally clean up session previews too
+
+    // Also clean session previews
     await db.update(chatSessions)
       .set({ lastRequestPreview: "" })
       .where(sql`last_seen_at < datetime('now', '-1 day') AND last_request_preview != ''`)
@@ -266,6 +281,36 @@ logs.post("/logs/cleanup-transcripts", async (c) => {
     return c.json({ success: true, clearedCount: res.rowsAffected });
   } catch (error: any) {
     return c.json({ error: "Failed to cleanup transcripts", details: error.message }, 500);
+  }
+});
+
+// Delete data older than 3 months (runs monthly via scheduler)
+logs.delete("/logs/older-than-3months", async (c) => {
+  try {
+    const cutoff = new Date();
+    cutoff.setMonth(cutoff.getMonth() - 3);
+    const cutoffStr = cutoff.toISOString().replace("T", " ").substring(0, 19);
+
+    // Delete request logs older than 3 months
+    const deletedLogs = await db.delete(requestLogs)
+      .where(sql`created_at < ${cutoffStr}`)
+      .run();
+
+    // Delete sessions older than 3 months
+    const deletedSessions = await db.delete(chatSessions)
+      .where(sql`last_seen_at < ${cutoffStr}`)
+      .run();
+
+    // Run VACUUM to reclaim disk space
+    await db.run(sql`VACUUM`);
+
+    return c.json({
+      success: true,
+      deletedLogs: deletedLogs.rowsAffected,
+      deletedSessions: deletedSessions.rowsAffected
+    });
+  } catch (error: any) {
+    return c.json({ error: "Failed to delete old data", details: error.message }, 500);
   }
 });
 

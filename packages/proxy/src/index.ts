@@ -97,18 +97,33 @@ async function main() {
   await initializeDatabase();
   await initializeModelCatalogScheduler();
 
-  // Clean old transcripts every 12 hours (runs in background)
+  // Clean heavy TEXT fields every 2 hours (runs in background)
+  // Clears transcript_snapshot, request_preview, response_preview, error_message
+  // from rows older than 24 hours while preserving all metadata (tokens, cost, status)
   setInterval(async () => {
     try {
       await fetch(`http://localhost:${PORT}/admin/logs/cleanup-transcripts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" }
       });
-      console.log("[proxy] Automatic transcript cleanup completed.");
+      console.log("[proxy] Automatic cleanup completed.");
     } catch (err) {
-      console.error("[proxy] Automatic transcript cleanup failed:", err);
+      console.error("[proxy] Automatic cleanup failed:", err);
     }
-  }, 12 * 60 * 60 * 1000);
+  }, 2 * 60 * 60 * 1000); // 2 hours
+
+  // Delete data older than 3 months monthly (runs in background)
+  setInterval(async () => {
+    try {
+      await fetch(`http://localhost:${PORT}/admin/logs/older-than-3months`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" }
+      });
+      console.log("[proxy] Monthly 3-month cleanup completed.");
+    } catch (err) {
+      console.error("[proxy] 3-month cleanup failed:", err);
+    }
+  }, 30 * 24 * 60 * 60 * 1000); // 30 days
 
   serve({
     fetch: app.fetch,
