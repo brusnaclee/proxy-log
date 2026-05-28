@@ -350,6 +350,7 @@ export async function initializeDatabase() {
   await ensureColumnExists("request_logs", "user_message_hash", "TEXT");
   await ensureColumnExists("request_logs", "actual_tool_calls_in_response", "INTEGER DEFAULT 0");
   await ensureColumnExists("request_logs", "is_counted_request", "INTEGER DEFAULT 1");
+  await ensureColumnExists("request_logs", "cached_tokens", "INTEGER DEFAULT 0");
 
   // Human-readable session name derived from first user message
   await ensureColumnExists("chat_sessions", "session_name", "TEXT DEFAULT ''");

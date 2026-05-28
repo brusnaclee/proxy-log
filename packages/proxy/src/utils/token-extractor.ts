@@ -54,6 +54,8 @@ export interface UpstreamUsage {
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
+  cached_tokens?: number;
+  reasoning_tokens?: number;
 }
 
 export interface CompletionAccumulator {
@@ -80,6 +82,16 @@ function captureUsage(acc: CompletionAccumulator, usage: any) {
     completion_tokens: typeof usage.completion_tokens === "number" ? usage.completion_tokens : acc.usage.completion_tokens,
     total_tokens: typeof usage.total_tokens === "number" ? usage.total_tokens : acc.usage.total_tokens,
   };
+  // Extract cached_tokens from prompt_tokens_details
+  if (usage.prompt_tokens_details?.cached_tokens != null) {
+    next.cached_tokens = usage.prompt_tokens_details.cached_tokens;
+  } else if (typeof usage.cached_tokens === "number") {
+    next.cached_tokens = usage.cached_tokens;
+  }
+  // Extract reasoning_tokens from completion_tokens_details
+  if (usage.completion_tokens_details?.reasoning_tokens != null) {
+    next.reasoning_tokens = usage.completion_tokens_details.reasoning_tokens;
+  }
   if (next.prompt_tokens != null || next.completion_tokens != null || next.total_tokens != null) {
     acc.usage = next;
     acc.hadUsage = true;
@@ -145,6 +157,8 @@ export function finalizeCompletion(acc: CompletionAccumulator): {
   promptTokens?: number;
   completionTokens?: number;
   totalTokens?: number;
+  cachedTokens?: number;
+  reasoningTokens?: number;
   hasUpstreamUsage: boolean;
 } {
   let completionText = acc.text;
@@ -158,6 +172,8 @@ export function finalizeCompletion(acc: CompletionAccumulator): {
   const promptTokens = acc.usage.prompt_tokens;
   const upstreamCompletion = acc.usage.completion_tokens;
   const totalTokens = acc.usage.total_tokens;
+  const cachedTokens = acc.usage.cached_tokens;
+  const reasoningTokens = acc.usage.reasoning_tokens;
   const completionTokens = (upstreamCompletion != null && upstreamCompletion > 0)
     ? upstreamCompletion
     : completionText
@@ -168,25 +184,35 @@ export function finalizeCompletion(acc: CompletionAccumulator): {
     promptTokens,
     completionTokens,
     totalTokens,
+    cachedTokens,
+    reasoningTokens,
     hasUpstreamUsage: acc.hadUsage,
   };
 }
 
 /**
  * Resolves billable prompt tokens and completion tokens.
- * Priority for prompt tokens:
- * 1. Upstream usage (if provided and valid)
- * 2. Delta mechanism (if contextDelta > 0 is passed)
- * 3. Text estimation using the full recent turn
+ * 
+ * Key insight: upstream prompt_tokens includes full context (cached + new).
+ * For billing, we want only NEW computation tokens = prompt_tokens - cached_tokens.
+ * 
+ * Priority for prompt tokens (new computation only):
+ * 1. Upstream prompt_tokens - cached_tokens (if provided)
+ * 2. Delta mechanism (if contextDelta > 0)
+ * 3. Text estimation using the last user turn
  */
 export function resolveBillableTokens(
-  finalized: { promptTokens?: number, completionTokens?: number },
+  finalized: { promptTokens?: number, completionTokens?: number, cachedTokens?: number },
   contextDeltaTokens: number,
   fullLastUserTurnText: string
-): { promptTokens: number, completionTokens: number, totalTokens: number } {
+): { promptTokens: number, completionTokens: number, cachedTokens: number, totalTokens: number } {
+  const rawPrompt = typeof finalized.promptTokens === "number" ? finalized.promptTokens : 0;
+  const cached = finalized.cachedTokens || 0;
+  
   let pToks = 0;
-  if (typeof finalized.promptTokens === "number" && finalized.promptTokens > 0) {
-    pToks = finalized.promptTokens;
+  if (rawPrompt > 0) {
+    // Billable input = total prompt minus cached (new computation only)
+    pToks = Math.max(rawPrompt - cached, 0);
   } else if (contextDeltaTokens > 0) {
     pToks = contextDeltaTokens;
   } else {
@@ -197,6 +223,7 @@ export function resolveBillableTokens(
   return {
     promptTokens: pToks,
     completionTokens: cToks,
+    cachedTokens: cached,
     totalTokens: pToks + cToks
   };
 }

@@ -104,6 +104,7 @@ export const requestLogs = sqliteTable("request_logs", {
   promptTokens: integer("prompt_tokens").default(0),
   completionTokens: integer("completion_tokens").default(0),
   totalTokens: integer("total_tokens").default(0),
+  cachedTokens: integer("cached_tokens").default(0),
   contextFingerprint: text("context_fingerprint"),
   contextTokensBefore: integer("context_tokens_before").default(0),
   contextDeltaTokens: integer("context_delta_tokens").default(0),

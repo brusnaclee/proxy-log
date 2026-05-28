@@ -929,6 +929,35 @@ proxy.all("/*", async (c) => {
       return c.json({ error: { message: "No online models available for auto selection", type: "model_offline" } }, 503);
     }
 
+    // Resolve session for auto model (so it appears in session history)
+    const deviceLockKey = `${keyRecord.id}:${fingerprint}`;
+    const autoSessionResult = await withDeviceLock(deviceLockKey, async () => {
+      const sessionResult = await resolveChatSession({
+        apiKeyId: keyRecord.id,
+        apiKeyName: keyRecord.name,
+        ipAddress: clientIp,
+        deviceFingerprint: fingerprint,
+        ideDetected: ide,
+        provider: "auto",
+        model: "auto",
+        contextFingerprint,
+        contextTokensBefore,
+        requestPreview,
+        messageAnalysis,
+      });
+      // Update tracking fields
+      if (messageAnalysis.messageHash) {
+        sessionHashCache.set(sessionResult.sessionId, messageAnalysis.messageHash);
+        await db.update(chatSessions)
+          .set({ lastUserMessageHash: messageAnalysis.messageHash, lastMessageRole: messageAnalysis.messageRole || null })
+          .where(eq(chatSessions.sessionId, sessionResult.sessionId))
+          .run();
+      }
+      return sessionResult;
+    });
+    const autoSessionInfo = autoSessionResult;
+    const autoIsNewPrompt = autoSessionResult.isNewUserPrompt;
+
     const wantedStream = requestBody?.stream === true;
     const tried: string[] = [];
 
@@ -974,7 +1003,7 @@ proxy.all("/*", async (c) => {
       if (contentType) upstreamHeaders["Content-Type"] = contentType;
 
       // Build body with this specific model
-      const trialBody = { ...requestBody, model: candidate.modelId, stream: false };
+      const trialBody = { ...requestBody, model: candidate.modelId, stream: wantedStream };
       const trialBodyBytes = new TextEncoder().encode(JSON.stringify(trialBody));
 
       try {
@@ -982,7 +1011,7 @@ proxy.all("/*", async (c) => {
           method: c.req.method,
           headers: upstreamHeaders,
           body: trialBodyBytes as any,
-        }, false, c.req.raw.signal);
+        }, wantedStream, c.req.raw.signal);
 
         if (trialResponse.status === 429) {
           // Rate limited — mark key and try next model
@@ -994,41 +1023,11 @@ proxy.all("/*", async (c) => {
           continue;
         }
 
-        // Check if response has actual content
-        const trialText = await trialResponse.text();
-        let hasContent = false;
-        try {
-          const parsed = JSON.parse(trialText);
-          const choice0 = parsed?.choices?.[0];
-          const msgContent = choice0?.message?.content;
-          const toolCalls = choice0?.message?.tool_calls;
-          hasContent = !!(msgContent || toolCalls);
-        } catch {
-          // Not JSON or unparseable — treat as no content
-        }
-
-        if (!hasContent) {
-          tried.push(`${candidate.provider}/${candidate.modelId} (empty response)`);
-          continue;
-        }
-
         // ── Success! This model works ──────────────────────────────────────
         const actualModel = `${candidate.provider}/${candidate.modelId}`;
 
         if (wantedStream) {
-          // Client wants streaming: re-request as streaming from this provider
-          const streamBody = { ...requestBody, model: candidate.modelId, stream: true };
-          const streamBodyBytes = new TextEncoder().encode(JSON.stringify(streamBody));
-          const streamHeaders: Record<string, string> = { ...baseHeaders };
-          streamHeaders["Authorization"] = `Bearer ${providerRow.apiKey}`;
-          if (contentType) streamHeaders["Content-Type"] = contentType;
-
-          const streamResponse = await fetchUpstreamWithRetry(upstreamUrl, {
-            method: c.req.method,
-            headers: streamHeaders,
-            body: streamBodyBytes as any,
-          }, true, c.req.raw.signal);
-
+          // Streaming: pipe directly to client with token accumulation
           const responseHeaders: Record<string, string> = {
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache",
@@ -1037,8 +1036,7 @@ proxy.all("/*", async (c) => {
           };
           if (tried.length > 0) responseHeaders["x-auto-model-tried"] = tried.join(", ");
 
-          // Add TransformStream to accumulate tokens for logging
-          if (streamResponse.body) {
+          if (trialResponse.body) {
             const acc = makeAccumulator();
             const decoder = new TextDecoder();
             const logModel = `auto (${candidate.modelId}) [stream]`;
@@ -1067,7 +1065,7 @@ proxy.all("/*", async (c) => {
                   ? finalized.completionTokens
                   : (finalized.completionText ? Math.max(estimateTokens(finalized.completionText), 1) : 0);
                 const billableTokens = resolveBillableTokens(
-                  { promptTokens: finalized.promptTokens, completionTokens: rawCompletionTokens },
+                  { promptTokens: finalized.promptTokens, completionTokens: rawCompletionTokens, cachedTokens: finalized.cachedTokens },
                   contextTokensBefore,
                   fullLastUserTurnText
                 );
@@ -1084,40 +1082,63 @@ proxy.all("/*", async (c) => {
                     ideDetected: ide,
                     provider: candidate.provider,
                     endpointPath: path,
+                    sessionId: autoSessionInfo.sessionId,
                     model: logModel,
                     promptTokens: billableTokens.promptTokens,
                     completionTokens: billableTokens.completionTokens,
                     totalTokens: billableTokens.totalTokens,
+                    cachedTokens: billableTokens.cachedTokens,
+                    contextFingerprint: contextFingerprint || null,
+                    contextTokensBefore,
+                    contextDeltaTokens: autoSessionInfo.contextDeltaTokens,
+                    contextEvent: autoSessionInfo.contextEvent,
                     latencyMs,
-                    statusCode: streamResponse.status,
+                    statusCode: trialResponse.status,
                     requestPreview: requestPreview || null,
                     responsePreview: finalized.completionText?.substring(0, 200) || null,
-                    isCountedRequest: 1,
+                    isCountedRequest: autoIsNewPrompt ? 1 : 0,
                     isBillableToken: 1,
                     estimatedCost: calculateEstimatedCost(candidate.modelId, billableTokens.promptTokens, billableTokens.completionTokens),
                   }).run();
                   logEmitter.emit({
                     model: logModel,
                     provider: candidate.provider,
-                    statusCode: streamResponse.status,
+                    statusCode: trialResponse.status,
                     latencyMs,
                   });
                 });
               },
             });
 
-            streamResponse.body.pipeTo(writable).catch((err) => {
+            trialResponse.body.pipeTo(writable).catch((err) => {
               console.error('[auto-stream] pipeTo error:', err?.message || err);
             });
-            return new Response(readable, { status: streamResponse.status, headers: responseHeaders });
+            return new Response(readable, { status: trialResponse.status, headers: responseHeaders });
           }
 
-          return new Response(streamResponse.body, { status: streamResponse.status, headers: responseHeaders });
+          return new Response(trialResponse.body, { status: trialResponse.status, headers: responseHeaders });
         }
 
-        // Non-streaming: return the validated response with model info injected
-        let responseJson: any;
-        try { responseJson = JSON.parse(trialText); } catch { responseJson = null; }
+        // Non-streaming: check if response has actual content
+        const trialText = await trialResponse.text();
+        let hasContent = false;
+        let responseJson: any = null;
+        try {
+          responseJson = JSON.parse(trialText);
+          const choice0 = responseJson?.choices?.[0];
+          const msgContent = choice0?.message?.content;
+          const toolCalls = choice0?.message?.tool_calls;
+          hasContent = !!(msgContent || toolCalls);
+        } catch {
+          // Not JSON or unparseable — treat as no content
+        }
+
+        if (!hasContent) {
+          tried.push(`${candidate.provider}/${candidate.modelId} (empty response)`);
+          continue;
+        }
+
+        // Non-streaming success: return with model info injected
         if (responseJson && typeof responseJson === "object") {
           responseJson.model = `auto (${candidate.modelId})`;
         }
@@ -1133,6 +1154,8 @@ proxy.all("/*", async (c) => {
         const latencyMs = Date.now() - startTime;
         const completionTokens = responseJson?.usage?.completion_tokens || estimateTokens(trialText);
         const promptTokens = responseJson?.usage?.prompt_tokens || 0;
+        const cachedTokens = responseJson?.usage?.prompt_tokens_details?.cached_tokens || 0;
+        const billableInput = Math.max(promptTokens - cachedTokens, 0);
         enqueueLogWrite(async (tx) => {
           await tx.insert(requestLogs).values({
             apiKeyId: keyRecord.id,
@@ -1145,16 +1168,22 @@ proxy.all("/*", async (c) => {
             ideDetected: ide,
             provider: candidate.provider,
             endpointPath: path,
+            sessionId: autoSessionInfo.sessionId,
             model: `auto (${candidate.modelId})`,
-            promptTokens,
+            promptTokens: billableInput,
             completionTokens,
-            totalTokens: promptTokens + completionTokens,
+            totalTokens: billableInput + completionTokens,
+            cachedTokens,
+            contextFingerprint: contextFingerprint || null,
+            contextTokensBefore,
+            contextDeltaTokens: autoSessionInfo.contextDeltaTokens,
+            contextEvent: autoSessionInfo.contextEvent,
             latencyMs,
             statusCode: 200,
-            estimatedCost: calculateEstimatedCost(candidate.modelId, promptTokens, completionTokens),
+            estimatedCost: calculateEstimatedCost(candidate.modelId, billableInput, completionTokens),
             requestPreview: requestPreview || null,
             responsePreview: responseJson?.choices?.[0]?.message?.content?.substring(0, 200) || null,
-            isCountedRequest: 1,
+            isCountedRequest: autoIsNewPrompt ? 1 : 0,
             isBillableToken: 1,
           }).run();
           logEmitter.emit({
@@ -1755,7 +1784,7 @@ const targetProvider = await getProviderForModel(model);
               ? finalized.completionTokens
               : (finalized.completionText ? Math.max(estimateTokens(finalized.completionText), 1) : 0);
           const billableTokens = resolveBillableTokens(
-            { promptTokens: finalized.promptTokens, completionTokens: rawCompletionTokens },
+            { promptTokens: finalized.promptTokens, completionTokens: rawCompletionTokens, cachedTokens: finalized.cachedTokens },
             sessionInfo.contextDeltaTokens,
             fullLastUserTurnText
           );
@@ -1766,6 +1795,7 @@ const targetProvider = await getProviderForModel(model);
             promptTokens: billableTokens.promptTokens,
             completionTokens: billableTokens.completionTokens,
             totalTokens: billableTokens.totalTokens,
+            cachedTokens: billableTokens.cachedTokens,
             toolCount: toolsUsed.length,
             hasToolCalls: toolsUsed.length > 0,
             toolsUsed: toToolJson(toolsUsed),
@@ -1908,13 +1938,14 @@ const targetProvider = await getProviderForModel(model);
     }
 
     const billableTokens = resolveBillableTokens(
-      { promptTokens: finalizedUsage.promptTokens, completionTokens },
+      { promptTokens: finalizedUsage.promptTokens, completionTokens, cachedTokens: finalizedUsage.cachedTokens },
       sessionInfo.contextDeltaTokens,
       fullLastUserTurnText
     );
     promptTokens = billableTokens.promptTokens;
     completionTokens = billableTokens.completionTokens;
     totalTokens = billableTokens.totalTokens;
+    const cachedTokens = billableTokens.cachedTokens;
 
     const toolsUsed = Array.from(toolNameSet);
 
@@ -1923,6 +1954,7 @@ const targetProvider = await getProviderForModel(model);
       promptTokens,
       completionTokens,
       totalTokens,
+      cachedTokens,
       toolCount: toolsUsed.length,
       hasToolCalls: toolsUsed.length > 0,
       toolsUsed: toToolJson(toolsUsed),
