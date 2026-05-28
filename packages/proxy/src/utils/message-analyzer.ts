@@ -66,6 +66,9 @@ function isToolResultContent(content: string): boolean {
   // Retry messages from agent framework
   if (trimmed.startsWith("[retry after the previous model attempt")) return true;
 
+  // Cline: ephemeral messages embedded in context (not a real user message)
+  if (trimmed.startsWith("step id:") && trimmed.includes("<ephemeral_message>")) return true;
+
   // Claude Desktop: tool result notifications wrapped as user
   if (/^the file .+ has been (updated|created|written) successfully/i.test(content.trimStart())) return true;
 

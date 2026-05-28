@@ -1116,10 +1116,11 @@ const targetProvider = await getProviderForModel(model);
     return Math.max(estimateTokens(content), 1);
   };
 
-  const finalizeCountedCompletion = (completionText: string, upstreamCompletion?: number): number => {
+  const finalizeCountedCompletion = (completionText: string, upstreamCompletion?: number, hasActualToolCallsFromResponse?: boolean): number => {
     if (upstreamCompletion != null && upstreamCompletion > 0) return upstreamCompletion;
     if (completionText) return Math.max(estimateTokens(completionText), 1);
-    return 0;
+    if (hasActualToolCallsFromResponse) return 150; // tool-only response fallback
+    return 1; // counted row minimum (empty text + no tools still had a successful response)
   };
 
   const persistLogAndSession = async (logEntry: Record<string, any>, hasActualToolCalls: boolean, shouldCountRequest: boolean = true) => {
@@ -1288,6 +1289,7 @@ const targetProvider = await getProviderForModel(model);
           const completionTokens = finalizeCountedCompletion(
             finalized.completionText,
             finalized.completionTokens,
+            hasActualToolCalls,
           );
           const finalPromptTokens = countedPromptTokens();
           const finalTotalTokens = finalPromptTokens + completionTokens;
@@ -1364,6 +1366,7 @@ const targetProvider = await getProviderForModel(model);
       completionTokens = finalizeCountedCompletion(
         finalized.completionText,
         finalized.completionTokens,
+        hasActualToolCalls,
       );
       responsePreview = finalized.completionText || null;
 
