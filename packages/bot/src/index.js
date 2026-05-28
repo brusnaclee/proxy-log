@@ -1129,7 +1129,7 @@ function buildPanelEmbed() {
 			},
 			{
 				name: 'Current Active Endpoint',
-				value: runtime.lastWorkingBaseUrl || TOKITO_BASE_URL,
+				value: PROXY_PUBLIC_BASE_URL,
 				inline: false,
 			},
 		)
@@ -2898,13 +2898,20 @@ client.on('interactionCreate', async (interaction) => {
 			) {
 				const kind =
 					interaction.customId === PANEL_STATUS ? 'status' : 'latency';
+				
+				// Immediately acknowledge to prevent 10s timeout
+				await interaction.deferReply({ ephemeral: true });
+				
+				// Now poll can take as long as needed
 				await pollModelStatus();
+				
 				const session = createTokitoSession(interaction.user.id, kind);
 				const { embed, components } = buildTokitoEmbed(kind, session);
-				await interaction.reply({
+				
+				// Edit with actual results
+				await interaction.editReply({
 					embeds: [embed],
 					components,
-					ephemeral: true,
 				});
 				return;
 			}
