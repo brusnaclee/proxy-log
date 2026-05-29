@@ -1106,6 +1106,25 @@ proxy.all("/*", async (c) => {
                     statusCode: trialResponse.status,
                     latencyMs,
                   });
+                  // Update session stats for auto model
+                  if (autoIsNewPrompt) {
+                    await updateSessionAfterRequest(tx, {
+                      sessionId: autoSessionInfo.sessionId,
+                      ipAddress: clientIp,
+                      ideDetected: ide,
+                      provider: candidate.provider,
+                      model: `auto (${candidate.modelId})`,
+                      contextFingerprint,
+                      contextTokensBefore,
+                      requestPreview,
+                      totalTokens: billableTokens.totalTokens || 0,
+                      estimatedCost: calculateEstimatedCost(candidate.modelId, billableTokens.promptTokens, billableTokens.completionTokens),
+                      contextEvent: autoSessionInfo.contextEvent,
+                      isNewPrompt: autoIsNewPrompt,
+                      messageAnalysis,
+                      hasActualToolCalls: false,
+                    });
+                  }
                 });
               },
             });
@@ -1192,6 +1211,25 @@ proxy.all("/*", async (c) => {
             statusCode: 200,
             latencyMs,
           });
+          // Update session stats for auto model (non-streaming)
+          if (autoIsNewPrompt) {
+            await updateSessionAfterRequest(tx, {
+              sessionId: autoSessionInfo.sessionId,
+              ipAddress: clientIp,
+              ideDetected: ide,
+              provider: candidate.provider,
+              model: `auto (${candidate.modelId})`,
+              contextFingerprint,
+              contextTokensBefore,
+              requestPreview,
+              totalTokens: billableInput + completionTokens,
+              estimatedCost: calculateEstimatedCost(candidate.modelId, billableInput, completionTokens),
+              contextEvent: autoSessionInfo.contextEvent,
+              isNewPrompt: autoIsNewPrompt,
+              messageAnalysis,
+              hasActualToolCalls: false,
+            });
+          }
         });
 
         return new Response(finalBody, { status: 200, headers: responseHeaders });

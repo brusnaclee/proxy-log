@@ -257,7 +257,7 @@ stats.get("/stats/by-model", async (c) => {
 
   const conditions = [];
   if (startDate) conditions.push(sql`created_at >= ${startDate}`);
-  conditions.push(VALID_LOG_SQL);
+  conditions.push(COUNTED_LOG_SQL);
   if (apiKeyId) conditions.push(eq(requestLogs.apiKeyId, apiKeyId));
   const whereClause = conditions.length > 1 ? and(...(conditions as [any, ...any[]])) : conditions[0];
 
@@ -338,8 +338,8 @@ stats.get("/stats/top-users", async (c) => {
     : null;
 
   const whereClause = startDate
-    ? and(sql`created_at >= ${startDate}`, VALID_LOG_SQL)
-    : VALID_LOG_SQL;
+    ? and(sql`created_at >= ${startDate}`, COUNTED_LOG_SQL)
+    : COUNTED_LOG_SQL;
 
   // Aggregate per api_key_id
   const aggRows = await db.select({
