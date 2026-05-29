@@ -41,3 +41,7 @@ Thumbs.db
 b64.txt
 ssh_output.txt
 commit-msg.txt
+
+# Project scripts and documentation (local only)
+scripts/
+docs/
