@@ -6,7 +6,7 @@ import { generateApiKey, getKeyPrefix, sha256 } from "../../utils/crypto.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
 import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindowResetMs } from "../../utils/rate-limit.js";
 import { isInternalRequest } from "../../middleware/session.js";
-import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL, VALID_LOG_SQL } from "../../utils/counting.js";
+import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql } from "../../utils/counting.js";
 
 const internal = new Hono();
 
@@ -30,12 +30,13 @@ async function findKeyByDiscordUser(discordUserId: string) {
 }
 
 async function getUserStats(apiKeyId: number) {
+  const whereClause = and(eq(requestLogs.apiKeyId, apiKeyId), VALID_LOG_SQL);
   const usage = await db.select({
-    requests: sql<number>`count(*)`,
-    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
-  }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, apiKeyId), VALID_LOG_SQL)).get();
+    requests: turnCountSql(whereClause),
+    tokens: turnTotalTokensSql(whereClause),
+    promptTokens: turnPromptTokensSql(whereClause),
+    completionTokens: turnCompletionTokensSql(whereClause),
+  }).from(requestLogs).where(whereClause).get();
 
   const uniqueDevices = await db.select({ count: sql<number>`count(*)` })
     .from(devices)
@@ -376,10 +377,11 @@ internal.get("/internal/stats/overview", async (c) => {
   const todayStart = new Date(wibNow.getTime() - wibOffset);
 
   const todayStr = todayStart.toISOString().replace("T", " ").substring(0, 19);
+  const todayWhere = and(sql`created_at >= ${todayStr}`, VALID_LOG_SQL);
   const today = await db.select({
-    requests: sql<number>`count(*)`,
-    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-  }).from(requestLogs).where(and(sql`created_at >= ${todayStr}`, VALID_LOG_SQL)).get();
+    requests: turnCountSql(todayWhere),
+    tokens: turnTotalTokensSql(todayWhere),
+  }).from(requestLogs).where(todayWhere).get();
 
   const activeDiscordKeys = await db.select({ count: sql<number>`count(*)` })
     .from(apiKeys)
@@ -405,48 +407,38 @@ internal.get("/internal/stats/ranking", async (c) => {
   const monthStr = monthStartFinal.toISOString().replace("T", " ").substring(0, 19);
 
   async function getTopModelsByRequests(since: string) {
-    return db.select({
-      model: requestLogs.model,
-      count: sql<number>`count(*)`,
-      tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-    })
-    .from(requestLogs)
-    .where(and(sql`created_at >= ${since}`, VALID_LOG_SQL))
-    .groupBy(requestLogs.model)
-    .orderBy(sql`count(*) DESC`)
-    .limit(10)
-    .all();
+    const rows = await db.all(sql`
+      SELECT model, COUNT(*) as count, COALESCE(SUM(max_p + sum_c), 0) as tokens
+      FROM (SELECT model, turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+        FROM request_logs WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299
+        GROUP BY model, turn_id)
+      GROUP BY model ORDER BY count DESC LIMIT 10
+    `);
+    return rows as any[];
   }
 
   async function getTopModelsByTokens(since: string) {
-    return db.select({
-      model: requestLogs.model,
-      count: sql<number>`count(*)`,
-      tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-    })
-    .from(requestLogs)
-    .where(and(sql`created_at >= ${since}`, VALID_LOG_SQL))
-    .groupBy(requestLogs.model)
-    .orderBy(sql`COALESCE(SUM(total_tokens), 0) DESC`)
-    .limit(10)
-    .all();
+    const rows = await db.all(sql`
+      SELECT model, COUNT(*) as count, COALESCE(SUM(max_p + sum_c), 0) as tokens
+      FROM (SELECT model, turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+        FROM request_logs WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299
+        GROUP BY model, turn_id)
+      GROUP BY model ORDER BY tokens DESC LIMIT 10
+    `);
+    return rows as any[];
   }
 
   async function getTopUsersByRequests(since: string) {
-    const rows = await db.select({
-      apiKeyId: requestLogs.apiKeyId,
-      requests: sql<number>`count(*)`,
-      tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-    })
-    .from(requestLogs)
-    .where(and(sql`created_at >= ${since}`, VALID_LOG_SQL))
-    .groupBy(requestLogs.apiKeyId)
-    .orderBy(sql`count(*) DESC`)
-    .limit(20)
-    .all();
+    const rows = await db.all(sql`
+      SELECT api_key_id as apiKeyId, COUNT(*) as requests, COALESCE(SUM(max_p + sum_c), 0) as tokens
+      FROM (SELECT api_key_id, turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+        FROM request_logs WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299
+        GROUP BY api_key_id, turn_id)
+      GROUP BY api_key_id ORDER BY requests DESC LIMIT 20
+    `);
 
     const result = [];
-    for (const row of rows) {
+    for (const row of rows as any[]) {
       if (!row.apiKeyId) continue;
       const key = await db.select({ discordUserId: apiKeys.discordUserId, discordUsername: apiKeys.discordUsername, name: apiKeys.name })
         .from(apiKeys).where(eq(apiKeys.id, row.apiKeyId)).get();
@@ -463,22 +455,19 @@ internal.get("/internal/stats/ranking", async (c) => {
   }
 
   async function getTopUsersByTokens(since: string) {
-    const rows = await db.select({
-      apiKeyId: requestLogs.apiKeyId,
-      requests: sql<number>`count(*)`,
-      tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-      promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-      completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
-    })
-    .from(requestLogs)
-    .where(and(sql`created_at >= ${since}`, VALID_LOG_SQL))
-    .groupBy(requestLogs.apiKeyId)
-    .orderBy(sql`COALESCE(SUM(total_tokens), 0) DESC`)
-    .limit(20)
-    .all();
+    const rows = await db.all(sql`
+      SELECT api_key_id as apiKeyId, COUNT(*) as requests,
+        COALESCE(SUM(max_p + sum_c), 0) as tokens,
+        COALESCE(SUM(max_p), 0) as promptTokens,
+        COALESCE(SUM(sum_c), 0) as completionTokens
+      FROM (SELECT api_key_id, turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+        FROM request_logs WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299
+        GROUP BY api_key_id, turn_id)
+      GROUP BY api_key_id ORDER BY tokens DESC LIMIT 20
+    `);
 
     const result = [];
-    for (const row of rows) {
+    for (const row of rows as any[]) {
       if (!row.apiKeyId) continue;
       const key = await db.select({ discordUserId: apiKeys.discordUserId, discordUsername: apiKeys.discordUsername, name: apiKeys.name })
         .from(apiKeys).where(eq(apiKeys.id, row.apiKeyId)).get();
@@ -549,38 +538,28 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   const monthStr = monthStart.toISOString().replace("T", " ").substring(0, 19);
 
   async function getTopModels(since: string) {
-    return db.select({
-      model: requestLogs.model,
-      requests: sql<number>`count(*)`,
-      tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-    })
-    .from(requestLogs)
-    .where(and(
-      eq(requestLogs.apiKeyId, keyId),
-      sql`created_at >= ${since}`,
-      VALID_LOG_SQL
-    ))
-    .groupBy(requestLogs.model)
-    .orderBy(sql`COALESCE(SUM(total_tokens), 0) DESC`)
-    .limit(3)
-    .all();
+    const rows = await db.all(sql`
+      SELECT model, COUNT(*) as requests, COALESCE(SUM(max_p + sum_c), 0) as tokens
+      FROM (SELECT model, turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+        FROM request_logs WHERE api_key_id = ${keyId} AND created_at >= ${since} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+        GROUP BY model, turn_id)
+      GROUP BY model ORDER BY tokens DESC LIMIT 3
+    `);
+    return rows as any[];
   }
 
   async function getPeriodStats(since: string) {
+    const whereClause = and(eq(requestLogs.apiKeyId, keyId), sql`created_at >= ${since}`, VALID_LOG_SQL);
     return db.select({
-      requests: sql<number>`count(*)`,
-      tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-      promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-      completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
+      requests: turnCountSql(whereClause),
+      tokens: turnTotalTokensSql(whereClause),
+      promptTokens: turnPromptTokensSql(whereClause),
+      completionTokens: turnCompletionTokensSql(whereClause),
       contextTokens: sql<number>`0`,
       estimatedCost: sql<number>`COALESCE(SUM(estimated_cost), 0)`,
     })
     .from(requestLogs)
-    .where(and(
-      eq(requestLogs.apiKeyId, keyId),
-      sql`created_at >= ${since}`,
-      VALID_LOG_SQL
-    ))
+    .where(whereClause)
     .get();
   }
 

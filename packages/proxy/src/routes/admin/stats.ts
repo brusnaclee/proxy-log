@@ -3,7 +3,7 @@ import { db } from "../../db/index.js";
 import { requestLogs, apiKeys, devices, chatSessions } from "../../db/schema.js";
 import { eq, sql, and } from "drizzle-orm";
 import { getModelRates } from "../../utils/cost-calculator.js";
-import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, wibTodayStartSql } from "../../utils/counting.js";
+import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, wibTodayStartSql, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql } from "../../utils/counting.js";
 
 const stats = new Hono();
 
@@ -51,98 +51,94 @@ stats.get("/stats/overview", async (c) => {
   const weekStr   = toSqliteUtc(weekStart);
   const monthStr  = toSqliteUtc(monthStart);
 
-  // Today
+  // Today — turn-based aggregation (MAX prompt per turn, SUM completion per turn)
+  const todayWhere = and(sql`created_at >= ${todayStr}`, VALID_LOG_SQL);
   const todayStats = await db.select({
-    requests: sql<number>`count(*)`,
-    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
+    requests: turnCountSql(todayWhere),
+    tokens: turnTotalTokensSql(todayWhere),
+    promptTokens: turnPromptTokensSql(todayWhere),
+    completionTokens: turnCompletionTokensSql(todayWhere),
     contextTokens: sql<number>`0`,
     uniqueDevices: sql<number>`COUNT(DISTINCT device_fingerprint)`
   })
   .from(requestLogs)
-  .where(and(sql`created_at >= ${todayStr}`, VALID_LOG_SQL))
+  .where(todayWhere)
   .get();
 
-  const todayBreakdown = await db.select({
-    model: requestLogs.model,
-    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`
-  })
-  .from(requestLogs)
-  .where(and(sql`created_at >= ${todayStr}`, VALID_LOG_SQL))
-  .groupBy(requestLogs.model)
-  .all();
-  const todayCosts = calculateBreakdownCosts(todayBreakdown);
+  const todayBreakdown = await db.all(sql`
+    SELECT model, COALESCE(SUM(max_p), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
+    FROM (SELECT model, turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+      FROM request_logs WHERE created_at >= ${todayStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+      GROUP BY model, turn_id)
+    GROUP BY model
+  `);
+  const todayCosts = calculateBreakdownCosts(todayBreakdown as any);
 
   // Week
+  const weekWhere = and(sql`created_at >= ${weekStr}`, VALID_LOG_SQL);
   const weekStats = await db.select({
-    requests: sql<number>`count(*)`,
-    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
+    requests: turnCountSql(weekWhere),
+    tokens: turnTotalTokensSql(weekWhere),
+    promptTokens: turnPromptTokensSql(weekWhere),
+    completionTokens: turnCompletionTokensSql(weekWhere),
     contextTokens: sql<number>`0`
   })
   .from(requestLogs)
-  .where(and(sql`created_at >= ${weekStr}`, VALID_LOG_SQL))
+  .where(weekWhere)
   .get();
 
-  const weekBreakdown = await db.select({
-    model: requestLogs.model,
-    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`
-  })
-  .from(requestLogs)
-  .where(and(sql`created_at >= ${weekStr}`, VALID_LOG_SQL))
-  .groupBy(requestLogs.model)
-  .all();
-  const weekCosts = calculateBreakdownCosts(weekBreakdown);
+  const weekBreakdown = await db.all(sql`
+    SELECT model, COALESCE(SUM(max_p), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
+    FROM (SELECT model, turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+      FROM request_logs WHERE created_at >= ${weekStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+      GROUP BY model, turn_id)
+    GROUP BY model
+  `);
+  const weekCosts = calculateBreakdownCosts(weekBreakdown as any);
 
   // Month
+  const monthWhere = and(sql`created_at >= ${monthStr}`, VALID_LOG_SQL);
   const monthStats = await db.select({
-    requests: sql<number>`count(*)`,
-    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
+    requests: turnCountSql(monthWhere),
+    tokens: turnTotalTokensSql(monthWhere),
+    promptTokens: turnPromptTokensSql(monthWhere),
+    completionTokens: turnCompletionTokensSql(monthWhere),
     contextTokens: sql<number>`0`
   })
   .from(requestLogs)
-  .where(and(sql`created_at >= ${monthStr}`, VALID_LOG_SQL))
+  .where(monthWhere)
   .get();
 
-  const monthBreakdown = await db.select({
-    model: requestLogs.model,
-    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`
-  })
-  .from(requestLogs)
-  .where(and(sql`created_at >= ${monthStr}`, VALID_LOG_SQL))
-  .groupBy(requestLogs.model)
-  .all();
-  const monthCosts = calculateBreakdownCosts(monthBreakdown);
+  const monthBreakdown = await db.all(sql`
+    SELECT model, COALESCE(SUM(max_p), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
+    FROM (SELECT model, turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+      FROM request_logs WHERE created_at >= ${monthStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+      GROUP BY model, turn_id)
+    GROUP BY model
+  `);
+  const monthCosts = calculateBreakdownCosts(monthBreakdown as any);
 
   // All Time
+  const allTimeWhere = VALID_LOG_SQL;
   const allTimeStats = await db.select({
-    requests: sql<number>`count(*)`,
-    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
+    requests: turnCountSql(allTimeWhere),
+    tokens: turnTotalTokensSql(allTimeWhere),
+    promptTokens: turnPromptTokensSql(allTimeWhere),
+    completionTokens: turnCompletionTokensSql(allTimeWhere),
     contextTokens: sql<number>`0`
   })
   .from(requestLogs)
-  .where(VALID_LOG_SQL)
+  .where(allTimeWhere)
   .get();
 
-  const allTimeBreakdown = await db.select({
-    model: requestLogs.model,
-    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`
-  })
-  .from(requestLogs)
-  .where(VALID_LOG_SQL)
-  .groupBy(requestLogs.model)
-  .all();
-  const allTimeCosts = calculateBreakdownCosts(allTimeBreakdown);
+  const allTimeBreakdown = await db.all(sql`
+    SELECT model, COALESCE(SUM(max_p), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
+    FROM (SELECT model, turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+      FROM request_logs WHERE status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+      GROUP BY model, turn_id)
+    GROUP BY model
+  `);
+  const allTimeCosts = calculateBreakdownCosts(allTimeBreakdown as any);
 
   const activeKeys = await db.select({ count: sql<number>`count(*)` }).from(apiKeys).where(eq(apiKeys.isActive, true)).get();
   const totalKeys = await db.select({ count: sql<number>`count(*)` }).from(apiKeys).get();
@@ -215,24 +211,26 @@ stats.get("/stats/by-key", async (c) => {
       : and(eq(requestLogs.apiKeyId, key.id), VALID_LOG_SQL);
 
     const keyStats = await db.select({
-      requests: sql<number>`count(*)`,
-      tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-      promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-      completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
+      requests: turnCountSql(whereClause),
+      tokens: turnTotalTokensSql(whereClause),
+      promptTokens: turnPromptTokensSql(whereClause),
+      completionTokens: turnCompletionTokensSql(whereClause),
       uniqueDevices: sql<number>`COUNT(DISTINCT device_fingerprint)`
     }).from(requestLogs).where(whereClause).get();
 
     const topModel = await db.select({ model: requestLogs.model, count: sql<number>`count(*)` })
       .from(requestLogs).where(whereClause).groupBy(requestLogs.model).orderBy(sql`count(*) DESC`).limit(1).get();
 
-    const modelBreakdown = await db.select({
-      model: requestLogs.model,
-      promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-      completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
-    }).from(requestLogs).where(whereClause).groupBy(requestLogs.model).all();
+    const modelBreakdown = await db.all(sql`
+      SELECT model, COALESCE(SUM(max_p), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
+      FROM (SELECT model, turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+        FROM request_logs WHERE api_key_id = ${key.id} ${startDate ? sql`AND created_at >= ${startDate}` : sql``} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+        GROUP BY model, turn_id)
+      GROUP BY model
+    `);
 
     let estimatedCost = 0;
-    for (const row of modelBreakdown) {
+    for (const row of modelBreakdown as any[]) {
       const rates = getModelRates(row.model || "");
       estimatedCost += row.promptTokens * rates.prompt + row.completionTokens * rates.completion;
     }
@@ -255,21 +253,33 @@ stats.get("/stats/by-model", async (c) => {
     ? new Date(Date.now() - days * 86400000).toISOString().replace("T", " ").substring(0, 19)
     : null;
 
-  const conditions = [];
-  if (startDate) conditions.push(sql`created_at >= ${startDate}`);
-  conditions.push(sql`turn_id IS NOT NULL`);
-  if (apiKeyId) conditions.push(eq(requestLogs.apiKeyId, apiKeyId));
-  const whereClause = conditions.length > 1 ? and(...(conditions as [any, ...any[]])) : conditions[0];
+  // Build WHERE fragments for raw SQL
+  const dateFilter = startDate ? sql`AND created_at >= ${startDate}` : sql``;
+  const keyFilter = apiKeyId ? sql`AND api_key_id = ${apiKeyId}` : sql``;
 
-  const result = await db.select({
-    model: requestLogs.model, turns: sql<number>`COUNT(DISTINCT turn_id)`,
-    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
-    avgLatency: sql<number>`ROUND(AVG(latency_ms), 0)`,
-  }).from(requestLogs).where(whereClause).groupBy(requestLogs.model).orderBy(sql`COUNT(DISTINCT turn_id) DESC`).all();
+  const rows = await db.all(sql`
+    SELECT
+      model,
+      COUNT(*) as turns,
+      COALESCE(SUM(max_p), 0) as tokens,
+      COALESCE(SUM(max_p), 0) as promptTokens,
+      COALESCE(SUM(sum_c), 0) as completionTokens,
+      ROUND(AVG(avg_lat), 0) as avgLatency
+    FROM (
+      SELECT
+        model, turn_id,
+        MAX(prompt_tokens) as max_p,
+        SUM(completion_tokens) as sum_c,
+        AVG(latency_ms) as avg_lat
+      FROM request_logs
+      WHERE turn_id IS NOT NULL ${dateFilter} ${keyFilter} AND status_code BETWEEN 200 AND 299
+      GROUP BY model, turn_id
+    )
+    GROUP BY model
+    ORDER BY turns DESC
+  `);
 
-  const withCost = result.map(row => {
+  const withCost = (rows as any[]).map(row => {
     const rates = getModelRates(row.model || "");
     const estimatedCost = Math.round(
       (row.promptTokens || 0) * rates.prompt + (row.completionTokens || 0) * rates.completion
@@ -286,22 +296,33 @@ stats.get("/stats/by-device", async (c) => {
     ? new Date(Date.now() - days * 86400000).toISOString().replace("T", " ").substring(0, 19)
     : null;
 
-  const whereClause = startDate
-    ? and(sql`created_at >= ${startDate}`, VALID_LOG_SQL)
-    : VALID_LOG_SQL;
+  const dateFilter = startDate ? sql`AND created_at >= ${startDate}` : sql``;
 
-  const rows = await db.select({
-    fingerprint: requestLogs.deviceFingerprint, ipAddress: requestLogs.ipAddress, ide: requestLogs.ideDetected,
-    requests: sql<number>`count(*)`, tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
-    lastSeen: sql<string>`MAX(created_at)`,
-  }).from(requestLogs).where(whereClause).groupBy(requestLogs.deviceFingerprint).orderBy(sql`count(*) DESC`).limit(50).all();
+  const rows = await db.all(sql`
+    SELECT
+      device_fingerprint as fingerprint,
+      ide_detected as ide,
+      ip_address as ipAddress,
+      COUNT(*) as requests,
+      COALESCE(SUM(max_p), 0) as tokens,
+      COALESCE(SUM(max_p), 0) as promptTokens,
+      COALESCE(SUM(sum_c), 0) as completionTokens,
+      MAX(last_seen) as lastSeen
+    FROM (
+      SELECT device_fingerprint, ide_detected, ip_address, turn_id,
+        MAX(prompt_tokens) as max_p,
+        SUM(completion_tokens) as sum_c,
+        MAX(created_at) as last_seen
+      FROM request_logs
+      WHERE status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL ${dateFilter}
+      GROUP BY device_fingerprint, ide_detected, ip_address, turn_id
+    )
+    GROUP BY device_fingerprint
+    ORDER BY requests DESC
+    LIMIT 50
+  `);
 
-  // Compute estimated cost per device (all models lumped together, use average rate)
-  const result = rows.map(row => {
-    // Use a simple per-device heuristic: total tokens * average cost
-    // We don't have model breakdown per device here, so use DEFAULT per-token rate
+  const result = (rows as any[]).map(row => {
     const estimatedCost = Math.round((row.promptTokens || 0) * 1.50 + (row.completionTokens || 0) * 6.00);
     return { ...row, estimatedCost };
   });
@@ -312,20 +333,34 @@ stats.get("/stats/by-device", async (c) => {
 stats.get("/stats/timeseries", async (c) => {
   const period = c.req.query("period") || "daily";
   const days = parseInt(c.req.query("days") || "7");
-  // Use UTC-based rolling window to match UTC timestamps stored in DB
   const startDate = new Date(Date.now() - days * 86400000);
   const startStr = toSqliteUtc(startDate);
 
   const groupExpr = period === "hourly" ? "strftime('%Y-%m-%d %H:00', created_at)" : "strftime('%Y-%m-%d', created_at)";
 
-  const result = await db.select({
-    period: sql<string>`${sql.raw(groupExpr)}`.as("period"),
-    requests: sql<number>`count(*)`, tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`, completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
-    estimatedCost: sql<number>`COALESCE(SUM(estimated_cost), 0)`,
-    uniqueDevices: sql<number>`COUNT(DISTINCT device_fingerprint)`,
-  }).from(requestLogs).where(and(sql`created_at >= ${startStr}`, VALID_LOG_SQL))
-    .groupBy(sql.raw(groupExpr)).orderBy(sql.raw(groupExpr)).all();
+  const result = await db.all(sql`
+    SELECT
+      ${sql.raw(groupExpr)} as period,
+      COUNT(*) as requests,
+      COALESCE(SUM(max_p + sum_c), 0) as tokens,
+      COALESCE(SUM(max_p), 0) as promptTokens,
+      COALESCE(SUM(sum_c), 0) as completionTokens,
+      0 as estimatedCost,
+      COUNT(DISTINCT device_fingerprint) as uniqueDevices
+    FROM (
+      SELECT
+        ${sql.raw(groupExpr)} as period_group,
+        device_fingerprint,
+        turn_id,
+        MAX(prompt_tokens) as max_p,
+        SUM(completion_tokens) as sum_c
+      FROM request_logs
+      WHERE created_at >= ${startStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+      GROUP BY ${sql.raw(groupExpr)}, turn_id
+    )
+    GROUP BY period_group
+    ORDER BY period_group
+  `);
 
   return c.json(result);
 });
@@ -337,28 +372,32 @@ stats.get("/stats/top-users", async (c) => {
     ? new Date(Date.now() - days * 86400000).toISOString().replace("T", " ").substring(0, 19)
     : null;
 
-  const whereClause = startDate
-    ? and(sql`created_at >= ${startDate}`, sql`turn_id IS NOT NULL`)
-    : sql`turn_id IS NOT NULL`;
+  const dateFilter = startDate ? sql`AND created_at >= ${startDate}` : sql``;
 
-  // Aggregate per api_key_id using turn-level counting
-  const aggRows = await db.select({
-    apiKeyId: requestLogs.apiKeyId,
-    turns: sql<number>`COUNT(DISTINCT turn_id)`,
-    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-    promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
-  })
-  .from(requestLogs)
-  .where(whereClause)
-  .groupBy(requestLogs.apiKeyId)
-  .all();
+  // Aggregate per api_key_id using turn-level token aggregation
+  const aggRows = await db.all(sql`
+    SELECT
+      api_key_id as apiKeyId,
+      COUNT(*) as turns,
+      COALESCE(SUM(max_p + sum_c), 0) as tokens,
+      COALESCE(SUM(max_p), 0) as promptTokens,
+      COALESCE(SUM(sum_c), 0) as completionTokens
+    FROM (
+      SELECT api_key_id, turn_id,
+        MAX(prompt_tokens) as max_p,
+        SUM(completion_tokens) as sum_c
+      FROM request_logs
+      WHERE turn_id IS NOT NULL ${dateFilter} AND status_code BETWEEN 200 AND 299
+      GROUP BY api_key_id, turn_id
+    )
+    GROUP BY api_key_id
+  `);
 
   // Join with api_keys for display info
   const enriched = await Promise.all(
-    aggRows
+    (aggRows as any[])
       .filter(r => r.apiKeyId != null)
-      .map(async r => {
+      .map(async (r: any) => {
         const key = await db.select({
           name: apiKeys.name,
           discordUserId: apiKeys.discordUserId,
@@ -370,7 +409,6 @@ stats.get("/stats/top-users", async (c) => {
           || key?.name
           || `Key #${r.apiKeyId}`;
 
-        // Per-row cost estimate using average rates (no model breakdown here)
         const estimatedCost = Math.round((r.promptTokens || 0) * 1.5 + (r.completionTokens || 0) * 6.0);
 
         return {
@@ -386,7 +424,6 @@ stats.get("/stats/top-users", async (c) => {
       })
   );
 
-  // Sort copies for by-turns and by-tokens
   const byTurns = [...enriched].sort((a, b) => b.turns - a.turns).slice(0, 10);
   const byTokens = [...enriched].sort((a, b) => b.tokens - a.tokens).slice(0, 10);
 

@@ -68,6 +68,9 @@ const IDE_PATTERNS: [RegExp, string][] = [
 
   // --- Browser / shell (low priority, catch-all) ---
   [/WindowsPowerShell|pwsh|PowerShell/i, "PowerShell"],
+
+  // --- Bare Node.js (very low priority — must be last) ---
+  [/^node$/i, "Node.js Client"],
 ];
 
 /**
