@@ -15,9 +15,12 @@ export const VALID_LOG_SQL = sql`status_code BETWEEN 200 AND 299`;
  * as prompt tokens. SUM(prompt_tokens) across all requests counts the same
  * context window multiple times (3.27x inflation on average).
  *
- * Solution: For each turn, take MAX(prompt_tokens) as the input (the final
- * context size) and SUM(completion_tokens) as the output (each tool call
- * produces genuinely new output). Then sum across turns.
+ * Solution: For input tokens, use context_delta_tokens which represents only
+ * the NEW tokens added since the last request (user message + tool results).
+ * This excludes system prompt and conversation history.
+ *
+ * For output tokens, SUM(completion_tokens) across all requests in the turn
+ * since each tool call produces genuinely new output.
  */
 
 /** Turn-based request count: COUNT(DISTINCT turn_id) */
@@ -25,9 +28,13 @@ export function turnCountSql(whereCondition: SQL): SQL<number> {
   return sql<number>`(SELECT COUNT(DISTINCT turn_id) FROM request_logs WHERE ${whereCondition} AND turn_id IS NOT NULL)`;
 }
 
-/** Turn-based prompt tokens: MAX(prompt) per turn, then SUM across turns */
+/**
+ * Turn-based input tokens: SUM of context_delta_tokens per turn.
+ * context_delta_tokens = new tokens added since last request (user message + tool results).
+ * Excludes system prompt and conversation history.
+ */
 export function turnPromptTokensSql(whereCondition: SQL): SQL<number> {
-  return sql<number>`COALESCE((SELECT SUM(max_p) FROM (SELECT MAX(prompt_tokens) as max_p FROM request_logs WHERE ${whereCondition} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
+  return sql<number>`COALESCE((SELECT SUM(sum_delta) FROM (SELECT SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta FROM request_logs WHERE ${whereCondition} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
 }
 
 /** Turn-based completion tokens: SUM(completion) per turn, then SUM across turns */
@@ -35,9 +42,9 @@ export function turnCompletionTokensSql(whereCondition: SQL): SQL<number> {
   return sql<number>`COALESCE((SELECT SUM(sum_c) FROM (SELECT SUM(completion_tokens) as sum_c FROM request_logs WHERE ${whereCondition} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
 }
 
-/** Turn-based total tokens: (MAX(prompt) + SUM(completion)) per turn, then SUM */
+/** Turn-based total tokens: (input + output) per turn, then SUM */
 export function turnTotalTokensSql(whereCondition: SQL): SQL<number> {
-  return sql<number>`COALESCE((SELECT SUM(max_p + sum_c) FROM (SELECT MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c FROM request_logs WHERE ${whereCondition} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
+  return sql<number>`COALESCE((SELECT SUM(sum_delta + sum_c) FROM (SELECT SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c FROM request_logs WHERE ${whereCondition} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
 }
 
 /** WIB midnight as SQLite datetime string (UTC storage). */

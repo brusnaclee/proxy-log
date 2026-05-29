@@ -66,15 +66,15 @@ stats.get("/stats/overview", async (c) => {
   .get();
 
   const todayBreakdown = await db.all(sql`
-    SELECT model, COALESCE(SUM(max_p), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
+    SELECT model, COALESCE(SUM(sum_delta), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
-        turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+        turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
       FROM request_logs WHERE created_at >= ${todayStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
       GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
       UNION ALL
       SELECT TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
-        turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+        turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
       FROM request_logs WHERE model LIKE 'auto (%)%' AND created_at >= ${todayStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
       GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
     )
@@ -96,15 +96,15 @@ stats.get("/stats/overview", async (c) => {
   .get();
 
   const weekBreakdown = await db.all(sql`
-    SELECT model, COALESCE(SUM(max_p), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
+    SELECT model, COALESCE(SUM(sum_delta), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
-        turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+        turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
       FROM request_logs WHERE created_at >= ${weekStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
       GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
       UNION ALL
       SELECT TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
-        turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+        turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
       FROM request_logs WHERE model LIKE 'auto (%)%' AND created_at >= ${weekStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
       GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
     )
@@ -126,15 +126,15 @@ stats.get("/stats/overview", async (c) => {
   .get();
 
   const monthBreakdown = await db.all(sql`
-    SELECT model, COALESCE(SUM(max_p), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
+    SELECT model, COALESCE(SUM(sum_delta), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
-        turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+        turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
       FROM request_logs WHERE created_at >= ${monthStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
       GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
       UNION ALL
       SELECT TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
-        turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+        turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
       FROM request_logs WHERE model LIKE 'auto (%)%' AND created_at >= ${monthStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
       GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
     )
@@ -156,15 +156,15 @@ stats.get("/stats/overview", async (c) => {
   .get();
 
   const allTimeBreakdown = await db.all(sql`
-    SELECT model, COALESCE(SUM(max_p), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
+    SELECT model, COALESCE(SUM(sum_delta), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
-        turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+        turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
       FROM request_logs WHERE status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
       GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
       UNION ALL
       SELECT TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
-        turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+        turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
       FROM request_logs WHERE model LIKE 'auto (%)%' AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
       GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
     )
@@ -293,14 +293,14 @@ stats.get("/stats/by-model", async (c) => {
     SELECT
       model,
       COUNT(*) as turns,
-      COALESCE(SUM(max_p), 0) as tokens,
-      COALESCE(SUM(max_p), 0) as promptTokens,
+      COALESCE(SUM(sum_delta), 0) as tokens,
+      COALESCE(SUM(sum_delta), 0) as promptTokens,
       COALESCE(SUM(sum_c), 0) as completionTokens,
       ROUND(AVG(avg_lat), 0) as avgLatency
     FROM (
       SELECT
         CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
-        turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c, AVG(latency_ms) as avg_lat
+        turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c, AVG(latency_ms) as avg_lat
       FROM request_logs
       WHERE turn_id IS NOT NULL ${dateFilter} ${keyFilter} AND status_code BETWEEN 200 AND 299
       GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
@@ -309,7 +309,7 @@ stats.get("/stats/by-model", async (c) => {
 
       SELECT
         TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
-        turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c, AVG(latency_ms) as avg_lat
+        turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c, AVG(latency_ms) as avg_lat
       FROM request_logs
       WHERE model LIKE 'auto (%)%' AND turn_id IS NOT NULL ${dateFilter} ${keyFilter} AND status_code BETWEEN 200 AND 299
       GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
@@ -381,8 +381,8 @@ stats.get("/stats/timeseries", async (c) => {
     SELECT
       period_group as period,
       COUNT(*) as requests,
-      COALESCE(SUM(max_p + sum_c), 0) as tokens,
-      COALESCE(SUM(max_p), 0) as promptTokens,
+      COALESCE(SUM(sum_delta + sum_c), 0) as tokens,
+      COALESCE(SUM(sum_delta), 0) as promptTokens,
       COALESCE(SUM(sum_c), 0) as completionTokens,
       0 as estimatedCost,
       COUNT(DISTINCT device_fingerprint) as uniqueDevices
@@ -391,7 +391,7 @@ stats.get("/stats/timeseries", async (c) => {
         ${sql.raw(groupExpr)} as period_group,
         device_fingerprint,
         turn_id,
-        MAX(prompt_tokens) as max_p,
+        SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta,
         SUM(completion_tokens) as sum_c
       FROM request_logs
       WHERE created_at >= ${startStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
@@ -418,12 +418,12 @@ stats.get("/stats/top-users", async (c) => {
     SELECT
       api_key_id as apiKeyId,
       COUNT(*) as turns,
-      COALESCE(SUM(max_p + sum_c), 0) as tokens,
-      COALESCE(SUM(max_p), 0) as promptTokens,
+      COALESCE(SUM(sum_delta + sum_c), 0) as tokens,
+      COALESCE(SUM(sum_delta), 0) as promptTokens,
       COALESCE(SUM(sum_c), 0) as completionTokens
     FROM (
       SELECT api_key_id, turn_id,
-        MAX(prompt_tokens) as max_p,
+        SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta,
         SUM(completion_tokens) as sum_c
       FROM request_logs
       WHERE turn_id IS NOT NULL ${dateFilter} AND status_code BETWEEN 200 AND 299
