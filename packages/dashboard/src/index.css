@@ -112,3 +112,45 @@
 .data-row-clickable {
   @apply border-b border-border/40 transition-colors hover:bg-accent/40 cursor-pointer;
 }
+
+/* Responsive table - hide columns on mobile */
+@media (max-width: 640px) {
+  .hide-mobile {
+    display: none !important;
+  }
+}
+
+/* Responsive chart container */
+.chart-container {
+  @apply w-full min-h-[200px];
+}
+@media (min-width: 1024px) {
+  .chart-container {
+    @apply h-[250px];
+  }
+}
+
+/* Mobile-friendly stat card */
+.stat-card {
+  @apply p-4 sm:p-6;
+}
+
+/* Better touch targets for mobile */
+@media (max-width: 640px) {
+  button, a, [role="button"] {
+    min-height: 44px;
+  }
+}
+
+/* Responsive page padding */
+.page-content {
+  @apply p-4 sm:p-6 lg:p-8;
+}
+
+/* Mobile-friendly period toggle */
+.period-toggle {
+  @apply flex flex-wrap gap-1;
+}
+.period-toggle button {
+  @apply px-2 py-1.5 text-xs sm:px-3 sm:py-1.5 sm:text-xs;
+}

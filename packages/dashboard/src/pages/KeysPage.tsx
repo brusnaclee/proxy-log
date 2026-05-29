@@ -88,16 +88,16 @@ export default function KeysPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">API Keys</h1>
-          <p className="text-muted-foreground mt-1">Manage proxy API keys for your clients</p>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight">API Keys</h1>
+          <p className="text-sm text-muted-foreground mt-1">Manage proxy API keys for your clients</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={handleExport}>
+          <Button variant="outline" size="sm" onClick={handleExport}>
             <Download className="h-4 w-4 mr-2" /> Export CSV
           </Button>
-          <Button onClick={() => { setShowCreate(true); setCreatedKey(null); }}>
+          <Button size="sm" onClick={() => { setShowCreate(true); setCreatedKey(null); }}>
             <Plus className="h-4 w-4 mr-2" />
             Create Key
           </Button>
@@ -107,17 +107,17 @@ export default function KeysPage() {
       {/* Keys Table */}
       <Card className="border-border/50">
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto -mx-4 sm:mx-0">
+            <table className="w-full text-sm min-w-[700px]">
               <thead>
                 <tr className="border-b border-border/50">
                   <th className="text-left py-3 px-4 text-muted-foreground font-medium">Name</th>
-                  <th className="text-left py-3 px-4 text-muted-foreground font-medium">Key</th>
+                  <th className="text-left py-3 px-4 text-muted-foreground font-medium hide-mobile">Key</th>
                   <th className="text-center py-3 px-4 text-muted-foreground font-medium">Status</th>
-                  <th className="text-right py-3 px-4 text-muted-foreground font-medium">Devices</th>
-                  <th className="text-right py-3 px-4 text-muted-foreground font-medium">Requests Today</th>
-                  <th className="text-right py-3 px-4 text-muted-foreground font-medium">Tokens Today</th>
-                  <th className="text-right py-3 px-4 text-muted-foreground font-medium">Est. Cost Today</th>
+                  <th className="text-right py-3 px-4 text-muted-foreground font-medium hide-mobile">Devices</th>
+                  <th className="text-right py-3 px-4 text-muted-foreground font-medium">Requests</th>
+                  <th className="text-right py-3 px-4 text-muted-foreground font-medium hide-mobile">Tokens</th>
+                  <th className="text-right py-3 px-4 text-muted-foreground font-medium hide-mobile">Cost</th>
                   <th className="text-center py-3 px-4 text-muted-foreground font-medium">Active</th>
                 </tr>
               </thead>
@@ -128,8 +128,8 @@ export default function KeysPage() {
                     className="border-b border-border/30 hover:bg-accent/30 cursor-pointer transition-colors"
                     onClick={() => navigate(`/keys/${k.id}-${k.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').substring(0, 40)}`)}
                   >
-                    <td className="py-3 px-4 font-medium">{k.name}</td>
-                    <td className="py-3 px-4">
+                    <td className="py-3 px-4 font-medium text-sm">{k.name}</td>
+                    <td className="py-3 px-4 hide-mobile">
                       <code className="text-xs bg-accent/50 px-2 py-1 rounded font-mono">
                         {k.keyMasked}
                       </code>
@@ -139,10 +139,10 @@ export default function KeysPage() {
                         {k.isActive ? "Active" : "Disabled"}
                       </Badge>
                     </td>
-                    <td className="py-3 px-4 text-right">{k.deviceCount}</td>
+                    <td className="py-3 px-4 text-right hide-mobile">{k.deviceCount}</td>
                     <td className="py-3 px-4 text-right font-mono">{formatNumber(k.requestsToday)}</td>
-                    <td className="py-3 px-4 text-right font-mono">{formatNumber(k.tokensToday)}</td>
-                    <td className="py-3 px-4 text-right font-mono text-emerald-400/90">{formatCost(k.estimatedCostToday || 0)}</td>
+                    <td className="py-3 px-4 text-right font-mono hide-mobile">{formatNumber(k.tokensToday)}</td>
+                    <td className="py-3 px-4 text-right font-mono text-emerald-400/90 hide-mobile">{formatCost(k.estimatedCostToday || 0)}</td>
                     <td className="py-3 px-4 text-center" onClick={(e) => e.stopPropagation()}>
                       <Switch
                         checked={k.isActive}

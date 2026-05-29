@@ -190,14 +190,14 @@ export default function AnalyticsPage() {
     .sort((a, b) => b.value - a.value);
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 sm:space-y-8">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Analytics</h1>
-          <p className="text-muted-foreground mt-1">Deep insights into your proxy usage patterns</p>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Analytics</h1>
+          <p className="text-sm text-muted-foreground mt-1">Deep insights into your proxy usage patterns</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
           <PeriodToggle value={days} onChange={setDays} />
           <Button variant="outline" size="sm" onClick={handleExport}>
             <Download className="h-4 w-4 mr-2" /> Export XLSX
@@ -206,7 +206,7 @@ export default function AnalyticsPage() {
       </div>
 
       {/* Row 1: Models pie + IDE bar */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         {/* Top Models Pie  -  with By Tokens / By Requests toggle */}
         <Card className="border-border/50">
           <CardHeader className="pb-2">
@@ -228,7 +228,7 @@ export default function AnalyticsPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="h-[300px]">
+            <div className="h-[250px] sm:h-[300px]">
               {modelData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
@@ -236,8 +236,8 @@ export default function AnalyticsPage() {
                       data={modelData.slice(0, 8)}
                       cx="50%"
                       cy="50%"
-                      innerRadius={60}
-                      outerRadius={100}
+                      innerRadius={50}
+                      outerRadius={80}
                       dataKey={modelChartMode}
                       nameKey="model"
                       label={({ model, percent }) =>
@@ -393,7 +393,7 @@ export default function AnalyticsPage() {
       </div>
 
       {/* Row 4: Hourly + Device Growth */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         <Card className="border-border/50">
           <CardHeader className="pb-2">
             <CardTitle className="text-base font-medium">
@@ -401,7 +401,7 @@ export default function AnalyticsPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="h-[250px]">
+            <div className="chart-container">
               {hourlyData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={hourlyData}>
@@ -424,7 +424,7 @@ export default function AnalyticsPage() {
             <CardTitle className="text-base font-medium">Unique Devices Over Time</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="h-[250px]">
+            <div className="chart-container">
               {timeseriesData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={timeseriesData}>
@@ -449,35 +449,37 @@ export default function AnalyticsPage() {
           <CardTitle className="text-base font-medium">Top Devices by Usage</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border/50">
-                <th className="text-left py-3 px-4 text-muted-foreground font-medium">Fingerprint</th>
-                <th className="text-left py-3 px-4 text-muted-foreground font-medium">IP</th>
-                <th className="text-left py-3 px-4 text-muted-foreground font-medium">IDE</th>
-                <th className="text-right py-3 px-4 text-muted-foreground font-medium">Requests</th>
-                <th className="text-right py-3 px-4 text-muted-foreground font-medium">Tokens</th>
-                <th className="text-right py-3 px-4 text-muted-foreground font-medium">Cost</th>
-                <th className="text-left py-3 px-4 text-muted-foreground font-medium">Last Seen</th>
-              </tr>
-            </thead>
-            <tbody>
-              {deviceData.slice(0, 20).map((d, i) => (
-                <tr key={i} className="border-b border-border/30 hover:bg-accent/30">
-                  <td className="py-2 px-4"><code className="text-xs font-mono">{d.fingerprint?.substring(0, 16)}...</code></td>
-                  <td className="py-2 px-4 text-xs font-mono">{d.ipAddress || " - "}</td>
-                  <td className="py-2 px-4 text-xs">{d.ide || " - "}</td>
-                  <td className="py-2 px-4 text-right font-mono">{formatNumber(d.requests)}</td>
-                  <td className="py-2 px-4 text-right font-mono">{formatNumber(d.tokens)}</td>
-                  <td className="py-2 px-4 text-right font-mono text-emerald-400/90">{formatCost(d.estimatedCost || 0)}</td>
-                  <td className="py-2 px-4 text-xs text-muted-foreground">{d.lastSeen || " - "}</td>
+          <div className="overflow-x-auto -mx-4 sm:mx-0">
+            <table className="w-full text-sm min-w-[700px]">
+              <thead>
+                <tr className="border-b border-border/50">
+                  <th className="text-left py-3 px-4 text-muted-foreground font-medium">Fingerprint</th>
+                  <th className="text-left py-3 px-4 text-muted-foreground font-medium hide-mobile">IP</th>
+                  <th className="text-left py-3 px-4 text-muted-foreground font-medium">IDE</th>
+                  <th className="text-right py-3 px-4 text-muted-foreground font-medium">Requests</th>
+                  <th className="text-right py-3 px-4 text-muted-foreground font-medium">Tokens</th>
+                  <th className="text-right py-3 px-4 text-muted-foreground font-medium hide-mobile">Cost</th>
+                  <th className="text-left py-3 px-4 text-muted-foreground font-medium hide-mobile">Last Seen</th>
                 </tr>
-              ))}
-              {deviceData.length === 0 && (
-                <tr><td colSpan={7} className="text-center py-8 text-muted-foreground">No device data yet.</td></tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {deviceData.slice(0, 20).map((d, i) => (
+                  <tr key={i} className="border-b border-border/30 hover:bg-accent/30">
+                    <td className="py-2 px-4"><code className="text-xs font-mono">{d.fingerprint?.substring(0, 16)}...</code></td>
+                    <td className="py-2 px-4 text-xs font-mono hide-mobile">{d.ipAddress || " - "}</td>
+                    <td className="py-2 px-4 text-xs">{d.ide || " - "}</td>
+                    <td className="py-2 px-4 text-right font-mono">{formatNumber(d.requests)}</td>
+                    <td className="py-2 px-4 text-right font-mono">{formatNumber(d.tokens)}</td>
+                    <td className="py-2 px-4 text-right font-mono text-emerald-400/90 hide-mobile">{formatCost(d.estimatedCost || 0)}</td>
+                    <td className="py-2 px-4 text-xs text-muted-foreground hide-mobile">{d.lastSeen || " - "}</td>
+                  </tr>
+                ))}
+                {deviceData.length === 0 && (
+                  <tr><td colSpan={7} className="text-center py-8 text-muted-foreground">No device data yet.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </CardContent>
       </Card>
     </div>

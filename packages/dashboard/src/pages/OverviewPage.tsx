@@ -252,12 +252,12 @@ export default function OverviewPage() {
 
   // â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 sm:space-y-8">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Overview</h1>
-          <p className="text-muted-foreground mt-1">Monitor your AI API proxy usage in real-time</p>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Overview</h1>
+          <p className="text-sm text-muted-foreground mt-1">Monitor your AI API proxy usage in real-time</p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={loadData}>
@@ -333,16 +333,16 @@ export default function OverviewPage() {
         </Card>
 
         {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
         {allCards.map((card) => (
           <Card key={card.label} className="border-border/50">
-            <CardContent className="p-6">
+            <CardContent className="stat-card">
               <div className="flex items-center justify-between">
-                <p className="text-sm text-muted-foreground leading-tight">{card.label}</p>
+                <p className="text-xs sm:text-sm text-muted-foreground leading-tight">{card.label}</p>
                 <card.icon className={`h-4 w-4 shrink-0 ${card.color}`} />
               </div>
-              <p className="text-2xl font-bold mt-2 truncate">{card.value}</p>
-              <p className="text-xs text-muted-foreground mt-1 truncate">{card.sub}</p>
+              <p className="text-xl sm:text-2xl font-bold mt-2 truncate">{card.value}</p>
+              <p className="text-[10px] sm:text-xs text-muted-foreground mt-1 truncate">{card.sub}</p>
             </CardContent>
           </Card>
         ))}
@@ -373,7 +373,7 @@ export default function OverviewPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="h-[250px]">
+            <div className="chart-container">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={timeseries}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -416,7 +416,7 @@ export default function OverviewPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="h-[250px]">
+            <div className="chart-container">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={modelStats.slice(0, 8)}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -452,16 +452,16 @@ export default function OverviewPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto -mx-4 sm:mx-0">
+            <table className="w-full text-sm min-w-[600px]">
               <thead>
                 <tr className="border-b border-border/50">
                   <th className="text-left py-2 px-3 text-muted-foreground font-medium">Time</th>
                   <th className="text-left py-2 px-3 text-muted-foreground font-medium">API Key</th>
                   <th className="text-left py-2 px-3 text-muted-foreground font-medium">Model</th>
-                  <th className="text-left py-2 px-3 text-muted-foreground font-medium">IDE</th>
+                  <th className="text-left py-2 px-3 text-muted-foreground font-medium hide-mobile">IDE</th>
                   <th className="text-right py-2 px-3 text-muted-foreground font-medium">Tokens</th>
-                  <th className="text-right py-2 px-3 text-muted-foreground font-medium">Latency</th>
+                  <th className="text-right py-2 px-3 text-muted-foreground font-medium hide-mobile">Latency</th>
                   <th className="text-center py-2 px-3 text-muted-foreground font-medium">Status</th>
                 </tr>
               </thead>
@@ -471,15 +471,15 @@ export default function OverviewPage() {
                     <td className="py-2 px-3 text-xs text-muted-foreground font-mono">
                       {log.createdAt ? formatRelativeTime(log.createdAt) : "just now"}
                     </td>
-                    <td className="py-2 px-3">{log.apiKeyName || " - "}</td>
+                    <td className="py-2 px-3 text-xs">{log.apiKeyName || " - "}</td>
                     <td className="py-2 px-3">
                       <code className="text-xs bg-accent/50 px-1.5 py-0.5 rounded">{log.model || " - "}</code>
                     </td>
-                    <td className="py-2 px-3 text-xs">{log.ideDetected || " - "}</td>
+                    <td className="py-2 px-3 text-xs hide-mobile">{log.ideDetected || " - "}</td>
                     <td className="py-2 px-3 text-right font-mono text-xs">
                       {formatNumber(log.totalTokens || 0)}
                     </td>
-                    <td className="py-2 px-3 text-right text-xs text-muted-foreground">
+                    <td className="py-2 px-3 text-right text-xs text-muted-foreground hide-mobile">
                       {log.latencyMs || 0}ms
                     </td>
                     <td className="py-2 px-3 text-center">
