@@ -401,6 +401,24 @@ export async function initializeDatabase() {
   // Add cleaned_days column if not exists (for existing databases)
   await ensureColumnExists("cleanup_state", "cleaned_days", "TEXT DEFAULT '[]'");
 
+  // monthly_stats table for archived aggregates (survives 3-month cleanup)
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS monthly_stats (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      year_month TEXT NOT NULL,
+      api_key_id INTEGER,
+      model TEXT NOT NULL DEFAULT '_all_',
+      turn_count INTEGER NOT NULL DEFAULT 0,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens INTEGER NOT NULL DEFAULT 0,
+      estimated_cost INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+  await client.execute("CREATE INDEX IF NOT EXISTS idx_monthly_stats_ym_key ON monthly_stats(year_month, api_key_id, model)");
+
   // Insert default cleanup states if not exists
   await client.execute(`INSERT OR IGNORE INTO cleanup_state (cleanup_type, cleaned_months, cleaned_days) VALUES ('transcripts', '[]', '[]')`);
   await client.execute(`INSERT OR IGNORE INTO cleanup_state (cleanup_type, cleaned_months, cleaned_days) VALUES ('3month', '[]', '[]')`);
