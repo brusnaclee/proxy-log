@@ -340,7 +340,7 @@ stats.get("/stats/timeseries", async (c) => {
 
   const result = await db.all(sql`
     SELECT
-      ${sql.raw(groupExpr)} as period,
+      period_group as period,
       COUNT(*) as requests,
       COALESCE(SUM(max_p + sum_c), 0) as tokens,
       COALESCE(SUM(max_p), 0) as promptTokens,
