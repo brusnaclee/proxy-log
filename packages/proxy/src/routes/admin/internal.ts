@@ -409,9 +409,17 @@ internal.get("/internal/stats/ranking", async (c) => {
   async function getTopModelsByRequests(since: string) {
     const rows = await db.all(sql`
       SELECT model, COUNT(*) as count, COALESCE(SUM(max_p + sum_c), 0) as tokens
-      FROM (SELECT model, turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+      FROM (
+        SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
+          turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
         FROM request_logs WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299
-        GROUP BY model, turn_id)
+        GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
+        UNION ALL
+        SELECT TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
+          turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+        FROM request_logs WHERE model LIKE 'auto (%)%' AND created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299
+        GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
+      )
       GROUP BY model ORDER BY count DESC LIMIT 10
     `);
     return rows as any[];
@@ -420,9 +428,17 @@ internal.get("/internal/stats/ranking", async (c) => {
   async function getTopModelsByTokens(since: string) {
     const rows = await db.all(sql`
       SELECT model, COUNT(*) as count, COALESCE(SUM(max_p + sum_c), 0) as tokens
-      FROM (SELECT model, turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+      FROM (
+        SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
+          turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
         FROM request_logs WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299
-        GROUP BY model, turn_id)
+        GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
+        UNION ALL
+        SELECT TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
+          turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+        FROM request_logs WHERE model LIKE 'auto (%)%' AND created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299
+        GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
+      )
       GROUP BY model ORDER BY tokens DESC LIMIT 10
     `);
     return rows as any[];
@@ -540,9 +556,17 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   async function getTopModels(since: string) {
     const rows = await db.all(sql`
       SELECT model, COUNT(*) as requests, COALESCE(SUM(max_p + sum_c), 0) as tokens
-      FROM (SELECT model, turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+      FROM (
+        SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
+          turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
         FROM request_logs WHERE api_key_id = ${keyId} AND created_at >= ${since} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-        GROUP BY model, turn_id)
+        GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
+        UNION ALL
+        SELECT TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
+          turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+        FROM request_logs WHERE model LIKE 'auto (%)%' AND api_key_id = ${keyId} AND created_at >= ${since} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+        GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
+      )
       GROUP BY model ORDER BY tokens DESC LIMIT 3
     `);
     return rows as any[];

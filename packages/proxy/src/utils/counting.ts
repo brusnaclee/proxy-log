@@ -58,3 +58,18 @@ export function wibMonthStartSql(): string {
   wibNow.setUTCHours(0, 0, 0, 0);
   return new Date(wibNow.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
 }
+
+/**
+ * Model name normalization for auto-model routing.
+ *
+ * When a user sends model="auto", the proxy resolves it to a specific model
+ * (e.g., "auto (qwen-flash) [stream]"). For leaderboard display:
+ * - "auto" entries should show as "auto" in the leaderboard
+ * - The underlying model (e.g., qwen-flash) should also be counted separately
+ */
+
+/** SQL expression: normalize "auto (model) [stream]" to "auto" */
+export const NORMALIZE_MODEL_SQL = sql`CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END`;
+
+/** SQL expression: extract underlying model from "auto (model) [stream]" */
+export const RESOLVE_AUTO_MODEL_SQL = sql`CASE WHEN model LIKE 'auto (%)%' THEN TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) ELSE model END`;

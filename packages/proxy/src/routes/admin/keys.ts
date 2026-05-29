@@ -117,14 +117,22 @@ keys.get("/keys/:id", async (c) => {
 
     const breakdown = await db.all(sql`
       SELECT model, COALESCE(SUM(max_p), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
-      FROM (SELECT model, turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+      FROM (
+        SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
+          turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
         FROM request_logs WHERE api_key_id = ${key.id} ${since ? sql`AND created_at >= ${since}` : sql``} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-        GROUP BY model, turn_id)
+        GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
+        UNION ALL
+        SELECT TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
+          turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+        FROM request_logs WHERE model LIKE 'auto (%)%' AND api_key_id = ${key.id} ${since ? sql`AND created_at >= ${since}` : sql``} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+        GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
+      )
       GROUP BY model
     `);
     const costs = calculateBreakdownCosts(breakdown as any);
     return {
-      turns:            s?.turns           || 0,
+      requests:         s?.turns           || 0,
       tokens:           s?.tokens          || 0,
       promptTokens:     s?.promptTokens    || 0,
       completionTokens: s?.completionTokens|| 0,
@@ -145,18 +153,34 @@ keys.get("/keys/:id", async (c) => {
   const deviceCount = await db.select({ count: sql<number>`count(*)` }).from(devices).where(eq(devices.apiKeyId, key.id)).get();
 
   const topModels = await db.all(sql`
-    SELECT model, COUNT(*) as turns, COALESCE(SUM(max_p + sum_c), 0) as tokens, 0 as estimatedCost
-    FROM (SELECT model, turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+    SELECT model, COUNT(*) as count, COALESCE(SUM(max_p + sum_c), 0) as tokens, 0 as estimatedCost
+    FROM (
+      SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
+        turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
       FROM request_logs WHERE api_key_id = ${key.id} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299
-      GROUP BY model, turn_id)
-    GROUP BY model ORDER BY turns DESC LIMIT 10
+      GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
+      UNION ALL
+      SELECT TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
+        turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+      FROM request_logs WHERE model LIKE 'auto (%)%' AND api_key_id = ${key.id} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299
+      GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
+    )
+    GROUP BY model ORDER BY count DESC LIMIT 10
   `);
 
   const topModelsByTokens = await db.all(sql`
-    SELECT model, COUNT(*) as turns, COALESCE(SUM(max_p + sum_c), 0) as tokens, 0 as estimatedCost
-    FROM (SELECT model, turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+    SELECT model, COUNT(*) as count, COALESCE(SUM(max_p + sum_c), 0) as tokens, 0 as estimatedCost
+    FROM (
+      SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
+        turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
       FROM request_logs WHERE api_key_id = ${key.id} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299
-      GROUP BY model, turn_id)
+      GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
+      UNION ALL
+      SELECT TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
+        turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+      FROM request_logs WHERE model LIKE 'auto (%)%' AND api_key_id = ${key.id} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299
+      GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
+    )
     GROUP BY model ORDER BY tokens DESC LIMIT 10
   `);
 

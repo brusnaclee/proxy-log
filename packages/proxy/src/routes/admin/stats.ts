@@ -67,9 +67,17 @@ stats.get("/stats/overview", async (c) => {
 
   const todayBreakdown = await db.all(sql`
     SELECT model, COALESCE(SUM(max_p), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
-    FROM (SELECT model, turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+    FROM (
+      SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
+        turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
       FROM request_logs WHERE created_at >= ${todayStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY model, turn_id)
+      GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
+      UNION ALL
+      SELECT TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
+        turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+      FROM request_logs WHERE model LIKE 'auto (%)%' AND created_at >= ${todayStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+      GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
+    )
     GROUP BY model
   `);
   const todayCosts = calculateBreakdownCosts(todayBreakdown as any);
@@ -89,9 +97,17 @@ stats.get("/stats/overview", async (c) => {
 
   const weekBreakdown = await db.all(sql`
     SELECT model, COALESCE(SUM(max_p), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
-    FROM (SELECT model, turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+    FROM (
+      SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
+        turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
       FROM request_logs WHERE created_at >= ${weekStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY model, turn_id)
+      GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
+      UNION ALL
+      SELECT TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
+        turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+      FROM request_logs WHERE model LIKE 'auto (%)%' AND created_at >= ${weekStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+      GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
+    )
     GROUP BY model
   `);
   const weekCosts = calculateBreakdownCosts(weekBreakdown as any);
@@ -111,9 +127,17 @@ stats.get("/stats/overview", async (c) => {
 
   const monthBreakdown = await db.all(sql`
     SELECT model, COALESCE(SUM(max_p), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
-    FROM (SELECT model, turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+    FROM (
+      SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
+        turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
       FROM request_logs WHERE created_at >= ${monthStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY model, turn_id)
+      GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
+      UNION ALL
+      SELECT TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
+        turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+      FROM request_logs WHERE model LIKE 'auto (%)%' AND created_at >= ${monthStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+      GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
+    )
     GROUP BY model
   `);
   const monthCosts = calculateBreakdownCosts(monthBreakdown as any);
@@ -133,9 +157,17 @@ stats.get("/stats/overview", async (c) => {
 
   const allTimeBreakdown = await db.all(sql`
     SELECT model, COALESCE(SUM(max_p), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
-    FROM (SELECT model, turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+    FROM (
+      SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
+        turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
       FROM request_logs WHERE status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY model, turn_id)
+      GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
+      UNION ALL
+      SELECT TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
+        turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
+      FROM request_logs WHERE model LIKE 'auto (%)%' AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+      GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
+    )
     GROUP BY model
   `);
   const allTimeCosts = calculateBreakdownCosts(allTimeBreakdown as any);
@@ -267,13 +299,20 @@ stats.get("/stats/by-model", async (c) => {
       ROUND(AVG(avg_lat), 0) as avgLatency
     FROM (
       SELECT
-        model, turn_id,
-        MAX(prompt_tokens) as max_p,
-        SUM(completion_tokens) as sum_c,
-        AVG(latency_ms) as avg_lat
+        CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
+        turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c, AVG(latency_ms) as avg_lat
       FROM request_logs
       WHERE turn_id IS NOT NULL ${dateFilter} ${keyFilter} AND status_code BETWEEN 200 AND 299
-      GROUP BY model, turn_id
+      GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
+
+      UNION ALL
+
+      SELECT
+        TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
+        turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c, AVG(latency_ms) as avg_lat
+      FROM request_logs
+      WHERE model LIKE 'auto (%)%' AND turn_id IS NOT NULL ${dateFilter} ${keyFilter} AND status_code BETWEEN 200 AND 299
+      GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
     )
     GROUP BY model
     ORDER BY turns DESC
