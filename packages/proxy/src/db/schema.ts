@@ -269,6 +269,25 @@ export const cleanupState = sqliteTable("cleanup_state", {
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 });
 
+// ─── Monthly Stats (archived aggregates before 3-month cleanup) ──────────────
+// Stores pre-computed per-(month, api_key_id, model) aggregates so stats
+// survive the 3-month rolling deletion of raw request_logs rows.
+export const monthlyStats = sqliteTable("monthly_stats", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  yearMonth: text("year_month").notNull(),                // "2026-01" format
+  apiKeyId: integer("api_key_id"),                         // null = global aggregate
+  model: text("model").notNull().default("_all_"),         // "_all_" = all models combined
+  turnCount: integer("turn_count").notNull().default(0),
+  inputTokens: integer("input_tokens").notNull().default(0),    // context_delta sum
+  outputTokens: integer("output_tokens").notNull().default(0),  // completion_tokens sum
+  totalTokens: integer("total_tokens").notNull().default(0),
+  estimatedCost: integer("estimated_cost").notNull().default(0),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+}, (table) => ({
+  ymKeyIdx: index("idx_monthly_stats_ym_key").on(table.yearMonth, table.apiKeyId, table.model),
+}));
+
 // ─── Type exports ──────────────────────────────────────────────────────────────
 export type AdminConfig = typeof adminConfig.$inferSelect;
 export type ApiKey = typeof apiKeys.$inferSelect;
@@ -283,6 +302,7 @@ export type ModelMonitor = typeof modelMonitor.$inferSelect;
 export type ModelTestState = typeof modelTestState.$inferSelect;
 export type ModelLimit = typeof modelLimits.$inferSelect;
 export type CleanupState = typeof cleanupState.$inferSelect;
+export type MonthlyStats = typeof monthlyStats.$inferSelect;
 
 export type NewAdminConfig = typeof adminConfig.$inferInsert;
 export type NewApiKey = typeof apiKeys.$inferInsert;
@@ -297,3 +317,4 @@ export type NewModelMonitor = typeof modelMonitor.$inferInsert;
 export type NewModelTestState = typeof modelTestState.$inferInsert;
 export type NewModelLimit = typeof modelLimits.$inferInsert;
 export type NewCleanupState = typeof cleanupState.$inferInsert;
+export type NewMonthlyStats = typeof monthlyStats.$inferInsert;

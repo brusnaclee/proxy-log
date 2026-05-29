@@ -1510,7 +1510,7 @@ function createTokitoSession(userId, kind) {
 		page: 0,
 		upstreamProvider: 'all',
 		modelVendor: 'all',
-		sortMode: kind === 'status' ? 'status_online_first' : 'latency_fastest',
+		sortMode: 'status_online_first',
 		expiresAt: Date.now() + TOKITO_SESSION_TIMEOUT_MS,
 	};
 	tokitoSessions.set(id, session);
@@ -1569,22 +1569,27 @@ function buildTokitoRows(
 		.setPlaceholder('Sort mode')
 		.addOptions([
 			{
-				label: 'name_asc',
-				value: 'name_asc',
-				default: sortMode === 'name_asc',
-			},
-			{
-				label: 'status_online_first',
+				label: 'Online First',
 				value: 'status_online_first',
 				default: sortMode === 'status_online_first',
 			},
 			{
-				label: 'latency_fastest',
+				label: 'By Name',
+				value: 'name_asc',
+				default: sortMode === 'name_asc',
+			},
+			{
+				label: 'By Provider',
+				value: 'provider_asc',
+				default: sortMode === 'provider_asc',
+			},
+			{
+				label: 'Fast Latency',
 				value: 'latency_fastest',
 				default: sortMode === 'latency_fastest',
 			},
 			{
-				label: 'latency_slowest',
+				label: 'Slow Latency',
 				value: 'latency_slowest',
 				default: sortMode === 'latency_slowest',
 			},
@@ -1626,10 +1631,22 @@ function listModels(kind, upstreamProvider, modelVendor, sortMode) {
 			(a, b) => {
 				if (a.modelId === 'auto') return -1;
 				if (b.modelId === 'auto') return 1;
-				return Number(!runtime.latency.get(entryKey(a))?.ok) -
-					Number(!runtime.latency.get(entryKey(b))?.ok);
+				// Online first, then by latency (fastest first)
+				const aOnline = runtime.latency.get(entryKey(a))?.ok ? 0 : 1;
+				const bOnline = runtime.latency.get(entryKey(b))?.ok ? 0 : 1;
+				if (aOnline !== bOnline) return aOnline - bOnline;
+				const am = runtime.latency.get(entryKey(a))?.ms ?? Number.MAX_SAFE_INTEGER;
+				const bm = runtime.latency.get(entryKey(b))?.ms ?? Number.MAX_SAFE_INTEGER;
+				return am - bm;
 			},
 		);
+	}
+	if (sortMode === 'provider_asc') {
+		items.sort((a, b) => {
+			if (a.modelId === 'auto') return -1;
+			if (b.modelId === 'auto') return 1;
+			return (a.provider || '').localeCompare(b.provider || '') || a.modelId.localeCompare(b.modelId);
+		});
 	}
 	if (sortMode === 'latency_fastest' || sortMode === 'latency_slowest') {
 		items.sort((a, b) => {

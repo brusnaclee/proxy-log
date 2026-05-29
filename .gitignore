@@ -35,3 +35,9 @@ packages/bot/logs/
 # OS / editor artifacts
 .DS_Store
 Thumbs.db
+
+# Temporary scripts and output files
+*.py
+b64.txt
+ssh_output.txt
+commit-msg.txt

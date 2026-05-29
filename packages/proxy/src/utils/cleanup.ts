@@ -1,6 +1,6 @@
 import { db } from "../db/index.js";
 import { sql } from "drizzle-orm";
-import { requestLogs, chatSessions, cleanupState } from "../db/schema.js";
+import { requestLogs, chatSessions, cleanupState, monthlyStats } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 
 /**
@@ -122,6 +122,112 @@ export async function runTranscriptCleanup(): Promise<{ success: boolean; cleare
 // ─── 3-Month Rolling Cleanup ──────────────────────────────────────────────────
 
 /**
+ * Snapshot aggregated stats for a month into monthly_stats before deletion.
+ * This preserves per-user, per-model, and global totals so the dashboard
+ * and Discord bot can still show historical data after raw logs are deleted.
+ */
+async function snapshotMonthStats(yearMonth: string): Promise<void> {
+  const { start, end } = getMonthRange(yearMonth);
+
+  // Check if already snapshotted
+  const existing = await db.select({ id: monthlyStats.id })
+    .from(monthlyStats)
+    .where(eq(monthlyStats.yearMonth, yearMonth))
+    .limit(1)
+    .get();
+
+  if (existing) {
+    console.log(`[cleanup] Month ${yearMonth} already snapshotted, skipping`);
+    return;
+  }
+
+  console.log(`[cleanup] Snapshotting stats for month ${yearMonth}...`);
+
+  // 1. Per-(api_key_id, model) aggregates
+  const perKeyModel = await db.all(sql`
+    SELECT
+      api_key_id,
+      CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
+      COUNT(DISTINCT turn_id) as turn_count,
+      COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END), 0) as input_tokens,
+      COALESCE(SUM(completion_tokens), 0) as output_tokens,
+      COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) + SUM(completion_tokens), 0) as total_tokens,
+      COALESCE(SUM(estimated_cost), 0) as estimated_cost
+    FROM request_logs
+    WHERE created_at >= ${start} AND created_at < ${end} AND status_code BETWEEN 200 AND 299
+    GROUP BY api_key_id, CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END
+  `);
+
+  // 2. Also add underlying model counts for auto entries
+  const perKeyAutoModels = await db.all(sql`
+    SELECT
+      api_key_id,
+      TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
+      COUNT(DISTINCT turn_id) as turn_count,
+      COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END), 0) as input_tokens,
+      COALESCE(SUM(completion_tokens), 0) as output_tokens,
+      COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) + SUM(completion_tokens), 0) as total_tokens,
+      COALESCE(SUM(estimated_cost), 0) as estimated_cost
+    FROM request_logs
+    WHERE model LIKE 'auto (%)%' AND created_at >= ${start} AND created_at < ${end} AND status_code BETWEEN 200 AND 299
+    GROUP BY api_key_id, TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1))
+  `);
+
+  // 3. Global aggregates (all keys combined, per model)
+  const globalModel = await db.all(sql`
+    SELECT
+      CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
+      COUNT(DISTINCT turn_id) as turn_count,
+      COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END), 0) as input_tokens,
+      COALESCE(SUM(completion_tokens), 0) as output_tokens,
+      COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) + SUM(completion_tokens), 0) as total_tokens,
+      COALESCE(SUM(estimated_cost), 0) as estimated_cost
+    FROM request_logs
+    WHERE created_at >= ${start} AND created_at < ${end} AND status_code BETWEEN 200 AND 299
+    GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END
+  `);
+
+  // 4. Global total (all keys, all models)
+  const globalTotal = await db.get(sql`
+    SELECT
+      COUNT(DISTINCT turn_id) as turn_count,
+      COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END), 0) as input_tokens,
+      COALESCE(SUM(completion_tokens), 0) as output_tokens,
+      COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) + SUM(completion_tokens), 0) as total_tokens,
+      COALESCE(SUM(estimated_cost), 0) as estimated_cost
+    FROM request_logs
+    WHERE created_at >= ${start} AND created_at < ${end} AND status_code BETWEEN 200 AND 299
+  `);
+
+  // Insert all snapshots
+  const rows: any[] = [];
+
+  for (const r of perKeyModel as any[]) {
+    rows.push({ yearMonth, apiKeyId: r.api_key_id, model: r.model, turnCount: r.turn_count, inputTokens: r.input_tokens, outputTokens: r.output_tokens, totalTokens: r.total_tokens, estimatedCost: r.estimated_cost });
+  }
+  for (const r of perKeyAutoModels as any[]) {
+    rows.push({ yearMonth, apiKeyId: r.api_key_id, model: r.model, turnCount: r.turn_count, inputTokens: r.input_tokens, outputTokens: r.output_tokens, totalTokens: r.total_tokens, estimatedCost: r.estimated_cost });
+  }
+  for (const r of globalModel as any[]) {
+    rows.push({ yearMonth, apiKeyId: null, model: r.model, turnCount: r.turn_count, inputTokens: r.input_tokens, outputTokens: r.output_tokens, totalTokens: r.total_tokens, estimatedCost: r.estimated_cost });
+  }
+  if (globalTotal as any) {
+    const gt = globalTotal as any;
+    rows.push({ yearMonth, apiKeyId: null, model: '_all_', turnCount: gt.turn_count, inputTokens: gt.input_tokens, outputTokens: gt.output_tokens, totalTokens: gt.total_tokens, estimatedCost: gt.estimated_cost });
+  }
+
+  // Batch insert
+  if (rows.length > 0) {
+    // Insert in batches of 100
+    for (let i = 0; i < rows.length; i += 100) {
+      const batch = rows.slice(i, i + 100);
+      await db.insert(monthlyStats).values(batch).run();
+    }
+    console.log(`[cleanup] Snapshotted ${rows.length} aggregated rows for month ${yearMonth}`);
+  }
+}
+
+/**
  * Get list of months that should be cleaned (3+ months old).
  * Example: If current date is 2026-06-15, returns ["2026-01", "2026-02", "2026-03"]
  */
@@ -185,6 +291,9 @@ export async function run3MonthCleanup(): Promise<{ success: boolean; deletedLog
       const { start, end } = getMonthRange(yearMonth);
 
       console.log(`[cleanup] Cleaning month ${yearMonth} (${start} to ${end})`);
+
+      // Snapshot aggregated stats before deletion
+      await snapshotMonthStats(yearMonth);
 
       // Delete request logs for this month
       const deletedLogs = await db.delete(requestLogs)
@@ -287,6 +396,9 @@ export async function forceTranscriptCleanup(): Promise<{ success: boolean; clea
 export async function forceCleanMonth(yearMonth: string): Promise<{ success: boolean; deletedLogs: number; deletedSessions: number }> {
   try {
     const { start, end } = getMonthRange(yearMonth);
+
+    // Snapshot aggregated stats before deletion
+    await snapshotMonthStats(yearMonth);
 
     const deletedLogs = await db.delete(requestLogs)
       .where(sql`created_at >= ${start} AND created_at < ${end}`)

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { db } from "../../db/index.js";
-import { requestLogs, apiKeys, devices, chatSessions } from "../../db/schema.js";
+import { requestLogs, apiKeys, devices, chatSessions, monthlyStats } from "../../db/schema.js";
 import { eq, sql, and } from "drizzle-orm";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, wibTodayStartSql, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql } from "../../utils/counting.js";
@@ -142,9 +142,9 @@ stats.get("/stats/overview", async (c) => {
   `);
   const monthCosts = calculateBreakdownCosts(monthBreakdown as any);
 
-  // All Time
+  // All Time - live data
   const allTimeWhere = VALID_LOG_SQL;
-  const allTimeStats = await db.select({
+  const allTimeLive = await db.select({
     requests: turnCountSql(allTimeWhere),
     tokens: turnTotalTokensSql(allTimeWhere),
     promptTokens: turnPromptTokensSql(allTimeWhere),
@@ -155,7 +155,28 @@ stats.get("/stats/overview", async (c) => {
   .where(allTimeWhere)
   .get();
 
-  const allTimeBreakdown = await db.all(sql`
+  // All Time - archived data from monthly_stats (survives 3-month cleanup)
+  const allTimeArchived = await db.select({
+    requests: sql<number>`COALESCE(SUM(turn_count), 0)`,
+    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
+    promptTokens: sql<number>`COALESCE(SUM(input_tokens), 0)`,
+    completionTokens: sql<number>`COALESCE(SUM(output_tokens), 0)`,
+  })
+  .from(monthlyStats)
+  .where(sql`api_key_id IS NULL AND model = '_all_'`)
+  .get();
+
+  // Combine live + archived
+  const allTimeStats = {
+    requests: (allTimeLive?.requests || 0) + (allTimeArchived?.requests || 0),
+    tokens: (allTimeLive?.tokens || 0) + (allTimeArchived?.tokens || 0),
+    promptTokens: (allTimeLive?.promptTokens || 0) + (allTimeArchived?.promptTokens || 0),
+    completionTokens: (allTimeLive?.completionTokens || 0) + (allTimeArchived?.completionTokens || 0),
+    contextTokens: 0,
+  };
+
+  // All Time breakdown - live data
+  const allTimeLiveBreakdown = await db.all(sql`
     SELECT model, COALESCE(SUM(sum_delta), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
@@ -170,6 +191,33 @@ stats.get("/stats/overview", async (c) => {
     )
     GROUP BY model
   `);
+
+  // All Time breakdown - archived model data
+  const allTimeArchivedBreakdown = await db.select({
+    model: monthlyStats.model,
+    promptTokens: sql<number>`COALESCE(SUM(input_tokens), 0)`,
+    completionTokens: sql<number>`COALESCE(SUM(output_tokens), 0)`,
+  })
+  .from(monthlyStats)
+  .where(sql`api_key_id IS NULL AND model != '_all_'`)
+  .groupBy(monthlyStats.model)
+  .all();
+
+  // Merge live and archived breakdowns by model
+  const breakdownMap = new Map<string, { promptTokens: number; completionTokens: number }>();
+  for (const row of allTimeLiveBreakdown as any[]) {
+    breakdownMap.set(row.model, { promptTokens: row.promptTokens, completionTokens: row.completionTokens });
+  }
+  for (const row of allTimeArchivedBreakdown as any[]) {
+    const existing = breakdownMap.get(row.model);
+    if (existing) {
+      existing.promptTokens += row.promptTokens;
+      existing.completionTokens += row.completionTokens;
+    } else {
+      breakdownMap.set(row.model, { promptTokens: row.promptTokens, completionTokens: row.completionTokens });
+    }
+  }
+  const allTimeBreakdown = Array.from(breakdownMap.entries()).map(([model, v]) => ({ model, ...v }));
   const allTimeCosts = calculateBreakdownCosts(allTimeBreakdown as any);
 
   const activeKeys = await db.select({ count: sql<number>`count(*)` }).from(apiKeys).where(eq(apiKeys.isActive, true)).get();
