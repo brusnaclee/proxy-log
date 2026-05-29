@@ -30,6 +30,11 @@ type ContextEvent = "new_session" | "append" | "compact" | "switch";
 // In-memory cache of the last user message hash per session.
 const sessionHashCache = new Map<string, string>();
 
+// In-memory cache of the current turn ID per session.
+// When isNewPrompt=true, generate a new turn_id and store it here.
+// For tool followups, reuse the same turn_id.
+const turnIdCache = new Map<string, string>();
+
 // Per-device mutex to serialize session resolution.
 // Without this, concurrent requests from the same device can both read "no session"
 // and each create their own session, causing duplicates and miscounts.
@@ -1557,6 +1562,17 @@ const targetProvider = await getProviderForModel(model);
     let isBillableToken = false;
     if (shouldCountRequest && hasActualContent(logEntry)) {
       isBillableToken = true;
+    }
+
+    // Assign turn_id: new turn for user prompts, reuse for tool followups
+    const turnKey = `${sessionInfo.sessionId}:${keyRecord.id}`;
+    if (isNewPrompt) {
+      const newTurnId = `turn_${generateSessionId().slice(0, 16)}`;
+      turnIdCache.set(turnKey, newTurnId);
+      logEntry.turnId = newTurnId;
+    } else {
+      // For tool followups, reuse the current turn ID
+      logEntry.turnId = turnIdCache.get(turnKey) || null;
     }
 
     enqueueLogWrite(async (tx) => {

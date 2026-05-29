@@ -100,6 +100,7 @@ export const requestLogs = sqliteTable("request_logs", {
   provider: text("provider"),
   endpointPath: text("endpoint_path"),
   sessionId: text("session_id"),
+  turnId: text("turn_id"),  // tracks which turn this request belongs to
   model: text("model"),
   promptTokens: integer("prompt_tokens").default(0),
   completionTokens: integer("completion_tokens").default(0),

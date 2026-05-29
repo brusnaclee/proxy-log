@@ -102,15 +102,15 @@ keys.get("/keys/:id", async (c) => {
   const buildPeriodStats = async (since?: string) => {
     const dateFilter = since ? sql`created_at >= ${since}` : sql`1=1`;
     
-    // Use COUNTED_LOG_SQL for request count (user prompts only)
-    const reqWhere = since
-      ? and(eq(requestLogs.apiKeyId, key.id), dateFilter, COUNTED_LOG_SQL)
-      : and(eq(requestLogs.apiKeyId, key.id), COUNTED_LOG_SQL);
-    const reqCount = await db.select({
-      count: sql<number>`count(*)`,
-    }).from(requestLogs).where(reqWhere).get();
+    // Count distinct turns (each user prompt = 1 turn, tool followups share same turn_id)
+    const turnWhere = since
+      ? and(eq(requestLogs.apiKeyId, key.id), dateFilter, sql`turn_id IS NOT NULL`)
+      : and(eq(requestLogs.apiKeyId, key.id), sql`turn_id IS NOT NULL`);
+    const turnCount = await db.select({
+      count: sql<number>`COUNT(DISTINCT turn_id)`,
+    }).from(requestLogs).where(turnWhere).get();
 
-    // Use VALID_LOG_SQL for token sums (all successful requests)
+    // Use VALID_LOG_SQL for token sums (all successful requests in turns)
     const tokenWhere = since
       ? and(eq(requestLogs.apiKeyId, key.id), dateFilter, VALID_LOG_SQL)
       : and(eq(requestLogs.apiKeyId, key.id), VALID_LOG_SQL);
@@ -129,7 +129,7 @@ keys.get("/keys/:id", async (c) => {
     }).from(requestLogs).where(tokenWhere).groupBy(requestLogs.model).all();
     const costs = calculateBreakdownCosts(breakdown);
     return {
-      requests:        reqCount?.count      || 0,
+      turns:           turnCount?.count      || 0,
       tokens:          s?.tokens          || 0,
       promptTokens:    s?.promptTokens    || 0,
       completionTokens:s?.completionTokens|| 0,
@@ -150,17 +150,17 @@ keys.get("/keys/:id", async (c) => {
   const deviceCount = await db.select({ count: sql<number>`count(*)` }).from(devices).where(eq(devices.apiKeyId, key.id)).get();
 
   const topModels = await db.select({
-    model: requestLogs.model, count: sql<number>`count(*)`, tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
+    model: requestLogs.model, turns: sql<number>`COUNT(DISTINCT turn_id)`, tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
     estimatedCost: sql<number>`COALESCE(SUM(estimated_cost), 0)`,
-  }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, key.id), COUNTED_LOG_SQL)).groupBy(requestLogs.model).orderBy(sql`count(*) DESC`).limit(10).all();
+  }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, key.id), sql`turn_id IS NOT NULL`)).groupBy(requestLogs.model).orderBy(sql`COUNT(DISTINCT turn_id) DESC`).limit(10).all();
 
   const topModelsByTokens = await db.select({
     model: requestLogs.model,
-    requests: sql<number>`count(*)`,
+    turns: sql<number>`COUNT(DISTINCT turn_id)`,
     tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
     estimatedCost: sql<number>`COALESCE(SUM(estimated_cost), 0)`,
   }).from(requestLogs)
-    .where(and(eq(requestLogs.apiKeyId, key.id), COUNTED_LOG_SQL))
+    .where(and(eq(requestLogs.apiKeyId, key.id), sql`turn_id IS NOT NULL`))
     .groupBy(requestLogs.model)
     .orderBy(sql`COALESCE(SUM(total_tokens), 0) DESC`)
     .limit(10)

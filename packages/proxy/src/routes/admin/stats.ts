@@ -257,17 +257,17 @@ stats.get("/stats/by-model", async (c) => {
 
   const conditions = [];
   if (startDate) conditions.push(sql`created_at >= ${startDate}`);
-  conditions.push(COUNTED_LOG_SQL);
+  conditions.push(sql`turn_id IS NOT NULL`);
   if (apiKeyId) conditions.push(eq(requestLogs.apiKeyId, apiKeyId));
   const whereClause = conditions.length > 1 ? and(...(conditions as [any, ...any[]])) : conditions[0];
 
   const result = await db.select({
-    model: requestLogs.model, requests: sql<number>`count(*)`,
+    model: requestLogs.model, turns: sql<number>`COUNT(DISTINCT turn_id)`,
     tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
     promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
     completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
     avgLatency: sql<number>`ROUND(AVG(latency_ms), 0)`,
-  }).from(requestLogs).where(whereClause).groupBy(requestLogs.model).orderBy(sql`count(*) DESC`).all();
+  }).from(requestLogs).where(whereClause).groupBy(requestLogs.model).orderBy(sql`COUNT(DISTINCT turn_id) DESC`).all();
 
   const withCost = result.map(row => {
     const rates = getModelRates(row.model || "");
@@ -338,13 +338,13 @@ stats.get("/stats/top-users", async (c) => {
     : null;
 
   const whereClause = startDate
-    ? and(sql`created_at >= ${startDate}`, COUNTED_LOG_SQL)
-    : COUNTED_LOG_SQL;
+    ? and(sql`created_at >= ${startDate}`, sql`turn_id IS NOT NULL`)
+    : sql`turn_id IS NOT NULL`;
 
-  // Aggregate per api_key_id
+  // Aggregate per api_key_id using turn-level counting
   const aggRows = await db.select({
     apiKeyId: requestLogs.apiKeyId,
-    requests: sql<number>`count(*)`,
+    turns: sql<number>`COUNT(DISTINCT turn_id)`,
     tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
     promptTokens: sql<number>`COALESCE(SUM(prompt_tokens), 0)`,
     completionTokens: sql<number>`COALESCE(SUM(completion_tokens), 0)`,
@@ -377,7 +377,7 @@ stats.get("/stats/top-users", async (c) => {
           keyName: key?.name || `Key #${r.apiKeyId}`,
           displayName,
           discordUserId: key?.discordUserId || null,
-          requests: r.requests,
+          turns: r.turns,
           tokens: r.tokens,
           promptTokens: r.promptTokens,
           completionTokens: r.completionTokens,
@@ -386,11 +386,11 @@ stats.get("/stats/top-users", async (c) => {
       })
   );
 
-  // Sort copies for by-requests and by-tokens
-  const byRequests = [...enriched].sort((a, b) => b.requests - a.requests).slice(0, 10);
-  const byTokens   = [...enriched].sort((a, b) => b.tokens   - a.tokens  ).slice(0, 10);
+  // Sort copies for by-turns and by-tokens
+  const byTurns = [...enriched].sort((a, b) => b.turns - a.turns).slice(0, 10);
+  const byTokens = [...enriched].sort((a, b) => b.tokens - a.tokens).slice(0, 10);
 
-  return c.json({ byRequests, byTokens });
+  return c.json({ byTurns, byTokens });
 });
 
 export default stats;
