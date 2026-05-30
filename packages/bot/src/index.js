@@ -840,6 +840,7 @@ const runtime = {
 	endpointStats: new Map(),
 	activeProviders: [],
 	modelRetryState: new Map(), // entryKey -> { retryCount, lastTestAt, suspendedUntil }
+	providerKeys: new Map(), // providerName -> [apiKey1, apiKey2, ...]
 };
 
 function loadTokitoState() {
@@ -1008,9 +1009,26 @@ async function pollModelStatus() {
 	const allModels = [];
 	runtime.modelProviderMap.clear();
 	runtime.modelEntries = [];
+	runtime.providerKeys = new Map(); // Store all active keys per provider
 
 	for (const prov of providers) {
 		try {
+			// Fetch all active API keys for this provider
+			try {
+				const keysResult = await proxyInternal(`/admin/providers/${prov.id}/keys`, 'GET');
+				if (Array.isArray(keysResult)) {
+					const activeKeys = keysResult
+						.filter(k => k.isActive && !k.isLimited)
+						.map(k => k.apiKey);
+					if (activeKeys.length > 0) {
+						runtime.providerKeys.set(prov.name, activeKeys);
+						console.log(`[tokito-monitor] loaded ${activeKeys.length} active keys for provider: ${prov.name}`);
+					}
+				}
+			} catch (err) {
+				console.error(`[tokito-monitor] failed to fetch keys for ${prov.name}:`, err.message);
+			}
+
 			const result = await fetchProviderModelList(prov);
 			if (!result) {
 				console.error(`[tokito-monitor] failed to fetch models from ${prov.name}`);
@@ -1187,33 +1205,48 @@ async function runLatencyTest() {
 async function testSingleModel(entry) {
 	const started = Date.now();
 	const baseUrl = entry.baseUrl;
-	const apiKey = entry.apiKey;
+	const provider = entry.provider;
+
+	// Get all available keys for this provider
+	const providerKeys = runtime.providerKeys.get(provider) || [];
+	// Use entry's apiKey as fallback, plus any additional keys from the pool
+	const keysToTry = [entry.apiKey, ...providerKeys.filter(k => k !== entry.apiKey)];
 
 	let result;
-	try {
-		const controller = new AbortController();
-		const timeout = setTimeout(() => controller.abort(), TOKITO_REQUEST_TIMEOUT_MS);
-		const res = await fetch(`${baseUrl}/chat/completions`, {
-			method: 'POST',
-			headers: {
-				Authorization: `Bearer ${apiKey}`,
-				'Content-Type': 'application/json',
-			},
-			body: JSON.stringify({
-				model: entry.modelId,
-				messages: [{ role: 'user', content: 'test' }],
-				max_tokens: 1,
-				temperature: 0,
-			}),
-			signal: controller.signal,
-		});
-		clearTimeout(timeout);
-		const text = await res.text();
-		let body;
-		try { body = JSON.parse(text); } catch (_) { body = { raw: text }; }
-		result = { ok: res.ok, status: res.status, body };
-	} catch (err) {
-		result = { ok: false, status: 0, body: { error: err.message } };
+	for (const apiKey of keysToTry) {
+		try {
+			const controller = new AbortController();
+			const timeout = setTimeout(() => controller.abort(), TOKITO_REQUEST_TIMEOUT_MS);
+			const res = await fetch(`${baseUrl}/chat/completions`, {
+				method: 'POST',
+				headers: {
+					Authorization: `Bearer ${apiKey}`,
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					model: entry.modelId,
+					messages: [{ role: 'user', content: 'test' }],
+					max_tokens: 1,
+					temperature: 0,
+				}),
+				signal: controller.signal,
+			});
+			clearTimeout(timeout);
+			const text = await res.text();
+			let body;
+			try { body = JSON.parse(text); } catch (_) { body = { raw: text }; }
+			result = { ok: res.ok, status: res.status, body };
+			
+			// If 429, try next key
+			if (res.status === 429 && keysToTry.length > 1) {
+				continue;
+			}
+			// Otherwise, use this result
+			break;
+		} catch (err) {
+			result = { ok: false, status: 0, body: { error: err.message } };
+			break; // Network error, don't retry with other keys
+		}
 	}
 
 	const ms = Date.now() - started;
@@ -1276,6 +1309,9 @@ async function runFullSweep() {
 				suspendedUntil,
 			});
 		}
+
+		// Small delay between tests to avoid rate limiting
+		await new Promise(r => setTimeout(r, 500));
 	}
 
 	runtime.lastLatencyAt = Date.now();
