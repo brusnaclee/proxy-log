@@ -84,7 +84,7 @@ export default function AnalyticsPage() {
       setDeviceData(byDevice);
       setTimeseriesData(daily);
       setHourlyData(hourly);
-      setTopUsersData(topUsers);
+      setTopUsersData(topUsers || { byRequests: [], byTokens: [] });
     } catch {}
   }, [days]);
 
@@ -335,7 +335,7 @@ export default function AnalyticsPage() {
                 </tr>
               </thead>
               <tbody>
-                {topUsersData.byRequests.map((u, i) => (
+        {topUsersData?.byRequests?.map((u, i) => (
                   <tr key={i} className="border-b border-border/30 hover:bg-accent/30">
                     <td className="py-2 px-4 text-xs text-muted-foreground font-bold">{i + 1}</td>
                     <td className="py-2 px-4 text-xs">
@@ -347,7 +347,7 @@ export default function AnalyticsPage() {
                     <td className="py-2 px-4 text-right font-mono text-xs text-emerald-400">{formatCost(u.estimatedCost)}</td>
                   </tr>
                 ))}
-                {topUsersData.byRequests.length === 0 && (
+                {!topUsersData?.byRequests?.length && (
                   <tr><td colSpan={5} className="text-center py-6 text-muted-foreground text-xs">No data yet.</td></tr>
                 )}
               </tbody>
@@ -371,7 +371,7 @@ export default function AnalyticsPage() {
                 </tr>
               </thead>
               <tbody>
-                {topUsersData.byTokens.map((u, i) => (
+        {topUsersData?.byTokens?.map((u, i) => (
                   <tr key={i} className="border-b border-border/30 hover:bg-accent/30">
                     <td className="py-2 px-4 text-xs text-muted-foreground font-bold">{i + 1}</td>
                     <td className="py-2 px-4 text-xs">
@@ -383,7 +383,7 @@ export default function AnalyticsPage() {
                     <td className="py-2 px-4 text-right font-mono text-xs text-emerald-400">{formatCost(u.estimatedCost)}</td>
                   </tr>
                 ))}
-                {topUsersData.byTokens.length === 0 && (
+                {!topUsersData?.byTokens?.length && (
                   <tr><td colSpan={5} className="text-center py-6 text-muted-foreground text-xs">No data yet.</td></tr>
                 )}
               </tbody>
