@@ -1491,7 +1491,7 @@ const targetProvider = await getProviderForModel(model);
       }
     }
 
-    const globalDailyTokenLimit = config.globalDailyTokenLimit || 0;
+    const globalDailyTokenLimit = (keyRecord.dailyTokenLimit && keyRecord.dailyTokenLimit > 0) ? keyRecord.dailyTokenLimit : (config.globalDailyTokenLimit || 0);
     if (globalDailyTokenLimit > 0) {
       const dw = new Date(wibNow); dw.setUTCHours(0, 0, 0, 0);
       const ds = new Date(dw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);

@@ -86,7 +86,10 @@ export interface ApiKeyListItem {
   maxDevices: number;
   devicePolicy: string;
   ipPolicy: string;
+  dailyTokenLimit: number;
   monthlyTokenLimit: number;
+  dailyInputTokenLimit: number;
+  dailyOutputTokenLimit: number;
   deviceCount: number;
   requestsToday: number;
   tokensToday: number;
@@ -207,7 +210,9 @@ export const keys = {
     }),
   update: (id: number, data: Partial<{
     name: string; isActive: boolean; maxDevices: number;
-    devicePolicy: string; ipPolicy: string; idePolicy: string; monthlyTokenLimit: number;
+    devicePolicy: string; ipPolicy: string; idePolicy: string;
+    dailyTokenLimit: number; monthlyTokenLimit: number;
+    dailyInputTokenLimit: number; dailyOutputTokenLimit: number;
     rateLimit: number; rateLimitWindow: string;
     promptLimit: number; promptLimitWindow: string;
     perModelPromptLimit: number; perModelPromptLimitWindow: string;

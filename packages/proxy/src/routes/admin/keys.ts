@@ -59,7 +59,9 @@ keys.get("/keys", async (c) => {
       discordUsername: key.discordUsername,
       provisionedBy: key.provisionedBy,
       isActive: key.isActive, maxDevices: key.maxDevices, devicePolicy: key.devicePolicy,
-      ipPolicy: key.ipPolicy, idePolicy: key.idePolicy, monthlyTokenLimit: key.monthlyTokenLimit,
+      ipPolicy: key.ipPolicy, idePolicy: key.idePolicy, 
+      dailyTokenLimit: key.dailyTokenLimit || 0, monthlyTokenLimit: key.monthlyTokenLimit,
+      dailyInputTokenLimit: key.dailyInputTokenLimit || 0, dailyOutputTokenLimit: key.dailyOutputTokenLimit || 0,
       rateLimit: key.rateLimit || 0, rateLimitWindow: key.rateLimitWindow || config?.globalRateLimitWindow || "1h",
       promptLimit: key.promptLimit || 0, promptLimitWindow: key.promptLimitWindow || config?.globalPromptLimitWindow || "1d",
       deviceCount: deviceCount?.count || 0, requestsToday: todayStats?.count || 0,
@@ -255,7 +257,9 @@ keys.get("/keys/:id", async (c) => {
     discordUsername: key.discordUsername,
     provisionedBy: key.provisionedBy,
     isActive: key.isActive, maxDevices: key.maxDevices, devicePolicy: key.devicePolicy,
-    ipPolicy: key.ipPolicy, idePolicy: key.idePolicy, monthlyTokenLimit: key.monthlyTokenLimit,
+    ipPolicy: key.ipPolicy, idePolicy: key.idePolicy, 
+    dailyTokenLimit: key.dailyTokenLimit || 0, monthlyTokenLimit: key.monthlyTokenLimit,
+    dailyInputTokenLimit: key.dailyInputTokenLimit || 0, dailyOutputTokenLimit: key.dailyOutputTokenLimit || 0,
     rateLimit: key.rateLimit || 0, rateLimitWindow: key.rateLimitWindow || config?.globalRateLimitWindow || "1h",
     promptLimit: key.promptLimit || 0, promptLimitWindow: key.promptLimitWindow || config?.globalPromptLimitWindow || "1d",
     perModelPromptLimit: key.perModelPromptLimit || 0, perModelPromptLimitWindow: key.perModelPromptLimitWindow || config?.globalPerModelPromptLimitWindow || "1d",
@@ -303,7 +307,10 @@ keys.put("/keys/:id", async (c) => {
   if (body.devicePolicy !== undefined) updates.devicePolicy = body.devicePolicy;
   if (body.ipPolicy !== undefined) updates.ipPolicy = body.ipPolicy;
   if (body.idePolicy !== undefined) updates.idePolicy = body.idePolicy;
+  if (body.dailyTokenLimit !== undefined) updates.dailyTokenLimit = body.dailyTokenLimit;
   if (body.monthlyTokenLimit !== undefined) updates.monthlyTokenLimit = body.monthlyTokenLimit;
+  if (body.dailyInputTokenLimit !== undefined) updates.dailyInputTokenLimit = body.dailyInputTokenLimit;
+  if (body.dailyOutputTokenLimit !== undefined) updates.dailyOutputTokenLimit = body.dailyOutputTokenLimit;
   if (body.rateLimit !== undefined) updates.rateLimit = body.rateLimit;
   if (body.rateLimitWindow !== undefined) updates.rateLimitWindow = body.rateLimitWindow || null;
   if (body.promptLimit !== undefined) updates.promptLimit = body.promptLimit;

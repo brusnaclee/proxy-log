@@ -76,6 +76,7 @@ export const apiKeys = sqliteTable('api_keys', {
 	promptWindowStart: text('prompt_window_start'), // tracks when the current global prompt window started
 	perModelPromptLimit: integer('per_model_prompt_limit').default(0), // overrides global per-model limit if > 0
 	perModelPromptLimitWindow: text('per_model_prompt_limit_window'), // overrides global per-model window if set
+	dailyTokenLimit: integer('daily_token_limit').default(0), // per-key override
 	dailyInputTokenLimit: integer('daily_input_token_limit').default(0), // per-key override
 	dailyOutputTokenLimit: integer('daily_output_token_limit').default(0), // per-key override
 	pendingNotification: text('pending_notification'), // JSON: { type, discordUserId, threadId, newKey, endpoint, message }

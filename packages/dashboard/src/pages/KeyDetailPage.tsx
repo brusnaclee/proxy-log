@@ -41,6 +41,9 @@ export default function KeyDetailPage() {
   const [editIpPolicy, setEditIpPolicy] = useState("none");
   const [editIdePolicy, setEditIdePolicy] = useState("none");
   const [editMonthlyLimit, setEditMonthlyLimit] = useState(0);
+  const [editDailyTokenLimit, setEditDailyTokenLimit] = useState(0);
+  const [editDailyInputTokenLimit, setEditDailyInputTokenLimit] = useState(0);
+  const [editDailyOutputTokenLimit, setEditDailyOutputTokenLimit] = useState(0);
   const [showDelete, setShowDelete] = useState(false);
   const [showRotate, setShowRotate] = useState(false);
   const [rotatedKey, setRotatedKey] = useState<string | null>(null);
@@ -137,6 +140,9 @@ export default function KeyDetailPage() {
       setEditIpPolicy(k.ipPolicy);
       setEditIdePolicy(k.idePolicy);
       setEditMonthlyLimit(k.monthlyTokenLimit);
+      setEditDailyTokenLimit(k.dailyTokenLimit);
+      setEditDailyInputTokenLimit(k.dailyInputTokenLimit);
+      setEditDailyOutputTokenLimit(k.dailyOutputTokenLimit);
       setStatusText("");
     } catch (err) {
       console.error("[KeyDetail] Failed to load key data:", err);
@@ -185,6 +191,9 @@ export default function KeyDetailPage() {
         ipPolicy: editIpPolicy,
         idePolicy: editIdePolicy,
         monthlyTokenLimit: editMonthlyLimit,
+        dailyTokenLimit: editDailyTokenLimit,
+        dailyInputTokenLimit: editDailyInputTokenLimit,
+        dailyOutputTokenLimit: editDailyOutputTokenLimit,
         rateLimit: keyData?.rateLimit || 0,
         rateLimitWindow: keyData?.rateLimitWindow || "",
         promptLimit: keyData?.promptLimit || 0,
@@ -544,12 +553,42 @@ export default function KeyDetailPage() {
                     </SelectContent>
                   </Select>
                 </div>
-    <div className="md:col-span-2">
-      <Label>Monthly Token Limit (0 = unlimited)</Label>
+    <div>
+      <Label>Daily Token Limit (0 = use global)</Label>
+      <Input
+        type="number"
+        value={editDailyTokenLimit}
+        onChange={(e) => setEditDailyTokenLimit(parseInt(e.target.value) || 0)}
+        disabled={!editing}
+        className="mt-1"
+      />
+    </div>
+    <div>
+      <Label>Monthly Token Limit (0 = use global)</Label>
       <Input
         type="number"
         value={editMonthlyLimit}
         onChange={(e) => setEditMonthlyLimit(parseInt(e.target.value) || 0)}
+        disabled={!editing}
+        className="mt-1"
+      />
+    </div>
+    <div>
+      <Label>Daily Input Token Limit (0 = use global)</Label>
+      <Input
+        type="number"
+        value={editDailyInputTokenLimit}
+        onChange={(e) => setEditDailyInputTokenLimit(parseInt(e.target.value) || 0)}
+        disabled={!editing}
+        className="mt-1"
+      />
+    </div>
+    <div>
+      <Label>Daily Output Token Limit (0 = use global)</Label>
+      <Input
+        type="number"
+        value={editDailyOutputTokenLimit}
+        onChange={(e) => setEditDailyOutputTokenLimit(parseInt(e.target.value) || 0)}
         disabled={!editing}
         className="mt-1"
       />
