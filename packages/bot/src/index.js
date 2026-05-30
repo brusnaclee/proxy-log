@@ -61,7 +61,7 @@ const TOKITO_PAGE_SIZE = parseInt(process.env.TOKITO_PAGE_SIZE) || 10;
 const TOKITO_REQUEST_TIMEOUT_MS =
 	parseInt(process.env.TOKITO_REQUEST_TIMEOUT_MS) || 30000;
 const TOKITO_SESSION_TIMEOUT_MS =
-	parseInt(process.env.TOKITO_SESSION_TIMEOUT_MS) || 60000;
+	parseInt(process.env.TOKITO_SESSION_TIMEOUT_MS) || 180000; // 3 minutes
 const TOKITO_FALLBACK_MAX_INDEX =
 	parseInt(process.env.TOKITO_FALLBACK_MAX_INDEX) || 1;
 
@@ -1823,11 +1823,22 @@ function buildTokitoEmbed(kind, session) {
 	return { embed, components };
 }
 
-// Cleanup expired tokito sessions
-setInterval(() => {
+// Cleanup expired tokito sessions and delete their ephemeral messages
+setInterval(async () => {
 	const now = Date.now();
 	for (const [id, session] of tokitoSessions.entries()) {
-		if (now >= session.expiresAt) tokitoSessions.delete(id);
+		if (now >= session.expiresAt) {
+			// Try to delete the ephemeral message
+			if (session.interaction) {
+				try {
+					const reply = await session.interaction.fetchReply();
+					if (reply) await reply.delete();
+				} catch (_) {
+					// Message may already be deleted or inaccessible
+				}
+			}
+			tokitoSessions.delete(id);
+		}
 	}
 }, 5000);
 // ==========================================
@@ -3314,6 +3325,8 @@ client.on('interactionCreate', async (interaction) => {
 				await refreshLatencyFromProxy();
 				
 				const session = createTokitoSession(interaction.user.id, kind);
+				// Store interaction for message deletion on expiry
+				session.interaction = interaction;
 				const { embed, components } = buildTokitoEmbed(kind, session);
 				
 				// Edit with actual results
