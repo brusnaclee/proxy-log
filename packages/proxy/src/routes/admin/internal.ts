@@ -465,13 +465,14 @@ internal.get("/internal/stats/ranking", async (c) => {
         keyName: key.name,
         requests: row.requests,
         tokens: row.tokens,
+        estimatedCost: 0,
       });
       if (result.length >= 10) break;
     }
     return result;
   }
 
-  async function getTopUsersByTokens(since: string) {
+    async function getTopUsersByTokens(since: string) {
     const rows = await db.all(sql`
       SELECT api_key_id as apiKeyId, COUNT(*) as requests,
         COALESCE(SUM(sum_delta + sum_c), 0) as tokens,
@@ -490,7 +491,7 @@ internal.get("/internal/stats/ranking", async (c) => {
         .from(apiKeys).where(eq(apiKeys.id, row.apiKeyId)).get();
       if (!key) continue;
 
-      const estimatedCost = Math.round((row.promptTokens || 0) * 1.5 + (row.completionTokens || 0) * 6.0);
+        const estimatedCost = Math.round((row.promptTokens || 0) * 1.5 + (row.completionTokens || 0) * 6.0);
 
       result.push({
         discordUserId: key.discordUserId,
