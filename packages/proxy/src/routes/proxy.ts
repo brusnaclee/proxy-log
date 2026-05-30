@@ -22,6 +22,7 @@ import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindo
 import { analyzeRequestMessages, isTitleGenRequest, detectToolCallsInResponse, getLastTurnTextForTokenEstimate, type MessageAnalysis } from "../utils/message-analyzer.js";
 import { makeAccumulator, consumeStreamPayload, consumeNonStreamingPayload, finalizeCompletion, resolveBillableTokens } from "../utils/token-extractor.js";
 import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL } from "../utils/counting.js";
+import { getCacheKey, getCachedResponse, cacheResponse, cacheStreamResponse, invalidateCache } from "../utils/response-cache.js";
 
 const proxy = new Hono();
 
@@ -1639,7 +1640,41 @@ const targetProvider = await getProviderForModel(model);
     estimatedContextLength: estimatedContextLength || contextTokensBefore,
   };
 
-  // ΓöÇΓöÇΓöÇ 10. Forward Request to Upstream ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  // ─── 9.5 Response Cache Check ──────────────────────────────────────────────
+  const cacheKey = getCacheKey(model, messageAnalysis.messageHash, sessionInfo.sessionId);
+  const cached = cacheKey ? getCachedResponse(cacheKey) : null;
+
+  if (cached && !isStreaming) {
+    console.log(`[cache] HIT for model=${model}`);
+    const cacheLogEntry: Record<string, any> = {
+      ...baseLogEntry, promptTokens: 0, completionTokens: 0, totalTokens: 0,
+      cachedTokens: 0, contextDeltaTokens: 0, latencyMs: Date.now() - startTime,
+      statusCode: cached.statusCode, errorMessage: null, estimatedCost: 0,
+      toolsUsed: null, toolCount: 0, hasToolCalls: false,
+      isCountedRequest: 0, isBillableToken: 0,
+    };
+    persistLogAndSession(cacheLogEntry, false, false);
+    return new Response(Buffer.from(cached.body), { status: cached.statusCode, headers: { ...cached.headers, "x-cache": "HIT" } });
+  }
+
+  if (cached && isStreaming) {
+    console.log(`[cache] HIT (stream) for model=${model}`);
+    const cacheLogEntry: Record<string, any> = {
+      ...baseLogEntry, promptTokens: 0, completionTokens: 0, totalTokens: 0,
+      cachedTokens: 0, contextDeltaTokens: 0, latencyMs: Date.now() - startTime,
+      statusCode: cached.statusCode, errorMessage: null, estimatedCost: 0,
+      toolsUsed: null, toolCount: 0, hasToolCalls: false,
+      isCountedRequest: 0, isBillableToken: 0,
+    };
+    persistLogAndSession(cacheLogEntry, false, false);
+    const { readable, writable } = new TransformStream();
+    const writer = writable.getWriter();
+    (async () => { for (const chunk of cached.streamChunks) { await writer.write(chunk); } await writer.close(); })();
+    return new Response(readable, { status: cached.statusCode, headers: { ...cached.headers, "x-cache": "HIT" } });
+  }
+
+  if (cacheKey) console.log(`[cache] MISS for model=${model}`);
+
   const upstreamHeaders: Record<string, string> = {};
   const blockedHeaders = new Set([
     "host",
@@ -1744,6 +1779,9 @@ const targetProvider = await getProviderForModel(model);
       let responsesResponseId = `resp-${Date.now()}`;
       let responsesSentCreated = false;
 
+      // Collect stream chunks for caching
+      const streamChunksForCache: Uint8Array[] = [];
+
       const { readable, writable } = new TransformStream({
         transform(chunk, controller) {
           if (isAnthropicProvider && anthropicStreamState) {
@@ -1813,6 +1851,8 @@ const targetProvider = await getProviderForModel(model);
           } else {
             // OpenAI streaming: pass through as-is
             controller.enqueue(chunk);
+            // Collect for caching
+            streamChunksForCache.push(new Uint8Array(chunk));
             try {
               const text = decoder.decode(chunk, { stream: true });
               const lines = text.split("\n");
@@ -1865,6 +1905,12 @@ const targetProvider = await getProviderForModel(model);
           // Only count request if status is 2xx (success)
           const shouldCountRequest = statusCode >= 200 && statusCode < 300;
           persistLogAndSession(logEntry, hasActualToolCalls, shouldCountRequest);
+
+          // Cache the streaming response for deduplication
+          if (cacheKey && statusCode >= 200 && statusCode < 300 && streamChunksForCache.length > 0) {
+            cacheStreamResponse(cacheKey, model, messageAnalysis.messageHash || "", statusCode, {}, streamChunksForCache);
+            console.log(`[cache] STORE (stream) for model=${model} chunks=${streamChunksForCache.length}`);
+          }
         },
       });
 
@@ -2042,6 +2088,12 @@ const targetProvider = await getProviderForModel(model);
     const rateLimitRemaining = (c as any).get("x-ratelimit-remaining-requests") as string;
     if (rateLimitLimit) responseHeaders["x-ratelimit-limit-requests"] = rateLimitLimit;
     if (rateLimitRemaining) responseHeaders["x-ratelimit-remaining-requests"] = rateLimitRemaining;
+
+    // Cache the non-streaming response for deduplication
+    if (cacheKey && statusCode >= 200 && statusCode < 300) {
+      cacheResponse(cacheKey, model, messageAnalysis.messageHash || "", statusCode, responseHeaders, new TextEncoder().encode(responseBody));
+      console.log(`[cache] STORE for model=${model} size=${responseBody.length}`);
+    }
 
     return new Response(responseBody, { status: statusCode, headers: responseHeaders });
   } catch (error: any) {
