@@ -1,22 +1,24 @@
-﻿import { createClient } from "@libsql/client";
-import { drizzle } from "drizzle-orm/libsql";
-import { eq, sql } from "drizzle-orm";
-import * as schema from "./schema.js";
-import { existsSync, mkdirSync } from "fs";
-import { dirname, isAbsolute, resolve } from "path";
+﻿import { createClient } from '@libsql/client';
+import { eq, sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/libsql';
+import { existsSync, mkdirSync } from 'fs';
+import { dirname, isAbsolute, resolve } from 'path';
+import * as schema from './schema.js';
 
-const rawDbPath = process.env.DATABASE_URL || "./data/gateway.db";
-const DB_PATH = isAbsolute(rawDbPath) ? rawDbPath : resolve(process.cwd(), rawDbPath);
+const rawDbPath = process.env.DATABASE_URL || './data/gateway.db';
+const DB_PATH = isAbsolute(rawDbPath)
+	? rawDbPath
+	: resolve(process.cwd(), rawDbPath);
 
 // Ensure directory exists
 const dbDir = dirname(DB_PATH);
 if (!existsSync(dbDir)) {
-  mkdirSync(dbDir, { recursive: true });
+	mkdirSync(dbDir, { recursive: true });
 }
 
 // Create libsql client (local file-based SQLite)
 const client = createClient({
-  url: `file:${DB_PATH}`,
+	url: `file:${DB_PATH}`,
 });
 
 // Create Drizzle instance with schema
@@ -27,23 +29,29 @@ export const db = drizzle(client, { schema });
  * and seed a default admin if none is found.
  */
 export async function initializeDatabase() {
-  // Set pragmas separately (they return rows which executeMultiple doesn't allow)
-  await client.execute("PRAGMA journal_mode = WAL");
-  await client.execute("PRAGMA foreign_keys = ON");
+	// Set pragmas separately (they return rows which executeMultiple doesn't allow)
+	await client.execute('PRAGMA journal_mode = WAL');
+	await client.execute('PRAGMA foreign_keys = ON');
 
-  // Fix for the table creation bug: if api_keys has password_hash, we need to recreate it.
-  const apiKeysPragma = await client.execute(`PRAGMA table_info(api_keys)`);
-  const hasPasswordHash = apiKeysPragma.rows.some((row: any) => String(row.name) === "password_hash");
-  if (hasPasswordHash) {
-    const brokenCount = await client.execute("SELECT COUNT(*) as cnt FROM api_keys");
-    const rowCount = Number((brokenCount.rows[0] as any)?.cnt || 0);
-    const backupName = `api_keys_broken_${Date.now()}`;
+	// Fix for the table creation bug: if api_keys has password_hash, we need to recreate it.
+	const apiKeysPragma = await client.execute(`PRAGMA table_info(api_keys)`);
+	const hasPasswordHash = apiKeysPragma.rows.some(
+		(row: any) => String(row.name) === 'password_hash',
+	);
+	if (hasPasswordHash) {
+		const brokenCount = await client.execute(
+			'SELECT COUNT(*) as cnt FROM api_keys',
+		);
+		const rowCount = Number((brokenCount.rows[0] as any)?.cnt || 0);
+		const backupName = `api_keys_broken_${Date.now()}`;
 
-    console.warn(`⚠️  Detected broken api_keys schema (${rowCount} rows). Renaming to ${backupName} for manual recovery.`);
-    await client.execute("PRAGMA foreign_keys = OFF");
-    await client.execute(`ALTER TABLE api_keys RENAME TO ${backupName}`);
+		console.warn(
+			`⚠️  Detected broken api_keys schema (${rowCount} rows). Renaming to ${backupName} for manual recovery.`,
+		);
+		await client.execute('PRAGMA foreign_keys = OFF');
+		await client.execute(`ALTER TABLE api_keys RENAME TO ${backupName}`);
 
-    await client.execute(`
+		await client.execute(`
       CREATE TABLE api_keys (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -71,18 +79,20 @@ export async function initializeDatabase() {
       )
     `);
 
-    if (rowCount > 0) {
-      console.warn(`⚠️  Broken api_keys had ${rowCount} rows — NOT auto-dropped. Inspect table "${backupName}" and restore manually if needed.`);
-    } else {
-      await client.execute(`DROP TABLE ${backupName}`);
-    }
+		if (rowCount > 0) {
+			console.warn(
+				`⚠️  Broken api_keys had ${rowCount} rows — NOT auto-dropped. Inspect table "${backupName}" and restore manually if needed.`,
+			);
+		} else {
+			await client.execute(`DROP TABLE ${backupName}`);
+		}
 
-    await client.execute("PRAGMA foreign_keys = ON");
-    console.log("✅ Recreated api_keys table with correct schema.");
-  }
+		await client.execute('PRAGMA foreign_keys = ON');
+		console.log('✅ Recreated api_keys table with correct schema.');
+	}
 
-  // Create all tables directly using SQL (auto-migration)
-  await client.executeMultiple(`
+	// Create all tables directly using SQL (auto-migration)
+	await client.executeMultiple(`
     CREATE TABLE IF NOT EXISTS admin_config (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       password_hash TEXT NOT NULL,
@@ -266,111 +276,295 @@ export async function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_provider_keys_provider_id ON provider_api_keys(provider_id);
   `);
 
-  // Backward-compatible column migration for existing databases
-  await ensureColumnExists("admin_config", "global_max_devices", "INTEGER DEFAULT 0");
-  await ensureColumnExists("admin_config", "realtime_enabled", "INTEGER NOT NULL DEFAULT 0");
-  await ensureColumnExists("admin_config", "global_rate_limit", "INTEGER DEFAULT 0");
-  await ensureColumnExists("admin_config", "global_rate_limit_window", "TEXT DEFAULT '1h'");
+	// Backward-compatible column migration for existing databases
+	await ensureColumnExists(
+		'admin_config',
+		'global_max_devices',
+		'INTEGER DEFAULT 0',
+	);
+	await ensureColumnExists(
+		'admin_config',
+		'realtime_enabled',
+		'INTEGER NOT NULL DEFAULT 0',
+	);
+	await ensureColumnExists(
+		'admin_config',
+		'global_rate_limit',
+		'INTEGER DEFAULT 0',
+	);
+	await ensureColumnExists(
+		'admin_config',
+		'global_rate_limit_window',
+		"TEXT DEFAULT '1h'",
+	);
 
-  // Fix api_keys columns that might be missing due to the previous schema bug
-  await ensureColumnExists("api_keys", "name", "TEXT NOT NULL DEFAULT ''");
-  await ensureColumnExists("api_keys", "key", "TEXT NOT NULL DEFAULT ''");
-  await ensureColumnExists("api_keys", "key_prefix", "TEXT NOT NULL DEFAULT ''");
-  await ensureColumnExists("api_keys", "key_hash", "TEXT NOT NULL DEFAULT ''");
-  await ensureColumnExists("api_keys", "discord_user_id", "TEXT");
-  await ensureColumnExists("api_keys", "discord_username", "TEXT");
-  await ensureColumnExists("api_keys", "provisioned_by", "TEXT NOT NULL DEFAULT 'dashboard'");
-  await ensureColumnExists("api_keys", "is_active", "INTEGER NOT NULL DEFAULT 1");
-  await ensureColumnExists("api_keys", "max_devices", "INTEGER DEFAULT 0");
-  await ensureColumnExists("api_keys", "device_policy", "TEXT NOT NULL DEFAULT 'none'");
-  await ensureColumnExists("api_keys", "ip_policy", "TEXT NOT NULL DEFAULT 'none'");
-  await ensureColumnExists("api_keys", "ide_policy", "TEXT NOT NULL DEFAULT 'none'");
-  await ensureColumnExists("api_keys", "monthly_token_limit", "INTEGER DEFAULT 0");
-  await ensureColumnExists("api_keys", "rate_limit", "INTEGER DEFAULT 0");
-  await ensureColumnExists("api_keys", "rate_limit_window", "TEXT");
+	// Fix api_keys columns that might be missing due to the previous schema bug
+	await ensureColumnExists('api_keys', 'name', "TEXT NOT NULL DEFAULT ''");
+	await ensureColumnExists('api_keys', 'key', "TEXT NOT NULL DEFAULT ''");
+	await ensureColumnExists(
+		'api_keys',
+		'key_prefix',
+		"TEXT NOT NULL DEFAULT ''",
+	);
+	await ensureColumnExists('api_keys', 'key_hash', "TEXT NOT NULL DEFAULT ''");
+	await ensureColumnExists('api_keys', 'discord_user_id', 'TEXT');
+	await ensureColumnExists('api_keys', 'discord_username', 'TEXT');
+	await ensureColumnExists(
+		'api_keys',
+		'provisioned_by',
+		"TEXT NOT NULL DEFAULT 'dashboard'",
+	);
+	await ensureColumnExists(
+		'api_keys',
+		'is_active',
+		'INTEGER NOT NULL DEFAULT 1',
+	);
+	await ensureColumnExists('api_keys', 'max_devices', 'INTEGER DEFAULT 0');
+	await ensureColumnExists(
+		'api_keys',
+		'device_policy',
+		"TEXT NOT NULL DEFAULT 'none'",
+	);
+	await ensureColumnExists(
+		'api_keys',
+		'ip_policy',
+		"TEXT NOT NULL DEFAULT 'none'",
+	);
+	await ensureColumnExists(
+		'api_keys',
+		'ide_policy',
+		"TEXT NOT NULL DEFAULT 'none'",
+	);
+	await ensureColumnExists(
+		'api_keys',
+		'monthly_token_limit',
+		'INTEGER DEFAULT 0',
+	);
+	await ensureColumnExists('api_keys', 'rate_limit', 'INTEGER DEFAULT 0');
+	await ensureColumnExists('api_keys', 'rate_limit_window', 'TEXT');
 
-  await ensureColumnExists("request_logs", "provider", "TEXT");
-  await ensureColumnExists("request_logs", "endpoint_path", "TEXT");
-  await ensureColumnExists("request_logs", "session_id", "TEXT");
-  await ensureColumnExists("request_logs", "user_agent_raw", "TEXT");
-  await ensureColumnExists("request_logs", "os_detected", "TEXT");
-  await ensureColumnExists("request_logs", "client_name", "TEXT");
-  await ensureColumnExists("request_logs", "context_fingerprint", "TEXT");
-  await ensureColumnExists("request_logs", "context_tokens_before", "INTEGER DEFAULT 0");
-  await ensureColumnExists("request_logs", "context_delta_tokens", "INTEGER DEFAULT 0");
-  await ensureColumnExists("request_logs", "context_event", "TEXT");
-  await ensureColumnExists("request_logs", "tools_used", "TEXT");
-  await ensureColumnExists("request_logs", "tool_count", "INTEGER DEFAULT 0");
-  await ensureColumnExists("request_logs", "has_tool_calls", "INTEGER DEFAULT 0");
-  await ensureColumnExists("request_logs", "request_preview", "TEXT");
-  await ensureColumnExists("request_logs", "response_preview", "TEXT");
-  await ensureColumnExists("request_logs", "transcript_snapshot", "TEXT");
-  await ensureColumnExists("request_logs", "estimated_cost", "INTEGER DEFAULT 0");
-  await ensureColumnExists("chat_sessions", "session_id", "TEXT");
-  await ensureColumnExists("chat_sessions", "api_key_id", "INTEGER");
-  await ensureColumnExists("chat_sessions", "api_key_name", "TEXT");
-  await ensureColumnExists("chat_sessions", "ip_address", "TEXT");
-  await ensureColumnExists("chat_sessions", "device_fingerprint", "TEXT");
-  await ensureColumnExists("chat_sessions", "ide_detected", "TEXT");
-  await ensureColumnExists("chat_sessions", "provider", "TEXT");
-  await ensureColumnExists("chat_sessions", "model", "TEXT");
-  await ensureColumnExists("chat_sessions", "context_fingerprint", "TEXT");
-  await ensureColumnExists("chat_sessions", "last_context_tokens", "INTEGER NOT NULL DEFAULT 0");
-  await ensureColumnExists("chat_sessions", "request_count", "INTEGER NOT NULL DEFAULT 0");
-  await ensureColumnExists("chat_sessions", "total_tokens", "INTEGER NOT NULL DEFAULT 0");
-  await ensureColumnExists("chat_sessions", "compact_count", "INTEGER NOT NULL DEFAULT 0");
-  await ensureColumnExists("chat_sessions", "switch_count", "INTEGER NOT NULL DEFAULT 0");
-  await ensureColumnExists("chat_sessions", "last_request_preview", "TEXT");
-  await ensureColumnExists("chat_sessions", "estimated_cost", "INTEGER NOT NULL DEFAULT 0");
-  await ensureColumnExists("chat_sessions", "first_seen_at", "TEXT NOT NULL DEFAULT (datetime('now'))");
-  await ensureColumnExists("chat_sessions", "last_seen_at", "TEXT NOT NULL DEFAULT (datetime('now'))");
-  await ensureColumnExists("devices", "os_detected", "TEXT");
-  await ensureColumnExists("devices", "device_name", "TEXT");
+	await ensureColumnExists('request_logs', 'provider', 'TEXT');
+	await ensureColumnExists('request_logs', 'endpoint_path', 'TEXT');
+	await ensureColumnExists('request_logs', 'session_id', 'TEXT');
+	await ensureColumnExists('request_logs', 'user_agent_raw', 'TEXT');
+	await ensureColumnExists('request_logs', 'os_detected', 'TEXT');
+	await ensureColumnExists('request_logs', 'client_name', 'TEXT');
+	await ensureColumnExists('request_logs', 'context_fingerprint', 'TEXT');
+	await ensureColumnExists(
+		'request_logs',
+		'context_tokens_before',
+		'INTEGER DEFAULT 0',
+	);
+	await ensureColumnExists(
+		'request_logs',
+		'context_delta_tokens',
+		'INTEGER DEFAULT 0',
+	);
+	await ensureColumnExists('request_logs', 'context_event', 'TEXT');
+	await ensureColumnExists('request_logs', 'tools_used', 'TEXT');
+	await ensureColumnExists('request_logs', 'tool_count', 'INTEGER DEFAULT 0');
+	await ensureColumnExists(
+		'request_logs',
+		'has_tool_calls',
+		'INTEGER DEFAULT 0',
+	);
+	await ensureColumnExists('request_logs', 'request_preview', 'TEXT');
+	await ensureColumnExists('request_logs', 'response_preview', 'TEXT');
+	await ensureColumnExists('request_logs', 'transcript_snapshot', 'TEXT');
+	await ensureColumnExists(
+		'request_logs',
+		'estimated_cost',
+		'INTEGER DEFAULT 0',
+	);
+	await ensureColumnExists('chat_sessions', 'session_id', 'TEXT');
+	await ensureColumnExists('chat_sessions', 'api_key_id', 'INTEGER');
+	await ensureColumnExists('chat_sessions', 'api_key_name', 'TEXT');
+	await ensureColumnExists('chat_sessions', 'ip_address', 'TEXT');
+	await ensureColumnExists('chat_sessions', 'device_fingerprint', 'TEXT');
+	await ensureColumnExists('chat_sessions', 'ide_detected', 'TEXT');
+	await ensureColumnExists('chat_sessions', 'provider', 'TEXT');
+	await ensureColumnExists('chat_sessions', 'model', 'TEXT');
+	await ensureColumnExists('chat_sessions', 'context_fingerprint', 'TEXT');
+	await ensureColumnExists(
+		'chat_sessions',
+		'last_context_tokens',
+		'INTEGER NOT NULL DEFAULT 0',
+	);
+	await ensureColumnExists(
+		'chat_sessions',
+		'request_count',
+		'INTEGER NOT NULL DEFAULT 0',
+	);
+	await ensureColumnExists(
+		'chat_sessions',
+		'total_tokens',
+		'INTEGER NOT NULL DEFAULT 0',
+	);
+	await ensureColumnExists(
+		'chat_sessions',
+		'compact_count',
+		'INTEGER NOT NULL DEFAULT 0',
+	);
+	await ensureColumnExists(
+		'chat_sessions',
+		'switch_count',
+		'INTEGER NOT NULL DEFAULT 0',
+	);
+	await ensureColumnExists('chat_sessions', 'last_request_preview', 'TEXT');
+	await ensureColumnExists(
+		'chat_sessions',
+		'estimated_cost',
+		'INTEGER NOT NULL DEFAULT 0',
+	);
+	await ensureColumnExists(
+		'chat_sessions',
+		'first_seen_at',
+		"TEXT NOT NULL DEFAULT (datetime('now'))",
+	);
+	await ensureColumnExists(
+		'chat_sessions',
+		'last_seen_at',
+		"TEXT NOT NULL DEFAULT (datetime('now'))",
+	);
+	await ensureColumnExists('devices', 'os_detected', 'TEXT');
+	await ensureColumnExists('devices', 'device_name', 'TEXT');
 
-  await ensureColumnExists("admin_config", "discord_bot_token", "TEXT DEFAULT ''");
-  await ensureColumnExists("admin_config", "agverif_channel_id", "TEXT DEFAULT ''");
-  await ensureColumnExists("admin_config", "tokito_channel_id", "TEXT DEFAULT ''");
-  await ensureColumnExists("admin_config", "required_role_id", "TEXT DEFAULT ''");
-  await ensureColumnExists("admin_config", "owner_groupy_role_id", "TEXT DEFAULT ''");
-  await ensureColumnExists("admin_config", "verified_role_id", "TEXT DEFAULT ''");
-  await ensureColumnExists("admin_config", "gemini_api_key", "TEXT DEFAULT ''");
-  await ensureColumnExists("admin_config", "verif_auto_enabled", "INTEGER DEFAULT 0");
-  await ensureColumnExists("admin_config", "tokito_api_key", "TEXT DEFAULT ''");
-  await ensureColumnExists("admin_config", "global_prompt_limit", "INTEGER DEFAULT 0");
-  await ensureColumnExists("admin_config", "global_prompt_limit_window", "TEXT DEFAULT '1d'");
-  await ensureColumnExists("api_keys", "prompt_limit", "INTEGER DEFAULT 0");
-  await ensureColumnExists("api_keys", "prompt_limit_window", "TEXT");
-  await ensureColumnExists("chat_sessions", "prompt_count", "INTEGER NOT NULL DEFAULT 0");
-  
-  // New columns for improved prompt counting
-  await ensureColumnExists("chat_sessions", "last_user_message_hash", "TEXT");
-  await ensureColumnExists("chat_sessions", "last_message_role", "TEXT");
-  await ensureColumnExists("chat_sessions", "last_tool_calls_active", "INTEGER DEFAULT 0");
-  await ensureColumnExists("request_logs", "message_role", "TEXT");
-  await ensureColumnExists("request_logs", "user_message_hash", "TEXT");
-  await ensureColumnExists("request_logs", "actual_tool_calls_in_response", "INTEGER DEFAULT 0");
-  await ensureColumnExists("request_logs", "is_counted_request", "INTEGER DEFAULT 1");
-  await ensureColumnExists("request_logs", "cached_tokens", "INTEGER DEFAULT 0");
-  await ensureColumnExists("request_logs", "turn_id", "TEXT");
+	await ensureColumnExists(
+		'admin_config',
+		'discord_bot_token',
+		"TEXT DEFAULT ''",
+	);
+	await ensureColumnExists(
+		'admin_config',
+		'agverif_channel_id',
+		"TEXT DEFAULT ''",
+	);
+	await ensureColumnExists(
+		'admin_config',
+		'tokito_channel_id',
+		"TEXT DEFAULT ''",
+	);
+	await ensureColumnExists(
+		'admin_config',
+		'required_role_id',
+		"TEXT DEFAULT ''",
+	);
+	await ensureColumnExists(
+		'admin_config',
+		'owner_groupy_role_id',
+		"TEXT DEFAULT ''",
+	);
+	await ensureColumnExists(
+		'admin_config',
+		'verified_role_id',
+		"TEXT DEFAULT ''",
+	);
+	await ensureColumnExists('admin_config', 'gemini_api_key', "TEXT DEFAULT ''");
+	await ensureColumnExists(
+		'admin_config',
+		'verif_auto_enabled',
+		'INTEGER DEFAULT 0',
+	);
+	await ensureColumnExists('admin_config', 'tokito_api_key', "TEXT DEFAULT ''");
+	await ensureColumnExists(
+		'admin_config',
+		'global_prompt_limit',
+		'INTEGER DEFAULT 0',
+	);
+	await ensureColumnExists(
+		'admin_config',
+		'global_prompt_limit_window',
+		"TEXT DEFAULT '1d'",
+	);
+	await ensureColumnExists('api_keys', 'prompt_limit', 'INTEGER DEFAULT 0');
+	await ensureColumnExists('api_keys', 'prompt_limit_window', 'TEXT');
+	await ensureColumnExists(
+		'chat_sessions',
+		'prompt_count',
+		'INTEGER NOT NULL DEFAULT 0',
+	);
 
-  // Human-readable session name derived from first user message
-  await ensureColumnExists("chat_sessions", "session_name", "TEXT DEFAULT ''");
+	// New columns for improved prompt counting
+	await ensureColumnExists('chat_sessions', 'last_user_message_hash', 'TEXT');
+	await ensureColumnExists('chat_sessions', 'last_message_role', 'TEXT');
+	await ensureColumnExists(
+		'chat_sessions',
+		'last_tool_calls_active',
+		'INTEGER DEFAULT 0',
+	);
+	await ensureColumnExists('request_logs', 'message_role', 'TEXT');
+	await ensureColumnExists('request_logs', 'user_message_hash', 'TEXT');
+	await ensureColumnExists(
+		'request_logs',
+		'actual_tool_calls_in_response',
+		'INTEGER DEFAULT 0',
+	);
+	await ensureColumnExists(
+		'request_logs',
+		'is_counted_request',
+		'INTEGER DEFAULT 1',
+	);
+	await ensureColumnExists(
+		'request_logs',
+		'cached_tokens',
+		'INTEGER DEFAULT 0',
+	);
+	await ensureColumnExists('request_logs', 'turn_id', 'TEXT');
 
-  // Per-model prompt limit system
-  await ensureColumnExists("admin_config", "global_per_model_prompt_limit", "INTEGER DEFAULT 0");
-  await ensureColumnExists("admin_config", "global_per_model_prompt_limit_window", "TEXT DEFAULT '1d'");
-  await ensureColumnExists("admin_config", "global_daily_token_limit", "INTEGER DEFAULT 0");
-  await ensureColumnExists("admin_config", "global_monthly_token_limit", "INTEGER DEFAULT 0");
-  await ensureColumnExists("admin_config", "global_daily_input_token_limit", "INTEGER DEFAULT 0");
-  await ensureColumnExists("admin_config", "global_daily_output_token_limit", "INTEGER DEFAULT 0");
-  await ensureColumnExists("api_keys", "per_model_prompt_limit", "INTEGER DEFAULT 0");
-  await ensureColumnExists("api_keys", "per_model_prompt_limit_window", "TEXT");
-  await ensureColumnExists("api_keys", "pending_notification", "TEXT");
-  await ensureColumnExists("api_keys", "daily_input_token_limit", "INTEGER DEFAULT 0");
-  await ensureColumnExists("api_keys", "daily_output_token_limit", "INTEGER DEFAULT 0");
+	// Human-readable session name derived from first user message
+	await ensureColumnExists('chat_sessions', 'session_name', "TEXT DEFAULT ''");
 
-  // model_limits table for per-model overrides
-  await client.execute(`
+	// Per-model prompt limit system
+	await ensureColumnExists(
+		'admin_config',
+		'global_per_model_prompt_limit',
+		'INTEGER DEFAULT 0',
+	);
+	await ensureColumnExists(
+		'admin_config',
+		'global_per_model_prompt_limit_window',
+		"TEXT DEFAULT '1d'",
+	);
+	await ensureColumnExists(
+		'admin_config',
+		'global_daily_token_limit',
+		'INTEGER DEFAULT 0',
+	);
+	await ensureColumnExists(
+		'admin_config',
+		'global_monthly_token_limit',
+		'INTEGER DEFAULT 0',
+	);
+	await ensureColumnExists(
+		'admin_config',
+		'global_daily_input_token_limit',
+		'INTEGER DEFAULT 0',
+	);
+	await ensureColumnExists(
+		'admin_config',
+		'global_daily_output_token_limit',
+		'INTEGER DEFAULT 0',
+	);
+	await ensureColumnExists(
+		'api_keys',
+		'per_model_prompt_limit',
+		'INTEGER DEFAULT 0',
+	);
+	await ensureColumnExists('api_keys', 'per_model_prompt_limit_window', 'TEXT');
+	await ensureColumnExists('api_keys', 'pending_notification', 'TEXT');
+	await ensureColumnExists(
+		'api_keys',
+		'daily_input_token_limit',
+		'INTEGER DEFAULT 0',
+	);
+	await ensureColumnExists(
+		'api_keys',
+		'daily_output_token_limit',
+		'INTEGER DEFAULT 0',
+	);
+
+	// model_limits table for per-model overrides
+	await client.execute(`
     CREATE TABLE IF NOT EXISTS model_limits (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       scope TEXT NOT NULL DEFAULT 'global',
@@ -380,10 +574,12 @@ export async function initializeDatabase() {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
-  await client.execute("CREATE INDEX IF NOT EXISTS idx_model_limits_scope_model ON model_limits(scope, scope_id, model)");
+	await client.execute(
+		'CREATE INDEX IF NOT EXISTS idx_model_limits_scope_model ON model_limits(scope, scope_id, model)',
+	);
 
-  // cleanup_state table to track cleanup history
-  await client.execute(`
+	// cleanup_state table to track cleanup history
+	await client.execute(`
     CREATE TABLE IF NOT EXISTS cleanup_state (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       cleanup_type TEXT NOT NULL,
@@ -396,13 +592,19 @@ export async function initializeDatabase() {
     )
   `);
 
-  await client.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_cleanup_state_type ON cleanup_state(cleanup_type)");
+	await client.execute(
+		'CREATE UNIQUE INDEX IF NOT EXISTS idx_cleanup_state_type ON cleanup_state(cleanup_type)',
+	);
 
-  // Add cleaned_days column if not exists (for existing databases)
-  await ensureColumnExists("cleanup_state", "cleaned_days", "TEXT DEFAULT '[]'");
+	// Add cleaned_days column if not exists (for existing databases)
+	await ensureColumnExists(
+		'cleanup_state',
+		'cleaned_days',
+		"TEXT DEFAULT '[]'",
+	);
 
-  // monthly_stats table for archived aggregates (survives 3-month cleanup)
-  await client.execute(`
+	// monthly_stats table for archived aggregates (survives 3-month cleanup)
+	await client.execute(`
     CREATE TABLE IF NOT EXISTS monthly_stats (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       year_month TEXT NOT NULL,
@@ -417,160 +619,241 @@ export async function initializeDatabase() {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
-  await client.execute("CREATE INDEX IF NOT EXISTS idx_monthly_stats_ym_key ON monthly_stats(year_month, api_key_id, model)");
+	await client.execute(
+		'CREATE INDEX IF NOT EXISTS idx_monthly_stats_ym_key ON monthly_stats(year_month, api_key_id, model)',
+	);
 
-  // Insert default cleanup states if not exists
-  await client.execute(`INSERT OR IGNORE INTO cleanup_state (cleanup_type, cleaned_months, cleaned_days) VALUES ('transcripts', '[]', '[]')`);
-  await client.execute(`INSERT OR IGNORE INTO cleanup_state (cleanup_type, cleaned_months, cleaned_days) VALUES ('3month', '[]', '[]')`);
+	// Insert default cleanup states if not exists
+	await client.execute(
+		`INSERT OR IGNORE INTO cleanup_state (cleanup_type, cleaned_months, cleaned_days) VALUES ('transcripts', '[]', '[]')`,
+	);
+	await client.execute(
+		`INSERT OR IGNORE INTO cleanup_state (cleanup_type, cleaned_months, cleaned_days) VALUES ('3month', '[]', '[]')`,
+	);
 
-  await client.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_session_id_unique ON chat_sessions(session_id)");
-  await client.execute("CREATE INDEX IF NOT EXISTS idx_logs_session_id ON request_logs(session_id)");
-  await client.execute("CREATE INDEX IF NOT EXISTS idx_logs_provider ON request_logs(provider)");
-  await client.execute("CREATE INDEX IF NOT EXISTS idx_sessions_api_key_id ON chat_sessions(api_key_id)");
-  await client.execute("CREATE INDEX IF NOT EXISTS idx_sessions_device_fingerprint ON chat_sessions(device_fingerprint)");
-  await client.execute("CREATE INDEX IF NOT EXISTS idx_sessions_last_seen_at ON chat_sessions(last_seen_at)");
-  await client.execute("CREATE INDEX IF NOT EXISTS idx_sessions_context_fingerprint ON chat_sessions(context_fingerprint)");
+	await client.execute(
+		'CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_session_id_unique ON chat_sessions(session_id)',
+	);
+	await client.execute(
+		'CREATE INDEX IF NOT EXISTS idx_logs_session_id ON request_logs(session_id)',
+	);
+	await client.execute(
+		'CREATE INDEX IF NOT EXISTS idx_logs_provider ON request_logs(provider)',
+	);
+	await client.execute(
+		'CREATE INDEX IF NOT EXISTS idx_sessions_api_key_id ON chat_sessions(api_key_id)',
+	);
+	await client.execute(
+		'CREATE INDEX IF NOT EXISTS idx_sessions_device_fingerprint ON chat_sessions(device_fingerprint)',
+	);
+	await client.execute(
+		'CREATE INDEX IF NOT EXISTS idx_sessions_last_seen_at ON chat_sessions(last_seen_at)',
+	);
+	await client.execute(
+		'CREATE INDEX IF NOT EXISTS idx_sessions_context_fingerprint ON chat_sessions(context_fingerprint)',
+	);
 
-  // Composite indexes for rate limiting performance (speed up queries that run on every request)
-  await client.execute("CREATE INDEX IF NOT EXISTS idx_logs_key_created ON request_logs(api_key_id, created_at)");
-  await client.execute("CREATE INDEX IF NOT EXISTS idx_logs_key_created_counted ON request_logs(api_key_id, created_at, is_counted_request)");
-  await client.execute("CREATE INDEX IF NOT EXISTS idx_logs_key_created_model ON request_logs(api_key_id, created_at, model)");
-  await client.execute("CREATE INDEX IF NOT EXISTS idx_logs_key_created_status ON request_logs(api_key_id, created_at, status_code)");
+	// Composite indexes for rate limiting performance (speed up queries that run on every request)
+	await client.execute(
+		'CREATE INDEX IF NOT EXISTS idx_logs_key_created ON request_logs(api_key_id, created_at)',
+	);
+	await client.execute(
+		'CREATE INDEX IF NOT EXISTS idx_logs_key_created_counted ON request_logs(api_key_id, created_at, is_counted_request)',
+	);
+	await client.execute(
+		'CREATE INDEX IF NOT EXISTS idx_logs_key_created_model ON request_logs(api_key_id, created_at, model)',
+	);
+	await client.execute(
+		'CREATE INDEX IF NOT EXISTS idx_logs_key_created_status ON request_logs(api_key_id, created_at, status_code)',
+	);
 
-  // Additional covering indexes for turn-based aggregation (stats overview, by-key, timeseries)
-  await client.execute("CREATE INDEX IF NOT EXISTS idx_logs_turn_agg ON request_logs(turn_id, status_code, created_at)");
-  await client.execute("CREATE INDEX IF NOT EXISTS idx_logs_model ON request_logs(model)");
+	// Additional covering indexes for turn-based aggregation (stats overview, by-key, timeseries)
+	await client.execute(
+		'CREATE INDEX IF NOT EXISTS idx_logs_turn_agg ON request_logs(turn_id, status_code, created_at)',
+	);
+	await client.execute(
+		'CREATE INDEX IF NOT EXISTS idx_logs_model ON request_logs(model)',
+	);
 
-  // SQLite PRAGMA optimizations for read-heavy workloads
-  await client.execute("PRAGMA cache_size = -16000");    // 16MB page cache (default ~2MB)
-  await client.execute("PRAGMA mmap_size = 268435456");  // 256MB memory-mapped I/O
-  await client.execute("PRAGMA temp_store = MEMORY");    // temp tables in memory
-  await client.execute("PRAGMA synchronous = NORMAL");   // faster writes, still safe with WAL
+	// SQLite PRAGMA optimizations for read-heavy workloads
+	await client.execute('PRAGMA cache_size = -16000'); // 16MB page cache (default ~2MB)
+	await client.execute('PRAGMA mmap_size = 268435456'); // 256MB memory-mapped I/O
+	await client.execute('PRAGMA temp_store = MEMORY'); // temp tables in memory
+	await client.execute('PRAGMA synchronous = NORMAL'); // faster writes, still safe with WAL
 
-  const envUpstreamEndpoint = (process.env.UPSTREAM_ENDPOINT || "").trim().replace(/\/$/, "");
-  const envUpstreamApiKey = (process.env.UPSTREAM_API_KEY || "").trim();
+	const envUpstreamEndpoint = (process.env.UPSTREAM_ENDPOINT || '')
+		.trim()
+		.replace(/\/$/, '');
+	const envUpstreamApiKey = (process.env.UPSTREAM_API_KEY || '').trim();
 
-  // Seed default admin if none exists
-  const existingAdmin = await db.select().from(schema.adminConfig).get();
-  if (!existingAdmin) {
-    const defaultPassword = process.env.DEFAULT_ADMIN_PASSWORD || "admin";
-    // Use argon2 for password hashing
-    const { hash } = await import("@node-rs/argon2");
-    const passwordHash = await hash(defaultPassword);
+	// Seed default admin if none exists
+	const existingAdmin = await db.select().from(schema.adminConfig).get();
+	if (!existingAdmin) {
+		const defaultPassword = process.env.DEFAULT_ADMIN_PASSWORD || 'admin';
+		// Use argon2 for password hashing
+		const { hash } = await import('@node-rs/argon2');
+		const passwordHash = await hash(defaultPassword);
 
-    await db.insert(schema.adminConfig).values({
-      passwordHash,
-      upstreamEndpoint: envUpstreamEndpoint || "https://api.openai.com",
-      upstreamApiKey: envUpstreamApiKey || "",
-    }).run();
+		await db
+			.insert(schema.adminConfig)
+			.values({
+				passwordHash,
+				upstreamEndpoint: envUpstreamEndpoint || 'https://api.openai.com',
+				upstreamApiKey: envUpstreamApiKey || '',
+			})
+			.run();
 
-    console.log(`✅ Default admin created with password: "${defaultPassword}"`);
-    console.log("⚠️  Please change the default password via the dashboard!");
-  } else {
-    // Optional env bootstrap for existing DB (only fill if currently empty/default)
-    const updates: Record<string, string> = {};
-    if (envUpstreamApiKey && !existingAdmin.upstreamApiKey) {
-      updates.upstreamApiKey = envUpstreamApiKey;
-    }
-    if (
-      envUpstreamEndpoint &&
-      (!existingAdmin.upstreamEndpoint || existingAdmin.upstreamEndpoint === "https://api.openai.com")
-    ) {
-      updates.upstreamEndpoint = envUpstreamEndpoint;
-    }
-    if (Object.keys(updates).length > 0) {
-      await db.update(schema.adminConfig)
-        .set({
-          ...updates,
-          updatedAt: new Date().toISOString().replace("T", " ").substring(0, 19),
-        })
-        .where(eq(schema.adminConfig.id, existingAdmin.id))
-        .run();
-      console.log("✅ Applied UPSTREAM_* env bootstrap into admin_config");
-    }
-    
-    // Also bootstrap bot settings if empty
-    const envBotToken = process.env.BOT_TOKEN || "";
-    const envAgVerifChannelId = process.env.AGVERIF_CHANNEL_ID || "";
-    const envTokitoChannelId = process.env.TOKITO_CHANNEL_ID || "1470313934752972993";
-    const envRequiredRole = process.env.REQUIRED_ROLE_ID || "";
-    const envOwnerRole = process.env.OWNER_GROUPY_ROLE_ID || "";
-    const envVerifiedRole = process.env.VERIFIED_ROLE_ID || "";
-    const envGemini = process.env.GOOGLE_API_KEY || "";
-    const envVerifAuto = String(process.env.VERIF_AUTO || "false").toLowerCase() === "true";
-    const envTokitoKey = process.env.TOKITO_API_KEY || "";
-    
-    // We update them even if they exist if the user has hardcoded them in .env so .env takes precedence on boot
-    const botUpdates: Record<string, any> = {};
-    if (envBotToken) botUpdates.discordBotToken = envBotToken;
-    if (envAgVerifChannelId) botUpdates.agverifChannelId = envAgVerifChannelId;
-    if (envTokitoChannelId) botUpdates.tokitoChannelId = envTokitoChannelId;
-    if (envRequiredRole) botUpdates.requiredRoleId = envRequiredRole;
-    if (envOwnerRole) botUpdates.ownerGroupyRoleId = envOwnerRole;
-    if (envVerifiedRole) botUpdates.verifiedRoleId = envVerifiedRole;
-    if (envGemini) botUpdates.geminiApiKey = envGemini;
-    botUpdates.verifAutoEnabled = envVerifAuto;
-    if (envTokitoKey) botUpdates.tokitoApiKey = envTokitoKey;
+		console.log(`✅ Default admin created with password: "${defaultPassword}"`);
+		console.log('⚠️  Please change the default password via the dashboard!');
+	} else {
+		// Optional env bootstrap for existing DB (only fill if currently empty/default)
+		const updates: Record<string, string> = {};
+		if (envUpstreamApiKey && !existingAdmin.upstreamApiKey) {
+			updates.upstreamApiKey = envUpstreamApiKey;
+		}
+		if (
+			envUpstreamEndpoint &&
+			(!existingAdmin.upstreamEndpoint ||
+				existingAdmin.upstreamEndpoint === 'https://api.openai.com')
+		) {
+			updates.upstreamEndpoint = envUpstreamEndpoint;
+		}
+		if (Object.keys(updates).length > 0) {
+			await db
+				.update(schema.adminConfig)
+				.set({
+					...updates,
+					updatedAt: new Date()
+						.toISOString()
+						.replace('T', ' ')
+						.substring(0, 19),
+				})
+				.where(eq(schema.adminConfig.id, existingAdmin.id))
+				.run();
+			console.log('✅ Applied UPSTREAM_* env bootstrap into admin_config');
+		}
 
-    if (Object.keys(botUpdates).length > 0) {
-      await db.update(schema.adminConfig)
-        .set({
-          ...botUpdates,
-          updatedAt: new Date().toISOString().replace("T", " ").substring(0, 19),
-        })
-        .where(eq(schema.adminConfig.id, existingAdmin.id))
-        .run();
-      console.log("✅ Synced .env bot variables to admin_config database");
-    }
-  }
+		// Also bootstrap bot settings if empty
+		const envBotToken = process.env.BOT_TOKEN || '';
+		const envAgVerifChannelId = process.env.AGVERIF_CHANNEL_ID || '';
+		const envTokitoChannelId =
+			process.env.TOKITO_CHANNEL_ID || '1470313934752972993';
+		const envRequiredRole = process.env.REQUIRED_ROLE_ID || '';
+		const envOwnerRole = process.env.OWNER_GROUPY_ROLE_ID || '';
+		const envVerifiedRole = process.env.VERIFIED_ROLE_ID || '';
+		const envGemini = process.env.GOOGLE_API_KEY || '';
+		const envVerifAuto =
+			String(process.env.VERIF_AUTO || 'false').toLowerCase() === 'true';
+		const envTokitoKey = process.env.TOKITO_API_KEY || '';
 
-  // provider_api_keys table for multi-key rotation per provider
-  // (must run BEFORE provider seed so endpoint_type column exists)
-  await ensureColumnExists("providers", "endpoint_type", "TEXT NOT NULL DEFAULT 'openai'");
-  await ensureColumnExists("provider_api_keys", "is_active", "INTEGER NOT NULL DEFAULT 1");
+		// We update them even if they exist if the user has hardcoded them in .env so .env takes precedence on boot
+		const botUpdates: Record<string, any> = {};
+		if (envBotToken) botUpdates.discordBotToken = envBotToken;
+		if (envAgVerifChannelId) botUpdates.agverifChannelId = envAgVerifChannelId;
+		if (envTokitoChannelId) botUpdates.tokitoChannelId = envTokitoChannelId;
+		if (envRequiredRole) botUpdates.requiredRoleId = envRequiredRole;
+		if (envOwnerRole) botUpdates.ownerGroupyRoleId = envOwnerRole;
+		if (envVerifiedRole) botUpdates.verifiedRoleId = envVerifiedRole;
+		if (envGemini) botUpdates.geminiApiKey = envGemini;
+		botUpdates.verifAutoEnabled = envVerifAuto;
+		if (envTokitoKey) botUpdates.tokitoApiKey = envTokitoKey;
 
-    // Migrate existing upstream to providers table if empty
-  const providerCount = await db.select({ count: sql<number>`count(*)` }).from(schema.providers).get();
-  if (!providerCount || providerCount.count === 0) {
-    const defaultEndpoint = existingAdmin?.upstreamEndpoint || envUpstreamEndpoint || "https://api.openai.com";
-    const defaultApiKey = existingAdmin?.upstreamApiKey || envUpstreamApiKey || "";
-    if (defaultEndpoint && defaultApiKey) {
-      await db.insert(schema.providers).values({
-        name: "Default Provider",
-        endpoint: defaultEndpoint,
-        apiKey: defaultApiKey,
-        isActive: true,
-        priority: 100,
-      }).run();
-      console.log("o. Migrated legacy upstream config to providers table");
-    }
-  }
+		if (Object.keys(botUpdates).length > 0) {
+			await db
+				.update(schema.adminConfig)
+				.set({
+					...botUpdates,
+					updatedAt: new Date()
+						.toISOString()
+						.replace('T', ' ')
+						.substring(0, 19),
+				})
+				.where(eq(schema.adminConfig.id, existingAdmin.id))
+				.run();
+			console.log('✅ Synced .env bot variables to admin_config database');
+		}
+	}
 
-  // Migrate existing provider api_key values into provider_api_keys table (one-time)
-  try {
-    const existingKeys = await client.execute("SELECT COUNT(*) as cnt FROM provider_api_keys");
-    const keyCount = Number((existingKeys.rows[0] as any)?.cnt || 0);
-    if (keyCount === 0) {
-      // No keys in the new table yet — migrate from providers.api_key
-      await client.execute(`
+	// provider_api_keys table for multi-key rotation per provider
+	// (must run BEFORE provider seed so endpoint_type column exists)
+	await ensureColumnExists(
+		'providers',
+		'endpoint_type',
+		"TEXT NOT NULL DEFAULT 'openai'",
+	);
+	await ensureColumnExists(
+		'provider_api_keys',
+		'is_active',
+		'INTEGER NOT NULL DEFAULT 1',
+	);
+
+	// Migrate existing upstream to providers table if empty
+	const providerCount = await db
+		.select({ count: sql<number>`count(*)` })
+		.from(schema.providers)
+		.get();
+	if (!providerCount || providerCount.count === 0) {
+		const defaultEndpoint =
+			existingAdmin?.upstreamEndpoint ||
+			envUpstreamEndpoint ||
+			'https://api.openai.com';
+		const defaultApiKey =
+			existingAdmin?.upstreamApiKey || envUpstreamApiKey || '';
+		if (defaultEndpoint && defaultApiKey) {
+			await db
+				.insert(schema.providers)
+				.values({
+					name: 'Default Provider',
+					endpoint: defaultEndpoint,
+					apiKey: defaultApiKey,
+					isActive: true,
+					priority: 100,
+				})
+				.run();
+			console.log('o. Migrated legacy upstream config to providers table');
+		}
+	}
+
+	// Migrate existing provider api_key values into provider_api_keys table (one-time)
+	try {
+		const existingKeys = await client.execute(
+			'SELECT COUNT(*) as cnt FROM provider_api_keys',
+		);
+		const keyCount = Number((existingKeys.rows[0] as any)?.cnt || 0);
+		if (keyCount === 0) {
+			// No keys in the new table yet — migrate from providers.api_key
+			await client.execute(`
         INSERT INTO provider_api_keys (provider_id, api_key, request_count, created_at)
         SELECT id, api_key, 0, datetime('now') FROM providers WHERE api_key IS NOT NULL AND api_key != ''
       `);
-      console.log("✅ Migrated existing provider API keys to provider_api_keys table");
-    }
-  } catch (err) {
-    console.warn("⚠️  Could not migrate provider API keys (table may not exist yet):", err);
-  }
+			console.log(
+				'✅ Migrated existing provider API keys to provider_api_keys table',
+			);
+		}
+	} catch (err) {
+		console.warn(
+			'⚠️  Could not migrate provider API keys (table may not exist yet):',
+			err,
+		);
+	}
 
-  console.log("✅ Database initialized successfully");
+	console.log('✅ Database initialized successfully');
 }
 
 export { client };
 
-async function ensureColumnExists(tableName: string, columnName: string, columnSqlType: string) {
-  const pragma = await client.execute(`PRAGMA table_info(${tableName})`);
-  const hasColumn = pragma.rows.some((row: any) => String(row.name) === columnName);
-  if (!hasColumn) {
-    await client.execute(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnSqlType}`);
-  }
+async function ensureColumnExists(
+	tableName: string,
+	columnName: string,
+	columnSqlType: string,
+) {
+	const pragma = await client.execute(`PRAGMA table_info(${tableName})`);
+	const hasColumn = pragma.rows.some(
+		(row: any) => String(row.name) === columnName,
+	);
+	if (!hasColumn) {
+		await client.execute(
+			`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnSqlType}`,
+		);
+	}
 }

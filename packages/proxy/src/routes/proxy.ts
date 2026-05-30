@@ -1599,6 +1599,52 @@ const targetProvider = await getProviderForModel(model);
           .run();
       }
 
+      if (counted) {
+        // Global limit tracking
+        const globalWindowStr = keyRecord.promptLimitWindow || config.globalPromptLimitWindow || "30m";
+        const globalWindowMs = parseRateLimitWindow(globalWindowStr);
+        let globalWindowStartMs = 0;
+        if (keyRecord.promptWindowStart) {
+          globalWindowStartMs = Date.parse(keyRecord.promptWindowStart.replace(" ", "T") + "Z");
+        }
+        
+        const nowMs = Date.now();
+        const nowStr = formatSqliteDate();
+
+        if (!globalWindowStartMs || nowMs >= globalWindowStartMs + globalWindowMs) {
+          await tx.update(apiKeys)
+            .set({ promptWindowStart: nowStr })
+            .where(eq(apiKeys.id, keyRecord.id))
+            .run();
+        }
+
+        // Model limit tracking
+        const keyOverride = await tx.select().from(modelLimits)
+          .where(and(eq(modelLimits.scope, "key"), eq(modelLimits.scopeId, keyRecord.id), eq(modelLimits.model, model)))
+          .get();
+
+        const globalOverride = await tx.select().from(modelLimits)
+          .where(and(eq(modelLimits.scope, "global"), eq(modelLimits.scopeId, 0), eq(modelLimits.model, model)))
+          .get();
+
+        const activeOverride = (keyOverride && keyOverride.promptLimit > 0) ? keyOverride : (globalOverride && globalOverride.promptLimit > 0) ? globalOverride : null;
+
+        if (activeOverride) {
+          const modelWindowStr = keyRecord.perModelPromptLimitWindow || config.globalPerModelPromptLimitWindow || "30m";
+          const modelWindowMs = parseRateLimitWindow(modelWindowStr);
+          let modelWindowStartMs = 0;
+          if (activeOverride.promptWindowStart) {
+            modelWindowStartMs = Date.parse(activeOverride.promptWindowStart.replace(" ", "T") + "Z");
+          }
+          if (!modelWindowStartMs || nowMs >= modelWindowStartMs + modelWindowMs) {
+            await tx.update(modelLimits)
+              .set({ promptWindowStart: nowStr })
+              .where(eq(modelLimits.id, activeOverride.id))
+              .run();
+          }
+        }
+      }
+
       if (shouldCountRequest && isNewPrompt) {
         await updateSessionAfterRequest(tx, {
           sessionId: sessionInfo.sessionId,

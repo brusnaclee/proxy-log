@@ -1,5 +1,5 @@
 import { db } from "../db/index.js";
-import { requestLogs, modelLimits } from "../db/schema.js";
+import { requestLogs, modelLimits, apiKeys } from "../db/schema.js";
 import { sql, and, eq, gte } from "drizzle-orm";
 import { COUNTED_LOG_SQL } from "./counting.js";
 
@@ -21,7 +21,7 @@ export function parseRateLimitWindow(windowStr: string | null | undefined): numb
 
 /**
  * Count user prompts for an API key within a time window.
- * Counts from request_logs WHERE is_counted_request = 1.
+ * Uses a fixed window that starts on the first request and lasts for `windowStr`.
  */
 export async function checkPromptLimit(
   apiKeyId: number,
@@ -32,23 +32,44 @@ export async function checkPromptLimit(
   const windowMs = parseRateLimitWindow(windowStr);
   if (windowMs <= 0) return { allowed: true, remaining: -1, resetMs: 0, used: 0 };
 
-  const windowStart = new Date(Date.now() - windowMs).toISOString().replace("T", " ").substring(0, 19);
+  const keyRecord = await db.select({ promptWindowStart: apiKeys.promptWindowStart }).from(apiKeys).where(eq(apiKeys.id, apiKeyId)).get();
+  
+  let windowStartMs = 0;
+  if (keyRecord?.promptWindowStart) {
+    windowStartMs = Date.parse(keyRecord.promptWindowStart.replace(" ", "T") + "Z");
+  }
+
+  const nowMs = Date.now();
+
+  // If window has expired or doesn't exist, this request will start a new window
+  if (!windowStartMs || nowMs >= windowStartMs + windowMs) {
+    // We don't write the new window start here to avoid extra DB writes on every check.
+    // The actual update will happen when the request is successfully completed and logged.
+    // For the check itself, we consider it a fresh window with 0 used.
+    return { allowed: true, remaining: promptLimit, resetMs: windowMs, used: 0 };
+  }
+
+  // Window is active, calculate how many requests have been made since windowStart
+  const windowStartStr = new Date(windowStartMs).toISOString().replace("T", " ").substring(0, 19);
+  
   const usage = await db.select({ count: sql<number>`count(*)` })
     .from(requestLogs)
     .where(and(
       eq(requestLogs.apiKeyId, apiKeyId),
-      gte(requestLogs.createdAt, windowStart),
+      gte(requestLogs.createdAt, windowStartStr),
       COUNTED_LOG_SQL,
     ))
     .get();
 
   const used = usage?.count || 0;
-  return { allowed: used < promptLimit, remaining: Math.max(0, promptLimit - used), resetMs: windowMs, used };
+  const resetMs = Math.max(0, windowStartMs + windowMs - nowMs);
+  
+  return { allowed: used < promptLimit, remaining: Math.max(0, promptLimit - used), resetMs, used };
 }
 
 /**
  * Check per-model prompt limit for an API key.
- * Priority: per-key model override > per-key default > global model override > global default.
+ * Uses a fixed window that starts on the first request for this model.
  */
 export async function checkModelPromptLimit(
   apiKeyId: number,
@@ -69,12 +90,16 @@ export async function checkModelPromptLimit(
     .get();
 
   let effectiveLimit = 0;
+  let activeOverride = null;
+  
   if (keyOverride && keyOverride.promptLimit > 0) {
     effectiveLimit = keyOverride.promptLimit;
+    activeOverride = keyOverride;
   } else if (perKeyDefaultLimit > 0) {
     effectiveLimit = perKeyDefaultLimit;
   } else if (globalOverride && globalOverride.promptLimit > 0) {
     effectiveLimit = globalOverride.promptLimit;
+    activeOverride = globalOverride;
   } else {
     effectiveLimit = globalDefaultLimit;
   }
@@ -85,22 +110,42 @@ export async function checkModelPromptLimit(
   const windowMs = parseRateLimitWindow(effectiveWindow);
   if (windowMs <= 0) return { allowed: true, remaining: -1, resetMs: 0, used: 0, effectiveLimit };
 
-  const windowStart = new Date(Date.now() - windowMs).toISOString().replace("T", " ").substring(0, 19);
+  const nowMs = Date.now();
+  let windowStartMs = 0;
+
+  // For model limits, we store the window start on the active override if it exists.
+  // If there's no override (using default limit), we can't easily track the window start per model.
+  // In that case, we fall back to a clock-aligned fixed window.
+  if (activeOverride && activeOverride.promptWindowStart) {
+    windowStartMs = Date.parse(activeOverride.promptWindowStart.replace(" ", "T") + "Z");
+    
+    if (nowMs >= windowStartMs + windowMs) {
+      return { allowed: true, remaining: effectiveLimit, resetMs: windowMs, used: 0, effectiveLimit };
+    }
+  } else if (!activeOverride) {
+     // Clock-aligned fixed window fallback for defaults
+     windowStartMs = Math.floor(nowMs / windowMs) * windowMs;
+  }
+
+  const windowStartStr = new Date(windowStartMs).toISOString().replace("T", " ").substring(0, 19);
+
   const usage = await db.select({ count: sql<number>`count(*)` })
     .from(requestLogs)
     .where(and(
       eq(requestLogs.apiKeyId, apiKeyId),
       eq(requestLogs.model, model),
-      gte(requestLogs.createdAt, windowStart),
+      gte(requestLogs.createdAt, windowStartStr),
       COUNTED_LOG_SQL,
     ))
     .get();
 
   const used = usage?.count || 0;
+  const resetMs = Math.max(0, windowStartMs + windowMs - nowMs);
+  
   return {
     allowed: used < effectiveLimit,
     remaining: Math.max(0, effectiveLimit - used),
-    resetMs: windowMs,
+    resetMs,
     used,
     effectiveLimit,
   };
@@ -112,24 +157,44 @@ export async function checkModelPromptLimit(
  */
 export async function getWindowResetMs(apiKeyId: number, windowMs: number, model?: string): Promise<number> {
   if (windowMs <= 0) return 0;
-  const windowStart = new Date(Date.now() - windowMs).toISOString().replace("T", " ").substring(0, 19);
-
-  const conditions: any[] = [
-    eq(requestLogs.apiKeyId, apiKeyId),
-    gte(requestLogs.createdAt, windowStart),
-    COUNTED_LOG_SQL,
-  ];
-  if (model) conditions.push(eq(requestLogs.model, model));
-
-  const oldest = await db.select({ createdAt: requestLogs.createdAt })
-    .from(requestLogs)
-    .where(and(...conditions))
-    .orderBy(requestLogs.createdAt)
-    .limit(1)
-    .get();
-
-  if (!oldest?.createdAt) return windowMs;
-  const oldestTime = Date.parse(oldest.createdAt.replace(" ", "T") + "Z");
-  const resetAt = oldestTime + windowMs;
-  return Math.max(0, resetAt - Date.now());
+  
+  const nowMs = Date.now();
+  
+  if (model) {
+    // Model specific limit
+    const keyOverride = await db.select().from(modelLimits)
+      .where(and(eq(modelLimits.scope, "key"), eq(modelLimits.scopeId, apiKeyId), eq(modelLimits.model, model)))
+      .get();
+      
+    const globalOverride = await db.select().from(modelLimits)
+      .where(and(eq(modelLimits.scope, "global"), eq(modelLimits.scopeId, 0), eq(modelLimits.model, model)))
+      .get();
+      
+    const activeOverride = (keyOverride && keyOverride.promptLimit > 0) ? keyOverride : (globalOverride && globalOverride.promptLimit > 0) ? globalOverride : null;
+    
+    if (activeOverride && activeOverride.promptWindowStart) {
+      const windowStartMs = Date.parse(activeOverride.promptWindowStart.replace(" ", "T") + "Z");
+      if (nowMs < windowStartMs + windowMs) {
+        return Math.max(0, windowStartMs + windowMs - nowMs);
+      }
+    } else if (!activeOverride) {
+      // Clock-aligned fixed window fallback for defaults
+      const windowStartMs = Math.floor(nowMs / windowMs) * windowMs;
+      return Math.max(0, windowStartMs + windowMs - nowMs);
+    }
+    
+    return windowMs;
+  }
+  
+  // Global prompt limit
+  const keyRecord = await db.select({ promptWindowStart: apiKeys.promptWindowStart }).from(apiKeys).where(eq(apiKeys.id, apiKeyId)).get();
+  
+  if (keyRecord?.promptWindowStart) {
+    const windowStartMs = Date.parse(keyRecord.promptWindowStart.replace(" ", "T") + "Z");
+    if (nowMs < windowStartMs + windowMs) {
+      return Math.max(0, windowStartMs + windowMs - nowMs);
+    }
+  }
+  
+  return windowMs;
 }

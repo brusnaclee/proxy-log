@@ -11,6 +11,10 @@ CREATE TABLE `admin_config` (
 	`global_prompt_limit_window` text DEFAULT '1d',
 	`global_per_model_prompt_limit` integer DEFAULT 0,
 	`global_per_model_prompt_limit_window` text DEFAULT '1d',
+	`global_daily_token_limit` integer DEFAULT 0,
+	`global_monthly_token_limit` integer DEFAULT 0,
+	`global_daily_input_token_limit` integer DEFAULT 0,
+	`global_daily_output_token_limit` integer DEFAULT 0,
 	`discord_bot_token` text DEFAULT '',
 	`agverif_channel_id` text DEFAULT '',
 	`tokito_channel_id` text DEFAULT '',
@@ -46,7 +50,7 @@ CREATE TABLE `allowed_ides` (
 --> statement-breakpoint
 CREATE TABLE `api_keys` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
-	`name` text NOT NULL,
+	`name` text DEFAULT '' NOT NULL,
 	`key` text NOT NULL,
 	`key_prefix` text NOT NULL,
 	`key_hash` text NOT NULL,
@@ -63,8 +67,11 @@ CREATE TABLE `api_keys` (
 	`rate_limit_window` text,
 	`prompt_limit` integer DEFAULT 0,
 	`prompt_limit_window` text,
+	`prompt_window_start` text,
 	`per_model_prompt_limit` integer DEFAULT 0,
 	`per_model_prompt_limit_window` text,
+	`daily_input_token_limit` integer DEFAULT 0,
+	`daily_output_token_limit` integer DEFAULT 0,
 	`pending_notification` text,
 	`created_at` text DEFAULT (datetime('now')) NOT NULL,
 	`updated_at` text DEFAULT (datetime('now')) NOT NULL
@@ -97,6 +104,17 @@ CREATE TABLE `chat_sessions` (
 	`last_seen_at` text DEFAULT (datetime('now')) NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE `cleanup_state` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`cleanup_type` text NOT NULL,
+	`last_cleanup_at` text,
+	`last_processed_month` text,
+	`cleaned_months` text DEFAULT '[]',
+	`cleaned_days` text DEFAULT '[]',
+	`created_at` text DEFAULT (datetime('now')) NOT NULL,
+	`updated_at` text DEFAULT (datetime('now')) NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE `devices` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`api_key_id` integer NOT NULL,
@@ -119,6 +137,7 @@ CREATE TABLE `model_limits` (
 	`scope_id` integer DEFAULT 0 NOT NULL,
 	`model` text NOT NULL,
 	`prompt_limit` integer DEFAULT 0 NOT NULL,
+	`prompt_window_start` text,
 	`created_at` text DEFAULT (datetime('now')) NOT NULL
 );
 --> statement-breakpoint
@@ -134,6 +153,54 @@ CREATE TABLE `model_monitor` (
 	`checked_at` text DEFAULT (datetime('now')) NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE `model_test_state` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`model_id` text NOT NULL,
+	`provider` text,
+	`retry_count` integer DEFAULT 0 NOT NULL,
+	`last_test_at` text,
+	`suspended_until` text
+);
+--> statement-breakpoint
+CREATE TABLE `monthly_stats` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`year_month` text NOT NULL,
+	`api_key_id` integer,
+	`model` text DEFAULT '_all_' NOT NULL,
+	`turn_count` integer DEFAULT 0 NOT NULL,
+	`input_tokens` integer DEFAULT 0 NOT NULL,
+	`output_tokens` integer DEFAULT 0 NOT NULL,
+	`total_tokens` integer DEFAULT 0 NOT NULL,
+	`estimated_cost` integer DEFAULT 0 NOT NULL,
+	`created_at` text DEFAULT (datetime('now')) NOT NULL,
+	`updated_at` text DEFAULT (datetime('now')) NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE `provider_api_keys` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`provider_id` integer NOT NULL,
+	`api_key` text NOT NULL,
+	`is_active` integer DEFAULT true NOT NULL,
+	`is_limited` integer DEFAULT false NOT NULL,
+	`limited_at` text,
+	`request_count` integer DEFAULT 0 NOT NULL,
+	`last_used_at` text,
+	`created_at` text DEFAULT (datetime('now')) NOT NULL,
+	FOREIGN KEY (`provider_id`) REFERENCES `providers`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+CREATE TABLE `providers` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`name` text NOT NULL,
+	`endpoint` text NOT NULL,
+	`api_key` text NOT NULL,
+	`endpoint_type` text DEFAULT 'openai' NOT NULL,
+	`is_active` integer DEFAULT true NOT NULL,
+	`priority` integer DEFAULT 0 NOT NULL,
+	`created_at` text DEFAULT (datetime('now')) NOT NULL,
+	`updated_at` text DEFAULT (datetime('now')) NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE `request_logs` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`api_key_id` integer,
@@ -147,10 +214,12 @@ CREATE TABLE `request_logs` (
 	`provider` text,
 	`endpoint_path` text,
 	`session_id` text,
+	`turn_id` text,
 	`model` text,
 	`prompt_tokens` integer DEFAULT 0,
 	`completion_tokens` integer DEFAULT 0,
 	`total_tokens` integer DEFAULT 0,
+	`cached_tokens` integer DEFAULT 0,
 	`context_fingerprint` text,
 	`context_tokens_before` integer DEFAULT 0,
 	`context_delta_tokens` integer DEFAULT 0,
@@ -166,6 +235,7 @@ CREATE TABLE `request_logs` (
 	`user_message_hash` text,
 	`actual_tool_calls_in_response` integer DEFAULT false,
 	`is_counted_request` integer DEFAULT true,
+	`is_billable_token` integer DEFAULT false,
 	`latency_ms` integer DEFAULT 0,
 	`status_code` integer DEFAULT 0,
 	`error_message` text,
@@ -184,9 +254,18 @@ CREATE INDEX `idx_devices_api_key_fingerprint` ON `devices` (`api_key_id`,`finge
 CREATE INDEX `idx_model_limits_scope_model` ON `model_limits` (`scope`,`scope_id`,`model`);--> statement-breakpoint
 CREATE INDEX `idx_monitor_model_id` ON `model_monitor` (`model_id`);--> statement-breakpoint
 CREATE INDEX `idx_monitor_checked_at` ON `model_monitor` (`checked_at`);--> statement-breakpoint
+CREATE INDEX `idx_test_state_model` ON `model_test_state` (`model_id`,`provider`);--> statement-breakpoint
+CREATE INDEX `idx_monthly_stats_ym_key` ON `monthly_stats` (`year_month`,`api_key_id`,`model`);--> statement-breakpoint
+CREATE INDEX `idx_provider_keys_provider_id` ON `provider_api_keys` (`provider_id`);--> statement-breakpoint
 CREATE INDEX `idx_logs_created_at` ON `request_logs` (`created_at`);--> statement-breakpoint
 CREATE INDEX `idx_logs_api_key_id` ON `request_logs` (`api_key_id`);--> statement-breakpoint
 CREATE INDEX `idx_logs_device_fingerprint` ON `request_logs` (`device_fingerprint`);--> statement-breakpoint
 CREATE INDEX `idx_logs_ip_address` ON `request_logs` (`ip_address`);--> statement-breakpoint
 CREATE INDEX `idx_logs_session_id` ON `request_logs` (`session_id`);--> statement-breakpoint
-CREATE INDEX `idx_logs_provider` ON `request_logs` (`provider`);
+CREATE INDEX `idx_logs_provider` ON `request_logs` (`provider`);--> statement-breakpoint
+CREATE INDEX `idx_logs_key_created` ON `request_logs` (`api_key_id`,`created_at`);--> statement-breakpoint
+CREATE INDEX `idx_logs_key_created_counted` ON `request_logs` (`api_key_id`,`created_at`,`is_counted_request`);--> statement-breakpoint
+CREATE INDEX `idx_logs_key_created_model` ON `request_logs` (`api_key_id`,`created_at`,`model`);--> statement-breakpoint
+CREATE INDEX `idx_logs_key_created_status` ON `request_logs` (`api_key_id`,`created_at`,`status_code`);--> statement-breakpoint
+CREATE INDEX `idx_logs_turn_agg` ON `request_logs` (`turn_id`,`status_code`,`created_at`);--> statement-breakpoint
+CREATE INDEX `idx_logs_model` ON `request_logs` (`model`);
