@@ -462,6 +462,7 @@ internal.get("/internal/stats/ranking", async (c) => {
       result.push({
         discordUserId: key.discordUserId,
         discordUsername: key.discordUsername || key.name,
+        keyName: key.name,
         requests: row.requests,
         tokens: row.tokens,
       });
@@ -488,13 +489,18 @@ internal.get("/internal/stats/ranking", async (c) => {
       const key = await db.select({ discordUserId: apiKeys.discordUserId, discordUsername: apiKeys.discordUsername, name: apiKeys.name })
         .from(apiKeys).where(eq(apiKeys.id, row.apiKeyId)).get();
       if (!key) continue;
+
+      const estimatedCost = Math.round((row.promptTokens || 0) * 1.5 + (row.completionTokens || 0) * 6.0);
+
       result.push({
         discordUserId: key.discordUserId,
         discordUsername: key.discordUsername || key.name,
+        keyName: key.name,
         requests: row.requests,
         tokens: row.tokens,
         promptTokens: row.promptTokens,
         completionTokens: row.completionTokens,
+        estimatedCost,
       });
       if (result.length >= 10) break;
     }

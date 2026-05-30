@@ -339,8 +339,8 @@ export default function AnalyticsPage() {
                   <tr key={i} className="border-b border-border/30 hover:bg-accent/30">
                     <td className="py-2 px-4 text-xs text-muted-foreground font-bold">{i + 1}</td>
                     <td className="py-2 px-4 text-xs">
-                      <div className="font-medium truncate max-w-[160px]">{u.displayName}</div>
-                      {u.displayName !== u.keyName && <div className="text-[10px] text-muted-foreground truncate max-w-[160px]">{u.keyName}</div>}
+                      <div className="font-medium truncate max-w-[160px]">{u.displayName || u.discordUsername}</div>
+                      {(u.displayName || u.discordUsername) !== u.keyName && <div className="text-[10px] text-muted-foreground truncate max-w-[160px]">{u.keyName}</div>}
                     </td>
                     <td className="py-2 px-4 text-right font-mono text-xs font-semibold">{formatNumber(u.requests)}</td>
                     <td className="py-2 px-4 text-right font-mono text-xs">{formatNumber(u.tokens)}</td>
@@ -375,8 +375,8 @@ export default function AnalyticsPage() {
                   <tr key={i} className="border-b border-border/30 hover:bg-accent/30">
                     <td className="py-2 px-4 text-xs text-muted-foreground font-bold">{i + 1}</td>
                     <td className="py-2 px-4 text-xs">
-                      <div className="font-medium truncate max-w-[160px]">{u.displayName}</div>
-                      {u.displayName !== u.keyName && <div className="text-[10px] text-muted-foreground truncate max-w-[160px]">{u.keyName}</div>}
+                      <div className="font-medium truncate max-w-[160px]">{u.displayName || u.discordUsername}</div>
+                      {(u.displayName || u.discordUsername) !== u.keyName && <div className="text-[10px] text-muted-foreground truncate max-w-[160px]">{u.keyName}</div>}
                     </td>
                     <td className="py-2 px-4 text-right font-mono text-xs font-semibold">{formatNumber(u.tokens)}</td>
                     <td className="py-2 px-4 text-right font-mono text-xs">{formatNumber(u.requests)}</td>
