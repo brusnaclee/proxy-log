@@ -485,7 +485,7 @@ async function resolveChatSession(params: {
     isNewUserPrompt = false;
   } else if (params.messageAnalysis.hasUserMessage && hashChanged) {
     if (params.messageAnalysis.isRawFormat) {
-      isNewUserPrompt = gapMs >= 120000;
+      isNewUserPrompt = true; // Always count new raw format prompts
     } else if (params.messageAnalysis.assistantMessageCount > 0) {
       isNewUserPrompt = true;
     } else {

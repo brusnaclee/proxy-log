@@ -448,7 +448,7 @@ internal.get("/internal/stats/ranking", async (c) => {
     const rows = await db.all(sql`
       SELECT api_key_id as apiKeyId, COUNT(*) as requests, COALESCE(SUM(sum_delta + sum_c), 0) as tokens
       FROM (SELECT api_key_id, turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
-        FROM request_logs WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299
+        FROM request_logs WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 AND is_counted_request = 1
         GROUP BY api_key_id, turn_id)
       GROUP BY api_key_id ORDER BY requests DESC LIMIT 20
     `);
@@ -477,7 +477,7 @@ internal.get("/internal/stats/ranking", async (c) => {
         COALESCE(SUM(sum_delta), 0) as promptTokens,
         COALESCE(SUM(sum_c), 0) as completionTokens
       FROM (SELECT api_key_id, turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
-        FROM request_logs WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299
+        FROM request_logs WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 AND is_billable_token = 1
         GROUP BY api_key_id, turn_id)
       GROUP BY api_key_id ORDER BY tokens DESC LIMIT 20
     `);

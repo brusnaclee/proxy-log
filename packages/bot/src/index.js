@@ -2488,7 +2488,10 @@ async function refreshRankingEmbeds() {
 				today.topUsersByRequests,
 				month.topUsersByRequests,
 				(item) => {
-					const name = item.discordUsername || item.discordUserId || 'Unknown';
+					let name = item.discordUsername || 'Unknown';
+					if (item.discordUserId && item.discordUsername === item.discordUserId) {
+						name = `<@${item.discordUserId}>`;
+					}
 					return `**${name}** — **${item.requests.toLocaleString()}** req`;
 				},
 			);
@@ -2506,7 +2509,10 @@ async function refreshRankingEmbeds() {
 				today.topUsersByTokens,
 				month.topUsersByTokens,
 				(item) => {
-					const name = item.discordUsername || item.discordUserId || 'Unknown';
+					let name = item.discordUsername || 'Unknown';
+					if (item.discordUserId && item.discordUsername === item.discordUserId) {
+						name = `<@${item.discordUserId}>`;
+					}
 					return `**${name}** — ${formatTokens(item.tokens)} tok (📥 ${formatTokens(item.promptTokens || 0)} / 📤 ${formatTokens(item.completionTokens || 0)})`;
 				},
 			);
