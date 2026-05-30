@@ -263,8 +263,6 @@ keys.get("/keys/:id", async (c) => {
     rateLimit: key.rateLimit || 0, rateLimitWindow: key.rateLimitWindow || config?.globalRateLimitWindow || "1h",
     promptLimit: key.promptLimit || 0, promptLimitWindow: key.promptLimitWindow || config?.globalPromptLimitWindow || "1d",
     perModelPromptLimit: key.perModelPromptLimit || 0, perModelPromptLimitWindow: key.perModelPromptLimitWindow || config?.globalPerModelPromptLimitWindow || "1d",
-    dailyInputTokenLimit: key.dailyInputTokenLimit || 0,
-    dailyOutputTokenLimit: key.dailyOutputTokenLimit || 0,
     createdAt: key.createdAt, updatedAt: key.updatedAt,
     stats: {
       today:   { ...todayStats },
