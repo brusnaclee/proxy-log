@@ -594,9 +594,22 @@ proxy.all("/*", async (c) => {
 
   if (!keyRecord) {
     const keyPrefix = clientKey.slice(0, 12);
-    console.warn(`[auth] API key lookup failed for prefix: ${keyPrefix}`);
+    const keyHash = sha256(clientKey).slice(0, 16);
+    console.warn(`[auth] API key lookup failed for prefix: ${keyPrefix} (hash: ${keyHash})`);
+
+    // Check if this key hash exists but key is inactive
+    const inactiveKey = await db.select({ id: apiKeys.id, name: apiKeys.name, isActive: apiKeys.isActive })
+      .from(apiKeys).where(eq(apiKeys.keyHash, sha256(clientKey))).get();
+
+    if (inactiveKey && !inactiveKey.isActive) {
+      return c.json(
+        { error: { message: "API key has been revoked. Please request a new key.", type: "auth_error" } },
+        403
+      );
+    }
+
     return c.json(
-      { error: { message: "Invalid API key.", type: "auth_error" } },
+      { error: { message: "Invalid API key. If you recently received a new key, please update your configuration.", type: "auth_error" } },
       401
     );
   }
