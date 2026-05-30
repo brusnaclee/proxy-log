@@ -4,6 +4,7 @@ import { adminConfig, apiKeys, requestLogs, chatSessions, devices, allowedDevice
 import { eq, and, sql } from "drizzle-orm";
 import { maskKey } from "../../utils/crypto.js";
 import { refreshModelCatalog, getModelCatalogResponse } from "../../utils/model-catalog.js";
+import { configCache, apiKeyCache } from "../../utils/cache.js";
 
 const settings = new Hono();
 
@@ -46,6 +47,7 @@ settings.put("/settings/global", async (c) => {
     if (body.globalDailyOutputTokenLimit !== undefined) updates.globalDailyOutputTokenLimit = body.globalDailyOutputTokenLimit;
 
   await db.update(adminConfig).set(updates).where(eq(adminConfig.id, config.id)).run();
+  configCache.invalidate("admin_config"); // invalidate cached config
   return c.json({ success: true, message: "Global settings updated" });
 });
 
@@ -105,6 +107,7 @@ settings.put("/settings", async (c) => {
   if (body.upstreamApiKey !== undefined) updates.upstreamApiKey = body.upstreamApiKey;
 
   await db.update(adminConfig).set(updates).where(eq(adminConfig.id, config.id)).run();
+  configCache.invalidate("admin_config"); // invalidate cached config
 
   // Immediately refresh cached model catalog when upstream settings change.
   if (body.upstreamEndpoint !== undefined || body.upstreamApiKey !== undefined) {
@@ -220,6 +223,9 @@ settings.post("/settings/factory-reset", async (c) => {
       tokitoApiKey: "",
       updatedAt: new Date().toISOString().replace("T", " ").substring(0, 19),
     }).where(eq(adminConfig.id, config.id)).run();
+
+    configCache.clear();
+    apiKeyCache.clear();
 
     return c.json({ success: true, message: "Factory reset complete. All API keys, logs, sessions, devices, and settings have been reset to defaults. Admin password preserved." });
   } catch (error: any) {

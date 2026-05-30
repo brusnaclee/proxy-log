@@ -6,6 +6,7 @@ import { generateApiKey, getKeyPrefix, sha256, maskKey } from "../../utils/crypt
 import { normalizeIdeName } from "../../utils/detect-ide.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql } from "../../utils/counting.js";
+import { apiKeyCache, statsCache } from "../../utils/cache.js";
 
 const keys = new Hono();
 
@@ -25,6 +26,7 @@ function calculateBreakdownCosts(modelBreakdown: Array<{ model: string | null, p
 }
 
 keys.get("/keys", async (c) => {
+  return c.json(await statsCache.getOrFetch("keys-list", async () => {
   const allKeys = await db.select().from(apiKeys).all();
   const config = await db.select().from(adminConfig).get();
   const result = [];
@@ -66,7 +68,8 @@ keys.get("/keys", async (c) => {
       totalTokens: totalStats?.tokens || 0, createdAt: key.createdAt,
     });
   }
-  return c.json(result);
+  return result;
+  }, 30_000)); // 30s TTL for keys list
 });
 
 keys.post("/keys", async (c) => {
@@ -311,6 +314,8 @@ keys.put("/keys/:id", async (c) => {
   if (body.dailyOutputTokenLimit !== undefined) updates.dailyOutputTokenLimit = body.dailyOutputTokenLimit;
 
   await db.update(apiKeys).set(updates).where(eq(apiKeys.id, id)).run();
+  apiKeyCache.clear(); // invalidate all cached keys since we matched by id, not key string
+  statsCache.invalidate("keys-list"); // invalidate keys list cache
   return c.json({ success: true, message: "API key updated" });
 });
 
@@ -319,6 +324,8 @@ keys.delete("/keys/:id", async (c) => {
   const key = await db.select().from(apiKeys).where(eq(apiKeys.id, id)).get();
   if (!key) return c.json({ error: "API key not found" }, 404);
   await db.delete(apiKeys).where(eq(apiKeys.id, id)).run();
+  apiKeyCache.clear();
+  statsCache.invalidate("keys-list");
   return c.json({ success: true, message: "API key deleted" });
 });
 
@@ -333,6 +340,8 @@ keys.post("/keys/:id/rotate", async (c) => {
     updatedAt: new Date().toISOString().replace("T", " ").substring(0, 19),
   }).where(eq(apiKeys.id, id)).run();
 
+  apiKeyCache.clear(); // invalidate cached keys after rotation
+  statsCache.invalidate("keys-list");
   return c.json({ success: true, key: newKey, keyPrefix: getKeyPrefix(newKey), message: "API key rotated." });
 });
 

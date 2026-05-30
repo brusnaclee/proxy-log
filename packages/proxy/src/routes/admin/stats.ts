@@ -4,6 +4,7 @@ import { requestLogs, apiKeys, devices, chatSessions, monthlyStats } from "../..
 import { eq, sql, and } from "drizzle-orm";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, wibTodayStartSql, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql } from "../../utils/counting.js";
+import { statsCache } from "../../utils/cache.js";
 
 const stats = new Hono();
 
@@ -42,6 +43,7 @@ function calculateBreakdownCosts(modelBreakdown: Array<{ model: string | null, p
 }
 
 stats.get("/stats/overview", async (c) => {
+  return c.json(await statsCache.getOrFetch("overview", async () => {
   const todayStart  = localTodayStart();
   const weekStart   = new Date(todayStart.getTime() - 7  * 86400000);
   // month: 1st of current month at local midnight
@@ -229,7 +231,7 @@ stats.get("/stats/overview", async (c) => {
   const totalSessions = sessionCountResult?.count || 0;
   const avgRequestsPerSession = totalSessions > 0 ? (allTimeStats?.requests || 0) / totalSessions : 0;
 
-  return c.json({
+  return {
     today: { 
       requests: todayStats?.requests || 0, 
       tokens: todayStats?.tokens || 0,
@@ -274,11 +276,14 @@ stats.get("/stats/overview", async (c) => {
       avgRequestsPerSession
     },
     activeKeys: activeKeys?.count || 0, totalKeys: totalKeys?.count || 0, totalDevices: totalDevices?.count || 0,
-  });
+  };
+  })); // end statsCache.getOrFetch
 });
 
 stats.get("/stats/by-key", async (c) => {
   const days = parseInt(c.req.query("days") || "0");
+  const cacheKey = `by-key:${days}`;
+  return c.json(await statsCache.getOrFetch(cacheKey, async () => {
   const startDate = days > 0
     ? new Date(Date.now() - days * 86400000).toISOString().replace("T", " ").substring(0, 19)
     : null;
@@ -323,12 +328,15 @@ stats.get("/stats/by-key", async (c) => {
       uniqueDevices: keyStats?.uniqueDevices || 0, topModel: topModel?.model || "N/A",
     });
   }
-  return c.json(result);
+  return result;
+  })); // end statsCache.getOrFetch
 });
 
 stats.get("/stats/by-model", async (c) => {
   const days = parseInt(c.req.query("days") || "0");
   const apiKeyId = c.req.query("api_key_id") ? parseInt(c.req.query("api_key_id")!) : null;
+  const cacheKey = `by-model:${days}:${apiKeyId}`;
+  return c.json(await statsCache.getOrFetch(cacheKey, async () => {
   const startDate = days > 0
     ? new Date(Date.now() - days * 86400000).toISOString().replace("T", " ").substring(0, 19)
     : null;
@@ -374,7 +382,8 @@ stats.get("/stats/by-model", async (c) => {
     return { ...row, estimatedCost };
   });
 
-  return c.json(withCost);
+  return withCost;
+  })); // end statsCache.getOrFetch
 });
 
 stats.get("/stats/by-device", async (c) => {
@@ -455,6 +464,8 @@ stats.get("/stats/timeseries", async (c) => {
 // ─── Top Users ────────────────────────────────────────────────────────────────
 stats.get("/stats/top-users", async (c) => {
   const days = parseInt(c.req.query("days") || "0");
+  const cacheKey = `top-users:${days}`;
+  return c.json(await statsCache.getOrFetch(cacheKey, async () => {
   const startDate = days > 0
     ? new Date(Date.now() - days * 86400000).toISOString().replace("T", " ").substring(0, 19)
     : null;
@@ -514,7 +525,8 @@ stats.get("/stats/top-users", async (c) => {
   const byTurns = [...enriched].sort((a, b) => b.turns - a.turns).slice(0, 10);
   const byTokens = [...enriched].sort((a, b) => b.tokens - a.tokens).slice(0, 10);
 
-  return c.json({ byTurns, byTokens });
+  return { byTurns, byTokens };
+  })); // end statsCache.getOrFetch
 });
 
 export default stats;

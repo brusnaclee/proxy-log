@@ -22,6 +22,7 @@ import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindo
 import { analyzeRequestMessages, isTitleGenRequest, detectToolCallsInResponse, getLastTurnTextForTokenEstimate, type MessageAnalysis } from "../utils/message-analyzer.js";
 import { makeAccumulator, consumeStreamPayload, consumeNonStreamingPayload, finalizeCompletion, resolveBillableTokens } from "../utils/token-extractor.js";
 import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL } from "../utils/counting.js";
+import { configCache, apiKeyCache } from "../utils/cache.js";
 
 const proxy = new Hono();
 
@@ -577,19 +578,22 @@ proxy.all("/*", async (c) => {
   const clientKey = authHeader.replace(/^Bearer\s+/i, "").trim();
 
   // ΓöÇΓöÇΓöÇ 2. Validate API Key ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-  let keyRecord = await db
-    .select()
-    .from(apiKeys)
-    .where(eq(apiKeys.key, clientKey))
-    .get();
-
-  if (!keyRecord) {
-    keyRecord = await db
+  let keyRecord = await apiKeyCache.getOrFetch(`key:${clientKey}`, async () => {
+    let record = await db
       .select()
       .from(apiKeys)
-      .where(eq(apiKeys.keyHash, sha256(clientKey)))
+      .where(eq(apiKeys.key, clientKey))
       .get();
-  }
+
+    if (!record) {
+      record = await db
+        .select()
+        .from(apiKeys)
+        .where(eq(apiKeys.keyHash, sha256(clientKey)))
+        .get();
+    }
+    return record || null;
+  });
 
   if (!keyRecord) {
     const keyPrefix = clientKey.slice(0, 12);
@@ -788,7 +792,7 @@ proxy.all("/*", async (c) => {
   }
 
   // ΓöÇΓöÇΓöÇ 7. Fetch Config & Parse Request Body ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-  const config = await db.select().from(adminConfig).get();
+  const config = await configCache.getOrFetch("admin_config", () => db.select().from(adminConfig).get());
   if (!config) {
     return c.json(
       { error: { message: "Upstream API not configured. Please configure via admin dashboard.", type: "server_error" } },

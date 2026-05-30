@@ -134,6 +134,14 @@ export const requestLogs = sqliteTable("request_logs", {
   ipAddressIdx: index("idx_logs_ip_address").on(table.ipAddress),
   sessionIdIdx: index("idx_logs_session_id").on(table.sessionId),
   providerIdx: index("idx_logs_provider").on(table.provider),
+  // Composite indexes for performance on hot-path queries (rate limiting, stats)
+  keyCreatedIdx: index("idx_logs_key_created").on(table.apiKeyId, table.createdAt),
+  keyCreatedCountedIdx: index("idx_logs_key_created_counted").on(table.apiKeyId, table.createdAt, table.isCountedRequest),
+  keyCreatedModelIdx: index("idx_logs_key_created_model").on(table.apiKeyId, table.createdAt, table.model),
+  keyCreatedStatusIdx: index("idx_logs_key_created_status").on(table.apiKeyId, table.createdAt, table.statusCode),
+  // Covering index for turn-based aggregation queries (stats overview, by-key, timeseries)
+  turnAggIdx: index("idx_logs_turn_agg").on(table.turnId, table.statusCode, table.createdAt),
+  modelIdx: index("idx_logs_model").on(table.model),
 }));
 
 // ─── Chat Sessions (context-level observability) ───────────────────────────────

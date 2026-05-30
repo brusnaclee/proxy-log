@@ -437,6 +437,16 @@ export async function initializeDatabase() {
   await client.execute("CREATE INDEX IF NOT EXISTS idx_logs_key_created_model ON request_logs(api_key_id, created_at, model)");
   await client.execute("CREATE INDEX IF NOT EXISTS idx_logs_key_created_status ON request_logs(api_key_id, created_at, status_code)");
 
+  // Additional covering indexes for turn-based aggregation (stats overview, by-key, timeseries)
+  await client.execute("CREATE INDEX IF NOT EXISTS idx_logs_turn_agg ON request_logs(turn_id, status_code, created_at)");
+  await client.execute("CREATE INDEX IF NOT EXISTS idx_logs_model ON request_logs(model)");
+
+  // SQLite PRAGMA optimizations for read-heavy workloads
+  await client.execute("PRAGMA cache_size = -16000");    // 16MB page cache (default ~2MB)
+  await client.execute("PRAGMA mmap_size = 268435456");  // 256MB memory-mapped I/O
+  await client.execute("PRAGMA temp_store = MEMORY");    // temp tables in memory
+  await client.execute("PRAGMA synchronous = NORMAL");   // faster writes, still safe with WAL
+
   const envUpstreamEndpoint = (process.env.UPSTREAM_ENDPOINT || "").trim().replace(/\/$/, "");
   const envUpstreamApiKey = (process.env.UPSTREAM_API_KEY || "").trim();
 
@@ -514,6 +524,11 @@ export async function initializeDatabase() {
     }
   }
 
+  // provider_api_keys table for multi-key rotation per provider
+  // (must run BEFORE provider seed so endpoint_type column exists)
+  await ensureColumnExists("providers", "endpoint_type", "TEXT NOT NULL DEFAULT 'openai'");
+  await ensureColumnExists("provider_api_keys", "is_active", "INTEGER NOT NULL DEFAULT 1");
+
     // Migrate existing upstream to providers table if empty
   const providerCount = await db.select({ count: sql<number>`count(*)` }).from(schema.providers).get();
   if (!providerCount || providerCount.count === 0) {
@@ -530,10 +545,6 @@ export async function initializeDatabase() {
       console.log("o. Migrated legacy upstream config to providers table");
     }
   }
-
-  // provider_api_keys table for multi-key rotation per provider
-  await ensureColumnExists("providers", "endpoint_type", "TEXT NOT NULL DEFAULT 'openai'");
-  await ensureColumnExists("provider_api_keys", "is_active", "INTEGER NOT NULL DEFAULT 1");
 
   // Migrate existing provider api_key values into provider_api_keys table (one-time)
   try {

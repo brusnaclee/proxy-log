@@ -41,6 +41,10 @@ Thumbs.db
 b64.txt
 ssh_output.txt
 commit-msg.txt
+all_commits.txt
+server-deploy-output.txt
+test_ps.txt
+test_node.txt
 
 # Project scripts and documentation (local only)
 scripts/

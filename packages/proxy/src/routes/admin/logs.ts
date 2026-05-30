@@ -96,7 +96,7 @@ function collapseTimelineRows(rows: any[]) {
 
 logs.get("/logs", async (c) => {
   const page = parseInt(c.req.query("page") || "1");
-  const limit = Math.min(parseInt(c.req.query("limit") || "500"), 500);
+  const limit = Math.min(parseInt(c.req.query("limit") || "50"), 200);
   const offset = (page - 1) * limit;
 
   const conditions: any[] = [];
@@ -124,11 +124,41 @@ logs.get("/logs", async (c) => {
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const rows = await db.select().from(requestLogs).where(whereClause)
+  // Select only columns needed for the listing (skip heavy transcriptSnapshot)
+  const rows = await db.select({
+    id: requestLogs.id,
+    apiKeyId: requestLogs.apiKeyId,
+    apiKeyName: requestLogs.apiKeyName,
+    ipAddress: requestLogs.ipAddress,
+    deviceFingerprint: requestLogs.deviceFingerprint,
+    ideDetected: requestLogs.ideDetected,
+    provider: requestLogs.provider,
+    endpointPath: requestLogs.endpointPath,
+    sessionId: requestLogs.sessionId,
+    turnId: requestLogs.turnId,
+    model: requestLogs.model,
+    promptTokens: requestLogs.promptTokens,
+    completionTokens: requestLogs.completionTokens,
+    totalTokens: requestLogs.totalTokens,
+    cachedTokens: requestLogs.cachedTokens,
+    contextEvent: requestLogs.contextEvent,
+    contextDeltaTokens: requestLogs.contextDeltaTokens,
+    toolsUsed: requestLogs.toolsUsed,
+    toolCount: requestLogs.toolCount,
+    hasToolCalls: requestLogs.hasToolCalls,
+    requestPreview: requestLogs.requestPreview,
+    responsePreview: requestLogs.responsePreview,
+    isCountedRequest: requestLogs.isCountedRequest,
+    latencyMs: requestLogs.latencyMs,
+    statusCode: requestLogs.statusCode,
+    errorMessage: requestLogs.errorMessage,
+    estimatedCost: requestLogs.estimatedCost,
+    createdAt: requestLogs.createdAt,
+  }).from(requestLogs).where(whereClause)
     .orderBy(desc(requestLogs.createdAt)).limit(limit).offset(offset).all();
 
   const totalResult = await db.select({ count: sql<number>`count(*)` }).from(requestLogs).where(whereClause).get();
-  const total = Math.min(totalResult?.count || 0, 500);
+  const total = totalResult?.count || 0;
 
   const mappedRows = rows.map((row: any) => mapTimelineRow(row));
 
@@ -167,7 +197,7 @@ logs.get("/logs/sessions", async (c) => {
     .orderBy(desc(chatSessions.lastSeenAt)).limit(limit).offset(offset).all();
 
   const totalResult = await db.select({ count: sql<number>`count(*)` }).from(chatSessions).where(whereClause).get();
-  const total = Math.min(totalResult?.count || 0, 100);
+  const total = totalResult?.count || 0;
 
   return c.json({ data: rows, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
 });
@@ -178,9 +208,41 @@ logs.get("/logs/sessions/:sessionId", async (c) => {
   const session = await db.select().from(chatSessions).where(eq(chatSessions.sessionId, sessionId)).get();
   if (!session) return c.json({ error: "Session not found" }, 404);
 
-  const timeline = await db.select().from(requestLogs)
+  // Limit timeline to latest 500 rows to avoid slowness on very active sessions
+  const timeline = await db.select({
+    id: requestLogs.id,
+    apiKeyId: requestLogs.apiKeyId,
+    apiKeyName: requestLogs.apiKeyName,
+    ipAddress: requestLogs.ipAddress,
+    deviceFingerprint: requestLogs.deviceFingerprint,
+    ideDetected: requestLogs.ideDetected,
+    provider: requestLogs.provider,
+    endpointPath: requestLogs.endpointPath,
+    sessionId: requestLogs.sessionId,
+    turnId: requestLogs.turnId,
+    model: requestLogs.model,
+    promptTokens: requestLogs.promptTokens,
+    completionTokens: requestLogs.completionTokens,
+    totalTokens: requestLogs.totalTokens,
+    cachedTokens: requestLogs.cachedTokens,
+    contextEvent: requestLogs.contextEvent,
+    contextDeltaTokens: requestLogs.contextDeltaTokens,
+    toolsUsed: requestLogs.toolsUsed,
+    toolCount: requestLogs.toolCount,
+    hasToolCalls: requestLogs.hasToolCalls,
+    requestPreview: requestLogs.requestPreview,
+    responsePreview: requestLogs.responsePreview,
+    transcriptSnapshot: requestLogs.transcriptSnapshot,
+    isCountedRequest: requestLogs.isCountedRequest,
+    latencyMs: requestLogs.latencyMs,
+    statusCode: requestLogs.statusCode,
+    errorMessage: requestLogs.errorMessage,
+    estimatedCost: requestLogs.estimatedCost,
+    createdAt: requestLogs.createdAt,
+  }).from(requestLogs)
     .where(eq(requestLogs.sessionId, sessionId))
     .orderBy(requestLogs.createdAt)
+    .limit(500)
     .all();
 
   const mappedTimeline = timeline.map((row: any) => mapTimelineRow(row));
