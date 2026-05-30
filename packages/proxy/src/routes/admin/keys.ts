@@ -328,8 +328,23 @@ keys.post("/keys/:id/rotate", async (c) => {
   if (!key) return c.json({ error: "API key not found" }, 404);
 
   const newKey = generateApiKey();
+  const endpoint = process.env.PROXY_PUBLIC_BASE_URL || "http://localhost:3000/v1";
+
+  // Create notification for Discord bot to send DM
+  const notification = key.discordUserId
+    ? JSON.stringify({
+        type: "admin_rotate",
+        discordUserId: key.discordUserId,
+        newKey,
+        endpoint,
+        keyId: key.id,
+        reason: "Admin rotated via dashboard",
+      })
+    : null;
+
   await db.update(apiKeys).set({
     key: newKey, keyPrefix: getKeyPrefix(newKey), keyHash: sha256(newKey),
+    pendingNotification: notification,
     updatedAt: new Date().toISOString().replace("T", " ").substring(0, 19),
   }).where(eq(apiKeys.id, id)).run();
 
