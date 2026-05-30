@@ -239,6 +239,7 @@ export const modelTestState = sqliteTable("model_test_state", {
   retryCount: integer("retry_count").notNull().default(0),
   lastTestAt: text("last_test_at"),
   suspendedUntil: text("suspended_until"), // null = not suspended; ISO datetime = paused until then
+  shutdownCycle: integer("shutdown_cycle").notNull().default(0), // escalating shutdown cycle (0-4)
 }, (table) => ({
   uniqueModel: index("idx_test_state_model").on(table.modelId, table.provider),
 }));

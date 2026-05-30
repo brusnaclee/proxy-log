@@ -3,10 +3,23 @@ import { modelMonitor, modelTestState, providers } from "../db/schema.js";
 import { eq, and, sql } from "drizzle-orm";
 
 /**
- * Data is valid until the next scheduled test replaces it.
- * No time-based stale cutoff — the smart retry system controls when models are tested.
+ * Model Monitoring Store
+ *
+ * Supports passive monitoring (from real user requests) and escalating shutdown.
+ *
+ * Escalating shutdown cycles:
+ * 1. First offline: test 3x every 10 min until online or 30 min
+ * 2. Still offline: shutdown 1 day
+ * 3. After 1 day: test 3x every 10 min until online or 30 min
+ * 4. Still offline: shutdown 3 days
+ * 5. After 3 days: test 3x every 10 min until online or 30 min
+ * 6. Still offline: shutdown 7 days
+ * 7. After 7 days: test 3x every 10 min until online or 30 min
+ * 8. Still offline: shutdown 30 days
+ * 9. After 30 days: reset to online
  */
-export const MONITOR_STALE_MINUTES = 60 * 24; // 24 hours (effectively "no stale cutoff")
+
+export const MONITOR_STALE_MINUTES = 60 * 24;
 
 export type MonitorSnapshotRow = {
   modelId: string;
@@ -18,6 +31,21 @@ export type MonitorSnapshotRow = {
   baseUrl: string | null;
   checkedAt: string;
 };
+
+// Shutdown durations in milliseconds (escalating)
+const SHUTDOWN_DURATIONS = [
+  24 * 60 * 60 * 1000,   // 1 day
+  3 * 24 * 60 * 60 * 1000,  // 3 days
+  7 * 24 * 60 * 60 * 1000,  // 7 days
+  30 * 24 * 60 * 60 * 1000, // 30 days
+];
+
+// Passive detection: 10 failures within 1 second = truly offline
+const PASSIVE_FAILURE_THRESHOLD = 10;
+const PASSIVE_FAILURE_WINDOW_MS = 1000;
+
+// In-memory failure tracking for passive detection
+const failureCounters = new Map<string, { count: number; firstFailureAt: number }>();
 
 export async function getActiveProviderNames(): Promise<Set<string>> {
   const rows = await db
@@ -33,7 +61,6 @@ export async function purgeMonitorForProvider(providerName: string): Promise<voi
   await db.delete(modelTestState).where(eq(modelTestState.provider, providerName)).run();
 }
 
-/** Replace entire monitor table with the latest bot snapshot (active providers only). */
 export async function replaceModelMonitorSnapshot(
   values: MonitorSnapshotRow[],
 ): Promise<number> {
@@ -52,38 +79,59 @@ export function monitorStaleCutoffIso(): string {
   return d.toISOString().replace("T", " ").substring(0, 19);
 }
 
-// ─── Smart Retry: Upsert single model status ──────────────────────────────────
+/**
+ * Report a passive failure from a real user request.
+ * Returns true if the model should now be considered offline.
+ */
+export function reportPassiveFailure(modelId: string, provider: string | null): boolean {
+  const key = `${modelId}:${provider || 'null'}`;
+  const now = Date.now();
+  const counter = failureCounters.get(key);
 
-const MAX_RETRIES = 3;
+  if (!counter || (now - counter.firstFailureAt) > PASSIVE_FAILURE_WINDOW_MS) {
+    // New window
+    failureCounters.set(key, { count: 1, firstFailureAt: now });
+    return false;
+  }
+
+  counter.count++;
+  if (counter.count >= PASSIVE_FAILURE_THRESHOLD) {
+    // Reset counter
+    failureCounters.delete(key);
+    return true; // Should mark as offline
+  }
+
+  return false;
+}
 
 /**
- * Upsert a single model's status into model_monitor, and update model_test_state
- * for retry tracking. Called by the bot after each individual model test.
- *
- * - If online: upsert into model_monitor, clear retry state (retryCount=0, suspendedUntil=null)
- * - If offline: upsert into model_monitor, increment retryCount
- * - If retryCount >= MAX_RETRIES: set suspendedUntil to next midnight (Asia/Jakarta)
+ * Report a passive success from a real user request.
+ * Updates latency and clears failure counter.
  */
-export async function upsertModelStatus(params: {
-  modelId: string;
-  provider: string | null;
-  isOnline: boolean;
-  latencyMs: number;
-  httpStatus: number;
-  errorMessage: string | null;
-  baseUrl: string | null;
-}): Promise<void> {
+export function reportPassiveSuccess(modelId: string, provider: string | null): void {
+  const key = `${modelId}:${provider || 'null'}`;
+  failureCounters.delete(key);
+}
+
+/**
+ * Update model latency from a real user request.
+ */
+export async function updateModelLatency(
+  modelId: string,
+  provider: string | null,
+  latencyMs: number,
+  isOnline: boolean,
+): Promise<void> {
   const now = new Date().toISOString().replace("T", " ").substring(0, 19);
 
-  // Upsert into model_monitor: find existing row by modelId+provider
   const existing = await db
     .select()
     .from(modelMonitor)
     .where(
       and(
-        eq(modelMonitor.modelId, params.modelId),
-        params.provider
-          ? eq(modelMonitor.provider, params.provider)
+        eq(modelMonitor.modelId, modelId),
+        provider
+          ? eq(modelMonitor.provider, provider)
           : sql`${modelMonitor.provider} IS NULL`,
       ),
     )
@@ -94,103 +142,182 @@ export async function upsertModelStatus(params: {
     await db
       .update(modelMonitor)
       .set({
-        isOnline: params.isOnline,
-        latencyMs: params.latencyMs,
-        httpStatus: params.httpStatus,
-        errorMessage: params.errorMessage,
-        baseUrl: params.baseUrl,
+        isOnline,
+        latencyMs,
+        checkedAt: now,
+        httpStatus: isOnline ? 200 : 500,
+      })
+      .where(eq(modelMonitor.id, existing.id))
+      .run();
+  } else {
+    await db.insert(modelMonitor).values({
+      modelId,
+      provider,
+      isOnline,
+      latencyMs,
+      httpStatus: isOnline ? 200 : 500,
+      checkedAt: now,
+    }).run();
+  }
+}
+
+/**
+ * Mark a model as offline (from passive detection).
+ */
+export async function markModelOffline(
+  modelId: string,
+  provider: string | null,
+  httpStatus: number,
+  errorMessage: string | null,
+): Promise<void> {
+  const now = new Date().toISOString().replace("T", " ").substring(0, 19);
+
+  const existing = await db
+    .select()
+    .from(modelMonitor)
+    .where(
+      and(
+        eq(modelMonitor.modelId, modelId),
+        provider
+          ? eq(modelMonitor.provider, provider)
+          : sql`${modelMonitor.provider} IS NULL`,
+      ),
+    )
+    .limit(1)
+    .get();
+
+  if (existing) {
+    await db
+      .update(modelMonitor)
+      .set({
+        isOnline: false,
+        httpStatus,
+        errorMessage,
         checkedAt: now,
       })
       .where(eq(modelMonitor.id, existing.id))
       .run();
   } else {
     await db.insert(modelMonitor).values({
-      modelId: params.modelId,
-      provider: params.provider,
-      isOnline: params.isOnline,
-      latencyMs: params.latencyMs,
-      httpStatus: params.httpStatus,
-      errorMessage: params.errorMessage,
-      baseUrl: params.baseUrl,
+      modelId,
+      provider,
+      isOnline: false,
+      httpStatus,
+      errorMessage,
       checkedAt: now,
     }).run();
   }
 
-  // Update model_test_state for retry tracking
+  // Update test state for escalating shutdown
+  await updateTestStateForShutdown(modelId, provider);
+}
+
+/**
+ * Update test state with escalating shutdown logic.
+ */
+async function updateTestStateForShutdown(
+  modelId: string,
+  provider: string | null,
+): Promise<void> {
+  const now = new Date().toISOString().replace("T", " ").substring(0, 19);
+
   const stateRow = await db
     .select()
     .from(modelTestState)
     .where(
       and(
-        eq(modelTestState.modelId, params.modelId),
-        params.provider
-          ? eq(modelTestState.provider, params.provider)
+        eq(modelTestState.modelId, modelId),
+        provider
+          ? eq(modelTestState.provider, provider)
           : sql`${modelTestState.provider} IS NULL`,
       ),
     )
     .limit(1)
     .get();
 
-  if (params.isOnline) {
-    // Online: clear retry state
-    if (stateRow) {
-      await db
-        .update(modelTestState)
-        .set({ retryCount: 0, lastTestAt: now, suspendedUntil: null })
-        .where(eq(modelTestState.id, stateRow.id))
-        .run();
-    } else {
-      await db.insert(modelTestState).values({
-        modelId: params.modelId,
-        provider: params.provider,
-        retryCount: 0,
-        lastTestAt: now,
-        suspendedUntil: null,
-      }).run();
-    }
-  } else if (params.httpStatus === 429) {
-    // Rate limited: DON'T increment retry count - model is working, just busy
-    // Just update the lastTestAt timestamp
-    if (stateRow) {
-      await db
-        .update(modelTestState)
-        .set({ lastTestAt: now })
-        .where(eq(modelTestState.id, stateRow.id))
-        .run();
-    } else {
-      await db.insert(modelTestState).values({
-        modelId: params.modelId,
-        provider: params.provider,
-        retryCount: 0,
-        lastTestAt: now,
-        suspendedUntil: null,
-      }).run();
-    }
-  } else {
-    // Offline (5xx, timeout, connection error): increment retry count
-    const newRetryCount = (stateRow?.retryCount ?? 0) + 1;
-    // After 3 failures, suspend for 24 hours instead of until midnight
-    const suspendedUntil = newRetryCount >= MAX_RETRIES ? get24HoursFromNowIso() : null;
+  if (!stateRow) {
+    // First time offline - start cycle 1
+    await db.insert(modelTestState).values({
+      modelId,
+      provider,
+      retryCount: 1,
+      lastTestAt: now,
+      suspendedUntil: null,
+      shutdownCycle: 0,
+    }).run();
+    return;
+  }
 
-    if (stateRow) {
-      await db
-        .update(modelTestState)
-        .set({ retryCount: newRetryCount, lastTestAt: now, suspendedUntil })
-        .where(eq(modelTestState.id, stateRow.id))
-        .run();
-    } else {
-      await db.insert(modelTestState).values({
-        modelId: params.modelId,
-        provider: params.provider,
-        retryCount: newRetryCount,
+  const currentCycle = (stateRow as any).shutdownCycle || 0;
+  const newRetryCount = stateRow.retryCount + 1;
+
+  // After 3 failures in current cycle, escalate to next shutdown
+  if (newRetryCount >= 3) {
+    const shutdownDuration = SHUTDOWN_DURATIONS[Math.min(currentCycle, SHUTDOWN_DURATIONS.length - 1)];
+    const suspendedUntil = new Date(Date.now() + shutdownDuration).toISOString().replace("T", " ").substring(0, 19);
+
+    await db
+      .update(modelTestState)
+      .set({
+        retryCount: 0,
         lastTestAt: now,
         suspendedUntil,
-      }).run();
-    }
+        shutdownCycle: currentCycle + 1,
+      })
+      .where(eq(modelTestState.id, stateRow.id))
+      .run();
+  } else {
+    await db
+      .update(modelTestState)
+      .set({
+        retryCount: newRetryCount,
+        lastTestAt: now,
+      })
+      .where(eq(modelTestState.id, stateRow.id))
+      .run();
   }
 }
 
-/** Get all model test states (for bot to recover retry state on startup). */
+/**
+ * Mark a model as online (from passive detection or test).
+ */
+export async function markModelOnline(
+  modelId: string,
+  provider: string | null,
+  latencyMs: number,
+): Promise<void> {
+  const now = new Date().toISOString().replace("T", " ").substring(0, 19);
+
+  // Update monitor
+  await updateModelLatency(modelId, provider, latencyMs, true);
+
+  // Clear test state
+  const stateRow = await db
+    .select()
+    .from(modelTestState)
+    .where(
+      and(
+        eq(modelTestState.modelId, modelId),
+        provider
+          ? eq(modelTestState.provider, provider)
+          : sql`${modelTestState.provider} IS NULL`,
+      ),
+    )
+    .limit(1)
+    .get();
+
+  if (stateRow) {
+    await db
+      .update(modelTestState)
+      .set({ retryCount: 0, lastTestAt: now, suspendedUntil: null, shutdownCycle: 0 })
+      .where(eq(modelTestState.id, stateRow.id))
+      .run();
+  }
+}
+
+/**
+ * Get all model test states (for bot to recover retry state on startup).
+ */
 export async function getModelTestStates(): Promise<
   Array<{
     modelId: string;
@@ -198,6 +325,7 @@ export async function getModelTestStates(): Promise<
     retryCount: number;
     lastTestAt: string | null;
     suspendedUntil: string | null;
+    shutdownCycle: number;
   }>
 > {
   return db
@@ -207,21 +335,76 @@ export async function getModelTestStates(): Promise<
       retryCount: modelTestState.retryCount,
       lastTestAt: modelTestState.lastTestAt,
       suspendedUntil: modelTestState.suspendedUntil,
+      shutdownCycle: sql<number>`COALESCE(${modelTestState.shutdownCycle}, 0)`,
     })
     .from(modelTestState)
     .all();
 }
 
-/** Reset all retry states (midnight reset). */
+/**
+ * Reset all retry states (midnight reset).
+ */
 export async function resetAllTestStates(): Promise<void> {
   await db
     .update(modelTestState)
-    .set({ retryCount: 0, suspendedUntil: null })
+    .set({ retryCount: 0, suspendedUntil: null, shutdownCycle: 0 })
     .run();
 }
 
-/** Get 24 hours from now as ISO string (for suspension). */
-function get24HoursFromNowIso(): string {
-  const d = new Date(Date.now() + 24 * 60 * 60 * 1000);
-  return d.toISOString().replace("T", " ").substring(0, 19);
+/**
+ * Get models that are currently suspended (for testing).
+ */
+export async function getSuspendedModels(): Promise<
+  Array<{
+    modelId: string;
+    provider: string | null;
+    suspendedUntil: string | null;
+    shutdownCycle: number;
+  }>
+> {
+  const now = new Date().toISOString().replace("T", " ").substring(0, 19);
+  return db
+    .select({
+      modelId: modelTestState.modelId,
+      provider: modelTestState.provider,
+      suspendedUntil: modelTestState.suspendedUntil,
+      shutdownCycle: sql<number>`COALESCE(${modelTestState.shutdownCycle}, 0)`,
+    })
+    .from(modelTestState)
+    .where(
+      and(
+        sql`${modelTestState.suspendedUntil} IS NOT NULL`,
+        sql`${modelTestState.suspendedUntil} > ${now}`,
+      ),
+    )
+    .all();
+}
+
+/**
+ * Get models that are offline and not suspended (eligible for testing).
+ */
+export async function getOfflineModelsForTesting(): Promise<
+  Array<{
+    modelId: string;
+    provider: string | null;
+    retryCount: number;
+    shutdownCycle: number;
+  }>
+> {
+  const now = new Date().toISOString().replace("T", " ").substring(0, 19);
+  return db
+    .select({
+      modelId: modelTestState.modelId,
+      provider: modelTestState.provider,
+      retryCount: modelTestState.retryCount,
+      shutdownCycle: sql<number>`COALESCE(${modelTestState.shutdownCycle}, 0)`,
+    })
+    .from(modelTestState)
+    .where(
+      and(
+        sql`${modelTestState.retryCount} > 0`,
+        sql`(${modelTestState.suspendedUntil} IS NULL OR ${modelTestState.suspendedUntil} <= ${now})`,
+      ),
+    )
+    .all();
 }

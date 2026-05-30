@@ -248,9 +248,13 @@ export async function initializeDatabase() {
       provider TEXT,
       retry_count INTEGER NOT NULL DEFAULT 0,
       last_test_at TEXT,
-      suspended_until TEXT
+      suspended_until TEXT,
+      shutdown_cycle INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_test_state_model ON model_test_state(model_id, provider);
+
+    // Add shutdown_cycle column for escalating shutdown
+    await ensureColumnExists("model_test_state", "shutdown_cycle", "INTEGER NOT NULL DEFAULT 0");
 
     CREATE TABLE IF NOT EXISTS provider_api_keys (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

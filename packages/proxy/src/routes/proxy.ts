@@ -1796,7 +1796,27 @@ const targetProvider = await getProviderForModel(model);
     const latencyMs = Date.now() - startTime;
     const statusCode = upstreamResponse.status;
 
-    // ΓöÇΓöÇΓöÇ 11. Register/Update Device ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // ─── 10.5 Passive Model Monitoring ──────────────────────────────────────────
+    // Report success/failure to the monitor store for passive health tracking
+    if (model && model !== 'unknown') {
+      const providerName = targetProvider?.name || null;
+      if (statusCode >= 200 && statusCode < 300) {
+        // Success: update latency and mark online
+        const { reportPassiveSuccess, updateModelLatency } = await import("../utils/model-monitor-store.js");
+        reportPassiveSuccess(model, providerName);
+        await updateModelLatency(model, providerName, latencyMs, true).catch(() => {});
+      } else if (statusCode >= 500 || statusCode === 429) {
+        // Failure: report to passive monitor
+        const { reportPassiveFailure, markModelOffline } = await import("../utils/model-monitor-store.js");
+        const shouldMarkOffline = reportPassiveFailure(model, providerName);
+        if (shouldMarkOffline) {
+          await markModelOffline(model, providerName, statusCode, `HTTP ${statusCode} from upstream`).catch(() => {});
+          console.log(`[monitor] Model ${model} marked offline after ${10} failures in 1s`);
+        }
+      }
+    }
+
+    // ─── 11. Register/Update Device ──────────────────────────────────────────────
     if (existingDevice) {
       await db.update(devices)
         .set({

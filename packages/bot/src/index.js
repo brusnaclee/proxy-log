@@ -2822,16 +2822,9 @@ client.once('clientReady', async () => {
 		await ensurePanelMessage();
 		await pollModelStatus();
 		await recoverRetryState();
-		await runFullSweep();
+		// No initial full sweep - models start online, passive monitoring from real requests
 
-		// Full sweep: every 1 hour (test all models)
-		setInterval(() => {
-			runFullSweep().catch((err) =>
-				console.error('runFullSweep error:', err.message),
-			);
-		}, 3600000);
-
-		// Retry sweep: every 10 minutes (test only offline models)
+		// Retry sweep: every 10 minutes (test only offline models that aren't suspended)
 		setInterval(() => {
 			runRetrySweep().catch((err) =>
 				console.error('runRetrySweep error:', err.message),
@@ -2896,57 +2889,6 @@ client.once('clientReady', async () => {
 								}
 							} catch (err) {
 								console.error(`[notify] Failed to send bulk rotate thread for ${notif.discordUserId}:`, err.message);
-							}
-						}
-					} else if (notif.type === 'admin_rotate') {
-						// Admin rotated a single key via dashboard
-						const dmText =
-							`🔄 **API Key Di-rotate (Admin)**\n\n` +
-							`Admin telah me-rotate API key Anda. Gunakan kredensial baru di bawah:\n\n` +
-							`**Endpoint:** \`${notif.endpoint}\`\n` +
-							`**Authorization:** \`Bearer ${notif.newKey}\`\n\n` +
-							`Key lama sudah tidak valid. Update IDE/client Anda segera.`;
-
-						let dmSent = false;
-						try {
-							await sendDMToUser(
-								notif.discordUserId,
-								'🔑 API Key Baru — Rotasi oleh Admin',
-								dmText,
-								0x5865f2,
-							);
-							dmSent = true;
-						} catch (err) {
-							console.warn(`[notify] DM failed for admin_rotate, trying thread:`, err.message);
-						}
-
-						// If DM failed, send key to thread as fallback
-						const threadId =
-							client.agverifData?.verifiedUsers?.[notif.discordUserId]?.threadId ||
-							Object.entries(client.agverifData?.threads || {}).find(
-								([, data]) => data.userId === notif.discordUserId,
-							)?.[0];
-
-						if (threadId) {
-							try {
-								const thread = await client.channels.fetch(threadId);
-								if (thread && thread.send) {
-									const { EmbedBuilder } = await import('discord.js');
-									const embed = new EmbedBuilder()
-										.setTitle('🔄 API Key Di-rotate oleh Admin')
-										.setDescription(
-											dmSent
-												? `Admin telah me-rotate API key Anda. Cek DM untuk kredensial baru.`
-												: `Admin telah me-rotate API key Anda. DM gagal, kredensial baru:\n\n` +
-													`**Endpoint:** \`${notif.endpoint}\`\n` +
-													`**Authorization:** \`Bearer ${notif.newKey}\``,
-										)
-										.setColor(0x5865f2)
-										.setTimestamp();
-									await thread.send({ embeds: [embed] });
-								}
-							} catch (err) {
-								console.error(`[notify] Failed to send admin_rotate thread for ${notif.discordUserId}:`, err.message);
 							}
 						}
 					} else {
