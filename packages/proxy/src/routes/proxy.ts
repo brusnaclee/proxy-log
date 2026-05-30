@@ -198,7 +198,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 function isRetryableStatus(code: number): boolean {
-  return code === 429 || code === 500 || code === 502 || code === 503 || code === 504 || code === 524;
+  return code === 401 || code === 429 || code === 500 || code === 502 || code === 503 || code === 504 || code === 524;
 }
 
 function isRetryableFetchError(error: any): boolean {
@@ -292,9 +292,9 @@ async function fetchWithKeyRotation(
     const init = initFn(keyResult.apiKey);
     const response = await fetchUpstreamWithRetry(url, init, isStreaming, clientSignal);
 
-    if (response.status === 429) {
-      // Rate limited — mark this key and try the next one
-      console.warn(`[key-rotation] Key ${keyResult.keyId} for provider ${providerId} returned 429, marking as limited`);
+    if (response.status === 429 || response.status === 401) {
+      // Rate limited or Invalid Key — mark this key and try the next one
+      console.warn(`[key-rotation] Key ${keyResult.keyId} for provider ${providerId} returned ${response.status}, marking as limited/invalid`);
       await markKeyAsLimited(keyResult.keyId);
       try { await response.body?.cancel(); } catch {}
       continue;
@@ -1022,8 +1022,8 @@ proxy.all("/*", async (c) => {
           body: trialBodyBytes as any,
         }, wantedStream, c.req.raw.signal);
 
-        if (trialResponse.status === 429) {
-          // Rate limited — mark key and try next model
+        if (trialResponse.status === 429 || trialResponse.status === 401) {
+          // Rate limited or Invalid Key — mark key and try next model
           await markKeyAsLimited(trialKeyResult.keyId);
         }
         if (trialResponse.status >= 400) {
