@@ -28,6 +28,21 @@ const proxy = new Hono();
 
 type ContextEvent = "new_session" | "append" | "compact" | "switch";
 
+/**
+ * Check if two IP addresses are on the same network.
+ * Returns true if IPs are identical OR differ only in the last octet.
+ * Example: 192.168.1.100 and 192.168.1.200 = same network
+ *          192.168.1.100 and 192.168.2.100 = different networks
+ */
+function isSameNetwork(ip1: string, ip2: string): boolean {
+  if (ip1 === ip2) return true;
+  const parts1 = ip1.split('.');
+  const parts2 = ip2.split('.');
+  if (parts1.length !== 4 || parts2.length !== 4) return false;
+  // Same network if first 3 octets match (differ only in last octet)
+  return parts1[0] === parts2[0] && parts1[1] === parts2[1] && parts1[2] === parts2[2];
+}
+
 // In-memory cache of the last user message hash per session.
 const sessionHashCache = new Map<string, string>();
 
@@ -634,12 +649,39 @@ proxy.all("/*", async (c) => {
   const osDetected = detectOperatingSystem(userAgent, platformHint);
   let normalizedIde = normalizeIdeName(ide);
 
-  // ΓöÇΓöÇΓöÇ 4. Device Policy Check ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-  const existingDevice = await db
+  // ─── 4. Device Policy Check ──────────────────────────────────────────────────
+  // First try to find device by fingerprint (exact match)
+  let existingDevice = await db
     .select()
     .from(devices)
     .where(and(eq(devices.apiKeyId, keyRecord.id), eq(devices.fingerprint, fingerprint)))
     .get();
+
+  // If not found by fingerprint, check by IP with sub-IP matching
+  // This handles cases where fingerprint changes but IP is the same (or sub-IP differs)
+  if (!existingDevice) {
+    const allDevicesForKey = await db
+      .select()
+      .from(devices)
+      .where(eq(devices.apiKeyId, keyRecord.id))
+      .all();
+
+    for (const device of allDevicesForKey) {
+      if (!device.ipAddress) continue;
+
+      // Check if IPs are the same or differ only in the last octet
+      const ipMatch = isSameNetwork(clientIp, device.ipAddress);
+      if (ipMatch) {
+        existingDevice = device;
+        // Update fingerprint to the new one (IP is the same device)
+        await db.update(devices)
+          .set({ fingerprint, ipAddress: clientIp })
+          .where(eq(devices.id, device.id))
+          .run();
+        break;
+      }
+    }
+  }
 
   if (existingDevice?.isBlocked) {
     return c.json(
