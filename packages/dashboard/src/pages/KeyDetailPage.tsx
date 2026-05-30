@@ -46,6 +46,8 @@ export default function KeyDetailPage() {
   const [rotatedKey, setRotatedKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [statusText, setStatusText] = useState<string>("");
+  const [revealedKey, setRevealedKey] = useState<string | null>(null);
+  const [showKey, setShowKey] = useState(false);
   const [accessTargetType, setAccessTargetType] = useState<"fingerprint" | "ip">("fingerprint");
   const [accessListType, setAccessListType] = useState<"allow" | "block">("allow");
   const [accessValue, setAccessValue] = useState("");
@@ -212,6 +214,23 @@ export default function KeyDetailPage() {
     loadAll();
   };
 
+  const handleRevealKey = async () => {
+    if (!id) return;
+    try {
+      const res = await keys.reveal(parseInt(id));
+      setRevealedKey(res.key);
+      setShowKey(true);
+    } catch (err) {
+      setStatusText("Failed to reveal key");
+    }
+  };
+
+  const handleCopyKey = async (key: string) => {
+    await copyToClipboard(key);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   const handleBlockDevice = async (fingerprint: string) => {
     if (!id) return;
     await keys.blockDevice(parseInt(id), fingerprint);
@@ -375,7 +394,17 @@ export default function KeyDetailPage() {
             </Badge>
           </div>
           <p className="text-sm text-muted-foreground mt-1">
-            <code className="font-mono">{keyData.keyMasked}</code>
+            <code className="font-mono">{showKey && revealedKey ? revealedKey : keyData.keyMasked}</code>
+            {!showKey && (
+              <Button variant="ghost" size="sm" className="ml-2" onClick={handleRevealKey}>
+                Show Key
+              </Button>
+            )}
+            {showKey && revealedKey && (
+              <Button variant="ghost" size="sm" className="ml-2" onClick={() => handleCopyKey(revealedKey)}>
+                {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+              </Button>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">

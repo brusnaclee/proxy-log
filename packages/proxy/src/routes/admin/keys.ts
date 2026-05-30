@@ -336,6 +336,14 @@ keys.post("/keys/:id/rotate", async (c) => {
   return c.json({ success: true, key: newKey, keyPrefix: getKeyPrefix(newKey), message: "API key rotated." });
 });
 
+// Reveal full API key (for admin dashboard)
+keys.get("/keys/:id/reveal", async (c) => {
+  const id = parseInt(c.req.param("id"));
+  const key = await db.select({ key: apiKeys.key, name: apiKeys.name }).from(apiKeys).where(eq(apiKeys.id, id)).get();
+  if (!key) return c.json({ error: "API key not found" }, 404);
+  return c.json({ key: key.key, name: key.name });
+});
+
 keys.get("/keys/:id/devices", async (c) => {
   const id = parseInt(c.req.param("id"));
   const allDevices = await db.select().from(devices).where(eq(devices.apiKeyId, id)).orderBy(desc(devices.lastSeen)).all();

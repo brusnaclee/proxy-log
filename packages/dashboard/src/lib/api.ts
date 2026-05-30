@@ -220,6 +220,8 @@ export const keys = {
     request<{ success: boolean }>(`/keys/${id}`, { method: "DELETE" }),
   rotate: (id: number) =>
     request<{ success: boolean; key: string; keyPrefix: string }>(`/keys/${id}/rotate`, { method: "POST" }),
+  reveal: (id: number) =>
+    request<{ key: string; name: string }>(`/keys/${id}/reveal`),
   getDevices: (id: number) =>
     request<any[]>(`/keys/${id}/devices`),
   blockDevice: (keyId: number, fingerprint: string) =>
