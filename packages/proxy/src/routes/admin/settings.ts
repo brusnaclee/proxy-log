@@ -148,10 +148,14 @@ settings.get("/settings/model-limits", async (c) => {
 });
 
 settings.put("/settings/model-limits", async (c) => {
-  const body = await c.req.json<{ model: string; promptLimit: number }>();
+  const body = await c.req.json<{ model: string; promptLimit?: number; dailyTokenLimit?: number; monthlyTokenLimit?: number; dailyInputTokenLimit?: number; dailyOutputTokenLimit?: number }>();
   if (!body.model || body.model.trim() === "") return c.json({ error: "model is required" }, 400);
   const modelName = body.model.trim();
   const limit = Math.max(0, body.promptLimit || 0);
+  const dailyTokenLimit = Math.max(0, body.dailyTokenLimit || 0);
+  const monthlyTokenLimit = Math.max(0, body.monthlyTokenLimit || 0);
+  const dailyInputTokenLimit = Math.max(0, body.dailyInputTokenLimit || 0);
+  const dailyOutputTokenLimit = Math.max(0, body.dailyOutputTokenLimit || 0);
 
   // Upsert: delete existing then insert
   await db.delete(modelLimits).where(and(
@@ -160,13 +164,18 @@ settings.put("/settings/model-limits", async (c) => {
     eq(modelLimits.model, modelName),
   )).run();
 
-  if (limit > 0) {
+  if (limit > 0 || dailyTokenLimit > 0 || monthlyTokenLimit > 0 || dailyInputTokenLimit > 0 || dailyOutputTokenLimit > 0) {
     await db.insert(modelLimits).values({
-      scope: "global", scopeId: 0, model: modelName, promptLimit: limit,
+      scope: "global", scopeId: 0, model: modelName, 
+      promptLimit: limit,
+      dailyTokenLimit,
+      monthlyTokenLimit,
+      dailyInputTokenLimit,
+      dailyOutputTokenLimit
     }).run();
   }
 
-  return c.json({ success: true, model: modelName, promptLimit: limit });
+  return c.json({ success: true, model: modelName, promptLimit: limit, dailyTokenLimit, monthlyTokenLimit, dailyInputTokenLimit, dailyOutputTokenLimit });
 });
 
 settings.delete("/settings/model-limits/:model", async (c) => {

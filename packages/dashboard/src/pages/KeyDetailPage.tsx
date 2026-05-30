@@ -13,7 +13,7 @@ import { formatDate, formatNumber, formatRelativeTime, copyToClipboard, formatCo
 import { ArrowLeft, Copy, Check, RotateCw, Trash2, Shield, ShieldOff, X, Download, DollarSign } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
-  DialogDescription, DialogFooter,
+  DialogDescription, DialogFooter, DialogTrigger
 } from "@/components/ui/dialog";
 import { useRealtimeSSE } from "@/lib/use-realtime-sse";
 import { exportXlsx, buildLogsSection, buildSessionsSection, fmtCost } from "@/lib/export-xlsx";
@@ -75,6 +75,10 @@ export default function KeyDetailPage() {
   const [keyModelCatalog, setKeyModelCatalog] = useState<string[]>([]);
   const [newKeyModelOverride, setNewKeyModelOverride] = useState("");
   const [newKeyModelOverrideLimit, setNewKeyModelOverrideLimit] = useState(0);
+  const [newKeyModelOverrideDailyTokenLimit, setNewKeyModelOverrideDailyTokenLimit] = useState(0);
+  const [newKeyModelOverrideMonthlyTokenLimit, setNewKeyModelOverrideMonthlyTokenLimit] = useState(0);
+  const [newKeyModelOverrideDailyInputTokenLimit, setNewKeyModelOverrideDailyInputTokenLimit] = useState(0);
+  const [newKeyModelOverrideDailyOutputTokenLimit, setNewKeyModelOverrideDailyOutputTokenLimit] = useState(0);
 
   useEffect(() => {
     if (id) loadAll();
@@ -577,7 +581,7 @@ export default function KeyDetailPage() {
       />
     </div>
     <div>
-      <Label>Per-Model Limit (0 = use global)</Label>
+      <Label>Default Per-Model Prompt Limit (0 = use global)</Label>
       <Input
         type="number"
         value={keyData?.perModelPromptLimit || 0}
@@ -603,49 +607,139 @@ export default function KeyDetailPage() {
       />
     </div>
     <div className="md:col-span-2 space-y-2 border border-border/50 rounded-lg p-3">
-      <Label className="text-sm font-medium">Per-Key Model Limit Overrides</Label>
-      <div className="flex gap-2">
-        <select
-          className="flex-1 px-2 py-1.5 text-xs rounded border border-border bg-background"
-          value={newKeyModelOverride}
-          onChange={(e) => setNewKeyModelOverride(e.target.value)}
-        >
-          <option value="">Select model...</option>
-          {keyModelCatalog.filter(m => !keyModelLimits.some(ml => ml.model === m)).map(m => (
-            <option key={m} value={m}>{m}</option>
-          ))}
-        </select>
-        <Input
-          type="number"
-          value={newKeyModelOverrideLimit}
-          onChange={(e) => setNewKeyModelOverrideLimit(parseInt(e.target.value) || 0)}
-          placeholder="Limit"
-          className="w-20 text-xs"
-        />
-        <Button size="sm" variant="outline" onClick={async () => {
-          if (!id || !newKeyModelOverride || newKeyModelOverrideLimit <= 0) return;
-          await keys.setModelLimit(parseInt(id), newKeyModelOverride, newKeyModelOverrideLimit);
-          setNewKeyModelOverride(""); setNewKeyModelOverrideLimit(0);
-          const ml = await keys.getModelLimits(parseInt(id)); setKeyModelLimits(ml.data || []);
-        }}>Add</Button>
-      </div>
-      {keyModelLimits.length > 0 && (
-        <div className="space-y-1">
-          {keyModelLimits.map(ml => (
-            <div key={ml.id} className="flex items-center justify-between px-2 py-1 bg-accent/30 rounded text-xs">
-              <code className="font-mono">{ml.model}</code>
-              <div className="flex items-center gap-2">
-                <span className="text-muted-foreground">{ml.promptLimit} prompts</span>
-                <Button size="icon" variant="ghost" className="h-5 w-5" onClick={async () => {
-                  if (!id) return;
-                  await keys.deleteModelLimit(parseInt(id), ml.model);
-                  const r = await keys.getModelLimits(parseInt(id)); setKeyModelLimits(r.data || []);
-                }}><X className="h-3 w-3" /></Button>
+      <div className="flex items-center justify-between">
+        <div>
+          <Label className="text-sm font-medium">Per-Key Model Limit Overrides</Label>
+          <p className="text-[10px] text-muted-foreground">Override the default limits for specific models on this key.</p>
+        </div>
+        <Dialog>
+          <DialogTrigger asChild>
+            <Button variant="outline" size="sm">Manage Model Limits</Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Manage Per-Key Model Limits</DialogTitle>
+              <DialogDescription>
+                Configure specific prompt and token limits for individual models for this key.
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 border p-4 rounded-lg bg-accent/10">
+              <div className="col-span-2 md:col-span-3">
+                <Label>Model</Label>
+                <select
+                  className="w-full mt-1 px-3 py-2 text-sm rounded-md border border-border bg-background"
+                  value={newKeyModelOverride}
+                  onChange={(e) => {
+                    const model = e.target.value;
+                    setNewKeyModelOverride(model);
+                    const existing = keyModelLimits.find(ml => ml.model === model);
+                    if (existing) {
+                      setNewKeyModelOverrideLimit(existing.promptLimit || 0);
+                      setNewKeyModelOverrideDailyTokenLimit(existing.dailyTokenLimit || 0);
+                      setNewKeyModelOverrideMonthlyTokenLimit(existing.monthlyTokenLimit || 0);
+                      setNewKeyModelOverrideDailyInputTokenLimit(existing.dailyInputTokenLimit || 0);
+                      setNewKeyModelOverrideDailyOutputTokenLimit(existing.dailyOutputTokenLimit || 0);
+                    } else {
+                      setNewKeyModelOverrideLimit(0);
+                      setNewKeyModelOverrideDailyTokenLimit(0);
+                      setNewKeyModelOverrideMonthlyTokenLimit(0);
+                      setNewKeyModelOverrideDailyInputTokenLimit(0);
+                      setNewKeyModelOverrideDailyOutputTokenLimit(0);
+                    }
+                  }}
+                >
+                  <option value="">Select model...</option>
+                  {keyModelCatalog.map(m => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <Label>Prompt Limit</Label>
+                <Input type="number" value={newKeyModelOverrideLimit} onChange={(e) => setNewKeyModelOverrideLimit(parseInt(e.target.value) || 0)} className="mt-1" />
+              </div>
+              <div>
+                <Label>Daily Token Limit</Label>
+                <Input type="number" value={newKeyModelOverrideDailyTokenLimit} onChange={(e) => setNewKeyModelOverrideDailyTokenLimit(parseInt(e.target.value) || 0)} className="mt-1" />
+              </div>
+              <div>
+                <Label>Monthly Token Limit</Label>
+                <Input type="number" value={newKeyModelOverrideMonthlyTokenLimit} onChange={(e) => setNewKeyModelOverrideMonthlyTokenLimit(parseInt(e.target.value) || 0)} className="mt-1" />
+              </div>
+              <div>
+                <Label>Daily Input Token Limit</Label>
+                <Input type="number" value={newKeyModelOverrideDailyInputTokenLimit} onChange={(e) => setNewKeyModelOverrideDailyInputTokenLimit(parseInt(e.target.value) || 0)} className="mt-1" />
+              </div>
+              <div>
+                <Label>Daily Output Token Limit</Label>
+                <Input type="number" value={newKeyModelOverrideDailyOutputTokenLimit} onChange={(e) => setNewKeyModelOverrideDailyOutputTokenLimit(parseInt(e.target.value) || 0)} className="mt-1" />
+              </div>
+              <div className="col-span-2 md:col-span-3 flex justify-end">
+                <Button onClick={async () => {
+                  if (!id || !newKeyModelOverride) return;
+                  await keys.setModelLimit(parseInt(id), newKeyModelOverride, {
+                    promptLimit: newKeyModelOverrideLimit,
+                    dailyTokenLimit: newKeyModelOverrideDailyTokenLimit,
+                    monthlyTokenLimit: newKeyModelOverrideMonthlyTokenLimit,
+                    dailyInputTokenLimit: newKeyModelOverrideDailyInputTokenLimit,
+                    dailyOutputTokenLimit: newKeyModelOverrideDailyOutputTokenLimit
+                  });
+                  setNewKeyModelOverride(""); 
+                  setNewKeyModelOverrideLimit(0);
+                  setNewKeyModelOverrideDailyTokenLimit(0);
+                  setNewKeyModelOverrideMonthlyTokenLimit(0);
+                  setNewKeyModelOverrideDailyInputTokenLimit(0);
+                  setNewKeyModelOverrideDailyOutputTokenLimit(0);
+                  const ml = await keys.getModelLimits(parseInt(id)); setKeyModelLimits(ml.data || []);
+                }}>Save Model Override</Button>
               </div>
             </div>
-          ))}
-        </div>
-      )}
+
+            <div className="mt-6 space-y-2">
+              <Label>Configured Limits</Label>
+              {keyModelLimits.length > 0 ? (
+                <div className="border rounded-md overflow-hidden">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-muted text-muted-foreground">
+                      <tr>
+                        <th className="p-2 font-medium">Model</th>
+                        <th className="p-2 font-medium">Prompts</th>
+                        <th className="p-2 font-medium">Daily Tokens</th>
+                        <th className="p-2 font-medium">Monthly Tokens</th>
+                        <th className="p-2 font-medium">Daily Input</th>
+                        <th className="p-2 font-medium">Daily Output</th>
+                        <th className="p-2"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {keyModelLimits.map(ml => (
+                        <tr key={ml.id} className="hover:bg-muted/50">
+                          <td className="p-2 font-mono">{ml.model}</td>
+                          <td className="p-2">{ml.promptLimit || '-'}</td>
+                          <td className="p-2">{ml.dailyTokenLimit || '-'}</td>
+                          <td className="p-2">{ml.monthlyTokenLimit || '-'}</td>
+                          <td className="p-2">{ml.dailyInputTokenLimit || '-'}</td>
+                          <td className="p-2">{ml.dailyOutputTokenLimit || '-'}</td>
+                          <td className="p-2 text-right">
+                            <Button size="icon" variant="ghost" className="h-6 w-6 text-red-500 hover:text-red-600 hover:bg-red-500/10" onClick={async () => {
+                              if (!id) return;
+                              await keys.deleteModelLimit(parseInt(id), ml.model);
+                              const r = await keys.getModelLimits(parseInt(id)); setKeyModelLimits(r.data || []);
+                            }}><Trash2 className="h-4 w-4" /></Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground text-center py-4 border rounded-md">No model limits configured.</p>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
+      </div>
     </div>
   </div>
             </CardContent>

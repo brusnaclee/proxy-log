@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Eye, EyeOff, Save, Trash2, AlertTriangle } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
-  DialogDescription, DialogFooter,
+  DialogDescription, DialogFooter, DialogTrigger
 } from "@/components/ui/dialog";
 
 import { useRealtime } from "@/lib/realtime-context";
@@ -30,6 +30,10 @@ export default function SettingsPage() {
   const [modelCatalog, setModelCatalog] = useState<string[]>([]);
   const [newModelOverride, setNewModelOverride] = useState("");
   const [newModelOverrideLimit, setNewModelOverrideLimit] = useState(0);
+  const [newModelOverrideDailyTokenLimit, setNewModelOverrideDailyTokenLimit] = useState(0);
+  const [newModelOverrideMonthlyTokenLimit, setNewModelOverrideMonthlyTokenLimit] = useState(0);
+  const [newModelOverrideDailyInputTokenLimit, setNewModelOverrideDailyInputTokenLimit] = useState(0);
+  const [newModelOverrideDailyOutputTokenLimit, setNewModelOverrideDailyOutputTokenLimit] = useState(0);
   const [upstreamEndpoint, setUpstreamEndpoint] = useState("");
   const [upstreamApiKey, setUpstreamApiKey] = useState("");
   const [showApiKey, setShowApiKey] = useState(false);
@@ -262,7 +266,7 @@ export default function SettingsPage() {
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <Label>Default Per-Model Limit</Label>
+                  <Label>Default Per-Model Prompt Limit</Label>
                   <Input
                     type="number"
                     value={globalPerModelPromptLimit}
@@ -271,7 +275,7 @@ export default function SettingsPage() {
                     className="mt-1"
                   />
                   <p className="text-[10px] text-muted-foreground mt-1">
-                    Default limit per model (0 = unlimited)
+                    Default prompt limit per model (0 = unlimited)
                   </p>
                 </div>
                 <div>
@@ -339,50 +343,139 @@ export default function SettingsPage() {
                 </div>
 
               {/* Per-Model Override Limits */}
-              <div className="space-y-2 border border-border/50 rounded-lg p-3">
-                <Label className="text-sm font-medium">Model Limit Overrides</Label>
-                <p className="text-[10px] text-muted-foreground">Override the default per-model limit for specific models. Cannot exceed Global Prompt Limit.</p>
-                <div className="flex gap-2">
-                  <select
-                    className="flex-1 px-2 py-1.5 text-xs rounded border border-border bg-background"
-                    value={newModelOverride}
-                    onChange={(e) => setNewModelOverride(e.target.value)}
-                  >
-                    <option value="">Select model...</option>
-                    {modelCatalog.filter(m => !globalModelLimits.some(ml => ml.model === m)).map(m => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
-                  <Input
-                    type="number"
-                    value={newModelOverrideLimit}
-                    onChange={(e) => setNewModelOverrideLimit(parseInt(e.target.value) || 0)}
-                    placeholder="Limit"
-                    className="w-20 text-xs"
-                  />
-                  <Button size="sm" variant="outline" onClick={async () => {
-                    if (!newModelOverride || newModelOverrideLimit <= 0) return;
-                    await globalSettings.setModelLimit(newModelOverride, newModelOverrideLimit);
-                    setNewModelOverride(""); setNewModelOverrideLimit(0);
-                    const ml = await globalSettings.getModelLimits(); setGlobalModelLimits(ml.data || []);
-                  }}>Add</Button>
-                </div>
-                {globalModelLimits.length > 0 && (
-                  <div className="space-y-1 mt-2">
-                    {globalModelLimits.map(ml => (
-                      <div key={ml.id} className="flex items-center justify-between px-2 py-1 bg-accent/30 rounded text-xs">
-                        <code className="font-mono">{ml.model}</code>
-                        <div className="flex items-center gap-2">
-                          <span className="text-muted-foreground">{ml.promptLimit} prompts</span>
-                          <Button size="icon" variant="ghost" className="h-5 w-5" onClick={async () => {
-                            await globalSettings.deleteModelLimit(ml.model);
-                            const r = await globalSettings.getModelLimits(); setGlobalModelLimits(r.data || []);
-                          }}><Trash2 className="h-3 w-3" /></Button>
+              <div className="md:col-span-2 space-y-2 border border-border/50 rounded-lg p-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label className="text-sm font-medium">Model Limit Overrides</Label>
+                    <p className="text-[10px] text-muted-foreground">Override the default per-model limit for specific models. Cannot exceed Global Prompt Limit.</p>
+                  </div>
+                  <Dialog>
+                    <DialogTrigger asChild>
+                      <Button variant="outline" size="sm">Manage Model Limits</Button>
+                    </DialogTrigger>
+                    <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+                      <DialogHeader>
+                        <DialogTitle>Manage Global Model Limits</DialogTitle>
+                        <DialogDescription>
+                          Configure specific prompt and token limits for individual models globally.
+                        </DialogDescription>
+                      </DialogHeader>
+                      
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 border p-4 rounded-lg bg-accent/10">
+                        <div className="col-span-2 md:col-span-3">
+                          <Label>Model</Label>
+                          <select
+                            className="w-full mt-1 px-3 py-2 text-sm rounded-md border border-border bg-background"
+                            value={newModelOverride}
+                            onChange={(e) => {
+                              const model = e.target.value;
+                              setNewModelOverride(model);
+                              const existing = globalModelLimits.find(ml => ml.model === model);
+                              if (existing) {
+                                setNewModelOverrideLimit(existing.promptLimit || 0);
+                                setNewModelOverrideDailyTokenLimit(existing.dailyTokenLimit || 0);
+                                setNewModelOverrideMonthlyTokenLimit(existing.monthlyTokenLimit || 0);
+                                setNewModelOverrideDailyInputTokenLimit(existing.dailyInputTokenLimit || 0);
+                                setNewModelOverrideDailyOutputTokenLimit(existing.dailyOutputTokenLimit || 0);
+                              } else {
+                                setNewModelOverrideLimit(0);
+                                setNewModelOverrideDailyTokenLimit(0);
+                                setNewModelOverrideMonthlyTokenLimit(0);
+                                setNewModelOverrideDailyInputTokenLimit(0);
+                                setNewModelOverrideDailyOutputTokenLimit(0);
+                              }
+                            }}
+                          >
+                            <option value="">Select model...</option>
+                            {modelCatalog.map(m => (
+                              <option key={m} value={m}>{m}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <Label>Prompt Limit</Label>
+                          <Input type="number" value={newModelOverrideLimit} onChange={(e) => setNewModelOverrideLimit(parseInt(e.target.value) || 0)} className="mt-1" />
+                        </div>
+                        <div>
+                          <Label>Daily Token Limit</Label>
+                          <Input type="number" value={newModelOverrideDailyTokenLimit} onChange={(e) => setNewModelOverrideDailyTokenLimit(parseInt(e.target.value) || 0)} className="mt-1" />
+                        </div>
+                        <div>
+                          <Label>Monthly Token Limit</Label>
+                          <Input type="number" value={newModelOverrideMonthlyTokenLimit} onChange={(e) => setNewModelOverrideMonthlyTokenLimit(parseInt(e.target.value) || 0)} className="mt-1" />
+                        </div>
+                        <div>
+                          <Label>Daily Input Token Limit</Label>
+                          <Input type="number" value={newModelOverrideDailyInputTokenLimit} onChange={(e) => setNewModelOverrideDailyInputTokenLimit(parseInt(e.target.value) || 0)} className="mt-1" />
+                        </div>
+                        <div>
+                          <Label>Daily Output Token Limit</Label>
+                          <Input type="number" value={newModelOverrideDailyOutputTokenLimit} onChange={(e) => setNewModelOverrideDailyOutputTokenLimit(parseInt(e.target.value) || 0)} className="mt-1" />
+                        </div>
+                        <div className="col-span-2 md:col-span-3 flex justify-end">
+                          <Button onClick={async () => {
+                            if (!newModelOverride) return;
+                            await globalSettings.setModelLimit(newModelOverride, {
+                              promptLimit: newModelOverrideLimit,
+                              dailyTokenLimit: newModelOverrideDailyTokenLimit,
+                              monthlyTokenLimit: newModelOverrideMonthlyTokenLimit,
+                              dailyInputTokenLimit: newModelOverrideDailyInputTokenLimit,
+                              dailyOutputTokenLimit: newModelOverrideDailyOutputTokenLimit
+                            });
+                            setNewModelOverride(""); 
+                            setNewModelOverrideLimit(0);
+                            setNewModelOverrideDailyTokenLimit(0);
+                            setNewModelOverrideMonthlyTokenLimit(0);
+                            setNewModelOverrideDailyInputTokenLimit(0);
+                            setNewModelOverrideDailyOutputTokenLimit(0);
+                            const ml = await globalSettings.getModelLimits(); setGlobalModelLimits(ml.data || []);
+                          }}>Save Model Override</Button>
                         </div>
                       </div>
-                    ))}
-                  </div>
-                )}
+
+                      <div className="mt-6 space-y-2">
+                        <Label>Configured Limits</Label>
+                        {globalModelLimits.length > 0 ? (
+                          <div className="border rounded-md overflow-hidden">
+                            <table className="w-full text-xs text-left">
+                              <thead className="bg-muted text-muted-foreground">
+                                <tr>
+                                  <th className="p-2 font-medium">Model</th>
+                                  <th className="p-2 font-medium">Prompts</th>
+                                  <th className="p-2 font-medium">Daily Tokens</th>
+                                  <th className="p-2 font-medium">Monthly Tokens</th>
+                                  <th className="p-2 font-medium">Daily Input</th>
+                                  <th className="p-2 font-medium">Daily Output</th>
+                                  <th className="p-2"></th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y">
+                                {globalModelLimits.map(ml => (
+                                  <tr key={ml.id} className="hover:bg-muted/50">
+                                    <td className="p-2 font-mono">{ml.model}</td>
+                                    <td className="p-2">{ml.promptLimit || '-'}</td>
+                                    <td className="p-2">{ml.dailyTokenLimit || '-'}</td>
+                                    <td className="p-2">{ml.monthlyTokenLimit || '-'}</td>
+                                    <td className="p-2">{ml.dailyInputTokenLimit || '-'}</td>
+                                    <td className="p-2">{ml.dailyOutputTokenLimit || '-'}</td>
+                                    <td className="p-2 text-right">
+                                      <Button size="icon" variant="ghost" className="h-6 w-6 text-red-500 hover:text-red-600 hover:bg-red-500/10" onClick={async () => {
+                                        await globalSettings.deleteModelLimit(ml.model);
+                                        const r = await globalSettings.getModelLimits(); setGlobalModelLimits(r.data || []);
+                                      }}><Trash2 className="h-4 w-4" /></Button>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground text-center py-4 border rounded-md">No model limits configured.</p>
+                        )}
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                </div>
               </div>
             </div>
 

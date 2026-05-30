@@ -392,6 +392,10 @@ export const modelLimits = sqliteTable(
 		model: text('model').notNull(), // model ID e.g. "ag/claude-sonnet-4-6"
 		promptLimit: integer('prompt_limit').notNull().default(0), // override limit for this model
 		promptWindowStart: text('prompt_window_start'), // tracks when the current prompt window started
+		dailyTokenLimit: integer('daily_token_limit').default(0),
+		monthlyTokenLimit: integer('monthly_token_limit').default(0),
+		dailyInputTokenLimit: integer('daily_input_token_limit').default(0),
+		dailyOutputTokenLimit: integer('daily_output_token_limit').default(0),
 		createdAt: text('created_at')
 			.notNull()
 			.default(sql`(datetime('now'))`),

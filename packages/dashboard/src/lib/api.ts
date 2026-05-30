@@ -247,8 +247,8 @@ export const keys = {
     request<{ success: boolean; message?: string }>(`/keys/${keyId}/policies/ide/${ruleId}`, { method: "DELETE" }),
   getModelLimits: (keyId: number) =>
     request<{ data: ModelLimitEntry[] }>(`/keys/${keyId}/model-limits`),
-  setModelLimit: (keyId: number, model: string, promptLimit: number) =>
-    request<{ success: boolean }>(`/keys/${keyId}/model-limits`, { method: "PUT", body: JSON.stringify({ model, promptLimit }) }),
+  setModelLimit: (keyId: number, model: string, limits: { promptLimit?: number, dailyTokenLimit?: number, monthlyTokenLimit?: number, dailyInputTokenLimit?: number, dailyOutputTokenLimit?: number }) =>
+    request<{ success: boolean }>(`/keys/${keyId}/model-limits`, { method: "PUT", body: JSON.stringify({ model, ...limits }) }),
   deleteModelLimit: (keyId: number, model: string) =>
     request<{ success: boolean }>(`/keys/${keyId}/model-limits/${encodeURIComponent(model)}`, { method: "DELETE" }),
 };
@@ -403,6 +403,10 @@ export interface ModelLimitEntry {
   scopeId: number;
   model: string;
   promptLimit: number;
+  dailyTokenLimit: number;
+  monthlyTokenLimit: number;
+  dailyInputTokenLimit: number;
+  dailyOutputTokenLimit: number;
   createdAt: string;
 }
 
@@ -414,8 +418,8 @@ export const globalSettings = {
     request<{ data: string[] }>("/settings/models"),
   getModelLimits: () =>
     request<{ data: ModelLimitEntry[] }>("/settings/model-limits"),
-  setModelLimit: (model: string, promptLimit: number) =>
-    request<{ success: boolean }>("/settings/model-limits", { method: "PUT", body: JSON.stringify({ model, promptLimit }) }),
+  setModelLimit: (model: string, limits: { promptLimit?: number, dailyTokenLimit?: number, monthlyTokenLimit?: number, dailyInputTokenLimit?: number, dailyOutputTokenLimit?: number }) =>
+    request<{ success: boolean }>("/settings/model-limits", { method: "PUT", body: JSON.stringify({ model, ...limits }) }),
   deleteModelLimit: (model: string) =>
     request<{ success: boolean }>(`/settings/model-limits/${encodeURIComponent(model)}`, { method: "DELETE" }),
 };
