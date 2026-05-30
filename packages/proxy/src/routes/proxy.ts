@@ -1,8 +1,8 @@
 ﻿import { Hono } from "hono";
 import * as zlib from "zlib";
 import { db } from "../db/index.js";
-import { apiKeys, devices, allowedDevices, allowedIdes, requestLogs, adminConfig, chatSessions, modelMonitor, providers } from "../db/schema.js";
-import { eq, and, sql, desc } from "drizzle-orm";
+import { apiKeys, devices, allowedDevices, allowedIdes, requestLogs, adminConfig, chatSessions, modelMonitor, providers, modelLimits } from "../db/schema.js";
+import { eq, and, sql, desc, gte } from "drizzle-orm";
 import { generateFingerprint, generateSessionId, generateApiKey, getKeyPrefix, sha256 } from "../utils/crypto.js";
 import { detectIde, detectIdeFromContent, estimateTokens, getClientIp, normalizeIdeName } from "../utils/detect-ide.js";
 import { calculateEstimatedCost } from "../utils/cost-calculator.js";
