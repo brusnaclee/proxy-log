@@ -40,9 +40,9 @@ const SHUTDOWN_DURATIONS = [
   30 * 24 * 60 * 60 * 1000, // 30 days
 ];
 
-// Passive detection: 10 failures within 1 second = truly offline
-const PASSIVE_FAILURE_THRESHOLD = 10;
-const PASSIVE_FAILURE_WINDOW_MS = 1000;
+// Passive detection: 5 failures within 1 minute = truly offline
+const PASSIVE_FAILURE_THRESHOLD = 5;
+const PASSIVE_FAILURE_WINDOW_MS = 60000;
 
 // In-memory failure tracking for passive detection
 const failureCounters = new Map<string, { count: number; firstFailureAt: number }>();

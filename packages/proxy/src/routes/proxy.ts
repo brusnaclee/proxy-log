@@ -315,6 +315,10 @@ async function fetchWithKeyRotation(
       continue;
     }
 
+    // Some upstream providers (like Antigravity/mimo) return 400 with rate limit info
+    // Or they return 400 for model not found / invalid argument.
+    // If it's a 400, let it pass through. The passive monitoring will pick it up
+    // if it happens 5 times in a row and mark the model offline.
     return { response, keyId: keyResult.keyId, apiKey: keyResult.apiKey };
   }
 
@@ -1805,13 +1809,13 @@ const targetProvider = await getProviderForModel(model);
         const { reportPassiveSuccess, updateModelLatency } = await import("../utils/model-monitor-store.js");
         reportPassiveSuccess(model, providerName);
         await updateModelLatency(model, providerName, latencyMs, true).catch(() => {});
-      } else if (statusCode >= 500 || statusCode === 429) {
+      } else if (statusCode >= 400) { // Any error (4xx or 5xx) counts as a failure
         // Failure: report to passive monitor
         const { reportPassiveFailure, markModelOffline } = await import("../utils/model-monitor-store.js");
         const shouldMarkOffline = reportPassiveFailure(model, providerName);
         if (shouldMarkOffline) {
           await markModelOffline(model, providerName, statusCode, `HTTP ${statusCode} from upstream`).catch(() => {});
-          console.log(`[monitor] Model ${model} marked offline after ${10} failures in 1s`);
+          console.log(`[monitor] Model ${model} marked offline after 5 failures in 1 min`);
         }
       }
     }
@@ -1981,8 +1985,9 @@ const targetProvider = await getProviderForModel(model);
           const shouldCountRequest = statusCode >= 200 && statusCode < 300;
           persistLogAndSession(logEntry, hasActualToolCalls, shouldCountRequest);
 
-          // Cache the streaming response for deduplication
-          if (cacheKey && statusCode >= 200 && statusCode < 300 && streamChunksForCache.length > 0) {
+          // Cache the streaming response for deduplication ONLY if it's successful and has no errors
+          const isErrorStream = acc.text.toLowerCase().includes('"error"');
+          if (cacheKey && statusCode >= 200 && statusCode < 300 && streamChunksForCache.length > 0 && !isErrorStream) {
             cacheStreamResponse(cacheKey, model, messageAnalysis.messageHash || "", statusCode, {}, streamChunksForCache);
             console.log(`[cache] STORE (stream) for model=${model} chunks=${streamChunksForCache.length}`);
           }
@@ -2164,8 +2169,8 @@ const targetProvider = await getProviderForModel(model);
     if (rateLimitLimit) responseHeaders["x-ratelimit-limit-requests"] = rateLimitLimit;
     if (rateLimitRemaining) responseHeaders["x-ratelimit-remaining-requests"] = rateLimitRemaining;
 
-    // Cache the non-streaming response for deduplication
-    if (cacheKey && statusCode >= 200 && statusCode < 300) {
+    // Cache the non-streaming response for deduplication ONLY if it's successful and has no errors
+    if (cacheKey && statusCode >= 200 && statusCode < 300 && !errorMessage) {
       cacheResponse(cacheKey, model, messageAnalysis.messageHash || "", statusCode, responseHeaders, new TextEncoder().encode(responseBody));
       console.log(`[cache] STORE for model=${model} size=${responseBody.length}`);
     }
