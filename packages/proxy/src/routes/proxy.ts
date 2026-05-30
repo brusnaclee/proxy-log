@@ -2181,6 +2181,18 @@ const targetProvider = await getProviderForModel(model);
     const errorMessage = error?.message || "Upstream request failed";
     const toolsUsed = Array.from(toolNameSet);
 
+    // ─── Passive Model Monitoring (Network Errors) ─────────────────────────
+    if (model && model !== 'unknown') {
+      const providerName = targetProvider?.name || null;
+      import("../utils/model-monitor-store.js").then(({ reportPassiveFailure, markModelOffline }) => {
+        const shouldMarkOffline = reportPassiveFailure(model, providerName);
+        if (shouldMarkOffline) {
+          markModelOffline(model, providerName, 502, `Network error: ${errorMessage}`).catch(() => {});
+          console.log(`[monitor] Model ${model} marked offline after 5 failures in 1 min (502)`);
+        }
+      });
+    }
+
     const logEntry = {
       ...baseLogEntry,
       promptTokens: contextTokensBefore,
