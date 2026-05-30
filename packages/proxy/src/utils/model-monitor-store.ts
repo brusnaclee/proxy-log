@@ -148,10 +148,29 @@ export async function upsertModelStatus(params: {
         suspendedUntil: null,
       }).run();
     }
+  } else if (params.httpStatus === 429) {
+    // Rate limited: DON'T increment retry count - model is working, just busy
+    // Just update the lastTestAt timestamp
+    if (stateRow) {
+      await db
+        .update(modelTestState)
+        .set({ lastTestAt: now })
+        .where(eq(modelTestState.id, stateRow.id))
+        .run();
+    } else {
+      await db.insert(modelTestState).values({
+        modelId: params.modelId,
+        provider: params.provider,
+        retryCount: 0,
+        lastTestAt: now,
+        suspendedUntil: null,
+      }).run();
+    }
   } else {
-    // Offline: increment retry count
+    // Offline (5xx, timeout, connection error): increment retry count
     const newRetryCount = (stateRow?.retryCount ?? 0) + 1;
-    const suspendedUntil = newRetryCount >= MAX_RETRIES ? getNextMidnightIso() : null;
+    // After 3 failures, suspend for 24 hours instead of until midnight
+    const suspendedUntil = newRetryCount >= MAX_RETRIES ? get24HoursFromNowIso() : null;
 
     if (stateRow) {
       await db
@@ -201,19 +220,8 @@ export async function resetAllTestStates(): Promise<void> {
     .run();
 }
 
-/** Get next midnight in Asia/Jakarta (UTC+7) as ISO string. */
-function getNextMidnightIso(): string {
-  const now = new Date();
-  // Convert to Asia/Jakarta (UTC+7)
-  const jakartaOffset = 7 * 60; // minutes
-  const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
-  const jakartaMs = utcMs + jakartaOffset * 60000;
-  const jakartaDate = new Date(jakartaMs);
-
-  // Set to next midnight
-  jakartaDate.setHours(24, 0, 0, 0);
-
-  // Convert back to UTC ISO
-  const midnightUtcMs = jakartaDate.getTime() - jakartaOffset * 60000;
-  return new Date(midnightUtcMs).toISOString().replace("T", " ").substring(0, 19);
+/** Get 24 hours from now as ISO string (for suspension). */
+function get24HoursFromNowIso(): string {
+  const d = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  return d.toISOString().replace("T", " ").substring(0, 19);
 }

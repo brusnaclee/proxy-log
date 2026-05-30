@@ -1117,7 +1117,7 @@ async function refreshLatencyFromProxy() {
 				runtime.modelEntries = newEntries;
 				runtime.latency = newLatency;
 				runtime.models = [...new Set(newEntries.map(e => e.modelId))];
-				runtime.lastLatencyAt = Date.now();
+				// Don't update lastLatencyAt here - only sweeps should set it
 			}
 
 			console.log(`[tokito-monitor] refreshed ${newEntries.length} models from proxy DB`);
@@ -1237,7 +1237,7 @@ async function runFullSweep() {
 	for (const entry of runtime.modelEntries) {
 		const key = entryKey(entry);
 
-		// Skip models currently suspended (waiting for midnight reset)
+		// Skip models currently suspended (waiting for cooldown)
 		const retryState = runtime.modelRetryState.get(key);
 		if (retryState?.suspendedUntil) {
 			const suspendedUntil = new Date(retryState.suspendedUntil).getTime();
@@ -1251,13 +1251,29 @@ async function runFullSweep() {
 		await pushSingleModelStatus(entry, latency);
 
 		if (latency.ok) {
+			// Online: clear retry state
 			runtime.modelRetryState.delete(key);
-		} else {
-			const current = runtime.modelRetryState.get(key) || { retryCount: 0 };
+		} else if (latency.status === 429) {
+			// Rate limited: DON'T increment retry count - model is working, just busy
+			// Store as rate limited state but don't mark as offline
 			runtime.modelRetryState.set(key, {
-				retryCount: current.retryCount + 1,
+				retryCount: 0, // Don't count 429 as failure
 				lastTestAt: new Date().toISOString(),
-				suspendedUntil: null, // proxy handles suspension logic
+				suspendedUntil: null,
+				isRateLimited: true,
+			});
+		} else {
+			// Actual failure (5xx, timeout, connection error): increment retry count
+			const current = runtime.modelRetryState.get(key) || { retryCount: 0 };
+			const newRetryCount = current.retryCount + 1;
+			// After 3 failures, suspend for 24 hours
+			const suspendedUntil = newRetryCount >= 3 
+				? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+				: null;
+			runtime.modelRetryState.set(key, {
+				retryCount: newRetryCount,
+				lastTestAt: new Date().toISOString(),
+				suspendedUntil,
 			});
 		}
 	}
@@ -1277,7 +1293,8 @@ async function runRetrySweep() {
 		const retryState = runtime.modelRetryState.get(key);
 
 		if (!retryState) continue; // not tracked as offline
-		if (retryState.retryCount >= 3) continue; // max retries reached, wait for midnight
+		if (retryState.isRateLimited) continue; // skip rate-limited models (429)
+		if (retryState.retryCount >= 3) continue; // max retries reached, suspended for 24h
 
 		if (retryState.suspendedUntil) {
 			const suspendedUntil = new Date(retryState.suspendedUntil).getTime();
@@ -1300,12 +1317,24 @@ async function runRetrySweep() {
 		if (latency.ok) {
 			runtime.modelRetryState.delete(key);
 			console.log(`[tokito-monitor] model back online: ${entry.modelId}`);
-		} else {
-			const current = runtime.modelRetryState.get(key) || { retryCount: 0 };
+		} else if (latency.status === 429) {
+			// Rate limited: mark as rate limited, don't count as failure
 			runtime.modelRetryState.set(key, {
-				retryCount: current.retryCount + 1,
+				retryCount: 0,
 				lastTestAt: new Date().toISOString(),
 				suspendedUntil: null,
+				isRateLimited: true,
+			});
+		} else {
+			const current = runtime.modelRetryState.get(key) || { retryCount: 0 };
+			const newRetryCount = current.retryCount + 1;
+			const suspendedUntil = newRetryCount >= 3 
+				? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+				: null;
+			runtime.modelRetryState.set(key, {
+				retryCount: newRetryCount,
+				lastTestAt: new Date().toISOString(),
+				suspendedUntil,
 			});
 		}
 	}
@@ -1684,14 +1713,15 @@ function buildTokitoEmbed(kind, session) {
 			if (!lt || lt.status == null) {
 				return `⚪ \`${entry.provider}/${entry.modelId}\` | not tested yet | vendor: **${vendor}**`;
 			}
-			const icon = lt.ok ? '🟢' : '🔴';
-			const httpInfo = lt.status ? `HTTP ${lt.status}` : 'timeout';
+			const icon = lt.ok ? '🟢' : (lt.status === 429 ? '🟡' : '🔴');
+			const httpInfo = lt.status === 429 ? 'rate limited' : (lt.status ? `HTTP ${lt.status}` : 'timeout');
 			return `${icon} \`${entry.provider}/${entry.modelId}\` | ${httpInfo} | vendor: **${vendor}**`;
 		}
 		
 		if (!lt) return `⚪ \`${entry.provider}/${entry.modelId}\` | not tested yet`;
-		const icon = lt.ok ? '🟢' : '🔴';
-		return `${icon} \`${entry.provider}/${entry.modelId}\` | ${lt.ms} ms | HTTP ${lt.status}`;
+		const icon = lt.ok ? '🟢' : (lt.status === 429 ? '🟡' : '🔴');
+		const statusInfo = lt.status === 429 ? 'rate limited' : `HTTP ${lt.status}`;
+		return `${icon} \`${entry.provider}/${entry.modelId}\` | ${lt.ms} ms | ${statusInfo}`;
 	});
 
 	const titleStyled =
@@ -1703,6 +1733,7 @@ function buildTokitoEmbed(kind, session) {
 	let online = 0,
 		down = 0,
 		timeout = 0,
+		rateLimited = 0,
 		untested = 0;
 	for (const entry of runtime.modelEntries) {
 		// Skip auto model in counts
@@ -1715,10 +1746,12 @@ function buildTokitoEmbed(kind, session) {
 		}
 		if (lt.status === 0 || lt.status == null) timeout += 1;
 		else if (lt.ok) online += 1;
+		else if (lt.status === 429) rateLimited += 1;
 		else down += 1;
 	}
 
 	const summaryParts = [`Online: ${online}`, `Down: ${down}`, `Timeout: ${timeout}`];
+	if (rateLimited > 0) summaryParts.push(`Rate Limited: ${rateLimited}`);
 	if (untested > 0) summaryParts.push(`Untested: ${untested}`);
 
 	const embed = new EmbedBuilder()
