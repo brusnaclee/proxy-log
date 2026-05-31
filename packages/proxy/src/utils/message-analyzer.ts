@@ -57,6 +57,10 @@ function isToolResultContent(content: string): boolean {
   // Cline / Roo Code: "[ERROR] You did not use a tool..."
   if (trimmed.startsWith("[error] you did not use a tool")) return true;
 
+  // Roo Code XML block for tool results (this specifically catches Roo Code's `<tool_response>` wrapping)
+  if (trimmed.startsWith("<tool_response>") || trimmed.includes("tool_response>")) return true;
+  if (/^<[\w_]+_response>/.test(trimmed)) return true; // e.g., <search_files_response>
+
   // Roo Code: summarization system operation
   if (trimmed.startsWith("critical: this summarization request is a system operation")) return true;
 
