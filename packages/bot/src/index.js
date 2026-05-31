@@ -3356,10 +3356,12 @@ client.on('interactionCreate', async (interaction) => {
 				session.userId !== interaction.user.id ||
 				Date.now() >= session.expiresAt
 			) {
-				await interaction.reply({
-					content: 'Session expired. Click panel button again.',
-					ephemeral: true,
-				});
+				try {
+					await interaction.deferUpdate();
+					await interaction.deleteReply();
+				} catch (err) {
+					console.error("Failed to delete expired tokito interaction:", err);
+				}
 				return;
 			}
 
@@ -3398,10 +3400,12 @@ client.on('interactionCreate', async (interaction) => {
 				session.userId !== interaction.user.id ||
 				Date.now() >= session.expiresAt
 			) {
-				await interaction.reply({
-					content: 'Session expired. Click panel button again.',
-					ephemeral: true,
-				});
+				try {
+					await interaction.deferUpdate();
+					await interaction.deleteReply();
+				} catch (err) {
+					console.error("Failed to delete expired tokito interaction:", err);
+				}
 				return;
 			}
 
