@@ -3357,8 +3357,12 @@ client.on('interactionCreate', async (interaction) => {
 				Date.now() >= session.expiresAt
 			) {
 				try {
-					await interaction.deferUpdate();
-					await interaction.deleteReply();
+					if (interaction.message && interaction.message.deletable) {
+						await interaction.message.delete();
+					} else {
+						await interaction.deferUpdate();
+						await interaction.deleteReply();
+					}
 				} catch (err) {
 					console.error("Failed to delete expired tokito interaction:", err);
 				}
@@ -3392,7 +3396,11 @@ client.on('interactionCreate', async (interaction) => {
 			);
 			const sortMatch = interaction.customId.match(/^tokito_filter_sort_(.+)$/);
 			const sessionId = upstreamMatch?.[1] || vendorMatch?.[1] || sortMatch?.[1];
-			if (!sessionId) return;
+			
+			if (!sessionId) {
+				console.warn("tokito interaction: no session ID found in customId", interaction.customId);
+				return;
+			}
 
 			const session = tokitoSessions.get(sessionId);
 			if (
@@ -3401,8 +3409,12 @@ client.on('interactionCreate', async (interaction) => {
 				Date.now() >= session.expiresAt
 			) {
 				try {
-					await interaction.deferUpdate();
-					await interaction.deleteReply();
+					if (interaction.message && interaction.message.deletable) {
+						await interaction.message.delete();
+					} else {
+						await interaction.deferUpdate();
+						await interaction.deleteReply();
+					}
 				} catch (err) {
 					console.error("Failed to delete expired tokito interaction:", err);
 				}
