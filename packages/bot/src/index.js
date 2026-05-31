@@ -3353,8 +3353,7 @@ client.on('interactionCreate', async (interaction) => {
 			const session = tokitoSessions.get(sessionId);
 			if (
 				!session ||
-				session.userId !== interaction.user.id ||
-				Date.now() >= session.expiresAt
+				session.userId !== interaction.user.id
 			) {
 				try {
 					if (interaction.message && interaction.message.deletable) {
@@ -3405,8 +3404,7 @@ client.on('interactionCreate', async (interaction) => {
 			const session = tokitoSessions.get(sessionId);
 			if (
 				!session ||
-				session.userId !== interaction.user.id ||
-				Date.now() >= session.expiresAt
+				session.userId !== interaction.user.id
 			) {
 				try {
 					if (interaction.message && interaction.message.deletable) {
