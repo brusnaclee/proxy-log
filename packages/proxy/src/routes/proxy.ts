@@ -21,7 +21,7 @@ import { convertRequestToAnthropic, convertResponseToOpenAI, convertStreamEvent,
 import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindowResetMs } from "../utils/rate-limit.js";
 import { analyzeRequestMessages, isTitleGenRequest, detectToolCallsInResponse, getLastTurnTextForTokenEstimate, type MessageAnalysis } from "../utils/message-analyzer.js";
 import { makeAccumulator, consumeStreamPayload, consumeNonStreamingPayload, finalizeCompletion, resolveBillableTokens } from "../utils/token-extractor.js";
-import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL } from "../utils/counting.js";
+  import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, turnTotalTokensSql, turnPromptTokensSql, turnCompletionTokensSql } from "../utils/counting.js";
 import { configCache, apiKeyCache } from "../utils/cache.js";
 
 const proxy = new Hono();
@@ -1485,7 +1485,8 @@ const targetProvider = await getProviderForModel(model);
     if (keyRecord.monthlyTokenLimit && keyRecord.monthlyTokenLimit > 0) {
       const mw = new Date(wibNow); mw.setUTCDate(1); mw.setUTCHours(0, 0, 0, 0);
       const ms = new Date(mw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
-      const mu = await db.select({ total: sql<number>`COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) + SUM(completion_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms}`, BILLABLE_LOG_SQL)).get();
+      const whereClause = and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms}`, BILLABLE_LOG_SQL);
+      const mu = await db.select({ total: turnTotalTokensSql(whereClause) }).from(requestLogs).where(whereClause).get();
       if (mu && mu.total >= keyRecord.monthlyTokenLimit) {
         return c.json({ error: { message: `Monthly token limit reached: ${mu.total.toLocaleString()}/${keyRecord.monthlyTokenLimit.toLocaleString()} tokens.`, type: "rate_limit_error", code: "monthly_token_limit_exceeded" } }, 429);
       }
@@ -1495,7 +1496,8 @@ const targetProvider = await getProviderForModel(model);
     if (globalDailyTokenLimit > 0) {
       const dw = new Date(wibNow); dw.setUTCHours(0, 0, 0, 0);
       const ds = new Date(dw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
-      const du = await db.select({ total: sql<number>`COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) + SUM(completion_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).get();
+      const whereClause = and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL);
+      const du = await db.select({ total: turnTotalTokensSql(whereClause) }).from(requestLogs).where(whereClause).get();
       if (du && du.total >= globalDailyTokenLimit) {
         return c.json({ error: { message: `Daily token limit reached: ${du.total.toLocaleString()}/${globalDailyTokenLimit.toLocaleString()} tokens today. Resets tomorrow.`, type: "rate_limit_error", code: "daily_token_limit_exceeded" } }, 429);
       }
@@ -1506,7 +1508,8 @@ const targetProvider = await getProviderForModel(model);
     if (dailyInputLimit > 0) {
       const dw = new Date(wibNow); dw.setUTCHours(0, 0, 0, 0);
       const ds = new Date(dw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
-      const du = await db.select({ total: sql<number>`COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).get();
+      const whereClause = and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL);
+      const du = await db.select({ total: turnPromptTokensSql(whereClause) }).from(requestLogs).where(whereClause).get();
       if (du && du.total >= dailyInputLimit) {
         return c.json({ error: { message: `Daily input token limit reached: ${du.total.toLocaleString()}/${dailyInputLimit.toLocaleString()} input tokens today. Resets tomorrow.`, type: "rate_limit_error", code: "daily_input_token_limit_exceeded" } }, 429);
       }
@@ -1517,7 +1520,8 @@ const targetProvider = await getProviderForModel(model);
     if (dailyOutputLimit > 0) {
       const dw = new Date(wibNow); dw.setUTCHours(0, 0, 0, 0);
       const ds = new Date(dw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
-      const du = await db.select({ total: sql<number>`COALESCE(SUM(completion_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).get();
+      const whereClause = and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL);
+      const du = await db.select({ total: turnCompletionTokensSql(whereClause) }).from(requestLogs).where(whereClause).get();
       if (du && du.total >= dailyOutputLimit) {
         return c.json({ error: { message: `Daily output token limit reached: ${du.total.toLocaleString()}/${dailyOutputLimit.toLocaleString()} output tokens today. Resets tomorrow.`, type: "rate_limit_error", code: "daily_output_token_limit_exceeded" } }, 429);
       }
@@ -1527,7 +1531,8 @@ const targetProvider = await getProviderForModel(model);
     if (globalMonthlyTokenLimit > 0) {
       const mw2 = new Date(wibNow); mw2.setUTCDate(1); mw2.setUTCHours(0, 0, 0, 0);
       const ms2 = new Date(mw2.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
-      const mu2 = await db.select({ total: sql<number>`COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) + SUM(completion_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms2}`, BILLABLE_LOG_SQL)).get();
+      const whereClause = and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms2}`, BILLABLE_LOG_SQL);
+      const mu2 = await db.select({ total: turnTotalTokensSql(whereClause) }).from(requestLogs).where(whereClause).get();
       if (mu2 && mu2.total >= globalMonthlyTokenLimit) {
         return c.json({ error: { message: `Monthly token limit reached: ${mu2.total.toLocaleString()}/${globalMonthlyTokenLimit.toLocaleString()} tokens. Resets next month.`, type: "rate_limit_error", code: "global_monthly_token_limit_exceeded" } }, 429);
       }
@@ -1543,28 +1548,32 @@ const targetProvider = await getProviderForModel(model);
       const ms = new Date(mw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
 
       if (overrideDailyToken && overrideDailyToken > 0) {
-        const du = await db.select({ total: sql<number>`COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) + SUM(completion_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), eq(requestLogs.model, model), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).get();
+        const whereClause = and(eq(requestLogs.apiKeyId, keyRecord.id), eq(requestLogs.model, model), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL);
+        const du = await db.select({ total: turnTotalTokensSql(whereClause) }).from(requestLogs).where(whereClause).get();
         if (du && du.total >= overrideDailyToken) {
           return c.json({ error: { message: `Daily token limit reached for model "${model}": ${du.total.toLocaleString()}/${overrideDailyToken.toLocaleString()} tokens today. Resets tomorrow.`, type: "rate_limit_error", code: "model_daily_token_limit_exceeded" } }, 429);
         }
       }
 
       if (overrideMonthlyToken && overrideMonthlyToken > 0) {
-        const mu = await db.select({ total: sql<number>`COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) + SUM(completion_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), eq(requestLogs.model, model), sql`created_at >= ${ms}`, BILLABLE_LOG_SQL)).get();
+        const whereClause = and(eq(requestLogs.apiKeyId, keyRecord.id), eq(requestLogs.model, model), sql`created_at >= ${ms}`, BILLABLE_LOG_SQL);
+        const mu = await db.select({ total: turnTotalTokensSql(whereClause) }).from(requestLogs).where(whereClause).get();
         if (mu && mu.total >= overrideMonthlyToken) {
           return c.json({ error: { message: `Monthly token limit reached for model "${model}": ${mu.total.toLocaleString()}/${overrideMonthlyToken.toLocaleString()} tokens. Resets next month.`, type: "rate_limit_error", code: "model_monthly_token_limit_exceeded" } }, 429);
         }
       }
 
       if (overrideDailyInputToken && overrideDailyInputToken > 0) {
-        const du = await db.select({ total: sql<number>`COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), eq(requestLogs.model, model), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).get();
+        const whereClause = and(eq(requestLogs.apiKeyId, keyRecord.id), eq(requestLogs.model, model), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL);
+        const du = await db.select({ total: turnPromptTokensSql(whereClause) }).from(requestLogs).where(whereClause).get();
         if (du && du.total >= overrideDailyInputToken) {
           return c.json({ error: { message: `Daily input token limit reached for model "${model}": ${du.total.toLocaleString()}/${overrideDailyInputToken.toLocaleString()} input tokens today. Resets tomorrow.`, type: "rate_limit_error", code: "model_daily_input_token_limit_exceeded" } }, 429);
         }
       }
 
       if (overrideDailyOutputToken && overrideDailyOutputToken > 0) {
-        const du = await db.select({ total: sql<number>`COALESCE(SUM(completion_tokens), 0)` }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), eq(requestLogs.model, model), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).get();
+        const whereClause = and(eq(requestLogs.apiKeyId, keyRecord.id), eq(requestLogs.model, model), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL);
+        const du = await db.select({ total: turnCompletionTokensSql(whereClause) }).from(requestLogs).where(whereClause).get();
         if (du && du.total >= overrideDailyOutputToken) {
           return c.json({ error: { message: `Daily output token limit reached for model "${model}": ${du.total.toLocaleString()}/${overrideDailyOutputToken.toLocaleString()} output tokens today. Resets tomorrow.`, type: "rate_limit_error", code: "model_daily_output_token_limit_exceeded" } }, 429);
         }
