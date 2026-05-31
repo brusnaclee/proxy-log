@@ -1567,6 +1567,13 @@ async function refreshPanelToBottom() {
 }
 
 function createTokitoSession(userId, kind) {
+	// Cleanup previous sessions for this user to prevent memory leak
+	for (const [key, sess] of tokitoSessions.entries()) {
+		if (sess.userId === userId) {
+			tokitoSessions.delete(key);
+		}
+	}
+
 	const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 	const session = {
 		id,
@@ -1576,7 +1583,6 @@ function createTokitoSession(userId, kind) {
 		upstreamProvider: 'all',
 		modelVendor: 'all',
 		sortMode: 'status_online_first',
-		expiresAt: Date.now() + TOKITO_SESSION_TIMEOUT_MS,
 	};
 	tokitoSessions.set(id, session);
 	return session;
@@ -1824,23 +1830,7 @@ function buildTokitoEmbed(kind, session) {
 }
 
 // Cleanup expired tokito sessions and delete their ephemeral messages
-setInterval(async () => {
-	const now = Date.now();
-	for (const [id, session] of tokitoSessions.entries()) {
-		if (now >= session.expiresAt) {
-			// Try to delete the ephemeral message
-			if (session.interaction) {
-				try {
-					const reply = await session.interaction.fetchReply();
-					if (reply) await reply.delete();
-				} catch (_) {
-					// Message may already be deleted or inaccessible
-				}
-			}
-			tokitoSessions.delete(id);
-		}
-	}
-}, 5000);
+// (Session expiration has been removed, memory is now managed by overwriting per-user in createTokitoSession)
 // ==========================================
 
 async function updateThreadData(threadId, updates) {
@@ -3356,11 +3346,12 @@ client.on('interactionCreate', async (interaction) => {
 				session.userId !== interaction.user.id
 			) {
 				try {
+					// ALWAYS defer the update immediately so Discord doesn't throw "Unknown interaction"
+					await interaction.deferUpdate().catch(() => {});
 					if (interaction.message && interaction.message.deletable) {
-						await interaction.message.delete();
+						await interaction.message.delete().catch(() => {});
 					} else {
-						await interaction.deferUpdate();
-						await interaction.deleteReply();
+						await interaction.deleteReply().catch(() => {});
 					}
 				} catch (err) {
 					console.error("Failed to delete expired tokito interaction:", err);
@@ -3380,7 +3371,6 @@ client.on('interactionCreate', async (interaction) => {
 				return;
 			}
 
-			session.expiresAt = Date.now() + TOKITO_SESSION_TIMEOUT_MS;
 			const { embed, components } = buildTokitoEmbed(session.kind, session);
 			await interaction.update({ embeds: [embed], components });
 			return;
@@ -3398,6 +3388,11 @@ client.on('interactionCreate', async (interaction) => {
 			
 			if (!sessionId) {
 				console.warn("tokito interaction: no session ID found in customId", interaction.customId);
+				// Acknowledge to prevent unknown interaction if it somehow drops through
+				await interaction.deferUpdate().catch(() => {});
+				if (interaction.message && interaction.message.deletable) {
+					await interaction.message.delete().catch(() => {});
+				}
 				return;
 			}
 
@@ -3407,11 +3402,12 @@ client.on('interactionCreate', async (interaction) => {
 				session.userId !== interaction.user.id
 			) {
 				try {
+					// ALWAYS defer the update immediately so Discord doesn't throw "Unknown interaction"
+					await interaction.deferUpdate().catch(() => {});
 					if (interaction.message && interaction.message.deletable) {
-						await interaction.message.delete();
+						await interaction.message.delete().catch(() => {});
 					} else {
-						await interaction.deferUpdate();
-						await interaction.deleteReply();
+						await interaction.deleteReply().catch(() => {});
 					}
 				} catch (err) {
 					console.error("Failed to delete expired tokito interaction:", err);
@@ -3432,7 +3428,6 @@ client.on('interactionCreate', async (interaction) => {
 				session.sortMode = interaction.values[0] || session.sortMode;
 				session.page = 0;
 			}
-			session.expiresAt = Date.now() + TOKITO_SESSION_TIMEOUT_MS;
 			const { embed, components } = buildTokitoEmbed(session.kind, session);
 			await interaction.update({ embeds: [embed], components });
 		}
