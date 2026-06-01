@@ -220,6 +220,20 @@ export function resolveBillableTokens(
   }
 
   const cToks = finalized.completionTokens || 0;
+
+  // Safety net: if we got completion tokens (upstream responded) but prompt tokens
+  // resolved to 0 (e.g. new session with no contextDelta, upstream didn't report usage),
+  // re-estimate from the user turn text or use a floor of 1.
+  // Without this, hasActualContent() returns false and the request is invisible to all
+  // stats queries, charts, and leaderboards.
+  if (pToks === 0 && cToks > 0) {
+    if (fullLastUserTurnText) {
+      pToks = Math.max(estimateTokens(fullLastUserTurnText), 1);
+    } else {
+      pToks = 1;
+    }
+  }
+
   return {
     promptTokens: pToks,
     completionTokens: cToks,

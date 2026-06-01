@@ -366,22 +366,47 @@ async function handleAdminCommand(message) {
 		}
 
 		if (cmd === '!agstatus') {
-			const data = await proxyInternal(`/admin/internal/user/${discordUserId}`);
-			if (!data.found) {
-				await message.reply('User belum punya API key proxy.');
+			const data = await proxyInternal(`/admin/internal/stats/user-detail/${discordUserId}`);
+			if (!data || data.error) {
+				await message.reply('User belum punya API key proxy atau tidak ditemukan.');
 				return true;
 			}
+			
+			function formatResetTime(isoStr) {
+				if (!isoStr) return '';
+				const unix = Math.floor(new Date(isoStr).getTime() / 1000);
+				return ` (Resets <t:${unix}:t>)`;
+			}
+
+			const globalLimitStr = data.promptLimit > 0 
+				? `${data.promptUsed} / ${data.promptLimit} req (${data.promptLimitWindow})` + formatResetTime(data.promptResetAt)
+				: 'Unlimited';
+				
+			let modelLimitStr = '';
+			if (data.modelUsage && data.modelUsage.length > 0) {
+				const activeModels = data.modelUsage.filter(m => m.used > 0 || m.limit > 0);
+				if (activeModels.length > 0) {
+					modelLimitStr = activeModels.map(m => `  • ${m.model}: ${m.used} / ${m.limit > 0 ? m.limit : '∞'}` + formatResetTime(m.resetAt)).join('\n');
+				}
+			}
+
+			function formatTokens(n) {
+				if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+				if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+				return n.toString();
+			}
+
 			await message.reply(
-				`**Status ${data.key.discordUsername || data.key.discordUserId}**\n` +
-					`Key: ${data.key.keyMasked}\n` +
-					`Active: ${data.key.isActive}\n` +
-					`Requests: ${data.stats.requests}\n` +
-					`Tokens: ${data.stats.tokens}\n` +
-					`Devices: ${data.stats.uniqueDevices}\n` +
-					`Policies: device=${data.key.devicePolicy}, ip=${data.key.ipPolicy}, ide=${data.key.idePolicy}\n` +
-					`Rate Limit: ${data.key.rateLimit || 'Global'} per ${data.key.rateLimitWindow || 'Global'}\n` +
-					`Prompt Limit: ${data.key.promptLimit || 'Global'} per ${data.key.promptLimitWindow || 'Global'}\n` +
-					`Per-Model Limit: ${data.key.perModelPromptLimit || 'Global'}`,
+				`**Status ${data.discordUsername || data.discordUserId}**\n` +
+					`Key: ${data.keyPrefix}...\n` +
+					`Active: ${data.isActive ? 'Yes 🟢' : 'No 🔴'}\n` +
+					`Usage Today: ${data.today?.requests || 0} reqs / ${formatTokens(data.today?.tokens || 0)} tokens\n` +
+					`Prompt Limit: ${globalLimitStr}\n` +
+					(modelLimitStr ? `Model Limits:\n${modelLimitStr}\n` : '') +
+					`Daily Token Limits:\n` +
+					`  • Total: ${data.dailyTokenLimit > 0 ? `${formatTokens(data.dailyTokensUsed)} / ${formatTokens(data.dailyTokenLimit)}` : `${formatTokens(data.dailyTokensUsed)} / ∞`}${formatResetTime(data.dailyResetAt)}\n` +
+					`  • Input: ${data.dailyInputTokenLimit > 0 ? `${formatTokens(data.dailyInputUsed)} / ${formatTokens(data.dailyInputTokenLimit)}` : `${formatTokens(data.dailyInputUsed)} / ∞`}\n` +
+					`  • Output: ${data.dailyOutputTokenLimit > 0 ? `${formatTokens(data.dailyOutputUsed)} / ${formatTokens(data.dailyOutputTokenLimit)}` : `${formatTokens(data.dailyOutputUsed)} / ∞`}`
 			);
 			return true;
 		}
@@ -2660,8 +2685,14 @@ async function handleRankingSearchModal(interaction) {
 		return lines.join('\n');
 	}
 
+	function formatResetTime(isoStr) {
+		if (!isoStr) return '';
+		const unix = Math.floor(new Date(isoStr).getTime() / 1000);
+		return ` — Resets <t:${unix}:t> (<t:${unix}:R>)`;
+	}
+
 	const globalLimitStr = promptLimit > 0 
-		? `**${promptUsed} / ${promptLimit}** req (${promptLimitWindow})` + (promptUsed >= promptLimit ? ` 🔴 Resets in ~${promptResetMins}m` : '')
+		? `**${promptUsed} / ${promptLimit}** req (${promptLimitWindow})` + (promptUsed >= promptLimit ? ' 🔴' : '') + formatResetTime(data.promptResetAt)
 		: '**Unlimited**';
 
 	let modelLimitStr = '';
@@ -2669,7 +2700,7 @@ async function handleRankingSearchModal(interaction) {
 		const activeModels = modelUsage.filter((m) => m.used > 0 || m.limit > 0);
 		if (activeModels.length > 0) {
 			modelLimitStr = activeModels.map(m => 
-				`- \`${m.model}\`: **${m.used} / ${m.limit > 0 ? m.limit : '∞'}**` + (m.limit > 0 && m.used >= m.limit ? ` 🔴 Resets in ~${m.resetMins}m` : '')
+				`- \`${m.model}\`: **${m.used} / ${m.limit > 0 ? m.limit : '∞'}**` + (m.limit > 0 && m.used >= m.limit ? ' 🔴' : '') + formatResetTime(m.resetAt)
 			).join('\n');
 		} else {
 			modelLimitStr = perModelPromptLimit > 0 ? `Default: **${perModelPromptLimit}** req (${perModelPromptLimitWindow})` : '**Unlimited**';
@@ -2679,17 +2710,17 @@ async function handleRankingSearchModal(interaction) {
 	}
 
 	const dailyTokenStr = dailyTokenLimit > 0
-		? `**${formatTokens(dailyTokensUsed)} / ${formatTokens(dailyTokenLimit)}**` + (dailyTokensUsed >= dailyTokenLimit ? ' 🔴 Limit Reached' : '')
-		: `**${formatTokens(dailyTokensUsed)} / Unlimited**`;
+		? `**${formatTokens(dailyTokensUsed)} / ${formatTokens(dailyTokenLimit)}**` + (dailyTokensUsed >= dailyTokenLimit ? ' 🔴' : '') + formatResetTime(data.dailyResetAt)
+		: `**${formatTokens(dailyTokensUsed)} / Unlimited**` + formatResetTime(data.dailyResetAt);
 	const monthlyTokenStr = monthlyTokenLimit > 0
-		? `**${formatTokens(monthlyTokensUsed)} / ${formatTokens(monthlyTokenLimit)}**` + (monthlyTokensUsed >= monthlyTokenLimit ? ' 🔴 Limit Reached' : '')
-		: `**${formatTokens(monthlyTokensUsed)} / Unlimited**`;
+		? `**${formatTokens(monthlyTokensUsed)} / ${formatTokens(monthlyTokenLimit)}**` + (monthlyTokensUsed >= monthlyTokenLimit ? ' 🔴' : '') + formatResetTime(data.monthlyResetAt)
+		: `**${formatTokens(monthlyTokensUsed)} / Unlimited**` + formatResetTime(data.monthlyResetAt);
 	const dailyInputStr = dailyInputTokenLimit > 0
-		? `**${formatTokens(dailyInputUsed)} / ${formatTokens(dailyInputTokenLimit)}**` + (dailyInputUsed >= dailyInputTokenLimit ? ' 🔴' : '')
-		: `**${formatTokens(dailyInputUsed)} / Unlimited**`;
+		? `**${formatTokens(dailyInputUsed)} / ${formatTokens(dailyInputTokenLimit)}**` + (dailyInputUsed >= dailyInputTokenLimit ? ' 🔴' : '') + formatResetTime(data.dailyResetAt)
+		: `**${formatTokens(dailyInputUsed)} / Unlimited**` + formatResetTime(data.dailyResetAt);
 	const dailyOutputStr = dailyOutputTokenLimit > 0
-		? `**${formatTokens(dailyOutputUsed)} / ${formatTokens(dailyOutputTokenLimit)}**` + (dailyOutputUsed >= dailyOutputTokenLimit ? ' 🔴' : '')
-		: `**${formatTokens(dailyOutputUsed)} / Unlimited**`;
+		? `**${formatTokens(dailyOutputUsed)} / ${formatTokens(dailyOutputTokenLimit)}**` + (dailyOutputUsed >= dailyOutputTokenLimit ? ' 🔴' : '') + formatResetTime(data.dailyResetAt)
+		: `**${formatTokens(dailyOutputUsed)} / Unlimited**` + formatResetTime(data.dailyResetAt);
 
 	const isSelf = interaction.user.id === discordUserId;
 	const keyDisplay = isSelf ? (data.key || `${keyPrefix}...`) : '[HIDDEN]';

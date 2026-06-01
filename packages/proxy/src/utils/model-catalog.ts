@@ -453,6 +453,36 @@ export function stripProviderPrefixSync(modelId: string, providerNames: Set<stri
   return modelId;
 }
 
+const AUTO_MODEL_EXCLUDE_PATTERNS = [
+  /\bimage\b/i,        // Image generation (qwen-image-*, z-image-*, wan2.7-image*)
+  /\btts\b/i,          // Text-to-speech (qwen3-tts-*, mimo-*-tts*)
+  /\basr\b/i,          // Speech recognition (qwen3-asr-*)
+  /\bocr\b/i,          // OCR (qwen-vl-ocr-*)
+  /\bembed/i,          // Embedding models (text-embedding-*)
+  /\brerank/i,         // Reranking
+  /\bmoderation\b/i,   // Content moderation
+  /\bs2s\b/i,          // Speech-to-speech
+  /\bcaptioner\b/i,    // Image captioning
+  /^qwen-mt-/i,        // Machine translation
+  /tingwu/i,           // Speech processing (tongyi-tingwu-slp)
+  /ccai-/i,            // CCAI specialized
+  /livetranslate/i,    // Live translation
+  /-omni-/i,           // Omni multimodal (audio/video - unreliable for text chat)
+  /^wan/i,             // Wanx image generation
+  /^qvq-/i,           // Visual QA (not standard chat)
+  /\bflux\b/i,         // Flux image generation
+  /\bdall/i,           // DALL-E
+  /stable[-_]?diff/i,  // Stable Diffusion
+  /\bwhisper\b/i,      // Whisper speech
+  /voicedesign/i,      // Voice design
+  /voiceclone/i,       // Voice cloning
+  /-realtime/i,        // Realtime streaming models (audio/video)
+];
+
+export function isAutoCompatible(modelId: string): boolean {
+  return !AUTO_MODEL_EXCLUDE_PATTERNS.some(p => p.test(modelId));
+}
+
 /** Get all online models from model_monitor, sorted by latency ascending. */
 export async function getOnlineModelsByLatency(): Promise<Array<{
   modelId: string;

@@ -607,6 +607,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   const globalWindow = key.promptLimitWindow || config?.globalPromptLimitWindow || "30m";
   let globalUsed = 0;
   let globalResetMins = 0;
+  let promptResetAt: string | null = null;
 
   if (globalLimit > 0) {
     const plCheck = await checkPromptLimit(key.id, globalLimit, globalWindow);
@@ -614,6 +615,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     const windowMs = parseRateLimitWindow(globalWindow);
     const resetMs = await getWindowResetMs(key.id, windowMs);
     globalResetMins = Math.ceil(resetMs / 60000);
+    promptResetAt = resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null;
   }
 
   const activeModelLimits = await db.select().from(modelLimits).where(eq(modelLimits.scope, 'global')).all();
@@ -639,6 +641,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
       used: mlCheck.used,
       limit: mlCheck.effectiveLimit,
       resetMins: Math.ceil(resetMs / 60000),
+      resetAt: resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null,
       window: windowStr
     });
   }
@@ -650,10 +653,23 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
         used: 0,
         limit: am.promptLimit,
         resetMins: 0,
+        resetAt: null,
         window: perModelWindowFallback
       });
     }
   }
+
+  // Calculate daily and monthly token reset times
+  const tomorrowWib = new Date(wibNow);
+  tomorrowWib.setUTCDate(tomorrowWib.getUTCDate() + 1);
+  tomorrowWib.setUTCHours(0, 0, 0, 0);
+  const dailyResetAt = new Date(tomorrowWib.getTime() - wibOffset).toISOString();
+
+  const nextMonthWib = new Date(wibNow);
+  nextMonthWib.setUTCMonth(nextMonthWib.getUTCMonth() + 1);
+  nextMonthWib.setUTCDate(1);
+  nextMonthWib.setUTCHours(0, 0, 0, 0);
+  const monthlyResetAt = new Date(nextMonthWib.getTime() - wibOffset).toISOString();
 
   return c.json({
     discordUserId: key.discordUserId,
@@ -665,6 +681,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     promptLimitWindow: globalWindow,
     promptUsed: globalUsed,
     promptResetMins: globalResetMins,
+    promptResetAt,
     modelUsage,
     perModelPromptLimit: perModelLimitFallback,
     perModelPromptLimitWindow: perModelWindowFallback,
@@ -676,6 +693,8 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     monthlyTokensUsed: monthStats?.tokens || 0,
     dailyInputUsed: todayStats?.promptTokens || 0,
     dailyOutputUsed: todayStats?.completionTokens || 0,
+    dailyResetAt,
+    monthlyResetAt,
       today: {
         requests: todayStats?.requests || 0,
         tokens: todayStats?.tokens || 0,

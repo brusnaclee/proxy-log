@@ -16,7 +16,7 @@ import {
   toToolJson,
 } from "../utils/telemetry.js";
 import { logEmitter } from "../utils/event-emitter.js";
-import { getModelCatalogResponse, getProviderForModel, stripProviderPrefix, getOnlineModelsByLatency, getNextApiKey, markKeyAsLimited } from "../utils/model-catalog.js";
+import { getModelCatalogResponse, getProviderForModel, stripProviderPrefix, getOnlineModelsByLatency, getNextApiKey, markKeyAsLimited, isAutoCompatible } from "../utils/model-catalog.js";
 import { convertRequestToAnthropic, convertResponseToOpenAI, convertStreamEvent, createStreamState } from "../utils/anthropic-adapter.js";
 import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindowResetMs } from "../utils/rate-limit.js";
 import { analyzeRequestMessages, isTitleGenRequest, detectToolCallsInResponse, getLastTurnTextForTokenEstimate, type MessageAnalysis } from "../utils/message-analyzer.js";
@@ -394,7 +394,7 @@ async function resolveChatSession(params: {
   if (!latest) {
     const isNewUserPrompt = params.messageAnalysis.hasUserMessage;
     const sessionId = await createChatSession({ ...params, isUserPrompt: isNewUserPrompt, messageAnalysis: params.messageAnalysis });
-    return { sessionId, contextEvent: "new_session", contextDeltaTokens: 0, gapMs: Infinity, isNewUserPrompt };
+    return { sessionId, contextEvent: "new_session", contextDeltaTokens: params.contextTokensBefore || 0, gapMs: Infinity, isNewUserPrompt };
   }
 
   const gapMs = Date.now() - parseDbDate(latest.lastSeenAt);
@@ -402,14 +402,14 @@ async function resolveChatSession(params: {
   // Sub-agent race condition: latest is stale but there's a very recent different session
   if (gapMs > SESSION_GAP_MS && veryRecent && veryRecent.sessionId !== latest.sessionId) {
     const veryRecentGap = Date.now() - parseDbDate(veryRecent.lastSeenAt);
-    return { sessionId: veryRecent.sessionId, contextEvent: "switch", contextDeltaTokens: 0, gapMs: veryRecentGap, isNewUserPrompt: false };
+    return { sessionId: veryRecent.sessionId, contextEvent: "switch", contextDeltaTokens: params.contextTokensBefore || 0, gapMs: veryRecentGap, isNewUserPrompt: false };
   }
 
   // ΓöÇΓöÇΓöÇ Gap > 45 min ΓåÆ definitely a new session ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   if (gapMs > SESSION_GAP_MS) {
     const isNewUserPrompt = params.messageAnalysis.hasUserMessage;
     const sessionId = await createChatSession({ ...params, isUserPrompt: isNewUserPrompt, messageAnalysis: params.messageAnalysis });
-    return { sessionId, contextEvent: "new_session", contextDeltaTokens: 0, gapMs, isNewUserPrompt };
+    return { sessionId, contextEvent: "new_session", contextDeltaTokens: params.contextTokensBefore || 0, gapMs, isNewUserPrompt };
   }
 
   // ΓöÇΓöÇΓöÇ Within session window: determine new-chat vs continuation ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
@@ -440,7 +440,7 @@ async function resolveChatSession(params: {
   if ((contextResetToZero || contextShrankMassively) && hashChanged) {
     const isNewUserPrompt = params.messageAnalysis.hasUserMessage;
     const sessionId = await createChatSession({ ...params, isUserPrompt: isNewUserPrompt, messageAnalysis: params.messageAnalysis });
-    return { sessionId, contextEvent: "new_session", contextDeltaTokens: 0, gapMs, isNewUserPrompt };
+    return { sessionId, contextEvent: "new_session", contextDeltaTokens: params.contextTokensBefore || 0, gapMs, isNewUserPrompt };
   }
 
   // Method 2: No assistant messages in context = fresh chat (user opened new chat,
@@ -454,7 +454,7 @@ async function resolveChatSession(params: {
   ) {
     const isNewUserPrompt = params.messageAnalysis.hasUserMessage;
     const sessionId = await createChatSession({ ...params, isUserPrompt: isNewUserPrompt, messageAnalysis: params.messageAnalysis });
-    return { sessionId, contextEvent: "new_session", contextDeltaTokens: 0, gapMs, isNewUserPrompt };
+    return { sessionId, contextEvent: "new_session", contextDeltaTokens: params.contextTokensBefore || 0, gapMs, isNewUserPrompt };
   }
 
   // ΓöÇΓöÇ Same session continuation (model change, context growth, or sub-agent) ΓöÇΓöÇ
@@ -939,9 +939,11 @@ proxy.all("/*", async (c) => {
   // ─── 8-auto. Auto Model Handler ────────────────────────────────────────────────
   // Virtual "auto" model: try online models in order of lowest latency until one works.
   if (model === "auto") {
-    const onlineModels = await getOnlineModelsByLatency();
+    let onlineModels = await getOnlineModelsByLatency();
+    onlineModels = onlineModels.filter(m => isAutoCompatible(m.modelId));
+    
     if (onlineModels.length === 0) {
-      return c.json({ error: { message: "No online models available for auto selection", type: "model_offline" } }, 503);
+      return c.json({ error: { message: "No compatible online models available for auto selection", type: "model_offline" } }, 503);
     }
 
     // Resolve session for auto model (so it appears in session history)
@@ -972,6 +974,17 @@ proxy.all("/*", async (c) => {
     });
     const autoSessionInfo = autoSessionResult;
     const autoIsNewPrompt = autoSessionResult.isNewUserPrompt;
+
+    // Assign turn_id for auto-model requests (same logic as regular proxy path)
+    const autoTurnKey = `${autoSessionInfo.sessionId}:${keyRecord.id}`;
+    let autoTurnId: string;
+    if (autoIsNewPrompt) {
+      autoTurnId = `turn_${generateSessionId().slice(0, 16)}`;
+      turnIdCache.set(autoTurnKey, autoTurnId);
+    } else {
+      autoTurnId = turnIdCache.get(autoTurnKey) || `turn_${generateSessionId().slice(0, 16)}`;
+      turnIdCache.set(autoTurnKey, autoTurnId);
+    }
 
     const wantedStream = requestBody?.stream === true;
     const tried: string[] = [];
@@ -1098,6 +1111,7 @@ proxy.all("/*", async (c) => {
                     provider: candidate.provider,
                     endpointPath: path,
                     sessionId: autoSessionInfo.sessionId,
+                    turnId: autoTurnId,
                     model: logModel,
                     promptTokens: billableTokens.promptTokens,
                     completionTokens: billableTokens.completionTokens,
@@ -1203,6 +1217,7 @@ proxy.all("/*", async (c) => {
             provider: candidate.provider,
             endpointPath: path,
             sessionId: autoSessionInfo.sessionId,
+            turnId: autoTurnId,
             model: `auto (${candidate.modelId})`,
             promptTokens: billableInput,
             completionTokens,
@@ -1645,6 +1660,15 @@ const targetProvider = await getProviderForModel(model);
     } else {
       // For tool followups, reuse the current turn ID
       logEntry.turnId = turnIdCache.get(turnKey) || null;
+    }
+
+    // Safety net: guarantee turn_id is never null.
+    // Without a turn_id, the request is invisible to all stats queries, charts,
+    // and leaderboards (they all filter on turn_id IS NOT NULL).
+    if (!logEntry.turnId) {
+      const fallbackTurnId = `turn_${generateSessionId().slice(0, 16)}`;
+      turnIdCache.set(turnKey, fallbackTurnId);
+      logEntry.turnId = fallbackTurnId;
     }
 
     enqueueLogWrite(async (tx) => {

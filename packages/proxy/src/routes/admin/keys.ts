@@ -106,6 +106,15 @@ keys.get("/keys/:id", async (c) => {
 
   const toSqlDate = (d: Date) => d.toISOString().replace('T', ' ').substring(0, 19);
 
+  // Analytics period filter: days=1 (today), 7 (week), 30 (month), 0/absent (all time)
+  const days = parseInt(c.req.query("days") || "0");
+  const analyticsSince: string | null = days === 1
+    ? toSqlDate(todayStart)
+    : days > 0
+      ? new Date(Date.now() - days * 86400000).toISOString().replace("T", " ").substring(0, 19)
+      : null;
+  const analyticsDateFilter = analyticsSince ? sql`AND created_at >= ${analyticsSince}` : sql``;
+
   const buildPeriodStats = async (since?: string) => {
     const whereClause = since
       ? and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${since}`, VALID_LOG_SQL)!
@@ -162,12 +171,12 @@ keys.get("/keys/:id", async (c) => {
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
         turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
-      FROM request_logs WHERE api_key_id = ${key.id} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299
+      FROM request_logs WHERE api_key_id = ${key.id} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 ${analyticsDateFilter}
       GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
       UNION ALL
       SELECT TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
         turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
-      FROM request_logs WHERE model LIKE 'auto (%)%' AND api_key_id = ${key.id} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299
+      FROM request_logs WHERE model LIKE 'auto (%)%' AND api_key_id = ${key.id} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 ${analyticsDateFilter}
       GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
     )
     GROUP BY model ORDER BY count DESC LIMIT 10
@@ -178,12 +187,12 @@ keys.get("/keys/:id", async (c) => {
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
         turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
-      FROM request_logs WHERE api_key_id = ${key.id} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299
+      FROM request_logs WHERE api_key_id = ${key.id} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 ${analyticsDateFilter}
       GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
       UNION ALL
       SELECT TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
         turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
-      FROM request_logs WHERE model LIKE 'auto (%)%' AND api_key_id = ${key.id} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299
+      FROM request_logs WHERE model LIKE 'auto (%)%' AND api_key_id = ${key.id} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 ${analyticsDateFilter}
       GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
     )
     GROUP BY model ORDER BY tokens DESC LIMIT 10
@@ -197,10 +206,14 @@ keys.get("/keys/:id", async (c) => {
       MAX(last_seen) as lastSeen
     FROM (SELECT device_fingerprint, ip_address, ide_detected, os_detected, client_name, session_id, turn_id,
         SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c, MAX(created_at) as last_seen
-      FROM request_logs WHERE api_key_id = ${key.id} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+      FROM request_logs WHERE api_key_id = ${key.id} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL ${analyticsDateFilter}
       GROUP BY device_fingerprint, turn_id)
     GROUP BY device_fingerprint ORDER BY tokens DESC LIMIT 20
   `);
+
+  const deviceSessionsWhere = analyticsSince
+    ? and(eq(chatSessions.apiKeyId, key.id), sql`last_seen_at >= ${analyticsSince}`)
+    : eq(chatSessions.apiKeyId, key.id);
 
   const deviceSessions = await db.select({
     sessionId: chatSessions.sessionId,
@@ -218,7 +231,7 @@ keys.get("/keys/:id", async (c) => {
     firstSeenAt: chatSessions.firstSeenAt,
     lastSeenAt: chatSessions.lastSeenAt,
   }).from(chatSessions)
-    .where(eq(chatSessions.apiKeyId, key.id))
+    .where(deviceSessionsWhere)
     .orderBy(sql`total_tokens DESC`)
     .limit(500)
     .all();
