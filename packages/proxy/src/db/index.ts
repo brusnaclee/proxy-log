@@ -511,6 +511,13 @@ export async function initializeDatabase() {
 	);
 	await ensureColumnExists('request_logs', 'turn_id', 'TEXT');
 
+	// Add consecutive tool followups to chat_sessions
+	await ensureColumnExists(
+		'chat_sessions',
+		'consecutive_tool_followups',
+		'INTEGER NOT NULL DEFAULT 0',
+	);
+
 	// Human-readable session name derived from first user message
 	await ensureColumnExists('chat_sessions', 'session_name', "TEXT DEFAULT ''");
 

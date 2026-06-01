@@ -546,6 +546,12 @@ async function updateSessionAfterRequest(tx: any, params: {
     updates.switchCount = sql`${chatSessions.switchCount} + 1`;
   }
 
+  if (params.messageAnalysis.turnKind === "tool_followup") {
+    updates.consecutiveToolFollowups = sql`${chatSessions.consecutiveToolFollowups} + 1`;
+  } else if (params.messageAnalysis.turnKind === "user_prompt") {
+    updates.consecutiveToolFollowups = 0;
+  }
+
   await tx.update(chatSessions).set(updates).where(eq(chatSessions.sessionId, params.sessionId)).run();
 }
 
@@ -1355,7 +1361,7 @@ const targetProvider = await getProviderForModel(model);
   // see "no session" and create duplicate sessions, or both read stale hash.
   const provider = targetProvider.name;
   const deviceLockKey = `${keyRecord.id}:${fingerprint}`;
-  const { sessionInfo, isNewPrompt } = await withDeviceLock(deviceLockKey, async () => {
+  const { sessionInfo, isNewPrompt, consecutiveToolFollowups } = await withDeviceLock(deviceLockKey, async () => {
     const sessionInfo = await resolveChatSession({
       apiKeyId: keyRecord.id,
       apiKeyName: keyRecord.name,
@@ -1373,6 +1379,16 @@ const targetProvider = await getProviderForModel(model);
     });
 
     const isNewPrompt = sessionInfo.isNewUserPrompt;
+
+    // We fetch the latest session row here to check consecutive tool followups
+    let consecutiveCount = 0;
+    if (sessionInfo.sessionId) {
+      const dbSess = await db.select({ consecutiveToolFollowups: chatSessions.consecutiveToolFollowups })
+        .from(chatSessions)
+        .where(eq(chatSessions.sessionId, sessionInfo.sessionId))
+        .get();
+      consecutiveCount = dbSess?.consecutiveToolFollowups || 0;
+    }
 
     // Sync non-hash session tracking before upstream (hash updated only after successful count).
     {
@@ -1395,8 +1411,10 @@ const targetProvider = await getProviderForModel(model);
         .run();
     }
 
-    return { sessionInfo, isNewPrompt };
+    return { sessionInfo, isNewPrompt, consecutiveToolFollowups: consecutiveCount };
   });
+
+  // Check for infinite tool loops removed as per user request to act as pure pass-through
 
   // ΓöÇΓöÇΓöÇ 10. Prompt & Model Limit Checks ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   //
@@ -1834,7 +1852,7 @@ const targetProvider = await getProviderForModel(model);
     }
 
     // ΓöÇΓöÇΓöÇ 12. Handle Streaming Response ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-    if (isStreaming && upstreamResponse.body) {
+    if (isStreaming && upstreamResponse.body && statusCode < 400) {
       const acc = makeAccumulator();
       let hasActualToolCalls = false;
       const decoder = new TextDecoder();

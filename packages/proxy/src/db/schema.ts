@@ -237,6 +237,7 @@ export const chatSessions = sqliteTable(
 		totalTokens: integer('total_tokens').notNull().default(0),
 		compactCount: integer('compact_count').notNull().default(0),
 		switchCount: integer('switch_count').notNull().default(0),
+		consecutiveToolFollowups: integer('consecutive_tool_followups').notNull().default(0),
 		lastRequestPreview: text('last_request_preview'),
 		estimatedCost: integer('estimated_cost').notNull().default(0), // millionths of a dollar
 		lastUserMessageHash: text('last_user_message_hash'),
