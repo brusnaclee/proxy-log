@@ -385,6 +385,8 @@ export const monitor = {
   getModels: () => request<ModelMonitorResponse>("/monitor/models"),
   getModelHistory: (modelId: string) => request<ModelMonitorEntry[]>(`/monitor/models/${encodeURIComponent(modelId)}/history`),
   getModelDetails: () => request<{ object: string; data: any[] }>("/monitor/models/details"),
+  triggerSweep: () => request<{ started: boolean; message: string }>("/monitor/sweep", { method: "POST" }),
+  getSweepProgress: () => request<{ total: number; tested: number; online: number; offline: number; rateLimited: number; startedAt: string; status: string }>("/monitor/sweep/progress"),
 };
 
 // ─── Global Settings ──────────────────────────────────────────────────────────

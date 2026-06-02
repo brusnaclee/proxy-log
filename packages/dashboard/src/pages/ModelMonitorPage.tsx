@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatRelativeTime, formatDate } from "@/lib/utils";
-import { Download, RefreshCw, Activity, ServerCrash, CheckCircle2, Clock } from "lucide-react";
+import { Download, RefreshCw, Activity, ServerCrash, CheckCircle2, Clock, Zap } from "lucide-react";
 import { exportXlsx } from "@/lib/export-xlsx";
 
 function modelVendorOf(modelId: string) {
@@ -23,6 +23,36 @@ export default function ModelMonitorPage() {
   const [catalogData, setCatalogData] = useState<any[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogSearch, setCatalogSearch] = useState("");
+  const [sweepState, setSweepState] = useState<{ running: boolean; progress: any }>({ running: false, progress: null });
+  const [sweepInterval, setSweepInterval] = useState<ReturnType<typeof setInterval> | null>(null);
+
+  const handleSweep = async () => {
+    try {
+      await monitor.triggerSweep();
+      setSweepState({ running: true, progress: null });
+      // Poll progress every 3 seconds
+      const interval = setInterval(async () => {
+        try {
+          const progress = await monitor.getSweepProgress();
+          setSweepState({ running: progress.status === "running", progress });
+          if (progress.status !== "running") {
+            clearInterval(interval);
+            setSweepInterval(null);
+            // Refresh data after sweep completes
+            loadData();
+          }
+        } catch {}
+      }, 3000);
+      setSweepInterval(interval);
+    } catch (err) {
+      console.error("Sweep failed:", err);
+    }
+  };
+
+  // Cleanup interval on unmount
+  useEffect(() => {
+    return () => { if (sweepInterval) clearInterval(sweepInterval); };
+  }, [sweepInterval]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -150,10 +180,16 @@ export default function ModelMonitorPage() {
             Refresh
           </Button>
           {activeTab === "monitor" && (
-            <Button variant="outline" size="sm" onClick={handleExport}>
-              <Download className="h-4 w-4 mr-2" />
-              Export XLSX
-            </Button>
+            <>
+              <Button variant="destructive" size="sm" onClick={handleSweep} disabled={sweepState.running}>
+                <Zap className={`h-4 w-4 mr-2 ${sweepState.running ? "animate-pulse" : ""}`} />
+                {sweepState.running ? `Sweeping... ${sweepState.progress?.tested || 0}/${sweepState.progress?.total || 0}` : "Test All Models"}
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleExport}>
+                <Download className="h-4 w-4 mr-2" />
+                Export XLSX
+              </Button>
+            </>
           )}
         </div>
       </div>
@@ -253,6 +289,35 @@ export default function ModelMonitorPage() {
       ) : (
       /* ── Status Monitor Tab (existing content) ── */
       <>
+      {/* Sweep Progress */}
+      {sweepState.running && sweepState.progress && (
+        <Card className="border-blue-500/50 bg-blue-500/5">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3 mb-2">
+              <Zap className="h-4 w-4 text-blue-400 animate-pulse" />
+              <span className="text-sm font-medium">Testing models... {sweepState.progress.tested}/{sweepState.progress.total}</span>
+            </div>
+            <div className="w-full bg-muted rounded-full h-2">
+              <div
+                className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                style={{ width: `${sweepState.progress.total > 0 ? (sweepState.progress.tested / sweepState.progress.total * 100) : 0}%` }}
+              />
+            </div>
+            <div className="flex gap-4 mt-2 text-xs text-muted-foreground">
+              <span className="text-emerald-500">Online: {sweepState.progress.online}</span>
+              <span className="text-red-500">Offline: {sweepState.progress.offline}</span>
+              <span className="text-amber-500">Rate Limited: {sweepState.progress.rateLimited}</span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+      {!sweepState.running && sweepState.progress?.status === "completed" && (
+        <Card className="border-emerald-500/50 bg-emerald-500/5">
+          <CardContent className="p-3 text-sm text-emerald-500">
+            Sweep completed — {sweepState.progress.online} online, {sweepState.progress.offline} offline, {sweepState.progress.rateLimited} rate limited
+          </CardContent>
+        </Card>
+      )}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card className="border-border/50">
           <CardContent className="p-6">

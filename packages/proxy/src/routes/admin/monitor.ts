@@ -3,7 +3,7 @@ import { db } from "../../db/index.js";
 import { modelMonitor } from "../../db/schema.js";
 import { eq, sql, desc } from "drizzle-orm";
 import { isInternalRequest, isAuthenticated } from "../../middleware/session.js";
-import { adminConfig } from "../../db/schema.js";
+import { adminConfig, providers, providerApiKeys } from "../../db/schema.js";
 import {
   getActiveProviderNames,
   monitorStaleCutoffIso,
@@ -306,6 +306,83 @@ monitor.get("/monitor/models/details", async (c) => {
   });
 
   return c.json({ object: "list", data: enriched });
+});
+
+// ─── Model Health Check Sweep ────────────────────────────────────────────────
+let sweepRunning = false;
+let sweepProgress = { total: 0, tested: 0, online: 0, offline: 0, rateLimited: 0, startedAt: "", status: "idle" as string };
+
+monitor.post("/monitor/sweep", async (c) => {
+  if (!isAuthenticated(c)) return c.json({ error: "Unauthorized" }, 401);
+  if (sweepRunning) return c.json({ error: "Sweep already running", progress: sweepProgress });
+
+  sweepRunning = true;
+  sweepProgress = { total: 0, tested: 0, online: 0, offline: 0, rateLimited: 0, startedAt: new Date().toISOString(), status: "running" };
+
+  (async () => {
+    try {
+      await resetAllTestStates();
+      const activeProviders = await db.select().from(providers).where(eq(providers.isActive, true)).orderBy(sql`${providers.priority} DESC`).all();
+      const allModels: Array<{ modelId: string; providerName: string; providerId: number; baseUrl: string; apiKey: string }> = [];
+
+      for (const prov of activeProviders) {
+        const keys = await db.select().from(providerApiKeys).where(sql`${providerApiKeys.providerId} = ${prov.id} AND ${providerApiKeys.isActive} = 1 AND ${providerApiKeys.isLimited} = 0`).orderBy(providerApiKeys.id).all();
+        if (keys.length === 0) continue;
+        const urls = [`${prov.endpoint}/v1/models`, `${prov.endpoint}/models`];
+        if (prov.endpoint.endsWith("/v1")) urls.unshift(`${prov.endpoint}/models`);
+        for (const url of urls) {
+          try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 8000);
+            const res = await fetch(url, { headers: { "Authorization": `Bearer ${keys[0].apiKey}` }, signal: controller.signal });
+            clearTimeout(timeout);
+            if (!res.ok) continue;
+            const json = await res.json() as any;
+            const models = Array.isArray(json?.data) ? json.data : [];
+            if (models.length === 0) continue;
+            for (const m of models) allModels.push({ modelId: m.id, providerName: prov.name, providerId: prov.id, baseUrl: prov.endpoint, apiKey: keys[0].apiKey });
+            break;
+          } catch { continue; }
+        }
+      }
+
+      sweepProgress.total = allModels.length;
+      for (const m of allModels) {
+        let tested = false;
+        const keys = await db.select().from(providerApiKeys).where(sql`${providerApiKeys.providerId} = ${m.providerId} AND ${providerApiKeys.isActive} = 1 AND ${providerApiKeys.isLimited} = 0`).orderBy(providerApiKeys.id).all();
+        for (const key of keys) {
+          try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 15000);
+            const start = Date.now();
+            const res = await fetch(`${m.baseUrl}/chat/completions`, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key.apiKey}` }, body: JSON.stringify({ model: m.modelId, messages: [{ role: "user", content: "test" }], max_tokens: 1, temperature: 0 }), signal: controller.signal });
+            clearTimeout(timeout);
+            const ms = Date.now() - start;
+            await upsertModelStatus({ modelId: m.modelId, provider: m.providerName, isOnline: res.ok, latencyMs: ms, httpStatus: res.status, errorMessage: res.ok ? null : `HTTP ${res.status}`, baseUrl: m.baseUrl });
+            sweepProgress.tested++;
+            if (res.ok) sweepProgress.online++; else if (res.status === 429) sweepProgress.rateLimited++; else sweepProgress.offline++;
+            tested = true;
+            break;
+          } catch { continue; }
+        }
+        if (!tested) {
+          await upsertModelStatus({ modelId: m.modelId, provider: m.providerName, isOnline: false, latencyMs: 0, httpStatus: 0, errorMessage: "Network error", baseUrl: m.baseUrl });
+          sweepProgress.tested++;
+          sweepProgress.offline++;
+        }
+        await new Promise(r => setTimeout(r, 200));
+      }
+      sweepProgress.status = "completed";
+    } catch (err: any) { sweepProgress.status = "error"; console.error("[sweep] Error:", err.message); }
+    finally { sweepRunning = false; }
+  })();
+
+  return c.json({ started: true, message: "Sweep started in background" });
+});
+
+monitor.get("/monitor/sweep/progress", async (c) => {
+  if (!isAuthenticated(c)) return c.json({ error: "Unauthorized" }, 401);
+  return c.json(sweepProgress);
 });
 
 export default monitor;
