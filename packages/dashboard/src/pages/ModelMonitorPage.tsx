@@ -38,8 +38,8 @@ export default function ModelMonitorPage() {
           if (progress.status !== "running") {
             clearInterval(interval);
             setSweepInterval(null);
-            // Refresh data after sweep completes
-            loadData();
+            // Wait 2s for all DB writes to fully commit, then refresh
+            setTimeout(() => loadData(), 2000);
           }
         } catch {}
       }, 3000);

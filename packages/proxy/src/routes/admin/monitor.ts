@@ -321,6 +321,8 @@ monitor.post("/monitor/sweep", async (c) => {
 
   (async () => {
     try {
+      // Clear ALL old model_monitor rows before sweep to remove stale data
+      await db.delete(modelMonitor).run();
       await resetAllTestStates();
       const activeProviders = await db.select().from(providers).where(eq(providers.isActive, true)).orderBy(sql`${providers.priority} DESC`).all();
       const allModels: Array<{ modelId: string; providerName: string; providerId: number; baseUrl: string; apiKey: string }> = [];
