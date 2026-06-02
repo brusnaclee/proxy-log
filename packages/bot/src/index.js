@@ -1774,13 +1774,29 @@ function buildTokitoEmbed(kind, session) {
 	const lines = slice.map((entry) => {
 		// Auto model: show special description
 		if (entry.modelId === 'auto') {
-			return `🤖 \`auto\` | **Auto-select**: picks fastest online model automatically | Use \`model: auto\` in your request`;
+			return `🤖 \`auto\` | **Auto-select**: picks fastest online model automatically`;
 		}
 
 		const key = entryKey(entry);
 		const vendor = providerOf(entry.modelId);
 		const lt = runtime.latency.get(key);
 		
+		if (kind === 'details') {
+			// Find enriched metadata from cache
+			const detailsCache = runtime._modelDetailsCache || [];
+			const meta = detailsCache.find(m => m.id === entry.modelId);
+			const icon = lt?.ok ? '🟢' : (lt?.status === 429 ? '🟡' : (lt ? '🔴' : '⚪'));
+			const ctx = meta?.context_length ? `${Math.round(meta.context_length / 1024)}K` : '?';
+			const maxOut = meta?.max_output_tokens ? `${Math.round(meta.max_output_tokens / 1024)}K` : '?';
+			const pricing = meta?.pricing 
+				? `$${meta.pricing.prompt?.toFixed(2) || '?'}/$${meta.pricing.completion?.toFixed(2) || '?'}/M`
+				: 'N/A';
+			const modalities = (meta?.input_modalities || ['text']).join(',');
+			const latency = lt?.ms != null ? `${lt.ms}ms` : '-';
+			const features = (meta?.supported_features || []).slice(0, 3).join(', ') || '-';
+			return `${icon} **${entry.modelId}**\n  ctx: ${ctx} | out: ${maxOut} | ${pricing} | ${modalities} | ${latency}\n  features: ${features}`;
+		}
+
 		if (kind === 'status') {
 			if (!lt || lt.status == null) {
 				return `⚪ \`${entry.provider}/${entry.modelId}\` | not tested yet | vendor: **${vendor}**`;
@@ -1799,7 +1815,9 @@ function buildTokitoEmbed(kind, session) {
 	const titleStyled =
 		kind === 'status'
 			? 'Tokito API • Model Status'
-			: 'Tokito API • Latency Benchmark';
+			: kind === 'details'
+				? '📋 Model Details'
+				: 'Tokito API • Latency Benchmark';
 	const updatedAt = runtime.lastLatencyAt;
 
 	let online = 0,
@@ -3345,16 +3363,29 @@ client.on('interactionCreate', async (interaction) => {
 		if (interaction.isButton()) {
 			if (
 				interaction.customId === PANEL_STATUS ||
-				interaction.customId === PANEL_LATENCY
+				interaction.customId === PANEL_LATENCY ||
+				interaction.customId === PANEL_DETAILS
 			) {
 				const kind =
-					interaction.customId === PANEL_STATUS ? 'status' : 'latency';
+					interaction.customId === PANEL_STATUS ? 'status' : 
+					interaction.customId === PANEL_LATENCY ? 'latency' : 'details';
 				
 				// Immediately acknowledge to prevent 10s timeout
 				await interaction.deferReply({ ephemeral: true });
 				
 				// Refresh data from proxy DB for fresh results
 				await refreshLatencyFromProxy();
+
+				// For details kind, fetch enriched model data from proxy
+				if (kind === 'details') {
+					try {
+						const detailsData = await proxyInternal('/admin/internal/models/details');
+						runtime._modelDetailsCache = detailsData?.data || [];
+					} catch (err) {
+						console.error('[tokito] Failed to fetch model details:', err.message);
+						runtime._modelDetailsCache = [];
+					}
+				}
 				
 				const session = createTokitoSession(interaction.user.id, kind);
 				// Store interaction for message deletion on expiry
@@ -3369,8 +3400,8 @@ client.on('interactionCreate', async (interaction) => {
 				return;
 			}
 
-			// Model Details button handler
-			if (interaction.customId === PANEL_DETAILS) {
+			// Model Details button handler (old static version - replaced by above)
+			if (false && interaction.customId === PANEL_DETAILS) {
 				await interaction.deferReply({ ephemeral: true });
 				
 				try {

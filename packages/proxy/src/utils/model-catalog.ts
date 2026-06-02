@@ -757,8 +757,11 @@ function findOpenRouterMatch(
     ? VENDOR_PREFIXES[localPrefix]
     : Object.values(VENDOR_PREFIXES).flat();
 
+  // Also try all known vendors as a wider net
+  const allVendors = [...new Set([...vendorPrefixes, ...Object.values(VENDOR_PREFIXES).flat()])];
+
   // Try "vendor/bareId" for each vendor prefix
-  for (const vendor of vendorPrefixes) {
+  for (const vendor of allVendors) {
     const candidate = `${vendor}/${bareId}`;
     if (openRouterModels.has(candidate)) return openRouterModels.get(candidate);
   }
@@ -766,22 +769,51 @@ function findOpenRouterMatch(
   // Fuzzy: try without version suffixes (e.g., "qwen3-max-2026-01-23" -> "qwen3-max")
   const versionless = bareId.replace(/-\d{4}-\d{2}-\d{2}$/, "").replace(/-\d{4}$/, "");
   if (versionless !== bareId) {
-    for (const vendor of vendorPrefixes) {
+    for (const vendor of allVendors) {
       const candidate = `${vendor}/${versionless}`;
       if (openRouterModels.has(candidate)) return openRouterModels.get(candidate);
     }
   }
 
   // Try common name transformations
-  const transformations = [
-    bareId.replace(/-/g, "_"),  // claude-sonnet-4-6 -> claude_sonnet_4_6
-    bareId.replace(/\./g, "-"), // qwen3.5-plus -> qwen3-5-plus
-    bareId.replace(/-(\d+)-(\d+)$/, "-$1.$2"), // claude-sonnet-4-6 -> claude-sonnet-4.6
-  ];
-  for (const tf of transformations) {
-    for (const vendor of vendorPrefixes) {
+  const candidates = new Set<string>();
+  const bases = [bareId, versionless];
+  for (const base of bases) {
+    candidates.add(base.replace(/-/g, "_"));                       // claude-sonnet-4-6 -> claude_sonnet_4_6
+    candidates.add(base.replace(/\./g, "-"));                      // qwen3.5-plus -> qwen3-5-plus
+    candidates.add(base.replace(/-(\d+)-(\d+)$/, "-$1.$2"));      // claude-sonnet-4-6 -> claude-sonnet-4.6
+    candidates.add(base.replace(/-thinking$/, ""));                // claude-opus-4-6-thinking -> claude-opus-4-6
+    candidates.add(base.replace(/-agent$/, ""));                   // gemini-3-flash-agent -> gemini-3-flash
+    candidates.add(base.replace(/-low$/, ""));                     // gemini-3.1-pro-low -> gemini-3.1-pro
+    candidates.add(base.replace(/-extra-low$/, ""));               // gemini-3.5-flash-extra-low -> gemini-3.5-flash
+    candidates.add(base.replace(/-medium$/, ""));                  // gpt-oss-120b-medium -> gpt-oss-120b
+    candidates.add(base.replace(/-highspeed$/, ""));               // MiniMax-M2.7-highspeed -> MiniMax-M2.7
+    candidates.add(base.replace(/^qwen(\d)/, "qwen-$1"));         // qwen3-max -> qwen-3-max
+    candidates.add(base.replace(/^qwen-(\d)/, "qwen$1"));         // qwen-3-max -> qwen3-max
+    // For models like "deepseek-v4-flash", try "deepseek-v4-flash" and "deepseek-chat"
+    if (base.startsWith("deepseek-v")) {
+      candidates.add("deepseek-chat");
+      candidates.add("deepseek-reasoner");
+    }
+  }
+  // Remove originals to avoid re-checking
+  candidates.delete(bareId);
+  candidates.delete(versionless);
+
+  for (const tf of candidates) {
+    if (!tf || tf === bareId) continue;
+    for (const vendor of allVendors) {
       const candidate = `${vendor}/${tf}`;
       if (openRouterModels.has(candidate)) return openRouterModels.get(candidate);
+    }
+  }
+
+  // Last resort: search all OpenRouter models for partial match in ID
+  // e.g., our "glm-5.1" might match "thudm/glm-5.1" or "zhipu-ai/glm-5.1"
+  for (const [orId, orModel] of openRouterModels) {
+    const orBare = orId.includes("/") ? orId.split("/").pop()! : orId;
+    if (orBare === bareId || orBare === versionless) {
+      return orModel;
     }
   }
 
