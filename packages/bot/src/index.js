@@ -852,6 +852,7 @@ async function loadDynamicSettings() {
 // ==========================================
 const PANEL_STATUS = 'tokito_panel_status';
 const PANEL_LATENCY = 'tokito_panel_latency';
+const PANEL_DETAILS = 'tokito_panel_details';
 const STATE_PATH = path.join(AGVERIF_DATA_DIR, 'tokito_state.json');
 
 const tokitoSessions = new Map();
@@ -1479,6 +1480,10 @@ function buildPanelRow() {
 			.setCustomId(PANEL_LATENCY)
 			.setLabel('Latency Benchmark')
 			.setStyle(ButtonStyle.Primary),
+		new ButtonBuilder()
+			.setCustomId(PANEL_DETAILS)
+			.setLabel('Model Details')
+			.setStyle(ButtonStyle.Secondary),
 	);
 }
 
@@ -1541,7 +1546,7 @@ async function ensurePanelMessage() {
 			msg.author.id === client.user.id &&
 			msg.components?.some((row) =>
 				row.components?.some(
-					(c) => c.customId === PANEL_STATUS || c.customId === PANEL_LATENCY,
+					(c) => c.customId === PANEL_STATUS || c.customId === PANEL_LATENCY || c.customId === PANEL_DETAILS,
 				),
 			),
 	);
@@ -3361,6 +3366,57 @@ client.on('interactionCreate', async (interaction) => {
 					embeds: [embed],
 					components,
 				});
+				return;
+			}
+
+			// Model Details button handler
+			if (interaction.customId === PANEL_DETAILS) {
+				await interaction.deferReply({ ephemeral: true });
+				
+				try {
+					const data = await proxyInternal('/admin/internal/models/details');
+					const models = (data?.data || []).filter(m => m.id !== 'auto');
+					
+					// Sort: online first, then by name
+					models.sort((a, b) => {
+						if (a.is_online && !b.is_online) return -1;
+						if (!a.is_online && b.is_online) return 1;
+						return (a.id || '').localeCompare(b.id || '');
+					});
+
+					// Paginate (max 10 per page to fit embed)
+					const PAGE_SIZE = 10;
+					const page = 0;
+					const totalPages = Math.max(1, Math.ceil(models.length / PAGE_SIZE));
+					const pageModels = models.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+					function formatModelLine(m) {
+						const status = m.is_online ? '🟢' : '🔴';
+						const ctx = m.context_length ? `${Math.round(m.context_length / 1024)}K` : '?';
+						const maxOut = m.max_output_tokens ? `${Math.round(m.max_output_tokens / 1024)}K` : '?';
+						const pricing = m.pricing
+							? `$${m.pricing.prompt?.toFixed(2) || '?'}/$${m.pricing.completion?.toFixed(2) || '?'}`
+							: 'N/A';
+						const modalities = (m.input_modalities || ['text']).join(',');
+						const features = (m.supported_features || []).slice(0, 3).join(', ') || '-';
+						const latency = m.latency_ms != null ? `${m.latency_ms}ms` : '-';
+						return `${status} **${m.id}**\n  ctx: ${ctx} | out: ${maxOut} | ${pricing}/M | ${modalities} | ${latency}\n  features: ${features}`;
+					}
+
+					const description = pageModels.map(formatModelLine).join('\n\n');
+
+					const embed = new EmbedBuilder()
+						.setTitle('📋 Model Details')
+						.setDescription(description || 'No models found')
+						.setFooter({ text: `Page ${page + 1}/${totalPages} • ${models.length} models total` })
+						.setColor(0x5865f2)
+						.setTimestamp();
+
+					await interaction.editReply({ embeds: [embed] });
+				} catch (err) {
+					console.error('[tokito] Model details error:', err.message);
+					await interaction.editReply({ content: 'Failed to fetch model details.' });
+				}
 				return;
 			}
 

@@ -800,4 +800,31 @@ internal.post("/internal/clear-notification/:keyId", async (c) => {
   return c.json({ success: true });
 });
 
+// ─── Enriched Model Details (for Discord bot) ────────────────────────────────
+internal.get("/internal/models/details", async (c) => {
+  const { getModelCatalogResponse, getOnlineModelsByLatency } = await import("../../utils/model-catalog.js");
+  
+  const [catalog, onlineModels] = await Promise.all([
+    getModelCatalogResponse(),
+    getOnlineModelsByLatency(),
+  ]);
+
+  const onlineMap = new Map<string, { latencyMs: number; provider: string }>();
+  for (const m of onlineModels) {
+    onlineMap.set(m.modelId, { latencyMs: m.latencyMs, provider: m.provider });
+  }
+
+  const enriched = catalog.data.map((model: any) => {
+    const monitor = onlineMap.get(model.id);
+    return {
+      ...model,
+      is_online: !!monitor,
+      latency_ms: monitor?.latencyMs ?? null,
+      active_provider: monitor?.provider ?? null,
+    };
+  });
+
+  return c.json({ object: "list", data: enriched });
+});
+
 export default internal;

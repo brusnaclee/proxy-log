@@ -281,4 +281,31 @@ monitor.get("/internal/monitor/models", async (c) => {
   return c.json({ data });
 });
 
+// ─── Enriched Model Details (catalog + metadata + monitor status) ────────────
+monitor.get("/monitor/models/details", async (c) => {
+  const { getModelCatalogResponse, getOnlineModelsByLatency, getModelMetadataMap } = await import("../../utils/model-catalog.js");
+  
+  const [catalog, onlineModels] = await Promise.all([
+    getModelCatalogResponse(),
+    getOnlineModelsByLatency(),
+  ]);
+
+  const onlineMap = new Map<string, { latencyMs: number; provider: string }>();
+  for (const m of onlineModels) {
+    onlineMap.set(m.modelId, { latencyMs: m.latencyMs, provider: m.provider });
+  }
+
+  const enriched = catalog.data.map((model: any) => {
+    const monitor = onlineMap.get(model.id);
+    return {
+      ...model,
+      is_online: !!monitor,
+      latency_ms: monitor?.latencyMs ?? null,
+      active_provider: monitor?.provider ?? null,
+    };
+  });
+
+  return c.json({ object: "list", data: enriched });
+});
+
 export default monitor;

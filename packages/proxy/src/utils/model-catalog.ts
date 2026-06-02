@@ -1,9 +1,10 @@
 ﻿import { mkdir, readFile, writeFile } from "fs/promises";
 import { dirname } from "path";
 import { db } from "../db/index.js";
-import { providers, modelMonitor, providerApiKeys } from "../db/schema.js";
+import { providers, modelMonitor, providerApiKeys, modelMetadata } from "../db/schema.js";
 import { eq, and, desc, sql, asc } from "drizzle-orm";
 import { sanitizeProviderApiKey } from "./crypto.js";
+import { getFallbackMetadata } from "./model-metadata-fallback.js";
 
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 8000;
@@ -241,9 +242,12 @@ export async function getModelCatalogResponse() {
     }
   }
 
+  // Load metadata for enrichment
+  const metadataMap = await getModelMetadataMap();
+
   // Deduplicate by model id for public listing (first occurrence wins for display)
   const seen = new Set<string>();
-  const publicModels: Omit<ModelRecord, "provider_id">[] = [];
+  const publicModels: any[] = [];
 
   // Add virtual "auto" model (proxy-level auto-selection)
   publicModels.push({
@@ -251,13 +255,43 @@ export async function getModelCatalogResponse() {
     object: "model",
     created: Math.floor(Date.now() / 1000),
     owned_by: "proxy",
+    description: "Auto-selects the fastest available online model",
+    context_length: 262144,
+    supported_features: ["tools", "reasoning", "structured_outputs"],
   });
 
   for (const m of cache.models) {
     if (seen.has(m.id)) continue;
     seen.add(m.id);
     const { provider_id: _pid, ...rest } = m;
-    publicModels.push(rest);
+
+    // Merge metadata if available
+    const meta = metadataMap.get(m.id);
+    if (meta) {
+      const enriched: any = { ...rest };
+      if (meta.contextLength) enriched.context_length = meta.contextLength;
+      if (meta.maxOutputTokens) enriched.max_output_tokens = meta.maxOutputTokens;
+      if (meta.displayName) enriched.name = meta.displayName;
+      if (meta.description) enriched.description = meta.description;
+      if (meta.inputPricePerMtok || meta.outputPricePerMtok) {
+        enriched.pricing = {
+          prompt: (meta.inputPricePerMtok || 0) / 1_000_000,
+          completion: (meta.outputPricePerMtok || 0) / 1_000_000,
+        };
+      }
+      if (meta.inputModalities) {
+        try { enriched.input_modalities = JSON.parse(meta.inputModalities); } catch {}
+      }
+      if (meta.outputModalities) {
+        try { enriched.output_modalities = JSON.parse(meta.outputModalities); } catch {}
+      }
+      if (meta.supportedFeatures) {
+        try { enriched.supported_features = JSON.parse(meta.supportedFeatures); } catch {}
+      }
+      publicModels.push(enriched);
+    } else {
+      publicModels.push(rest);
+    }
   }
 
   return {
@@ -677,3 +711,299 @@ export async function addProviderApiKey(providerId: number, apiKey: string): Pro
 
   return Number(result.lastInsertRowid);
 }
+
+// ─── Model Metadata Enrichment (OpenRouter + Fallback) ────────────────────────
+
+const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/models";
+const ENRICHMENT_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
+let lastEnrichmentAt = 0;
+let enrichmentInFlight: Promise<void> | null = null;
+
+/**
+ * Known prefix mappings from our model IDs to OpenRouter vendor prefixes.
+ * OpenRouter uses "vendor/model" format (e.g., "qwen/qwen3-max").
+ */
+const VENDOR_PREFIXES: Record<string, string[]> = {
+  "qwen": ["qwen", "alibaba"],
+  "ag": ["anthropic", "google", "openai"],
+  "glm": ["zhipu", "thudm"],
+  "minimax": ["minimax"],
+  "ollama": ["ollama"],
+  "deepseek": ["deepseek"],
+  "mimo": ["xiaomi"],
+};
+
+function usd(dollars: number): number {
+  return Math.round(dollars * 1_000_000);
+}
+
+/**
+ * Try to find an OpenRouter model matching our local model ID.
+ */
+function findOpenRouterMatch(
+  localModelId: string,
+  openRouterModels: Map<string, any>,
+): any | null {
+  // Direct match: e.g., "qwen/qwen3-max" exists directly
+  if (openRouterModels.has(localModelId)) return openRouterModels.get(localModelId);
+
+  // Strip our provider prefix: "ag/claude-sonnet-4-6" -> "claude-sonnet-4-6"
+  const slashIdx = localModelId.indexOf("/");
+  const bareId = slashIdx > 0 ? localModelId.slice(slashIdx + 1) : localModelId;
+  const localPrefix = slashIdx > 0 ? localModelId.slice(0, slashIdx) : "";
+
+  // Determine which vendor prefixes to try
+  const vendorPrefixes = localPrefix && VENDOR_PREFIXES[localPrefix]
+    ? VENDOR_PREFIXES[localPrefix]
+    : Object.values(VENDOR_PREFIXES).flat();
+
+  // Try "vendor/bareId" for each vendor prefix
+  for (const vendor of vendorPrefixes) {
+    const candidate = `${vendor}/${bareId}`;
+    if (openRouterModels.has(candidate)) return openRouterModels.get(candidate);
+  }
+
+  // Fuzzy: try without version suffixes (e.g., "qwen3-max-2026-01-23" -> "qwen3-max")
+  const versionless = bareId.replace(/-\d{4}-\d{2}-\d{2}$/, "").replace(/-\d{4}$/, "");
+  if (versionless !== bareId) {
+    for (const vendor of vendorPrefixes) {
+      const candidate = `${vendor}/${versionless}`;
+      if (openRouterModels.has(candidate)) return openRouterModels.get(candidate);
+    }
+  }
+
+  // Try common name transformations
+  const transformations = [
+    bareId.replace(/-/g, "_"),  // claude-sonnet-4-6 -> claude_sonnet_4_6
+    bareId.replace(/\./g, "-"), // qwen3.5-plus -> qwen3-5-plus
+    bareId.replace(/-(\d+)-(\d+)$/, "-$1.$2"), // claude-sonnet-4-6 -> claude-sonnet-4.6
+  ];
+  for (const tf of transformations) {
+    for (const vendor of vendorPrefixes) {
+      const candidate = `${vendor}/${tf}`;
+      if (openRouterModels.has(candidate)) return openRouterModels.get(candidate);
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Extract metadata from an OpenRouter model object.
+ */
+function extractOpenRouterMetadata(orModel: any): {
+  displayName: string;
+  description: string;
+  contextLength: number;
+  maxOutputTokens: number;
+  inputPricePerMtok: number;
+  outputPricePerMtok: number;
+  inputModalities: string[];
+  outputModalities: string[];
+  supportedFeatures: string[];
+} {
+  const pricing = orModel.pricing || {};
+  // OpenRouter pricing is per-token in USD (string). Convert to per-1M-tokens microcents.
+  const promptPerToken = parseFloat(pricing.prompt || "0");
+  const completionPerToken = parseFloat(pricing.completion || "0");
+
+  const arch = orModel.architecture || {};
+  const topProvider = orModel.top_provider || {};
+
+  // Build supported features list
+  const features: string[] = [];
+  const params = orModel.supported_parameters || [];
+  if (params.includes("tools") || params.includes("tool_choice")) features.push("tools");
+  if (params.includes("reasoning") || params.includes("reasoning_effort") || params.includes("include_reasoning")) features.push("reasoning");
+  if (params.includes("response_format") || params.includes("structured_outputs")) features.push("structured_outputs");
+  if (params.includes("stop")) features.push("stop");
+  if (arch.modality?.includes("image")) features.push("vision");
+
+  return {
+    displayName: orModel.name || orModel.id || "",
+    description: (orModel.description || "").substring(0, 500),
+    contextLength: orModel.context_length || topProvider.context_length || 0,
+    maxOutputTokens: topProvider.max_completion_tokens || 0,
+    inputPricePerMtok: Math.round(promptPerToken * 1_000_000 * 1_000_000), // per-token -> per-1M-token -> microcents
+    outputPricePerMtok: Math.round(completionPerToken * 1_000_000 * 1_000_000),
+    inputModalities: arch.input_modalities || (arch.modality?.includes("image") ? ["text", "image"] : ["text"]),
+    outputModalities: arch.output_modalities || ["text"],
+    supportedFeatures: features,
+  };
+}
+
+/**
+ * Fetch all models from OpenRouter and enrich our catalog.
+ */
+export async function enrichModelMetadata(): Promise<void> {
+  if (enrichmentInFlight) return enrichmentInFlight;
+
+  enrichmentInFlight = (async () => {
+    try {
+      console.log("[model-metadata] Starting enrichment from OpenRouter...");
+
+      // 1. Fetch OpenRouter catalog
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30_000);
+      let orModels: any[] = [];
+      try {
+        const res = await fetch(OPENROUTER_API_URL, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (res.ok) {
+          const json = await res.json() as any;
+          orModels = Array.isArray(json?.data) ? json.data : [];
+          console.log(`[model-metadata] Fetched ${orModels.length} models from OpenRouter`);
+        } else {
+          console.warn(`[model-metadata] OpenRouter returned ${res.status}`);
+        }
+      } catch (err: any) {
+        clearTimeout(timeout);
+        console.warn(`[model-metadata] OpenRouter fetch failed: ${err.message}`);
+      }
+
+      // Build lookup map
+      const orMap = new Map<string, any>();
+      for (const m of orModels) {
+        if (m.id) orMap.set(m.id, m);
+      }
+
+      // 2. Get our current model catalog
+      await loadFromDisk();
+      const ourModels = cache.models.map(m => m.id);
+
+      // 3. For each of our models, find metadata
+      let matched = 0;
+      let fallback = 0;
+      let unknown = 0;
+
+      for (const modelId of ourModels) {
+        // Skip virtual models
+        if (modelId === "auto") continue;
+
+        // Try OpenRouter first
+        const orMatch = findOpenRouterMatch(modelId, orMap);
+
+        if (orMatch) {
+          const meta = extractOpenRouterMetadata(orMatch);
+          await db.insert(modelMetadata).values({
+            modelId,
+            displayName: meta.displayName,
+            description: meta.description,
+            contextLength: meta.contextLength,
+            maxOutputTokens: meta.maxOutputTokens,
+            inputPricePerMtok: meta.inputPricePerMtok,
+            outputPricePerMtok: meta.outputPricePerMtok,
+            inputModalities: JSON.stringify(meta.inputModalities),
+            outputModalities: JSON.stringify(meta.outputModalities),
+            supportedFeatures: JSON.stringify(meta.supportedFeatures),
+            source: "openrouter",
+          }).onConflictDoUpdate({
+            target: modelMetadata.modelId,
+            set: {
+              displayName: meta.displayName,
+              description: meta.description,
+              contextLength: meta.contextLength,
+              maxOutputTokens: meta.maxOutputTokens,
+              inputPricePerMtok: meta.inputPricePerMtok,
+              outputPricePerMtok: meta.outputPricePerMtok,
+              inputModalities: JSON.stringify(meta.inputModalities),
+              outputModalities: JSON.stringify(meta.outputModalities),
+              supportedFeatures: JSON.stringify(meta.supportedFeatures),
+              source: "openrouter",
+              updatedAt: new Date().toISOString().replace("T", " ").substring(0, 19),
+            },
+          }).run();
+          matched++;
+          continue;
+        }
+
+        // Try hardcode fallback
+        const fb = getFallbackMetadata(modelId);
+        if (fb) {
+          await db.insert(modelMetadata).values({
+            modelId,
+            displayName: fb.displayName,
+            description: fb.description || null,
+            contextLength: fb.contextLength || null,
+            maxOutputTokens: fb.maxOutputTokens || null,
+            inputPricePerMtok: fb.inputPricePerMtok || 0,
+            outputPricePerMtok: fb.outputPricePerMtok || 0,
+            inputModalities: fb.inputModalities ? JSON.stringify(fb.inputModalities) : null,
+            outputModalities: fb.outputModalities ? JSON.stringify(fb.outputModalities) : null,
+            supportedFeatures: fb.supportedFeatures ? JSON.stringify(fb.supportedFeatures) : null,
+            source: "hardcode",
+          }).onConflictDoUpdate({
+            target: modelMetadata.modelId,
+            set: {
+              displayName: fb.displayName,
+              description: fb.description || null,
+              contextLength: fb.contextLength || null,
+              maxOutputTokens: fb.maxOutputTokens || null,
+              inputPricePerMtok: fb.inputPricePerMtok || 0,
+              outputPricePerMtok: fb.outputPricePerMtok || 0,
+              inputModalities: fb.inputModalities ? JSON.stringify(fb.inputModalities) : null,
+              outputModalities: fb.outputModalities ? JSON.stringify(fb.outputModalities) : null,
+              supportedFeatures: fb.supportedFeatures ? JSON.stringify(fb.supportedFeatures) : null,
+              source: "hardcode",
+              updatedAt: new Date().toISOString().replace("T", " ").substring(0, 19),
+            },
+          }).run();
+          fallback++;
+          continue;
+        }
+
+        // Unknown model — check if already in DB (e.g., manually added), skip if so
+        const existing = await db.select().from(modelMetadata).where(eq(modelMetadata.modelId, modelId)).get();
+        if (!existing) {
+          // Insert with safe defaults for unknown models
+          await db.insert(modelMetadata).values({
+            modelId,
+            displayName: modelId,
+            inputModalities: JSON.stringify(["text"]),
+            outputModalities: JSON.stringify(["text"]),
+            source: "unknown",
+          }).onConflictDoNothing().run();
+          unknown++;
+        }
+      }
+
+      lastEnrichmentAt = Date.now();
+      console.log(`[model-metadata] Enrichment complete: ${matched} OpenRouter, ${fallback} fallback, ${unknown} unknown`);
+    } catch (err: any) {
+      console.error(`[model-metadata] Enrichment error: ${err.message}`);
+    } finally {
+      enrichmentInFlight = null;
+    }
+  })();
+
+  return enrichmentInFlight;
+}
+
+/**
+ * Get all model metadata from DB as a lookup map.
+ */
+export async function getModelMetadataMap(): Promise<Map<string, typeof modelMetadata.$inferSelect>> {
+  const rows = await db.select().from(modelMetadata).all();
+  const map = new Map<string, typeof modelMetadata.$inferSelect>();
+  for (const row of rows) {
+    map.set(row.modelId, row);
+  }
+  return map;
+}
+
+/**
+ * Initialize the metadata enrichment scheduler.
+ * Runs enrichment on startup (after a short delay) and every 6 hours.
+ */
+export function initializeMetadataEnrichmentScheduler() {
+  // Run first enrichment after 30s (give catalog time to load)
+  setTimeout(() => {
+    void enrichModelMetadata();
+  }, 30_000);
+
+  // Then every 6 hours
+  setInterval(() => {
+    void enrichModelMetadata();
+  }, ENRICHMENT_INTERVAL_MS);
+}
+

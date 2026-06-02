@@ -630,6 +630,25 @@ export async function initializeDatabase() {
 		'CREATE INDEX IF NOT EXISTS idx_monthly_stats_ym_key ON monthly_stats(year_month, api_key_id, model)',
 	);
 
+	// model_metadata table for enriched model info (from OpenRouter + hardcode fallback)
+	await client.execute(`
+    CREATE TABLE IF NOT EXISTS model_metadata (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      model_id TEXT NOT NULL UNIQUE,
+      display_name TEXT,
+      description TEXT,
+      context_length INTEGER,
+      max_output_tokens INTEGER,
+      input_price_per_mtok INTEGER DEFAULT 0,
+      output_price_per_mtok INTEGER DEFAULT 0,
+      input_modalities TEXT,
+      output_modalities TEXT,
+      supported_features TEXT,
+      source TEXT DEFAULT 'unknown',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
 	// Insert default cleanup states if not exists
 	await client.execute(
 		`INSERT OR IGNORE INTO cleanup_state (cleanup_type, cleaned_months, cleaned_days) VALUES ('transcripts', '[]', '[]')`,

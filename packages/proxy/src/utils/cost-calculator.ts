@@ -10,6 +10,10 @@
  * (all providers charge context as part of the input token count).
  */
 
+import { db } from "../db/index.js";
+import { modelMetadata } from "../db/schema.js";
+import { eq } from "drizzle-orm";
+
 interface ModelRates {
   prompt: number;    // $ per 1M input tokens
   completion: number; // $ per 1M output tokens
@@ -165,18 +169,63 @@ export const MODEL_COSTS: Record<string, ModelRates> = {
   "kimi-k2.5":               { prompt: 0.14, completion: 0.28 },
 };
 
+// ─── Metadata-based pricing cache ──────────────────────────────────────────────
+// Populated from model_metadata table on startup and periodically.
+const metadataPricingCache = new Map<string, ModelRates>();
+let metadataPricingLoaded = false;
+
+export async function refreshMetadataPricing(): Promise<void> {
+  try {
+    const rows = await db.select({
+      modelId: modelMetadata.modelId,
+      inputPricePerMtok: modelMetadata.inputPricePerMtok,
+      outputPricePerMtok: modelMetadata.outputPricePerMtok,
+    }).from(modelMetadata).all();
+
+    for (const row of rows) {
+      if (row.inputPricePerMtok || row.outputPricePerMtok) {
+        metadataPricingCache.set(row.modelId, {
+          prompt: (row.inputPricePerMtok || 0) / 1_000_000,
+          completion: (row.outputPricePerMtok || 0) / 1_000_000,
+        });
+      }
+    }
+    metadataPricingLoaded = true;
+  } catch {
+    // DB may not be ready yet on first call
+  }
+}
+
+// Auto-refresh pricing cache every 10 minutes
+setInterval(() => { void refreshMetadataPricing(); }, 10 * 60 * 1000);
+// Initial load after 5s delay (wait for DB init)
+setTimeout(() => { void refreshMetadataPricing(); }, 5000);
+
 // ─── Lookup Helper ───────────────────────────────────────────────────────────
 
 /**
  * Find cost rates for a model. Strategy:
- * 1. Exact match
- * 2. Substring match (e.g. "anthropic/claude-sonnet-4.6" → matches "claude-sonnet-4")
- * 3. Prefix/provider match for known providers
- * 4. DEFAULT_RATES fallback
+ * 1. model_metadata DB pricing (from OpenRouter / hardcode enrichment)
+ * 2. Exact match in hardcoded MODEL_COSTS
+ * 3. Substring match (e.g. "anthropic/claude-sonnet-4.6" → matches "claude-sonnet-4")
+ * 4. Prefix/provider match for known providers
+ * 5. DEFAULT_RATES fallback
  */
 function findModelRates(modelName: string): ModelRates {
   const n = String(modelName || "").toLowerCase().trim();
   if (!n) return DEFAULT_RATES;
+
+  // 0. Check metadata pricing cache first (from OpenRouter / hardcode enrichment)
+  const metaRates = metadataPricingCache.get(n) || metadataPricingCache.get(modelName);
+  if (metaRates && (metaRates.prompt > 0 || metaRates.completion > 0)) return metaRates;
+
+  // Also check without provider prefix for metadata
+  const slashIdx = n.indexOf("/");
+  if (slashIdx > 0) {
+    const bareId = n.slice(slashIdx + 1);
+    const bareRates = metadataPricingCache.get(bareId);
+    if (bareRates && (bareRates.prompt > 0 || bareRates.completion > 0)) return bareRates;
+  }
 
   // 1. Exact match (case-insensitive)
   const exact = MODEL_COSTS[n] ?? MODEL_COSTS[modelName];

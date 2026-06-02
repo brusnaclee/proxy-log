@@ -458,6 +458,25 @@ export const monthlyStats = sqliteTable(
 	}),
 );
 
+// ─── Model Metadata (enriched from OpenRouter + hardcode fallback) ────────────
+export const modelMetadata = sqliteTable('model_metadata', {
+	id: integer('id').primaryKey({ autoIncrement: true }),
+	modelId: text('model_id').notNull().unique(),
+	displayName: text('display_name'),
+	description: text('description'),
+	contextLength: integer('context_length'),
+	maxOutputTokens: integer('max_output_tokens'),
+	inputPricePerMtok: integer('input_price_per_mtok').default(0), // microcents per 1M tokens (1200000 = $1.20)
+	outputPricePerMtok: integer('output_price_per_mtok').default(0),
+	inputModalities: text('input_modalities'), // JSON array: ["text","image"]
+	outputModalities: text('output_modalities'), // JSON array: ["text"]
+	supportedFeatures: text('supported_features'), // JSON array: ["tools","reasoning"]
+	source: text('source').default('unknown'), // "openrouter" | "hardcode" | "manual"
+	updatedAt: text('updated_at')
+		.notNull()
+		.default(sql`(datetime('now'))`),
+});
+
 // ─── Type exports ──────────────────────────────────────────────────────────────
 export type AdminConfig = typeof adminConfig.$inferSelect;
 export type ApiKey = typeof apiKeys.$inferSelect;
@@ -473,6 +492,7 @@ export type ModelTestState = typeof modelTestState.$inferSelect;
 export type ModelLimit = typeof modelLimits.$inferSelect;
 export type CleanupState = typeof cleanupState.$inferSelect;
 export type MonthlyStats = typeof monthlyStats.$inferSelect;
+export type ModelMetadata = typeof modelMetadata.$inferSelect;
 
 export type NewAdminConfig = typeof adminConfig.$inferInsert;
 export type NewApiKey = typeof apiKeys.$inferInsert;
@@ -488,3 +508,4 @@ export type NewModelTestState = typeof modelTestState.$inferInsert;
 export type NewModelLimit = typeof modelLimits.$inferInsert;
 export type NewCleanupState = typeof cleanupState.$inferInsert;
 export type NewMonthlyStats = typeof monthlyStats.$inferInsert;
+export type NewModelMetadata = typeof modelMetadata.$inferInsert;
