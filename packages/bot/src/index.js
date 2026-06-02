@@ -1762,14 +1762,15 @@ function listModels(kind, upstreamProvider, modelVendor, sortMode) {
 }
 
 function buildTokitoEmbed(kind, session) {
+	const pageSize = kind === 'details' ? 5 : TOKITO_PAGE_SIZE;
 	const entries = listModels(kind, session.upstreamProvider, session.modelVendor, session.sortMode);
-	const totalPages = Math.max(1, Math.ceil(entries.length / TOKITO_PAGE_SIZE));
+	const totalPages = Math.max(1, Math.ceil(entries.length / pageSize));
 	const page = Math.max(0, Math.min(session.page, totalPages - 1));
 	session.page = page;
 
 	const slice = entries.slice(
-		page * TOKITO_PAGE_SIZE,
-		(page + 1) * TOKITO_PAGE_SIZE,
+		page * pageSize,
+		(page + 1) * pageSize,
 	);
 	const lines = slice.map((entry) => {
 		// Auto model: show special description
@@ -1786,15 +1787,16 @@ function buildTokitoEmbed(kind, session) {
 			const detailsCache = runtime._modelDetailsCache || [];
 			const meta = detailsCache.find(m => m.id === entry.modelId);
 			const icon = lt?.ok ? '🟢' : (lt?.status === 429 ? '🟡' : (lt ? '🔴' : '⚪'));
-			const ctx = meta?.context_length ? `${Math.round(meta.context_length / 1024)}K` : '?';
-			const maxOut = meta?.max_output_tokens ? `${Math.round(meta.max_output_tokens / 1024)}K` : '?';
-			const pricing = meta?.pricing 
-				? `$${meta.pricing.prompt?.toFixed(2) || '?'}/$${meta.pricing.completion?.toFixed(2) || '?'}/M`
-				: 'N/A';
-			const modalities = (meta?.input_modalities || ['text']).join(',');
-			const latency = lt?.ms != null ? `${lt.ms}ms` : '-';
-			const features = (meta?.supported_features || []).slice(0, 3).join(', ') || '-';
-			return `${icon} **${entry.modelId}**\n  ctx: ${ctx} | out: ${maxOut} | ${pricing} | ${modalities} | ${latency}\n  features: ${features}`;
+			const name = meta?.name || entry.modelId;
+			const ctx = meta?.context_length ? `${Math.round(meta.context_length / 1024)}K` : '—';
+			const maxOut = meta?.max_output_tokens ? `${Math.round(meta.max_output_tokens / 1024)}K` : '—';
+			const inPrice = meta?.pricing?.prompt != null ? `$${meta.pricing.prompt.toFixed(2)}` : '—';
+			const outPrice = meta?.pricing?.completion != null ? `$${meta.pricing.completion.toFixed(2)}` : '—';
+			const inMod = (meta?.input_modalities || ['text']).join(', ');
+			const outMod = (meta?.output_modalities || ['text']).join(', ');
+			const latency = lt?.ms != null ? `${lt.ms}ms` : '—';
+			const features = (meta?.supported_features || []).slice(0, 4).join(', ') || '—';
+			return `━━━━━━━━━━━━━━━━━━━━\n${icon} **${name}** (\`${entry.modelId}\`)\n📐 Context/Input: **${ctx}**  •  Max Output: **${maxOut}**\n💰 In: **${inPrice}/M**  •  Out: **${outPrice}/M**\n📥 ${inMod} → ${outMod}\n⚡ ${latency}  •  🛠 ${features}`;
 		}
 
 		if (kind === 'status') {

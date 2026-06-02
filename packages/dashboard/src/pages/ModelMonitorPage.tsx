@@ -13,12 +13,16 @@ function modelVendorOf(modelId: string) {
 }
 
 export default function ModelMonitorPage() {
+  const [activeTab, setActiveTab] = useState<"monitor" | "catalog">("monitor");
   const [data, setData] = useState<ModelMonitorEntry[]>([]);
   const [summary, setSummary] = useState({ total: 0, online: 0, offline: 0, timeout: 0 });
   const [loading, setLoading] = useState(true);
   const [upstreamFilter, setUpstreamFilter] = useState("all");
   const [modelVendorFilter, setModelVendorFilter] = useState("all");
   const [sortMode, setSortMode] = useState("status");
+  const [catalogData, setCatalogData] = useState<any[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogSearch, setCatalogSearch] = useState("");
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -33,6 +37,21 @@ export default function ModelMonitorPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  const loadCatalog = useCallback(async () => {
+    setCatalogLoading(true);
+    try {
+      const res = await monitor.getModelDetails();
+      setCatalogData(res.data || []);
+    } catch {}
+    setCatalogLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === "catalog" && catalogData.length === 0) {
+      loadCatalog();
+    }
+  }, [activeTab, catalogData.length, loadCatalog]);
 
   const handleExport = () => {
     const online  = data.filter(d => d.isOnline);
@@ -118,18 +137,122 @@ export default function ModelMonitorPage() {
           <p className="text-muted-foreground mt-1">Real-time status and latency benchmark for upstream AI models</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={loadData} disabled={loading}>
-            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+          <div className="flex bg-muted rounded-lg p-1 gap-1">
+            <Button variant={activeTab === "monitor" ? "default" : "ghost"} size="sm" onClick={() => setActiveTab("monitor")}>
+              Status Monitor
+            </Button>
+            <Button variant={activeTab === "catalog" ? "default" : "ghost"} size="sm" onClick={() => setActiveTab("catalog")}>
+              Model Catalog
+            </Button>
+          </div>
+          <Button variant="outline" size="sm" onClick={activeTab === "monitor" ? loadData : loadCatalog} disabled={loading || catalogLoading}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${(loading || catalogLoading) ? "animate-spin" : ""}`} />
             Refresh
           </Button>
-          <Button variant="outline" size="sm" onClick={handleExport}>
-            <Download className="h-4 w-4 mr-2" />
-            Export XLSX
-          </Button>
+          {activeTab === "monitor" && (
+            <Button variant="outline" size="sm" onClick={handleExport}>
+              <Download className="h-4 w-4 mr-2" />
+              Export XLSX
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* Summary Cards */}
+      {activeTab === "catalog" ? (
+        /* ── Model Catalog Tab ── */
+        <>
+          <Card className="border-border/50">
+            <CardContent className="p-4">
+              <input
+                type="text"
+                placeholder="Search models..."
+                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm"
+                value={catalogSearch}
+                onChange={(e) => setCatalogSearch(e.target.value)}
+              />
+            </CardContent>
+          </Card>
+          <Card className="border-border/50">
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border/50 bg-muted/20">
+                      <th className="text-center py-3 px-3 font-medium text-muted-foreground w-12">Status</th>
+                      <th className="text-left py-3 px-3 font-medium text-muted-foreground">Model</th>
+                      <th className="text-right py-3 px-3 font-medium text-muted-foreground">Context/Input</th>
+                      <th className="text-right py-3 px-3 font-medium text-muted-foreground">Max Output</th>
+                      <th className="text-right py-3 px-3 font-medium text-muted-foreground">Input $/M</th>
+                      <th className="text-right py-3 px-3 font-medium text-muted-foreground">Output $/M</th>
+                      <th className="text-left py-3 px-3 font-medium text-muted-foreground">Modalities</th>
+                      <th className="text-left py-3 px-3 font-medium text-muted-foreground">Features</th>
+                      <th className="text-right py-3 px-3 font-medium text-muted-foreground">Latency</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {catalogData
+                      .filter(m => m.id !== "auto")
+                      .filter(m => !catalogSearch || m.id.toLowerCase().includes(catalogSearch.toLowerCase()) || (m.name || "").toLowerCase().includes(catalogSearch.toLowerCase()))
+                      .map((m) => (
+                        <tr key={m.id} className="data-row hover:bg-muted/10 transition-colors border-b border-border/30">
+                          <td className="py-2 px-3 text-center">
+                            {m.is_online ? (
+                              <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500" title="Online" />
+                            ) : (
+                              <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500" title="Offline" />
+                            )}
+                          </td>
+                          <td className="py-2 px-3">
+                            <div className="font-mono text-xs font-medium">{m.id}</div>
+                            {m.name && m.name !== m.id && <div className="text-xs text-muted-foreground mt-0.5">{m.name}</div>}
+                          </td>
+                          <td className="py-2 px-3 text-right font-mono text-xs">
+                            {m.context_length ? `${Math.round(m.context_length / 1024)}K` : "—"}
+                          </td>
+                          <td className="py-2 px-3 text-right font-mono text-xs">
+                            {m.max_output_tokens ? `${Math.round(m.max_output_tokens / 1024)}K` : "—"}
+                          </td>
+                          <td className="py-2 px-3 text-right font-mono text-xs">
+                            {m.pricing?.prompt != null ? `$${m.pricing.prompt.toFixed(2)}` : "—"}
+                          </td>
+                          <td className="py-2 px-3 text-right font-mono text-xs">
+                            {m.pricing?.completion != null ? `$${m.pricing.completion.toFixed(2)}` : "—"}
+                          </td>
+                          <td className="py-2 px-3">
+                            <div className="flex flex-wrap gap-1">
+                              {(m.input_modalities || []).map((mod: string) => (
+                                <Badge key={`in-${mod}`} variant="outline" className="text-[10px] px-1.5 py-0">{mod}</Badge>
+                              ))}
+                              <span className="text-muted-foreground text-[10px]">→</span>
+                              {(m.output_modalities || []).map((mod: string) => (
+                                <Badge key={`out-${mod}`} variant="secondary" className="text-[10px] px-1.5 py-0">{mod}</Badge>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="py-2 px-3">
+                            <div className="flex flex-wrap gap-1">
+                              {(m.supported_features || []).slice(0, 3).map((f: string) => (
+                                <Badge key={f} variant="outline" className="text-[10px] px-1.5 py-0 text-blue-400 border-blue-400/30">{f}</Badge>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="py-2 px-3 text-right font-mono text-xs">
+                            {m.latency_ms != null ? `${m.latency_ms}ms` : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+              {catalogLoading && (
+                <div className="text-center py-8 text-muted-foreground">Loading model catalog...</div>
+              )}
+            </CardContent>
+          </Card>
+        </>
+      ) : (
+      /* ── Status Monitor Tab (existing content) ── */
+      <>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card className="border-border/50">
           <CardContent className="p-6">
@@ -281,6 +404,8 @@ export default function ModelMonitorPage() {
           </div>
         </CardContent>
       </Card>
+      </>
+      )}
     </div>
   );
 }

@@ -384,6 +384,7 @@ export interface ModelMonitorResponse {
 export const monitor = {
   getModels: () => request<ModelMonitorResponse>("/monitor/models"),
   getModelHistory: (modelId: string) => request<ModelMonitorEntry[]>(`/monitor/models/${encodeURIComponent(modelId)}/history`),
+  getModelDetails: () => request<{ object: string; data: any[] }>("/monitor/models/details"),
 };
 
 // ─── Global Settings ──────────────────────────────────────────────────────────
