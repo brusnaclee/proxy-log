@@ -403,6 +403,7 @@ async function handleAdminCommand(message) {
 					`Usage Today: ${data.today?.requests || 0} reqs / ${formatTokens(data.today?.tokens || 0)} tokens\n` +
 					`Prompt Limit: ${globalLimitStr}\n` +
 					(modelLimitStr ? `Model Limits:\n${modelLimitStr}\n` : '') +
+					`ℹ️ *Tool follow-ups & sub-agent requests hanya dihitung 1x prompt per turn.*\n` +
 					`Daily Token Limits:\n` +
 					`  • Total: ${data.dailyTokenLimit > 0 ? `${formatTokens(data.dailyTokensUsed)} / ${formatTokens(data.dailyTokenLimit)}` : `${formatTokens(data.dailyTokensUsed)} / ∞`}${formatResetTime(data.dailyResetAt)}\n` +
 					`  • Input: ${data.dailyInputTokenLimit > 0 ? `${formatTokens(data.dailyInputUsed)} / ${formatTokens(data.dailyInputTokenLimit)}` : `${formatTokens(data.dailyInputUsed)} / ∞`}\n` +
@@ -2752,7 +2753,7 @@ async function handleRankingSearchModal(interaction) {
 
 	const embed = new EmbedBuilder()
 		.setTitle(`📊 Usage: ${displayName}`)
-		.setDescription(`Discord ID: \`${discordUserId}\`\nAPI Key: \`${keyDisplay}\`\nStatus: ${isActive ? '🟢 Active' : '🔴 Inactive'}\n\n**🎯 Prompt Limits**\nGlobal: ${globalLimitStr}\nPer-Model:\n${modelLimitStr}\n\n**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}\nBulanan: ${monthlyTokenStr}`)
+		.setDescription(`Discord ID: \`${discordUserId}\`\nAPI Key: \`${keyDisplay}\`\nStatus: ${isActive ? '🟢 Active' : '🔴 Inactive'}\n\n**🎯 Prompt Limits**\nGlobal: ${globalLimitStr}\nPer-Model:\n${modelLimitStr}\n-# ℹ️ Tool follow-ups & sub-agent requests hanya dihitung 1x prompt per turn. Jika 1 prompt menghasilkan beberapa tool calls, tetap terhitung sebagai 1 prompt saja.\n\n**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}\nBulanan: ${monthlyTokenStr}`)
 		.setColor(isActive ? 0x57f287 : 0xff6b6b)
 		.addFields(
 			{ name: '📅 Hari Ini', value: periodField(today), inline: true },

@@ -60,7 +60,7 @@ const IDE_PATTERNS: [RegExp, string][] = [
   // --- SDK / HTTP clients ---
   [/openai-python/i, "OpenAI Python SDK"],
   [/openai-node/i, "OpenAI Node SDK"],
-  [/python-requests/i, "Python Requests"],
+  [/python-requests|python\/requests/i, "Python Requests"],
   [/axios/i, "Axios"],
   [/node-fetch|undici/i, "Node Fetch"],
   [/Go-http-client/i, "Go HTTP Client"],
