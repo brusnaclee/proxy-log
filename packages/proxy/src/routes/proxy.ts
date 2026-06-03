@@ -185,9 +185,11 @@ async function drainLogWriteQueue() {
   logWriteRunning = false;
 }
 
-function parseDbDate(value: string | null | undefined): number {
+function parseDbDate(value: string | Date | null | undefined): number {
   if (!value) return 0;
-  const normalized = value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
+  if (value instanceof Date) return value.getTime();
+  const str = String(value);
+  const normalized = str.includes("T") ? str : `${str.replace(" ", "T")}Z`;
   const parsed = Date.parse(normalized);
   return Number.isNaN(parsed) ? 0 : parsed;
 }
@@ -1123,8 +1125,8 @@ proxy.all("/*", async (c) => {
                     statusCode: trialResponse.status,
                     requestPreview: requestPreview || null,
                     responsePreview: finalized.completionText?.substring(0, 200) || null,
-                    isCountedRequest: autoIsNewPrompt ? 1 : 0,
-                    isBillableToken: 1,
+                    isCountedRequest: autoIsNewPrompt ? true : false,
+                    isBillableToken: true,
                     estimatedCost: calculateEstimatedCost(candidate.modelId, billableTokens.promptTokens, billableTokens.completionTokens),
                   });
                   logEmitter.emit({
@@ -1230,8 +1232,8 @@ proxy.all("/*", async (c) => {
             estimatedCost: calculateEstimatedCost(candidate.modelId, billableInput, completionTokens),
             requestPreview: requestPreview || null,
             responsePreview: responseJson?.choices?.[0]?.message?.content?.substring(0, 200) || null,
-            isCountedRequest: autoIsNewPrompt ? 1 : 0,
-            isBillableToken: 1,
+            isCountedRequest: autoIsNewPrompt ? true : false,
+            isBillableToken: true,
           });
           logEmitter.emit({
             model: `auto (${candidate.modelId})`,
@@ -1667,8 +1669,8 @@ const targetProvider = await getProviderForModel(model);
     }
 
     enqueueLogWrite(async (tx) => {
-      logEntry.isCountedRequest = counted ? 1 : 0;
-      logEntry.isBillableToken = isBillableToken ? 1 : 0;
+      logEntry.isCountedRequest = counted ? true : false;
+      logEntry.isBillableToken = isBillableToken ? true : false;
       await tx.insert(requestLogs).values(logEntry);
       logEmitter.emit({
         ...logEntry,
@@ -1695,7 +1697,7 @@ const targetProvider = await getProviderForModel(model);
         }
         
         const nowMs = Date.now();
-        const nowStr = new Date();
+        const nowStr = new Date().toISOString().replace("T", " ").substring(0, 19);
 
         if (!globalWindowStartMs || nowMs >= globalWindowStartMs + globalWindowMs) {
           await tx.update(apiKeys)
