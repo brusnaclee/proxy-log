@@ -1,7 +1,8 @@
 import { db } from "../db/index.js";
 import { requestLogs, modelLimits, apiKeys } from "../db/schema.js";
-import { sql, and, eq, gte } from "drizzle-orm";
+import { sql, and, eq, gte, type SQL } from "drizzle-orm";
 import { COUNTED_LOG_SQL } from "./counting.js";
+import { stripProviderPrefix } from "./model-catalog.js";
 
 export function parseRateLimitWindow(windowStr: string | null | undefined): number {
   if (!windowStr) return 0;
@@ -17,6 +18,60 @@ export function parseRateLimitWindow(windowStr: string | null | undefined): numb
     case "d": return value * 24 * 60 * 60 * 1000;
     default: return 0;
   }
+}
+
+/**
+ * Normalize model name for per-model limit matching.
+ * Strips provider prefixes and extracts base model from auto patterns.
+ *
+ * Examples:
+ *  - "auto (qwen-flash) [stream]"          -> "qwen-flash"
+ *  - "auto (ag/gpt-oss-120b-medium)"       -> "gpt-oss-120b-medium"
+ *  - "tokito/ag/claude-opus-4-6-thinking"  -> "claude-opus-4-6-thinking"
+ *  - "ag/claude-opus-4-6-thinking"         -> "claude-opus-4-6-thinking"
+ *  - "claude-opus-4-6-thinking"            -> "claude-opus-4-6-thinking"
+ *  - "qwen-flash"                          -> "qwen-flash"
+ */
+export async function normalizeModelForLimit(model: string): Promise<string> {
+  let normalized = model;
+
+  // Step 1: Extract from auto pattern  "auto (X) [stream]" or "auto (X)"
+  const autoMatch = normalized.match(/^auto\s*\(([^)]+)\)(?:\s*\[.*\])?\s*$/);
+  if (autoMatch) {
+    normalized = autoMatch[1].trim();
+  }
+
+  // Step 2: Strip provider prefix(es) iteratively
+  // e.g. "tokito/ag/claude-opus-4-6-thinking" -> strip "tokito/" -> strip "ag/" -> "claude-opus-4-6-thinking"
+  let prev = '';
+  while (normalized !== prev) {
+    prev = normalized;
+    const stripped = await stripProviderPrefix(normalized);
+    if (stripped !== normalized) {
+      normalized = stripped;
+    } else {
+      break;
+    }
+  }
+
+  return normalized;
+}
+
+/**
+ * Build a SQL WHERE condition that matches request_logs rows whose model
+ * normalizes to `normalizedModel`.  Handles:
+ *   - exact:        model = 'X'
+ *   - provider-pfx: model = 'tokito/ag/X'  (LIKE '%/X')
+ *   - auto bare:    model = 'auto (X)' or 'auto (X) [stream]'
+ *   - auto + pfx:   model = 'auto (ag/X)' or 'auto (ag/X) [stream]'
+ */
+export function getModelMatchCondition(normalizedModel: string): SQL {
+  return sql`(
+    ${requestLogs.model} = ${normalizedModel}
+    OR ${requestLogs.model} LIKE ${'auto (' + normalizedModel + ')%'}
+    OR ${requestLogs.model} LIKE ${'%/' + normalizedModel}
+    OR ${requestLogs.model} LIKE ${'auto (%/' + normalizedModel + ')%'}
+  )`;
 }
 
 /**
@@ -78,13 +133,24 @@ export async function checkModelPromptLimit(
   globalDefaultLimit: number,
   globalDefaultWindow: string,
 ): Promise<{ allowed: boolean; remaining: number; resetMs: number; used: number; effectiveLimit: number }> {
-  // 1. Per-key model override
-  const keyOverride = (await db.select().from(modelLimits)
-    .where(and(eq(modelLimits.scope, "key"), eq(modelLimits.scopeId, apiKeyId), eq(modelLimits.model, model))))[0];
+  // Normalize model name so "tokito/ag/claude-opus-4-6" matches "ag/claude-opus-4-6" etc.
+  const normalizedModel = await normalizeModelForLimit(model);
 
-  // 2. Global model override
+  // 1. Per-key model override — match any variant that normalizes to the same base
+  const keyOverride = (await db.select().from(modelLimits)
+    .where(and(
+      eq(modelLimits.scope, "key"),
+      eq(modelLimits.scopeId, apiKeyId),
+      sql`(${modelLimits.model} = ${normalizedModel} OR ${modelLimits.model} LIKE ${'%/' + normalizedModel} OR ${modelLimits.model} LIKE ${'auto (' + normalizedModel + ')%'} OR ${modelLimits.model} LIKE ${'auto (%/' + normalizedModel + ')%'})`,
+    )))[0];
+
+  // 2. Global model override — same normalized matching
   const globalOverride = (await db.select().from(modelLimits)
-    .where(and(eq(modelLimits.scope, "global"), eq(modelLimits.scopeId, 0), eq(modelLimits.model, model))))[0];
+    .where(and(
+      eq(modelLimits.scope, "global"),
+      eq(modelLimits.scopeId, 0),
+      sql`(${modelLimits.model} = ${normalizedModel} OR ${modelLimits.model} LIKE ${'%/' + normalizedModel} OR ${modelLimits.model} LIKE ${'auto (' + normalizedModel + ')%'} OR ${modelLimits.model} LIKE ${'auto (%/' + normalizedModel + ')%'})`,
+    )))[0];
 
   let effectiveLimit = 0;
   let activeOverride = null;
@@ -119,9 +185,10 @@ export async function checkModelPromptLimit(
     if (nowMs >= windowStartMs + windowMs) {
       return { allowed: true, remaining: effectiveLimit, resetMs: windowMs, used: 0, effectiveLimit };
     }
-  } else if (!activeOverride) {
-     // Clock-aligned fixed window fallback for defaults
-     windowStartMs = Math.floor(nowMs / windowMs) * windowMs;
+  } else {
+    // No override at all (using default limit) OR override exists but no window start yet.
+    // Use clock-aligned fixed window fallback.
+    windowStartMs = Math.floor(nowMs / windowMs) * windowMs;
   }
 
   const windowStartDate = new Date(windowStartMs);
@@ -130,7 +197,7 @@ export async function checkModelPromptLimit(
     .from(requestLogs)
     .where(and(
       eq(requestLogs.apiKeyId, apiKeyId),
-      eq(requestLogs.model, model),
+      getModelMatchCondition(normalizedModel),
       gte(requestLogs.createdAt, windowStartDate),
       COUNTED_LOG_SQL,
     ));
@@ -157,12 +224,22 @@ export async function getWindowResetMs(apiKeyId: number, windowMs: number, model
   const nowMs = Date.now();
   
   if (model) {
-    // Model specific limit
+    const normalizedModel = await normalizeModelForLimit(model);
+
+    // Model specific limit — match any variant that normalizes to the same base
     const keyOverride = (await db.select().from(modelLimits)
-      .where(and(eq(modelLimits.scope, "key"), eq(modelLimits.scopeId, apiKeyId), eq(modelLimits.model, model))))[0];
-      
+      .where(and(
+        eq(modelLimits.scope, "key"),
+        eq(modelLimits.scopeId, apiKeyId),
+        sql`(${modelLimits.model} = ${normalizedModel} OR ${modelLimits.model} LIKE ${'%/' + normalizedModel} OR ${modelLimits.model} LIKE ${'auto (' + normalizedModel + ')%'} OR ${modelLimits.model} LIKE ${'auto (%/' + normalizedModel + ')%'})`,
+      )))[0];
+
     const globalOverride = (await db.select().from(modelLimits)
-      .where(and(eq(modelLimits.scope, "global"), eq(modelLimits.scopeId, 0), eq(modelLimits.model, model))))[0];
+      .where(and(
+        eq(modelLimits.scope, "global"),
+        eq(modelLimits.scopeId, 0),
+        sql`(${modelLimits.model} = ${normalizedModel} OR ${modelLimits.model} LIKE ${'%/' + normalizedModel} OR ${modelLimits.model} LIKE ${'auto (' + normalizedModel + ')%'} OR ${modelLimits.model} LIKE ${'auto (%/' + normalizedModel + ')%'})`,
+      )))[0];
       
     const activeOverride = (keyOverride && keyOverride.promptLimit > 0) ? keyOverride : (globalOverride && globalOverride.promptLimit > 0) ? globalOverride : null;
     
@@ -171,8 +248,9 @@ export async function getWindowResetMs(apiKeyId: number, windowMs: number, model
       if (nowMs < windowStartMs + windowMs) {
         return Math.max(0, windowStartMs + windowMs - nowMs);
       }
-    } else if (!activeOverride) {
-      // Clock-aligned fixed window fallback for defaults
+    } else {
+      // No override (using default limit) OR override exists but no window start yet.
+      // Use clock-aligned fixed window fallback.
       const windowStartMs = Math.floor(nowMs / windowMs) * windowMs;
       return Math.max(0, windowStartMs + windowMs - nowMs);
     }
