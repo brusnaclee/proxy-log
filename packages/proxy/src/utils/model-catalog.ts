@@ -507,6 +507,8 @@ const AUTO_MODEL_EXCLUDE_PATTERNS = [
   /voicedesign/i,      // Voice design
   /voiceclone/i,       // Voice cloning
   /-realtime/i,        // Realtime streaming models (audio/video)
+  /^glm/i,             // GLM vendor models (glm-5.1, glm-z1, etc.)
+  /-character$/i,      // Character/roleplay models
 ];
 
 export function isAutoCompatible(modelId: string): boolean {
@@ -930,7 +932,7 @@ export async function enrichModelMetadata(): Promise<void> {
               outputModalities: JSON.stringify(meta.outputModalities),
               supportedFeatures: JSON.stringify(meta.supportedFeatures),
               source: "openrouter",
-              updatedAt: new Date().toISOString().replace("T", " ").substring(0, 19),
+              updatedAt: new Date(),
             },
           });
           matched++;
@@ -965,7 +967,7 @@ export async function enrichModelMetadata(): Promise<void> {
               outputModalities: fb.outputModalities ? JSON.stringify(fb.outputModalities) : null,
               supportedFeatures: fb.supportedFeatures ? JSON.stringify(fb.supportedFeatures) : null,
               source: "hardcode",
-              updatedAt: new Date().toISOString().replace("T", " ").substring(0, 19),
+              updatedAt: new Date(),
             },
           });
           fallback++;

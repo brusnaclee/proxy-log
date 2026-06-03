@@ -180,9 +180,9 @@ export async function initializeDatabase() {
 		if (keyCount === 0) {
 			// No keys in the new table yet — migrate from providers.api_key
 			await pool.query(`
-				INSERT INTO provider_api_keys (provider_id, api_key, request_count, created_at)
+        INSERT INTO provider_api_keys (provider_id, api_key, request_count, created_at)
 				SELECT id, api_key, 0, NOW() FROM providers WHERE api_key IS NOT NULL AND api_key != ''
-			`);
+      `);
 			console.log(
 				'✅ Migrated existing provider API keys to provider_api_keys table',
 			);

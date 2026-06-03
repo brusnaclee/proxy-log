@@ -3,7 +3,7 @@ import { stats, logs, type OverviewStats, type LogEntry } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { formatNumber, formatRelativeTime } from "@/lib/utils";
+import { formatNumber, formatRelativeTime, formatChartPeriod } from "@/lib/utils";
 import { Activity, Coins, Key, Monitor, TrendingUp, Download, RefreshCw, DollarSign, Search } from "lucide-react";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -380,9 +380,7 @@ export default function OverviewPage() {
                   <XAxis
                     dataKey="period"
                     tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
-                    tickFormatter={(v) =>
-                      v?.includes(" ") ? v.split(" ")[1] : v?.split("-").slice(1).join("/")
-                    }
+                    tickFormatter={formatChartPeriod}
                   />
                   <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
                   <Tooltip contentStyle={TOOLTIP_STYLE} itemStyle={ITEM_STYLE} labelStyle={LABEL_STYLE} />
@@ -457,7 +455,7 @@ export default function OverviewPage() {
               <thead>
                 <tr className="border-b border-border/50">
                   <th className="text-left py-2 px-3 text-muted-foreground font-medium">Time</th>
-                  <th className="text-left py-2 px-3 text-muted-foreground font-medium">API Key</th>
+                  <th className="text-left py-2 px-3 text-muted-foreground font-medium">User</th>
                   <th className="text-left py-2 px-3 text-muted-foreground font-medium">Model</th>
                   <th className="text-left py-2 px-3 text-muted-foreground font-medium hide-mobile">IDE</th>
                   <th className="text-right py-2 px-3 text-muted-foreground font-medium">Tokens</th>

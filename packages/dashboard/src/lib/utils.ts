@@ -57,3 +57,18 @@ function parseProxyDate(dateStr: string): Date {
 export function copyToClipboard(text: string): Promise<void> {
   return navigator.clipboard.writeText(text);
 }
+
+/**
+ * Format a period string for chart display.
+ * Daily: "2026-06-03" → "06/03"
+ * Hourly: "2026-06-03 14:00" → "14:00 WIB"
+ */
+export function formatChartPeriod(v: string): string {
+  if (!v) return v;
+  if (v.includes(" ")) {
+    // Hourly: already in WIB from server, show hour + WIB label
+    return (v.split(" ")[1] || v) + " WIB";
+  }
+  // Daily: "YYYY-MM-DD" → "MM/DD"
+  return v.split("-").slice(1).join("/");
+}

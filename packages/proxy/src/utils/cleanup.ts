@@ -104,7 +104,7 @@ export async function runTranscriptCleanup(): Promise<{ success: boolean; cleare
       .set({
         lastCleanupAt: now,
         cleanedDays: JSON.stringify(recentDays),
-        updatedAt: now
+        updatedAt: new Date()
       })
       .where(eq(cleanupState.cleanupType, "transcripts"));
 
@@ -321,7 +321,7 @@ export async function run3MonthCleanup(): Promise<{ success: boolean; deletedLog
         lastCleanupAt: now.toISOString(),
         lastProcessedMonth: pendingMonths[pendingMonths.length - 1],
         cleanedMonths: JSON.stringify(recentCleaned),
-        updatedAt: now.toISOString()
+        updatedAt: new Date()
       })
       .where(eq(cleanupState.cleanupType, "3month"));
 
@@ -366,7 +366,7 @@ export async function forceTranscriptCleanup(): Promise<{ success: boolean; clea
     await db.update(cleanupState)
       .set({
         lastCleanupAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date()
       })
       .where(eq(cleanupState.cleanupType, "transcripts"));
 
@@ -409,7 +409,7 @@ export async function forceCleanMonth(yearMonth: string): Promise<{ success: boo
         .set({
           lastCleanupAt: new Date().toISOString(),
           cleanedMonths: JSON.stringify(cleanedMonths.slice(-12)),
-          updatedAt: new Date().toISOString()
+          updatedAt: new Date()
         })
         .where(eq(cleanupState.cleanupType, "3month"));
     }

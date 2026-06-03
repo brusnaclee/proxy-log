@@ -426,7 +426,9 @@ stats.get("/stats/timeseries", async (c) => {
   const startDate = new Date(Date.now() - days * 86400000);
   const startStr = toUtcStr(startDate);
 
-  const groupExpr = period === "hourly" ? sql`to_char(created_at, 'YYYY-MM-DD HH24:00')` : sql`to_char(created_at, 'YYYY-MM-DD')`;
+  const groupExpr = period === "hourly"
+    ? sql`to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD HH24:00')`
+    : sql`to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD')`;
 
   const result = sanitizeRows((await db.execute(sql`
     SELECT

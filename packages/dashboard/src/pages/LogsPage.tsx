@@ -317,7 +317,7 @@ export default function LogsPage() {
                   <thead>
                     <tr className="border-b border-border/50">
                       <th className="text-left py-3 px-3 text-muted-foreground font-medium text-xs">Time</th>
-                      <th className="text-left py-3 px-3 text-muted-foreground font-medium text-xs">API Key</th>
+                      <th className="text-left py-3 px-3 text-muted-foreground font-medium text-xs">User</th>
                       <th className="text-left py-3 px-3 text-muted-foreground font-medium text-xs">IDE / Provider</th>
                       <th className="text-left py-3 px-3 text-muted-foreground font-medium text-xs">Model</th>
                       <th className="text-left py-3 px-3 text-muted-foreground font-medium text-xs">Session</th>
@@ -394,9 +394,11 @@ export default function LogsPage() {
                 </table>
               </div>
 
-              {requestTotalPages > 1 && (
+              {requestTotalPages > 1 && (() => {
+                const maxPages = Math.min(requestTotalPages, 10); // Cap at 500 rows (50 per page × 10)
+                return (
                 <div className="flex items-center justify-between px-4 py-3 border-t border-border/50">
-                  <p className="text-xs text-muted-foreground">Page {requestPage} of {requestTotalPages}</p>
+                  <p className="text-xs text-muted-foreground">Page {requestPage} of {maxPages}{requestTotalPages > 10 ? ` (showing max 500 rows)` : ""}</p>
                   <div className="flex gap-1">
                     <Button
                       variant="outline"
@@ -411,14 +413,15 @@ export default function LogsPage() {
                       variant="outline"
                       size="icon"
                       className="h-8 w-8"
-                      disabled={requestPage >= requestTotalPages}
+                      disabled={requestPage >= maxPages}
                       onClick={() => setRequestPage((prev) => prev + 1)}
                     >
                       <ChevronRight className="h-4 w-4" />
                     </Button>
                   </div>
                 </div>
-              )}
+                );
+              })()}
             </CardContent>
           </Card>
         </TabsContent>
@@ -494,7 +497,7 @@ export default function LogsPage() {
                   <thead>
                     <tr className="border-b border-border/50">
                       <th className="text-left py-3 px-3 text-muted-foreground font-medium text-xs">Session</th>
-                      <th className="text-left py-3 px-3 text-muted-foreground font-medium text-xs">API Key</th>
+                      <th className="text-left py-3 px-3 text-muted-foreground font-medium text-xs">User</th>
                       <th className="text-left py-3 px-3 text-muted-foreground font-medium text-xs">Provider</th>
                       <th className="text-left py-3 px-3 text-muted-foreground font-medium text-xs">Model</th>
                       <th className="text-left py-3 px-3 text-muted-foreground font-medium text-xs">IDE</th>

@@ -39,7 +39,7 @@ monitor.post("/internal/monitor/models", async (c) => {
   const body = await c.req.json<any[]>();
   if (!Array.isArray(body)) return c.json({ error: "Expected array of monitor data" }, 400);
 
-  const now = new Date().toISOString().replace("T", " ").substring(0, 19);
+  const now = new Date();
 
   const values: MonitorSnapshotRow[] = body.map((item) => ({
     modelId: String(item.modelId),
@@ -87,7 +87,7 @@ monitor.post("/settings/bot", async (c) => {
   if (!config) return c.json({ error: "Admin config not found" }, 500);
 
   const updates: Record<string, any> = {
-    updatedAt: new Date().toISOString().replace("T", " ").substring(0, 19),
+    updatedAt: new Date(),
   };
 
   if (body.discordBotToken !== undefined) updates.discordBotToken = body.discordBotToken;
@@ -162,7 +162,7 @@ monitor.post("/monitor/models", async (c) => {
   const body = await c.req.json<any[]>();
   if (!Array.isArray(body)) return c.json({ error: "Expected array of monitor data" }, 400);
 
-  const now = new Date().toISOString().replace("T", " ").substring(0, 19);
+  const now = new Date();
 
   const values: MonitorSnapshotRow[] = body.map((item) => ({
     modelId: String(item.modelId),
@@ -188,7 +188,7 @@ monitor.post("/monitor/models/single", async (c) => {
   const item = await c.req.json<any>();
   if (!item.modelId) return c.json({ error: "modelId required" }, 400);
 
-  const now = new Date().toISOString().replace("T", " ").substring(0, 19);
+  const now = new Date();
 
   await db.insert(modelMonitor).values({
     modelId: String(item.modelId),

@@ -1,7 +1,7 @@
 ﻿import { useEffect, useState, useCallback } from "react";
 import { stats } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatNumber, formatCost } from "@/lib/utils";
+import { formatNumber, formatCost, formatChartPeriod } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
 import {
@@ -295,7 +295,7 @@ export default function AnalyticsPage() {
       {/* Row 2: API Keys by Token Consumption */}
       <Card className="border-border/50">
         <CardHeader className="pb-2">
-          <CardTitle className="text-base font-medium">API Keys by Token Consumption</CardTitle>
+          <CardTitle className="text-base font-medium">Users by Token Consumption</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="h-[250px]">
@@ -406,7 +406,7 @@ export default function AnalyticsPage() {
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={hourlyData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis dataKey="period" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} tickFormatter={(v) => v?.split(" ")[1] || v} />
+                    <XAxis dataKey="period" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} tickFormatter={(v) => { const p = formatChartPeriod(v); return p.replace(" WIB", ""); }} />
                     <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
                     <Tooltip contentStyle={TOOLTIP_STYLE} itemStyle={ITEM_STYLE} labelStyle={LABEL_STYLE} />
                     <Bar dataKey="requests" fill="#f59e0b" radius={[2, 2, 0, 0]} />
@@ -429,7 +429,7 @@ export default function AnalyticsPage() {
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={timeseriesData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis dataKey="period" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} tickFormatter={(v) => v?.split("-").slice(1).join("/")} />
+                    <XAxis dataKey="period" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} tickFormatter={formatChartPeriod} />
                     <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
                     <Tooltip contentStyle={TOOLTIP_STYLE} itemStyle={ITEM_STYLE} labelStyle={LABEL_STYLE} />
                     <Line type="monotone" dataKey="uniqueDevices" stroke="#38bdf8" strokeWidth={2} dot={false} name="Unique Devices" />

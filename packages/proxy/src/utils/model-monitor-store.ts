@@ -16,7 +16,7 @@ export type MonitorSnapshotRow = {
   httpStatus: number;
   errorMessage: string | null;
   baseUrl: string | null;
-  checkedAt: string;
+  checkedAt: Date;
 };
 
 export async function getActiveProviderNames(): Promise<Set<string>> {
@@ -72,7 +72,8 @@ export async function upsertModelStatus(params: {
   errorMessage: string | null;
   baseUrl: string | null;
 }): Promise<void> {
-  const now = new Date().toISOString().replace("T", " ").substring(0, 19);
+  const now = new Date();
+  const nowStr = now.toISOString().replace("T", " ").substring(0, 19);
 
   // Upsert into model_monitor: find existing row by modelId+provider
   const existing = await db
@@ -134,14 +135,14 @@ export async function upsertModelStatus(params: {
     if (stateRow) {
       await db
         .update(modelTestState)
-        .set({ retryCount: 0, lastTestAt: now, suspendedUntil: null })
+        .set({ retryCount: 0, lastTestAt: nowStr, suspendedUntil: null })
         .where(eq(modelTestState.id, stateRow.id));
     } else {
       await db.insert(modelTestState).values({
         modelId: params.modelId,
         provider: params.provider,
         retryCount: 0,
-        lastTestAt: now,
+        lastTestAt: nowStr,
         suspendedUntil: null,
       });
     }
@@ -151,14 +152,14 @@ export async function upsertModelStatus(params: {
     if (stateRow) {
       await db
         .update(modelTestState)
-        .set({ lastTestAt: now })
+        .set({ lastTestAt: nowStr })
         .where(eq(modelTestState.id, stateRow.id));
     } else {
       await db.insert(modelTestState).values({
         modelId: params.modelId,
         provider: params.provider,
         retryCount: 0,
-        lastTestAt: now,
+        lastTestAt: nowStr,
         suspendedUntil: null,
       });
     }
@@ -171,14 +172,14 @@ export async function upsertModelStatus(params: {
     if (stateRow) {
       await db
         .update(modelTestState)
-        .set({ retryCount: newRetryCount, lastTestAt: now, suspendedUntil })
+        .set({ retryCount: newRetryCount, lastTestAt: nowStr, suspendedUntil })
         .where(eq(modelTestState.id, stateRow.id));
     } else {
       await db.insert(modelTestState).values({
         modelId: params.modelId,
         provider: params.provider,
         retryCount: newRetryCount,
-        lastTestAt: now,
+        lastTestAt: nowStr,
         suspendedUntil,
       });
     }
