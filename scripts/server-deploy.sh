@@ -35,8 +35,8 @@ echo "=== Health check ==="
 curl -sf http://127.0.0.1:3000/health | head -c 120
 echo
 
-echo "=== Providers ==="
-sqlite3 packages/proxy/data/gateway.db "SELECT id, name, endpoint, priority FROM providers WHERE is_active=1;"
+echo "=== Providers (via psql) ==="
+PGPASSWORD="${DB_PASSWORD:-}" psql -h "${DB_HOST:-localhost}" -U "${DB_USER:-monit}" -d "${DB_NAME:-monit_gateway}" -c "SELECT id, name, endpoint, priority FROM providers WHERE is_active=true;" 2>/dev/null || echo "(skipped — set DB env vars)"
 
 echo "=== Bot monitor (last tokowa/tokito lines) ==="
 pm2 logs discord-bot --lines 20 --nostream 2>&1 | grep -E 'tokito-monitor|error|Error' | tail -10 || true
