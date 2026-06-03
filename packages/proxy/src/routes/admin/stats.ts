@@ -407,7 +407,7 @@ stats.get("/stats/by-device", async (c) => {
       WHERE status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL ${dateFilter}
       GROUP BY device_fingerprint, ide_detected, ip_address, turn_id
     )
-    GROUP BY device_fingerprint
+    GROUP BY device_fingerprint, ide_detected, ip_address
     ORDER BY requests DESC
     LIMIT 50
   `)).rows;
@@ -426,7 +426,7 @@ stats.get("/stats/timeseries", async (c) => {
   const startDate = new Date(Date.now() - days * 86400000);
   const startStr = toUtcStr(startDate);
 
-  const groupExpr = period === "hourly" ? "to_char(created_at, 'YYYY-MM-DD HH24:00')" : "to_char(created_at, 'YYYY-MM-DD')";
+  const groupExpr = period === "hourly" ? sql`to_char(created_at, 'YYYY-MM-DD HH24:00')` : sql`to_char(created_at, 'YYYY-MM-DD')`;
 
   const result = (await db.execute(sql`
     SELECT
@@ -436,18 +436,17 @@ stats.get("/stats/timeseries", async (c) => {
       COALESCE(SUM(sum_delta), 0) as promptTokens,
       COALESCE(SUM(sum_c), 0) as completionTokens,
       0 as estimatedCost,
-      COUNT(DISTINCT device_fingerprint) as uniqueDevices
+      0 as uniqueDevices
     FROM (
       SELECT
-        ${sql.raw(groupExpr)} as period_group,
-        device_fingerprint,
+        ${groupExpr} as period_group,
         turn_id,
         SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta,
         SUM(completion_tokens) as sum_c
       FROM request_logs
       WHERE created_at >= ${startStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY ${sql.raw(groupExpr)}, turn_id
-    )
+      GROUP BY ${groupExpr}, turn_id
+    ) sub
     GROUP BY period_group
     ORDER BY period_group
   `)).rows;
