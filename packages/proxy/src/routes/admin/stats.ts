@@ -300,7 +300,7 @@ stats.get("/stats/by-key", async (c) => {
     const topModel = (await db.select({ model: requestLogs.model, count: sql<number>`count(*)` })
       .from(requestLogs).where(whereClause).groupBy(requestLogs.model).orderBy(sql`count(*) DESC`).limit(1))[0];
 
-    const modelBreakdown = (await db.execute(sql`
+    const modelBreakdown = sanitizeRows((await db.execute(sql`
       SELECT model, COALESCE(SUM(max_p), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
       FROM (SELECT model, turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
         FROM request_logs WHERE api_key_id = ${key.id} ${startDate ? sql`AND created_at >= ${startDate}` : sql``} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
@@ -339,7 +339,7 @@ stats.get("/stats/by-model", async (c) => {
   const dateFilter = startDate ? sql`AND created_at >= ${startDate}` : sql``;
   const keyFilter = apiKeyId ? sql`AND api_key_id = ${apiKeyId}` : sql``;
 
-  const rows = (await db.execute(sql`
+  const rows = sanitizeRows((await db.execute(sql`
     SELECT
       model,
       COUNT(*) as "requests",
@@ -388,7 +388,7 @@ stats.get("/stats/by-device", async (c) => {
 
   const dateFilter = startDate ? sql`AND created_at >= ${startDate}` : sql``;
 
-  const rows = (await db.execute(sql`
+  const rows = sanitizeRows((await db.execute(sql`
     SELECT
       device_fingerprint as fingerprint,
       ide_detected as ide,
@@ -428,7 +428,7 @@ stats.get("/stats/timeseries", async (c) => {
 
   const groupExpr = period === "hourly" ? sql`to_char(created_at, 'YYYY-MM-DD HH24:00')` : sql`to_char(created_at, 'YYYY-MM-DD')`;
 
-  const result = (await db.execute(sql`
+  const result = sanitizeRows((await db.execute(sql`
     SELECT
       period_group as period,
       COUNT(*) as requests,
@@ -467,7 +467,7 @@ stats.get("/stats/top-users", async (c) => {
   const dateFilter = startDate ? sql`AND created_at >= ${startDate}` : sql``;
 
   // Aggregate per api_key_id using turn-level token aggregation
-  const aggRows = (await db.execute(sql`
+  const aggRows = sanitizeRows((await db.execute(sql`
     SELECT
       api_key_id as "apiKeyId",
       COUNT(*) as "requests",
