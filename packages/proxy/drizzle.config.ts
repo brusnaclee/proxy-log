@@ -3,8 +3,8 @@ import { defineConfig } from "drizzle-kit";
 export default defineConfig({
   schema: "./src/db/schema.ts",
   out: "./drizzle",
-  dialect: "sqlite",
+  dialect: "postgresql",
   dbCredentials: {
-    url: `file:${process.env.DATABASE_URL || "./data/gateway.db"}`,
+    url: process.env.DATABASE_URL || "postgresql://monit_api:rendang123pg@localhost:5432/monit_api",
   },
 });

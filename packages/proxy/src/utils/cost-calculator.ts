@@ -180,7 +180,7 @@ export async function refreshMetadataPricing(): Promise<void> {
       modelId: modelMetadata.modelId,
       inputPricePerMtok: modelMetadata.inputPricePerMtok,
       outputPricePerMtok: modelMetadata.outputPricePerMtok,
-    }).from(modelMetadata).all();
+    }).from(modelMetadata);
 
     for (const row of rows) {
       if (row.inputPricePerMtok || row.outputPricePerMtok) {

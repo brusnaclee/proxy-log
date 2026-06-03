@@ -9,7 +9,7 @@ import { purgeMonitorForProvider } from "../../utils/model-monitor-store.js";
 const providersApi = new Hono();
 
 providersApi.get("/providers", async (c) => {
-  const list = await db.select().from(providers).orderBy(desc(providers.priority)).all();
+  const list = await db.select().from(providers).orderBy(desc(providers.priority));
   return c.json(list);
 });
 
@@ -18,14 +18,14 @@ providersApi.post("/providers", async (c) => {
   if (!body.name || !body.endpoint || !body.apiKey) {
     return c.json({ error: "Missing required fields" }, 400);
   }
-  const result = await db.insert(providers).values({
+  const [result] = await db.insert(providers).values({
     name: body.name,
     endpoint: body.endpoint,
     apiKey: sanitizeProviderApiKey(body.apiKey),
     endpointType: body.endpointType || "openai",
     isActive: body.isActive ?? true,
     priority: body.priority || 0,
-  }).returning().get();
+  }).returning();
 
   // Also add the key to the providerApiKeys table for rotation
   await addProviderApiKey(result.id, body.apiKey);
@@ -37,7 +37,7 @@ providersApi.post("/providers", async (c) => {
 
 providersApi.put("/providers/:id", async (c) => {
   const id = parseInt(c.req.param("id"));
-  const existing = await db.select().from(providers).where(eq(providers.id, id)).get();
+  const [existing] = await db.select().from(providers).where(eq(providers.id, id));
   if (!existing) return c.json({ error: "Provider not found" }, 404);
 
   const body = await c.req.json<{ name?: string; endpoint?: string; apiKey?: string; isActive?: boolean; priority?: number; endpointType?: string }>();
@@ -48,9 +48,9 @@ providersApi.put("/providers/:id", async (c) => {
   if (body.isActive !== undefined) updates.isActive = body.isActive;
   if (body.priority !== undefined) updates.priority = body.priority;
   if (body.endpointType !== undefined) updates.endpointType = body.endpointType;
-  updates.updatedAt = new Date().toISOString().replace("T", " ").substring(0, 19);
+  updates.updatedAt = new Date();
 
-  await db.update(providers).set(updates).where(eq(providers.id, id)).run();
+  await db.update(providers).set(updates).where(eq(providers.id, id));
 
   if (body.isActive === false) {
     await purgeMonitorForProvider(existing.name);
@@ -63,11 +63,11 @@ providersApi.put("/providers/:id", async (c) => {
 
 providersApi.delete("/providers/:id", async (c) => {
   const id = parseInt(c.req.param("id"));
-  const existing = await db.select().from(providers).where(eq(providers.id, id)).get();
+  const [existing] = await db.select().from(providers).where(eq(providers.id, id));
   if (existing) {
     await purgeMonitorForProvider(existing.name);
   }
-  await db.delete(providers).where(eq(providers.id, id)).run();
+  await db.delete(providers).where(eq(providers.id, id));
 
   void refreshModelCatalog();
 
@@ -79,7 +79,7 @@ providersApi.delete("/providers/:id", async (c) => {
 // Get all keys for a provider
 providersApi.get("/providers/:id/keys", async (c) => {
   const id = parseInt(c.req.param("id"));
-  const existing = await db.select().from(providers).where(eq(providers.id, id)).get();
+  const [existing] = await db.select().from(providers).where(eq(providers.id, id));
   if (!existing) return c.json({ error: "Provider not found" }, 404);
 
   const keys = await getProviderApiKeys(id);
@@ -89,7 +89,7 @@ providersApi.get("/providers/:id/keys", async (c) => {
 // Add a new key to a provider
 providersApi.post("/providers/:id/keys", async (c) => {
   const id = parseInt(c.req.param("id"));
-  const existing = await db.select().from(providers).where(eq(providers.id, id)).get();
+  const [existing] = await db.select().from(providers).where(eq(providers.id, id));
   if (!existing) return c.json({ error: "Provider not found" }, 404);
 
   const body = await c.req.json<{ apiKey: string }>();

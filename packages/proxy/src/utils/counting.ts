@@ -1,7 +1,7 @@
 import { sql, type SQL } from "drizzle-orm";
 
 /** Rows that count toward user prompt usage. */
-export const COUNTED_LOG_SQL = sql`is_counted_request IS NOT 0 AND status_code BETWEEN 200 AND 299`;
+export const COUNTED_LOG_SQL = sql`is_counted_request = true AND status_code BETWEEN 200 AND 299`;
 
 /** Rows that count toward token billing (prompts + tool followups). */
 export const BILLABLE_LOG_SQL = sql`status_code BETWEEN 200 AND 299`;
@@ -47,7 +47,7 @@ export function turnTotalTokensSql(whereCondition: SQL | undefined): SQL<number>
   return sql<number>`COALESCE((SELECT SUM(sum_delta + sum_c) FROM (SELECT SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
 }
 
-/** WIB midnight as SQLite datetime string (UTC storage). */
+/** WIB midnight as PostgreSQL datetime string (UTC storage). */
 export function wibTodayStartSql(): string {
   const now = new Date();
   const wibOffset = 7 * 60 * 60 * 1000;
@@ -56,7 +56,7 @@ export function wibTodayStartSql(): string {
   return new Date(wibNow.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
 }
 
-/** WIB calendar month start as SQLite datetime string. */
+/** WIB calendar month start as PostgreSQL datetime string. */
 export function wibMonthStartSql(): string {
   const now = new Date();
   const wibOffset = 7 * 60 * 60 * 1000;
@@ -79,4 +79,4 @@ export function wibMonthStartSql(): string {
 export const NORMALIZE_MODEL_SQL = sql`CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END`;
 
 /** SQL expression: extract underlying model from "auto (model) [stream]" */
-export const RESOLVE_AUTO_MODEL_SQL = sql`CASE WHEN model LIKE 'auto (%)%' THEN TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) ELSE model END`;
+export const RESOLVE_AUTO_MODEL_SQL = sql`CASE WHEN model LIKE 'auto (%)%' THEN TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) ELSE model END`;

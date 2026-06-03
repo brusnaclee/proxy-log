@@ -32,7 +32,7 @@ export async function checkPromptLimit(
   const windowMs = parseRateLimitWindow(windowStr);
   if (windowMs <= 0) return { allowed: true, remaining: -1, resetMs: 0, used: 0 };
 
-  const keyRecord = await db.select({ promptWindowStart: apiKeys.promptWindowStart }).from(apiKeys).where(eq(apiKeys.id, apiKeyId)).get();
+  const keyRecord = (await db.select({ promptWindowStart: apiKeys.promptWindowStart }).from(apiKeys).where(eq(apiKeys.id, apiKeyId)))[0];
   
   let windowStartMs = 0;
   if (keyRecord?.promptWindowStart) {
@@ -58,10 +58,9 @@ export async function checkPromptLimit(
       eq(requestLogs.apiKeyId, apiKeyId),
       gte(requestLogs.createdAt, windowStartStr),
       COUNTED_LOG_SQL,
-    ))
-    .get();
+    ));
 
-  const used = usage?.count || 0;
+  const used = (usage[0])?.count || 0;
   const resetMs = Math.max(0, windowStartMs + windowMs - nowMs);
   
   return { allowed: used < promptLimit, remaining: Math.max(0, promptLimit - used), resetMs, used };
@@ -80,14 +79,12 @@ export async function checkModelPromptLimit(
   globalDefaultWindow: string,
 ): Promise<{ allowed: boolean; remaining: number; resetMs: number; used: number; effectiveLimit: number }> {
   // 1. Per-key model override
-  const keyOverride = await db.select().from(modelLimits)
-    .where(and(eq(modelLimits.scope, "key"), eq(modelLimits.scopeId, apiKeyId), eq(modelLimits.model, model)))
-    .get();
+  const keyOverride = (await db.select().from(modelLimits)
+    .where(and(eq(modelLimits.scope, "key"), eq(modelLimits.scopeId, apiKeyId), eq(modelLimits.model, model))))[0];
 
   // 2. Global model override
-  const globalOverride = await db.select().from(modelLimits)
-    .where(and(eq(modelLimits.scope, "global"), eq(modelLimits.scopeId, 0), eq(modelLimits.model, model)))
-    .get();
+  const globalOverride = (await db.select().from(modelLimits)
+    .where(and(eq(modelLimits.scope, "global"), eq(modelLimits.scopeId, 0), eq(modelLimits.model, model))))[0];
 
   let effectiveLimit = 0;
   let activeOverride = null;
@@ -136,10 +133,9 @@ export async function checkModelPromptLimit(
       eq(requestLogs.model, model),
       gte(requestLogs.createdAt, windowStartStr),
       COUNTED_LOG_SQL,
-    ))
-    .get();
+    ));
 
-  const used = usage?.count || 0;
+  const used = (usage[0])?.count || 0;
   const resetMs = Math.max(0, windowStartMs + windowMs - nowMs);
   
   return {
@@ -162,13 +158,11 @@ export async function getWindowResetMs(apiKeyId: number, windowMs: number, model
   
   if (model) {
     // Model specific limit
-    const keyOverride = await db.select().from(modelLimits)
-      .where(and(eq(modelLimits.scope, "key"), eq(modelLimits.scopeId, apiKeyId), eq(modelLimits.model, model)))
-      .get();
+    const keyOverride = (await db.select().from(modelLimits)
+      .where(and(eq(modelLimits.scope, "key"), eq(modelLimits.scopeId, apiKeyId), eq(modelLimits.model, model))))[0];
       
-    const globalOverride = await db.select().from(modelLimits)
-      .where(and(eq(modelLimits.scope, "global"), eq(modelLimits.scopeId, 0), eq(modelLimits.model, model)))
-      .get();
+    const globalOverride = (await db.select().from(modelLimits)
+      .where(and(eq(modelLimits.scope, "global"), eq(modelLimits.scopeId, 0), eq(modelLimits.model, model))))[0];
       
     const activeOverride = (keyOverride && keyOverride.promptLimit > 0) ? keyOverride : (globalOverride && globalOverride.promptLimit > 0) ? globalOverride : null;
     
@@ -187,7 +181,7 @@ export async function getWindowResetMs(apiKeyId: number, windowMs: number, model
   }
   
   // Global prompt limit
-  const keyRecord = await db.select({ promptWindowStart: apiKeys.promptWindowStart }).from(apiKeys).where(eq(apiKeys.id, apiKeyId)).get();
+  const keyRecord = (await db.select({ promptWindowStart: apiKeys.promptWindowStart }).from(apiKeys).where(eq(apiKeys.id, apiKeyId)))[0];
   
   if (keyRecord?.promptWindowStart) {
     const windowStartMs = Date.parse(keyRecord.promptWindowStart.replace(" ", "T") + "Z");

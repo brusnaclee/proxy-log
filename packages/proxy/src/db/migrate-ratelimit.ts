@@ -1,25 +1,9 @@
-import { client } from "./index.js";
+// This migration file is no longer needed.
+// PostgreSQL schema is managed via Drizzle pgTable definitions in schema.ts.
+// Rate limit columns are defined directly in the schema.
 
 export async function up() {
-  const queries = [
-    `ALTER TABLE admin_config ADD COLUMN global_rate_limit INTEGER DEFAULT 0`,
-    `ALTER TABLE admin_config ADD COLUMN global_rate_limit_window TEXT DEFAULT '1h'`,
-    `ALTER TABLE api_keys ADD COLUMN rate_limit INTEGER DEFAULT 0`,
-    `ALTER TABLE api_keys ADD COLUMN rate_limit_window TEXT`
-  ];
-
-  for (const query of queries) {
-    try {
-      await client.execute(query);
-      console.log(`Executed: ${query}`);
-    } catch (e: any) {
-      if (!e.message.includes("duplicate column name")) {
-        console.error(`Migration error: ${e.message}`);
-      } else {
-        console.log(`Column already exists, skipped.`);
-      }
-    }
-  }
+  console.log('[migrate-ratelimit] Skipped — PostgreSQL schema is managed via Drizzle push.');
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

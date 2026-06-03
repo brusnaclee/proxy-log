@@ -168,7 +168,7 @@ export async function refreshModelCatalog(): Promise<void> {
   refreshInFlight = (async () => {
     await loadFromDisk();
 
-    const activeProviders = await db.select().from(providers).where(eq(providers.isActive, true)).orderBy(providers.priority).all();
+    const activeProviders = await db.select().from(providers).where(eq(providers.isActive, true)).orderBy(providers.priority);
     if (activeProviders.length === 0) {
       cache.lastError = "No active providers configured";
       return;
@@ -303,11 +303,11 @@ export async function getModelCatalogResponse() {
 }
 
 async function getActiveProviders() {
-  return db.select().from(providers).where(eq(providers.isActive, true)).orderBy(providers.priority).all();
+  return db.select().from(providers).where(eq(providers.isActive, true)).orderBy(providers.priority);
 }
 
 async function resolveProviderById(providerId: number) {
-  const p = await db.select().from(providers).where(eq(providers.id, providerId)).get();
+  const p = (await db.select().from(providers).where(eq(providers.id, providerId)))[0];
   return p && p.isActive ? p : null;
 }
 
@@ -353,7 +353,7 @@ function collectProviderIdsForModel(modelId: string, upstreamModel: string): num
 
 async function isProviderOnlineForModel(providerName: string, upstreamModel: string): Promise<boolean> {
   // Check exact match first
-  const latest = await db
+  const latest = (await db
     .select()
     .from(modelMonitor)
     .where(
@@ -363,15 +363,14 @@ async function isProviderOnlineForModel(providerName: string, upstreamModel: str
       ),
     )
     .orderBy(desc(modelMonitor.checkedAt))
-    .limit(1)
-    .get();
+    .limit(1))[0];
 
   if (latest) {
     return Boolean(latest.isOnline) && latest.httpStatus === 200;
   }
 
   // Also check with provider prefix (e.g., "mimo-v2.5-pro" -> "mimo/mimo-v2.5-pro")
-  const withPrefix = await db
+  const withPrefix = (await db
     .select()
     .from(modelMonitor)
     .where(
@@ -381,21 +380,19 @@ async function isProviderOnlineForModel(providerName: string, upstreamModel: str
       ),
     )
     .orderBy(desc(modelMonitor.checkedAt))
-    .limit(1)
-    .get();
+    .limit(1))[0];
 
   if (withPrefix) {
     return Boolean(withPrefix.isOnline) && withPrefix.httpStatus === 200;
   }
 
   // Fallback: any monitor row for this model (legacy rows without provider)
-  const legacy = await db
+  const legacy = (await db
     .select()
     .from(modelMonitor)
     .where(eq(modelMonitor.modelId, upstreamModel))
     .orderBy(desc(modelMonitor.checkedAt))
-    .limit(1)
-    .get();
+    .limit(1))[0];
 
   if (legacy) {
     return Boolean(legacy.isOnline) && legacy.httpStatus === 200;
@@ -430,11 +427,10 @@ export async function getProviderForModel(modelId: string): Promise<any | null> 
   const { upstreamModel, forcedProviderName } = await parseModelWithProvider(modelId);
 
   if (forcedProviderName) {
-    const forced = await db
+    const forced = (await db
       .select()
       .from(providers)
-      .where(and(eq(providers.name, forcedProviderName), eq(providers.isActive, true)))
-      .get();
+      .where(and(eq(providers.name, forcedProviderName), eq(providers.isActive, true))))[0];
     return forced || null;
   }
 
@@ -541,8 +537,7 @@ export async function getOnlineModelsByLatency(): Promise<Array<{
     .innerJoin(
       latestSubquery,
       sql`${modelMonitor.modelId} = ${latestSubquery.modelId} AND COALESCE(${modelMonitor.provider}, '') = COALESCE(${latestSubquery.provider}, '') AND ${modelMonitor.checkedAt} = ${latestSubquery.maxCheckedAt}`,
-    )
-    .all();
+    );
 
   return rows
     .map((r) => r.model_monitor)
@@ -586,8 +581,7 @@ export async function getNextApiKey(providerId: number): Promise<{ keyId: number
         eq(providerApiKeys.isActive, true),
       ),
     )
-    .orderBy(asc(providerApiKeys.requestCount))
-    .all();
+    .orderBy(asc(providerApiKeys.requestCount));
 
   if (keys.length > 0) {
     const chosen = keys[0];
@@ -598,14 +592,13 @@ export async function getNextApiKey(providerId: number): Promise<{ keyId: number
         requestCount: (chosen.requestCount ?? 0) + 1,
         lastUsedAt: new Date().toISOString(),
       })
-      .where(eq(providerApiKeys.id, chosen.id))
-      .run();
+      .where(eq(providerApiKeys.id, chosen.id));
 
     return { keyId: chosen.id, apiKey: chosen.apiKey };
   }
 
   // Fallback: use the legacy api_key from the providers table
-  const provider = await db.select().from(providers).where(eq(providers.id, providerId)).get();
+  const provider = (await db.select().from(providers).where(eq(providers.id, providerId)))[0];
   if (provider?.apiKey) {
     return { keyId: -1, apiKey: provider.apiKey }; // -1 = legacy key
   }
@@ -624,8 +617,7 @@ export async function markKeyAsLimited(keyId: number): Promise<void> {
       isLimited: true,
       limitedAt: new Date().toISOString(),
     })
-    .where(eq(providerApiKeys.id, keyId))
-    .run();
+    .where(eq(providerApiKeys.id, keyId));
 }
 
 /**
@@ -638,29 +630,27 @@ export async function resetKeyLimited(keyId: number): Promise<void> {
       isLimited: false,
       limitedAt: null,
     })
-    .where(eq(providerApiKeys.id, keyId))
-    .run();
+    .where(eq(providerApiKeys.id, keyId));
 }
 
 /**
  * Delete an API key (Delete button in dashboard).
  */
 export async function deleteApiKey(keyId: number): Promise<void> {
-  await db.delete(providerApiKeys).where(eq(providerApiKeys.id, keyId)).run();
+  await db.delete(providerApiKeys).where(eq(providerApiKeys.id, keyId));
 }
 
 /**
  * Toggle a key's active status (Enable/Disable button in dashboard).
  */
 export async function toggleKeyActive(keyId: number): Promise<boolean> {
-  const key = await db.select().from(providerApiKeys).where(eq(providerApiKeys.id, keyId)).get();
+  const key = (await db.select().from(providerApiKeys).where(eq(providerApiKeys.id, keyId)))[0];
   if (!key) return false;
   const newActive = !key.isActive;
   await db
     .update(providerApiKeys)
     .set({ isActive: newActive })
-    .where(eq(providerApiKeys.id, keyId))
-    .run();
+    .where(eq(providerApiKeys.id, keyId));
   return newActive;
 }
 
@@ -671,8 +661,7 @@ export async function updateApiKey(keyId: number, newApiKey: string): Promise<vo
   await db
     .update(providerApiKeys)
     .set({ apiKey: sanitizeProviderApiKey(newApiKey) })
-    .where(eq(providerApiKeys.id, keyId))
-    .run();
+    .where(eq(providerApiKeys.id, keyId));
 }
 
 /**
@@ -683,8 +672,7 @@ export async function getProviderApiKeys(providerId: number): Promise<ProviderAp
     .select()
     .from(providerApiKeys)
     .where(eq(providerApiKeys.providerId, providerId))
-    .orderBy(providerApiKeys.id)
-    .all();
+    .orderBy(providerApiKeys.id);
 
   return rows.map((r) => ({
     id: r.id,
@@ -702,14 +690,14 @@ export async function getProviderApiKeys(providerId: number): Promise<ProviderAp
  * Add a new API key to a provider.
  */
 export async function addProviderApiKey(providerId: number, apiKey: string): Promise<number> {
-  const result = await db.insert(providerApiKeys).values({
+  const [result] = await db.insert(providerApiKeys).values({
     providerId,
     apiKey: sanitizeProviderApiKey(apiKey),
     requestCount: 0,
     isLimited: false,
-  }).run();
+  }).returning();
 
-  return Number(result.lastInsertRowid);
+  return result.id;
 }
 
 // ─── Model Metadata Enrichment (OpenRouter + Fallback) ────────────────────────
@@ -944,7 +932,7 @@ export async function enrichModelMetadata(): Promise<void> {
               source: "openrouter",
               updatedAt: new Date().toISOString().replace("T", " ").substring(0, 19),
             },
-          }).run();
+          });
           matched++;
           continue;
         }
@@ -979,13 +967,13 @@ export async function enrichModelMetadata(): Promise<void> {
               source: "hardcode",
               updatedAt: new Date().toISOString().replace("T", " ").substring(0, 19),
             },
-          }).run();
+          });
           fallback++;
           continue;
         }
 
         // Unknown model — check if already in DB (e.g., manually added), skip if so
-        const existing = await db.select().from(modelMetadata).where(eq(modelMetadata.modelId, modelId)).get();
+        const existing = (await db.select().from(modelMetadata).where(eq(modelMetadata.modelId, modelId)))[0];
         if (!existing) {
           // Insert with safe defaults for unknown models
           await db.insert(modelMetadata).values({
@@ -994,7 +982,7 @@ export async function enrichModelMetadata(): Promise<void> {
             inputModalities: JSON.stringify(["text"]),
             outputModalities: JSON.stringify(["text"]),
             source: "unknown",
-          }).onConflictDoNothing().run();
+          }).onConflictDoNothing();
           unknown++;
         }
       }
@@ -1015,7 +1003,7 @@ export async function enrichModelMetadata(): Promise<void> {
  * Get all model metadata from DB as a lookup map.
  */
 export async function getModelMetadataMap(): Promise<Map<string, typeof modelMetadata.$inferSelect>> {
-  const rows = await db.select().from(modelMetadata).all();
+  const rows = await db.select().from(modelMetadata);
   const map = new Map<string, typeof modelMetadata.$inferSelect>();
   for (const row of rows) {
     map.set(row.modelId, row);

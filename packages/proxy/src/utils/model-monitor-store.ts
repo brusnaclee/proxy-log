@@ -23,14 +23,13 @@ export async function getActiveProviderNames(): Promise<Set<string>> {
   const rows = await db
     .select({ name: providers.name })
     .from(providers)
-    .where(eq(providers.isActive, true))
-    .all();
+    .where(eq(providers.isActive, true));
   return new Set(rows.map((r) => r.name));
 }
 
 export async function purgeMonitorForProvider(providerName: string): Promise<void> {
-  await db.delete(modelMonitor).where(eq(modelMonitor.provider, providerName)).run();
-  await db.delete(modelTestState).where(eq(modelTestState.provider, providerName)).run();
+  await db.delete(modelMonitor).where(eq(modelMonitor.provider, providerName));
+  await db.delete(modelTestState).where(eq(modelTestState.provider, providerName));
 }
 
 /** Replace entire monitor table with the latest bot snapshot (active providers only). */
@@ -40,9 +39,9 @@ export async function replaceModelMonitorSnapshot(
   const activeNames = await getActiveProviderNames();
   const filtered = values.filter((v) => v.provider && activeNames.has(v.provider));
 
-  await db.delete(modelMonitor).run();
+  await db.delete(modelMonitor);
   if (filtered.length > 0) {
-    await db.insert(modelMonitor).values(filtered).run();
+    await db.insert(modelMonitor).values(filtered);
   }
   return filtered.length;
 }
@@ -88,7 +87,7 @@ export async function upsertModelStatus(params: {
       ),
     )
     .limit(1)
-    .get();
+    .then(rows => rows[0]);
 
   if (existing) {
     await db
@@ -101,8 +100,7 @@ export async function upsertModelStatus(params: {
         baseUrl: params.baseUrl,
         checkedAt: now,
       })
-      .where(eq(modelMonitor.id, existing.id))
-      .run();
+      .where(eq(modelMonitor.id, existing.id));
   } else {
     await db.insert(modelMonitor).values({
       modelId: params.modelId,
@@ -113,7 +111,7 @@ export async function upsertModelStatus(params: {
       errorMessage: params.errorMessage,
       baseUrl: params.baseUrl,
       checkedAt: now,
-    }).run();
+    });
   }
 
   // Update model_test_state for retry tracking
@@ -129,7 +127,7 @@ export async function upsertModelStatus(params: {
       ),
     )
     .limit(1)
-    .get();
+    .then(rows => rows[0]);
 
   if (params.isOnline) {
     // Online: clear retry state
@@ -137,8 +135,7 @@ export async function upsertModelStatus(params: {
       await db
         .update(modelTestState)
         .set({ retryCount: 0, lastTestAt: now, suspendedUntil: null })
-        .where(eq(modelTestState.id, stateRow.id))
-        .run();
+        .where(eq(modelTestState.id, stateRow.id));
     } else {
       await db.insert(modelTestState).values({
         modelId: params.modelId,
@@ -146,7 +143,7 @@ export async function upsertModelStatus(params: {
         retryCount: 0,
         lastTestAt: now,
         suspendedUntil: null,
-      }).run();
+      });
     }
   } else if (params.httpStatus === 429) {
     // Rate limited: DON'T increment retry count - model is working, just busy
@@ -155,8 +152,7 @@ export async function upsertModelStatus(params: {
       await db
         .update(modelTestState)
         .set({ lastTestAt: now })
-        .where(eq(modelTestState.id, stateRow.id))
-        .run();
+        .where(eq(modelTestState.id, stateRow.id));
     } else {
       await db.insert(modelTestState).values({
         modelId: params.modelId,
@@ -164,7 +160,7 @@ export async function upsertModelStatus(params: {
         retryCount: 0,
         lastTestAt: now,
         suspendedUntil: null,
-      }).run();
+      });
     }
   } else {
     // Offline (5xx, timeout, connection error): increment retry count
@@ -176,8 +172,7 @@ export async function upsertModelStatus(params: {
       await db
         .update(modelTestState)
         .set({ retryCount: newRetryCount, lastTestAt: now, suspendedUntil })
-        .where(eq(modelTestState.id, stateRow.id))
-        .run();
+        .where(eq(modelTestState.id, stateRow.id));
     } else {
       await db.insert(modelTestState).values({
         modelId: params.modelId,
@@ -185,7 +180,7 @@ export async function upsertModelStatus(params: {
         retryCount: newRetryCount,
         lastTestAt: now,
         suspendedUntil,
-      }).run();
+      });
     }
   }
 }
@@ -208,16 +203,14 @@ export async function getModelTestStates(): Promise<
       lastTestAt: modelTestState.lastTestAt,
       suspendedUntil: modelTestState.suspendedUntil,
     })
-    .from(modelTestState)
-    .all();
+    .from(modelTestState);
 }
 
 /** Reset all retry states (midnight reset). */
 export async function resetAllTestStates(): Promise<void> {
   await db
     .update(modelTestState)
-    .set({ retryCount: 0, suspendedUntil: null })
-    .run();
+    .set({ retryCount: 0, suspendedUntil: null });
 }
 
 /** Get 24 hours from now as ISO string (for suspension). */

@@ -34,7 +34,7 @@ function getYesterdayWIB(): string {
 
 /**
  * Get date range for a specific date (00:00:00 to 23:59:59).
- * Returns SQLite-compatible datetime strings.
+ * Returns PostgreSQL-compatible datetime strings.
  */
 function getDayRange(dateStr: string): { start: string; end: string } {
   return {
@@ -56,10 +56,10 @@ export async function runTranscriptCleanup(): Promise<{ success: boolean; cleare
     const { start, end } = getDayRange(yesterday);
 
     // Get current state
-    const state = await db.select()
+    const stateRows = await db.select()
       .from(cleanupState)
-      .where(eq(cleanupState.cleanupType, "transcripts"))
-      .get();
+      .where(eq(cleanupState.cleanupType, "transcripts"));
+    const state = stateRows[0] ?? null;
 
     // Check if yesterday has already been cleaned
     const cleanedDays: string[] = state?.cleanedDays ? JSON.parse(state.cleanedDays) : [];
@@ -70,7 +70,7 @@ export async function runTranscriptCleanup(): Promise<{ success: boolean; cleare
 
     // Clear heavy fields from YESTERDAY's data only (not today!)
     // Keep all metadata: tokens, cost, status_code, is_counted_request, etc.
-    const res = await db.update(requestLogs)
+    await db.update(requestLogs)
       .set({
         transcriptSnapshot: "",
         requestPreview: "",
@@ -86,14 +86,12 @@ export async function runTranscriptCleanup(): Promise<{ success: boolean; cleare
           OR response_preview != ''
           OR (error_message IS NOT NULL AND error_message != '')
         )
-      `)
-      .run();
+      `);
 
     // Also clean yesterday's session previews
     await db.update(chatSessions)
       .set({ lastRequestPreview: "" })
-      .where(sql`last_seen_at >= ${start} AND last_seen_at <= ${end} AND last_request_preview != ''`)
-      .run();
+      .where(sql`last_seen_at >= ${start} AND last_seen_at <= ${end} AND last_request_preview != ''`);
 
     // Update state - mark yesterday as cleaned
     const now = new Date().toISOString();
@@ -108,11 +106,10 @@ export async function runTranscriptCleanup(): Promise<{ success: boolean; cleare
         cleanedDays: JSON.stringify(recentDays),
         updatedAt: now
       })
-      .where(eq(cleanupState.cleanupType, "transcripts"))
-      .run();
+      .where(eq(cleanupState.cleanupType, "transcripts"));
 
-    console.log(`[cleanup] Transcript cleanup completed for ${yesterday}. Cleared ${res.rowsAffected} rows.`);
-    return { success: true, clearedCount: res.rowsAffected };
+    console.log(`[cleanup] Transcript cleanup completed for ${yesterday}.`);
+    return { success: true, clearedCount: 0 };
   } catch (error: any) {
     console.error("[cleanup] Transcript cleanup failed:", error);
     return { success: false, clearedCount: 0 };
@@ -130,11 +127,11 @@ async function snapshotMonthStats(yearMonth: string): Promise<void> {
   const { start, end } = getMonthRange(yearMonth);
 
   // Check if already snapshotted
-  const existing = await db.select({ id: monthlyStats.id })
+  const existingRows = await db.select({ id: monthlyStats.id })
     .from(monthlyStats)
     .where(eq(monthlyStats.yearMonth, yearMonth))
-    .limit(1)
-    .get();
+    .limit(1);
+  const existing = existingRows[0] ?? null;
 
   if (existing) {
     console.log(`[cleanup] Month ${yearMonth} already snapshotted, skipping`);
@@ -144,7 +141,7 @@ async function snapshotMonthStats(yearMonth: string): Promise<void> {
   console.log(`[cleanup] Snapshotting stats for month ${yearMonth}...`);
 
   // 1. Per-(api_key_id, model) aggregates
-  const perKeyModel = await db.all(sql`
+  const perKeyModel = (await db.execute(sql`
     SELECT
       api_key_id,
       CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
@@ -156,13 +153,13 @@ async function snapshotMonthStats(yearMonth: string): Promise<void> {
     FROM request_logs
     WHERE created_at >= ${start} AND created_at < ${end} AND status_code BETWEEN 200 AND 299
     GROUP BY api_key_id, CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END
-  `);
+  `)).rows;
 
   // 2. Also add underlying model counts for auto entries
-  const perKeyAutoModels = await db.all(sql`
+  const perKeyAutoModels = (await db.execute(sql`
     SELECT
       api_key_id,
-      TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
+      TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
       COUNT(DISTINCT turn_id) as turn_count,
       COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END), 0) as input_tokens,
       COALESCE(SUM(completion_tokens), 0) as output_tokens,
@@ -170,11 +167,11 @@ async function snapshotMonthStats(yearMonth: string): Promise<void> {
       COALESCE(SUM(estimated_cost), 0) as estimated_cost
     FROM request_logs
     WHERE model LIKE 'auto (%)%' AND created_at >= ${start} AND created_at < ${end} AND status_code BETWEEN 200 AND 299
-    GROUP BY api_key_id, TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1))
-  `);
+    GROUP BY api_key_id, TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1))
+  `)).rows;
 
   // 3. Global aggregates (all keys combined, per model)
-  const globalModel = await db.all(sql`
+  const globalModel = (await db.execute(sql`
     SELECT
       CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
       COUNT(DISTINCT turn_id) as turn_count,
@@ -185,10 +182,10 @@ async function snapshotMonthStats(yearMonth: string): Promise<void> {
     FROM request_logs
     WHERE created_at >= ${start} AND created_at < ${end} AND status_code BETWEEN 200 AND 299
     GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END
-  `);
+  `)).rows;
 
   // 4. Global total (all keys, all models)
-  const globalTotal = await db.get(sql`
+  const globalTotal = (await db.execute(sql`
     SELECT
       COUNT(DISTINCT turn_id) as turn_count,
       COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END), 0) as input_tokens,
@@ -197,7 +194,7 @@ async function snapshotMonthStats(yearMonth: string): Promise<void> {
       COALESCE(SUM(estimated_cost), 0) as estimated_cost
     FROM request_logs
     WHERE created_at >= ${start} AND created_at < ${end} AND status_code BETWEEN 200 AND 299
-  `);
+  `)).rows[0];
 
   // Insert all snapshots
   const rows: any[] = [];
@@ -221,7 +218,7 @@ async function snapshotMonthStats(yearMonth: string): Promise<void> {
     // Insert in batches of 100
     for (let i = 0; i < rows.length; i += 100) {
       const batch = rows.slice(i, i + 100);
-      await db.insert(monthlyStats).values(batch).run();
+      await db.insert(monthlyStats).values(batch);
     }
     console.log(`[cleanup] Snapshotted ${rows.length} aggregated rows for month ${yearMonth}`);
   }
@@ -265,10 +262,10 @@ export async function run3MonthCleanup(): Promise<{ success: boolean; deletedLog
     const now = new Date();
 
     // Get current state
-    const state = await db.select()
+    const stateRows3m = await db.select()
       .from(cleanupState)
-      .where(eq(cleanupState.cleanupType, "3month"))
-      .get();
+      .where(eq(cleanupState.cleanupType, "3month"));
+    const state = stateRows3m[0] ?? null;
 
     const cleanedMonths: string[] = state?.cleanedMonths ? JSON.parse(state.cleanedMonths) : [];
 
@@ -297,19 +294,20 @@ export async function run3MonthCleanup(): Promise<{ success: boolean; deletedLog
 
       // Delete request logs for this month
       const deletedLogs = await db.delete(requestLogs)
-        .where(sql`created_at >= ${start} AND created_at < ${end}`)
-        .run();
+        .where(sql`created_at >= ${start} AND created_at < ${end}`);
 
       // Delete sessions for this month
       const deletedSessions = await db.delete(chatSessions)
-        .where(sql`last_seen_at >= ${start} AND last_seen_at < ${end}`)
-        .run();
+        .where(sql`last_seen_at >= ${start} AND last_seen_at < ${end}`);
 
-      totalDeletedLogs += deletedLogs.rowsAffected;
-      totalDeletedSessions += deletedSessions.rowsAffected;
+      const deletedLogsCount = deletedLogs.rowCount ?? 0;
+      const deletedSessionsCount = deletedSessions.rowCount ?? 0;
+
+      totalDeletedLogs += deletedLogsCount;
+      totalDeletedSessions += deletedSessionsCount;
       newlyCleaned.push(yearMonth);
 
-      console.log(`[cleanup] Month ${yearMonth}: deleted ${deletedLogs.rowsAffected} logs, ${deletedSessions.rowsAffected} sessions`);
+      console.log(`[cleanup] Month ${yearMonth}: deleted ${deletedLogsCount} logs, ${deletedSessionsCount} sessions`);
     }
 
     // Update state with newly cleaned months
@@ -325,14 +323,7 @@ export async function run3MonthCleanup(): Promise<{ success: boolean; deletedLog
         cleanedMonths: JSON.stringify(recentCleaned),
         updatedAt: now.toISOString()
       })
-      .where(eq(cleanupState.cleanupType, "3month"))
-      .run();
-
-    // Run VACUUM to reclaim disk space
-    if (totalDeletedLogs > 0 || totalDeletedSessions > 0) {
-      await db.run(sql`VACUUM`);
-      console.log("[cleanup] VACUUM completed");
-    }
+      .where(eq(cleanupState.cleanupType, "3month"));
 
     console.log(`[cleanup] 3-month cleanup completed. Deleted ${totalDeletedLogs} logs, ${totalDeletedSessions} sessions from months: ${newlyCleaned.join(', ')}`);
     return { success: true, deletedLogs: totalDeletedLogs, deletedSessions: totalDeletedSessions };
@@ -350,7 +341,7 @@ export async function run3MonthCleanup(): Promise<{ success: boolean; deletedLog
  */
 export async function forceTranscriptCleanup(): Promise<{ success: boolean; clearedCount: number }> {
   try {
-    const res = await db.update(requestLogs)
+    await db.update(requestLogs)
       .set({
         transcriptSnapshot: "",
         requestPreview: "",
@@ -358,20 +349,18 @@ export async function forceTranscriptCleanup(): Promise<{ success: boolean; clea
         errorMessage: ""
       })
       .where(sql`
-        created_at < datetime('now', '-1 day')
+        created_at < NOW() - INTERVAL '1 day'
         AND (
           transcript_snapshot != ''
           OR request_preview != ''
           OR response_preview != ''
           OR (error_message IS NOT NULL AND error_message != '')
         )
-      `)
-      .run();
+      `);
 
     await db.update(chatSessions)
       .set({ lastRequestPreview: "" })
-      .where(sql`last_seen_at < datetime('now', '-1 day') AND last_request_preview != ''`)
-      .run();
+      .where(sql`last_seen_at < NOW() - INTERVAL '1 day' AND last_request_preview != ''`);
 
     // Update state
     await db.update(cleanupState)
@@ -379,10 +368,9 @@ export async function forceTranscriptCleanup(): Promise<{ success: boolean; clea
         lastCleanupAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       })
-      .where(eq(cleanupState.cleanupType, "transcripts"))
-      .run();
+      .where(eq(cleanupState.cleanupType, "transcripts"));
 
-    return { success: true, clearedCount: res.rowsAffected };
+    return { success: true, clearedCount: 0 };
   } catch (error: any) {
     console.error("[cleanup] Force transcript cleanup failed:", error);
     return { success: false, clearedCount: 0 };
@@ -401,18 +389,16 @@ export async function forceCleanMonth(yearMonth: string): Promise<{ success: boo
     await snapshotMonthStats(yearMonth);
 
     const deletedLogs = await db.delete(requestLogs)
-      .where(sql`created_at >= ${start} AND created_at < ${end}`)
-      .run();
+      .where(sql`created_at >= ${start} AND created_at < ${end}`);
 
     const deletedSessions = await db.delete(chatSessions)
-      .where(sql`last_seen_at >= ${start} AND last_seen_at < ${end}`)
-      .run();
+      .where(sql`last_seen_at >= ${start} AND last_seen_at < ${end}`);
 
     // Update state
-    const state = await db.select()
+    const stateRowsForce = await db.select()
       .from(cleanupState)
-      .where(eq(cleanupState.cleanupType, "3month"))
-      .get();
+      .where(eq(cleanupState.cleanupType, "3month"));
+    const state = stateRowsForce[0] ?? null;
 
     const cleanedMonths: string[] = state?.cleanedMonths ? JSON.parse(state.cleanedMonths) : [];
     if (!cleanedMonths.includes(yearMonth)) {
@@ -425,11 +411,10 @@ export async function forceCleanMonth(yearMonth: string): Promise<{ success: boo
           cleanedMonths: JSON.stringify(cleanedMonths.slice(-12)),
           updatedAt: new Date().toISOString()
         })
-        .where(eq(cleanupState.cleanupType, "3month"))
-        .run();
+        .where(eq(cleanupState.cleanupType, "3month"));
     }
 
-    return { success: true, deletedLogs: deletedLogs.rowsAffected, deletedSessions: deletedSessions.rowsAffected };
+    return { success: true, deletedLogs: deletedLogs.rowCount ?? 0, deletedSessions: deletedSessions.rowCount ?? 0 };
   } catch (error: any) {
     console.error(`[cleanup] Force clean month ${yearMonth} failed:`, error);
     return { success: false, deletedLogs: 0, deletedSessions: 0 };
@@ -440,7 +425,7 @@ export async function forceCleanMonth(yearMonth: string): Promise<{ success: boo
  * Get cleanup status for admin dashboard.
  */
 export async function getCleanupStatus(): Promise<any> {
-  const states = await db.select().from(cleanupState).all();
+  const states = await db.select().from(cleanupState);
 
   const result: any = {};
   for (const state of states) {

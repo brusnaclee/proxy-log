@@ -9,7 +9,7 @@ import { configCache, apiKeyCache } from "../../utils/cache.js";
 const settings = new Hono();
 
 settings.get("/settings/global", async (c) => {
-  const config = await db.select().from(adminConfig).get();
+  const config = (await db.select().from(adminConfig))[0];
   if (!config) return c.json({ error: "Admin not configured" }, 500);
   return c.json({
     globalMaxDevices: config.globalMaxDevices || 0,
@@ -29,10 +29,10 @@ settings.get("/settings/global", async (c) => {
 
 settings.put("/settings/global", async (c) => {
   const body = await c.req.json<any>();
-  const config = await db.select().from(adminConfig).get();
+  const config = (await db.select().from(adminConfig))[0];
   if (!config) return c.json({ error: "Admin not configured" }, 500);
 
-  const updates: Record<string, any> = { updatedAt: new Date().toISOString().replace("T", " ").substring(0, 19) };
+  const updates: Record<string, any> = { updatedAt: new Date() };
   if (body.globalMaxDevices !== undefined) updates.globalMaxDevices = body.globalMaxDevices;
   if (body.realtimeEnabled !== undefined) updates.realtimeEnabled = body.realtimeEnabled;
   if (body.globalRateLimit !== undefined) updates.globalRateLimit = body.globalRateLimit;
@@ -46,7 +46,7 @@ settings.put("/settings/global", async (c) => {
     if (body.globalDailyInputTokenLimit !== undefined) updates.globalDailyInputTokenLimit = body.globalDailyInputTokenLimit;
     if (body.globalDailyOutputTokenLimit !== undefined) updates.globalDailyOutputTokenLimit = body.globalDailyOutputTokenLimit;
 
-  await db.update(adminConfig).set(updates).where(eq(adminConfig.id, config.id)).run();
+  await db.update(adminConfig).set(updates).where(eq(adminConfig.id, config.id));
   configCache.invalidate("admin_config"); // invalidate cached config
   return c.json({ success: true, message: "Global settings updated" });
 });
@@ -66,8 +66,7 @@ settings.get("/settings/models", async (c) => {
   // From model_monitor table (models seen by Tokito bot)
   try {
     const monitors = await db.select({ modelId: sql<string>`DISTINCT model_id` })
-      .from(sql`model_monitor`)
-      .all();
+      .from(sql`model_monitor`);
     for (const m of monitors) {
       if (m.modelId) modelSet.add(m.modelId);
     }
@@ -76,8 +75,7 @@ settings.get("/settings/models", async (c) => {
   // From request_logs (models actually used)
   try {
     const used = await db.select({ model: sql<string>`DISTINCT model` })
-      .from(sql`request_logs`)
-      .all();
+      .from(sql`request_logs`);
     for (const m of used) {
       if (m.model && m.model !== "unknown") modelSet.add(m.model);
     }
@@ -88,7 +86,7 @@ settings.get("/settings/models", async (c) => {
 });
 
 settings.get("/settings", async (c) => {
-  const config = await db.select().from(adminConfig).get();
+  const config = (await db.select().from(adminConfig))[0];
   if (!config) return c.json({ error: "Admin not configured" }, 500);
   return c.json({
     upstreamEndpoint: config.upstreamEndpoint,
@@ -99,14 +97,14 @@ settings.get("/settings", async (c) => {
 
 settings.put("/settings", async (c) => {
   const body = await c.req.json<{ upstreamEndpoint?: string; upstreamApiKey?: string }>();
-  const config = await db.select().from(adminConfig).get();
+  const config = (await db.select().from(adminConfig))[0];
   if (!config) return c.json({ error: "Admin not configured" }, 500);
 
-  const updates: Record<string, any> = { updatedAt: new Date().toISOString().replace("T", " ").substring(0, 19) };
+  const updates: Record<string, any> = { updatedAt: new Date() };
   if (body.upstreamEndpoint !== undefined) updates.upstreamEndpoint = body.upstreamEndpoint.replace(/\/$/, "");
   if (body.upstreamApiKey !== undefined) updates.upstreamApiKey = body.upstreamApiKey;
 
-  await db.update(adminConfig).set(updates).where(eq(adminConfig.id, config.id)).run();
+  await db.update(adminConfig).set(updates).where(eq(adminConfig.id, config.id));
   configCache.invalidate("admin_config"); // invalidate cached config
 
   // Immediately refresh cached model catalog when upstream settings change.
@@ -122,7 +120,7 @@ settings.put("/password", async (c) => {
   if (!currentPassword || !newPassword) return c.json({ error: "Both current and new password are required" }, 400);
   if (newPassword.length < 6) return c.json({ error: "New password must be at least 6 characters" }, 400);
 
-  const config = await db.select().from(adminConfig).get();
+  const config = (await db.select().from(adminConfig))[0];
   if (!config) return c.json({ error: "Admin not configured" }, 500);
 
   const { verify, hash } = await import("@node-rs/argon2");
@@ -132,8 +130,8 @@ settings.put("/password", async (c) => {
   const newHash = await hash(newPassword);
   await db.update(adminConfig).set({
     passwordHash: newHash,
-    updatedAt: new Date().toISOString().replace("T", " ").substring(0, 19),
-  }).where(eq(adminConfig.id, config.id)).run();
+    updatedAt: new Date(),
+  }).where(eq(adminConfig.id, config.id));
 
   return c.json({ success: true, message: "Password updated successfully" });
 });
@@ -142,8 +140,7 @@ settings.put("/password", async (c) => {
 
 settings.get("/settings/model-limits", async (c) => {
   const rows = await db.select().from(modelLimits)
-    .where(and(eq(modelLimits.scope, "global"), eq(modelLimits.scopeId, 0)))
-    .all();
+    .where(and(eq(modelLimits.scope, "global"), eq(modelLimits.scopeId, 0)));
   return c.json({ data: rows });
 });
 
@@ -162,7 +159,7 @@ settings.put("/settings/model-limits", async (c) => {
     eq(modelLimits.scope, "global"),
     eq(modelLimits.scopeId, 0),
     eq(modelLimits.model, modelName),
-  )).run();
+  ));
 
   if (limit > 0 || dailyTokenLimit > 0 || monthlyTokenLimit > 0 || dailyInputTokenLimit > 0 || dailyOutputTokenLimit > 0) {
     await db.insert(modelLimits).values({
@@ -172,7 +169,7 @@ settings.put("/settings/model-limits", async (c) => {
       monthlyTokenLimit,
       dailyInputTokenLimit,
       dailyOutputTokenLimit
-    }).run();
+    });
   }
 
   return c.json({ success: true, model: modelName, promptLimit: limit, dailyTokenLimit, monthlyTokenLimit, dailyInputTokenLimit, dailyOutputTokenLimit });
@@ -184,7 +181,7 @@ settings.delete("/settings/model-limits/:model", async (c) => {
     eq(modelLimits.scope, "global"),
     eq(modelLimits.scopeId, 0),
     eq(modelLimits.model, model),
-  )).run();
+  ));
   return c.json({ success: true, message: `Model limit for "${model}" removed` });
 });
 
@@ -197,17 +194,17 @@ settings.delete("/settings/model-limits/:model", async (c) => {
  */
 settings.post("/settings/factory-reset", async (c) => {
   try {
-    const config = await db.select().from(adminConfig).get();
+    const config = (await db.select().from(adminConfig))[0];
     if (!config) return c.json({ error: "Admin not configured" }, 500);
 
     // Delete all data
-    await db.delete(requestLogs).run();
-    await db.delete(chatSessions).run();
-    await db.delete(allowedIdes).run();
-    await db.delete(allowedDevices).run();
-    await db.delete(devices).run();
-    await db.delete(apiKeys).run();
-    await db.delete(modelLimits).run();
+    await db.delete(requestLogs);
+    await db.delete(chatSessions);
+    await db.delete(allowedIdes);
+    await db.delete(allowedDevices);
+    await db.delete(devices);
+    await db.delete(apiKeys);
+    await db.delete(modelLimits);
 
     // Reset admin config to defaults (keep password hash)
     await db.update(adminConfig).set({
@@ -230,8 +227,8 @@ settings.post("/settings/factory-reset", async (c) => {
       geminiApiKey: "",
       verifAutoEnabled: false,
       tokitoApiKey: "",
-      updatedAt: new Date().toISOString().replace("T", " ").substring(0, 19),
-    }).where(eq(adminConfig.id, config.id)).run();
+      updatedAt: new Date(),
+    }).where(eq(adminConfig.id, config.id));
 
     configCache.clear();
     apiKeyCache.clear();

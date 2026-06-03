@@ -10,7 +10,7 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: '3000',
-        DATABASE_URL: './packages/proxy/data/gateway.db',
+        DATABASE_URL: 'postgresql://monit_api:rendang123pg@localhost:5432/monit_api',
         INTERNAL_API_SECRET: 'change-me-in-production',
         PROXY_INTERNAL_BASE_URL: 'http://localhost:3000',
         SESSION_SECRET: 'change-me-to-a-random-secret-string',

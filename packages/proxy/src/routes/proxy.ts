@@ -11,7 +11,6 @@ import {
   detectOperatingSystem,
   extractContextInfo,
   extractToolNamesFromPayload,
-  formatSqliteDate,
   parseToolJson,
   toToolJson,
 } from "../utils/telemetry.js";
@@ -322,7 +321,7 @@ async function createChatSession(params: {
   requestBody?: any; // raw request body for session name extraction
 }) {
   const sessionId = `chat_${generateSessionId().slice(0, 24)}`;
-  const now = formatSqliteDate();
+  const now = new Date();
   const sessionName = deriveSessionName(params.requestBody, params.requestPreview);
   await db.insert(chatSessions).values({
     sessionId,
@@ -347,7 +346,7 @@ async function createChatSession(params: {
     lastUserMessageHash: params.messageAnalysis?.messageHash || null,
     lastMessageRole: params.messageAnalysis?.messageRole || null,
     lastToolCallsActive: false,
-  }).run();
+  });
   return sessionId;
 }
 
@@ -373,7 +372,7 @@ async function resolveChatSession(params: {
     .where(and(eq(chatSessions.apiKeyId, params.apiKeyId), eq(chatSessions.deviceFingerprint, params.deviceFingerprint)))
     .orderBy(desc(chatSessions.lastSeenAt))
     .limit(1)
-    .get();
+    .then(r => r[0]);
 
   // Also look for any very recent session from this device (within sub-agent window)
   // to handle async race conditions where row N+1 arrives before row N's session is committed
@@ -388,7 +387,7 @@ async function resolveChatSession(params: {
     ))
     .orderBy(desc(chatSessions.lastSeenAt))
     .limit(1)
-    .get();
+    .then(r => r[0]);
 
   // ΓöÇΓöÇΓöÇ No session yet ΓåÆ create first one ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   if (!latest) {
@@ -552,7 +551,7 @@ async function updateSessionAfterRequest(tx: any, params: {
     updates.consecutiveToolFollowups = 0;
   }
 
-  await tx.update(chatSessions).set(updates).where(eq(chatSessions.sessionId, params.sessionId)).run();
+  await tx.update(chatSessions).set(updates).where(eq(chatSessions.sessionId, params.sessionId));
 }
 
 /**
@@ -589,14 +588,14 @@ proxy.all("/*", async (c) => {
       .select()
       .from(apiKeys)
       .where(eq(apiKeys.key, clientKey))
-      .get();
+      .then(r => r[0]);
 
     if (!record) {
       record = await db
         .select()
         .from(apiKeys)
         .where(eq(apiKeys.keyHash, sha256(clientKey)))
-        .get();
+        .then(r => r[0]);
     }
     return record || null;
   });
@@ -635,7 +634,7 @@ proxy.all("/*", async (c) => {
     .select()
     .from(devices)
     .where(and(eq(devices.apiKeyId, keyRecord.id), eq(devices.fingerprint, fingerprint)))
-    .get();
+    .then(r => r[0]);
 
   if (existingDevice?.isBlocked) {
     return c.json(
@@ -655,7 +654,7 @@ proxy.all("/*", async (c) => {
           eq(allowedDevices.listType, "allow")
         )
       )
-      .get();
+      .then(r => r[0]);
     if (!allowed) {
       return c.json({ error: { message: "Device not in allowlist.", type: "access_error" } }, 403);
     }
@@ -670,7 +669,7 @@ proxy.all("/*", async (c) => {
           eq(allowedDevices.listType, "block")
         )
       )
-      .get();
+      .then(r => r[0]);
     if (blocked) {
       return c.json({ error: { message: "Device is blacklisted.", type: "access_error" } }, 403);
     }
@@ -688,7 +687,7 @@ proxy.all("/*", async (c) => {
           eq(allowedIdes.listType, "allow")
         )
       )
-      .get();
+      .then(r => r[0]);
     if (!allowedIde) {
       return c.json({ error: { message: `IDE '${ide}' not in allowlist.`, type: "access_error" } }, 403);
     }
@@ -703,7 +702,7 @@ proxy.all("/*", async (c) => {
           eq(allowedIdes.listType, "block")
         )
       )
-      .get();
+      .then(r => r[0]);
     if (blockedIde) {
       return c.json({ error: { message: `IDE '${ide}' is blacklisted.`, type: "access_error" } }, 403);
     }
@@ -714,7 +713,7 @@ proxy.all("/*", async (c) => {
     const allowed = await db
       .select().from(allowedDevices)
       .where(and(eq(allowedDevices.apiKeyId, keyRecord.id), eq(allowedDevices.ipAddress, clientIp), eq(allowedDevices.listType, "allow")))
-      .get();
+      .then(r => r[0]);
     if (!allowed) {
       return c.json({ error: { message: "IP address not in allowlist.", type: "access_error" } }, 403);
     }
@@ -722,7 +721,7 @@ proxy.all("/*", async (c) => {
     const blocked = await db
       .select().from(allowedDevices)
       .where(and(eq(allowedDevices.apiKeyId, keyRecord.id), eq(allowedDevices.ipAddress, clientIp), eq(allowedDevices.listType, "block")))
-      .get();
+      .then(r => r[0]);
     if (blocked) {
       return c.json({ error: { message: "IP address is blacklisted.", type: "access_error" } }, 403);
     }
@@ -734,7 +733,7 @@ proxy.all("/*", async (c) => {
       .select({ count: sql<number>`count(*)` })
       .from(devices)
       .where(and(eq(devices.apiKeyId, keyRecord.id), eq(devices.isBlocked, false)))
-      .get();
+      .then(r => r[0]);
 
     if (deviceCount && deviceCount.count >= keyRecord.maxDevices && !existingDevice) {
       if (keyRecord.provisionedBy === "discord-bot") {
@@ -743,7 +742,7 @@ proxy.all("/*", async (c) => {
         const newKeyPrefix = getKeyPrefix(rotatedKey);
 
         // Remove all old devices for this key so the new device can register cleanly
-        await db.delete(devices).where(eq(devices.apiKeyId, keyRecord.id)).run();
+        await db.delete(devices).where(eq(devices.apiKeyId, keyRecord.id));
 
         // Register the new device immediately so they don't have to hit the limit again
         await db.insert(devices).values({
@@ -755,7 +754,7 @@ proxy.all("/*", async (c) => {
           deviceName: deviceName || null,
           ideDetected: ide,
           requestCount: 0,
-        }).run();
+        });
 
         // Update the key to the new value (stays active)
         await db.update(apiKeys).set({
@@ -763,8 +762,8 @@ proxy.all("/*", async (c) => {
           keyPrefix: newKeyPrefix,
           keyHash: sha256(rotatedKey),
           isActive: true,
-          updatedAt: new Date().toISOString().replace("T", " ").substring(0, 19),
-        }).where(eq(apiKeys.id, keyRecord.id)).run();
+          updatedAt: new Date(),
+        }).where(eq(apiKeys.id, keyRecord.id));
 
         // Store pending notification for bot to pick up and send
         const proxyEndpoint = `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`;
@@ -776,7 +775,7 @@ proxy.all("/*", async (c) => {
         };
         await db.update(apiKeys).set({
           pendingNotification: JSON.stringify(notification),
-        }).where(eq(apiKeys.id, keyRecord.id)).run();
+        }).where(eq(apiKeys.id, keyRecord.id));
 
         return c.json(
           {
@@ -798,7 +797,7 @@ proxy.all("/*", async (c) => {
   }
 
   // ΓöÇΓöÇΓöÇ 7. Fetch Config & Parse Request Body ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-  const config = await configCache.getOrFetch("admin_config", () => db.select().from(adminConfig).get());
+  const config = await configCache.getOrFetch("admin_config", () => db.select().from(adminConfig).then(r => r[0]));
   if (!config) {
     return c.json(
       { error: { message: "Upstream API not configured. Please configure via admin dashboard.", type: "server_error" } },
@@ -967,8 +966,7 @@ proxy.all("/*", async (c) => {
         sessionHashCache.set(sessionResult.sessionId, messageAnalysis.messageHash);
         await db.update(chatSessions)
           .set({ lastUserMessageHash: messageAnalysis.messageHash, lastMessageRole: messageAnalysis.messageRole || null })
-          .where(eq(chatSessions.sessionId, sessionResult.sessionId))
-          .run();
+          .where(eq(chatSessions.sessionId, sessionResult.sessionId));
       }
       return sessionResult;
     });
@@ -1004,7 +1002,7 @@ proxy.all("/*", async (c) => {
         .from(providers)
         .where(and(eq(providers.name, candidate.provider), eq(providers.isActive, true)))
         .limit(1)
-        .get();
+        .then(r => r[0]);
 
       if (!providerRow) {
         tried.push(`${candidate.provider}/${candidate.modelId} (no provider)`);
@@ -1128,7 +1126,7 @@ proxy.all("/*", async (c) => {
                     isCountedRequest: autoIsNewPrompt ? 1 : 0,
                     isBillableToken: 1,
                     estimatedCost: calculateEstimatedCost(candidate.modelId, billableTokens.promptTokens, billableTokens.completionTokens),
-                  }).run();
+                  });
                   logEmitter.emit({
                     model: logModel,
                     provider: candidate.provider,
@@ -1234,7 +1232,7 @@ proxy.all("/*", async (c) => {
             responsePreview: responseJson?.choices?.[0]?.message?.content?.substring(0, 200) || null,
             isCountedRequest: autoIsNewPrompt ? 1 : 0,
             isBillableToken: 1,
-          }).run();
+          });
           logEmitter.emit({
             model: `auto (${candidate.modelId})`,
             provider: candidate.provider,
@@ -1303,8 +1301,7 @@ const targetProvider = await getProviderForModel(model);
       .from(modelMonitor)
       .where(eq(modelMonitor.modelId, upstreamModel))
       .orderBy(desc(modelMonitor.checkedAt))
-      .limit(20)
-      .all();
+      .limit(20);
 
     if (monitorRows.length > 0) {
       const hasOnline = monitorRows.some((row) => row.isOnline && row.httpStatus === 200);
@@ -1313,8 +1310,7 @@ const targetProvider = await getProviderForModel(model);
           .select({ modelId: modelMonitor.modelId })
           .from(modelMonitor)
           .where(eq(modelMonitor.isOnline, true))
-          .orderBy(modelMonitor.modelId)
-          .all();
+          .orderBy(modelMonitor.modelId);
 
         const seen = new Set<string>();
         const uniqueOnline: string[] = [];
@@ -1401,14 +1397,14 @@ const targetProvider = await getProviderForModel(model);
       const dbSess = await db.select({ consecutiveToolFollowups: chatSessions.consecutiveToolFollowups })
         .from(chatSessions)
         .where(eq(chatSessions.sessionId, sessionInfo.sessionId))
-        .get();
+        .then(r => r[0]);
       consecutiveCount = dbSess?.consecutiveToolFollowups || 0;
     }
 
     // Sync non-hash session tracking before upstream (hash updated only after successful count).
     {
       const syncUpdates: Record<string, any> = {
-        lastSeenAt: formatSqliteDate(),
+        lastSeenAt: new Date(),
         model,
       };
       if (messageAnalysis.messageRole) {
@@ -1422,8 +1418,7 @@ const targetProvider = await getProviderForModel(model);
       }
       await db.update(chatSessions)
         .set(syncUpdates)
-        .where(eq(chatSessions.sessionId, sessionInfo.sessionId))
-        .run();
+        .where(eq(chatSessions.sessionId, sessionInfo.sessionId));
     }
 
     return { sessionInfo, isNewPrompt, consecutiveToolFollowups: consecutiveCount };
@@ -1509,8 +1504,8 @@ const targetProvider = await getProviderForModel(model);
   // Checked on ALL requests. If already exceeded, block.
   // Otherwise let through - may push slightly over, blocked on NEXT request.
   {
-    const modelOverride = await db.select().from(modelLimits).where(and(eq(modelLimits.scope, "key"), eq(modelLimits.scopeId, keyRecord.id), eq(modelLimits.model, model))).get() || 
-                          await db.select().from(modelLimits).where(and(eq(modelLimits.scope, "global"), eq(modelLimits.scopeId, 0), eq(modelLimits.model, model))).get();
+    const modelOverride = await db.select().from(modelLimits).where(and(eq(modelLimits.scope, "key"), eq(modelLimits.scopeId, keyRecord.id), eq(modelLimits.model, model))).then(r => r[0]) || 
+                          await db.select().from(modelLimits).where(and(eq(modelLimits.scope, "global"), eq(modelLimits.scopeId, 0), eq(modelLimits.model, model))).then(r => r[0]);
 
     const wibOffset = 7 * 60 * 60 * 1000;
     const wibNow = new Date(Date.now() + wibOffset);
@@ -1519,7 +1514,7 @@ const targetProvider = await getProviderForModel(model);
       const mw = new Date(wibNow); mw.setUTCDate(1); mw.setUTCHours(0, 0, 0, 0);
       const ms = new Date(mw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
       const whereClause = and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms}`, BILLABLE_LOG_SQL);
-      const mu = await db.select({ total: turnTotalTokensSql(whereClause) }).from(requestLogs).where(whereClause).get();
+      const mu = await db.select({ total: turnTotalTokensSql(whereClause) }).from(requestLogs).where(whereClause).then(r => r[0]);
       if (mu && mu.total >= keyRecord.monthlyTokenLimit) {
         return c.json({ error: { message: `Monthly token limit reached: ${mu.total.toLocaleString()}/${keyRecord.monthlyTokenLimit.toLocaleString()} tokens.`, type: "rate_limit_error", code: "monthly_token_limit_exceeded" } }, 429);
       }
@@ -1530,7 +1525,7 @@ const targetProvider = await getProviderForModel(model);
       const dw = new Date(wibNow); dw.setUTCHours(0, 0, 0, 0);
       const ds = new Date(dw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
       const whereClause = and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL);
-      const du = await db.select({ total: turnTotalTokensSql(whereClause) }).from(requestLogs).where(whereClause).get();
+      const du = await db.select({ total: turnTotalTokensSql(whereClause) }).from(requestLogs).where(whereClause).then(r => r[0]);
       if (du && du.total >= globalDailyTokenLimit) {
         return c.json({ error: { message: `Daily token limit reached: ${du.total.toLocaleString()}/${globalDailyTokenLimit.toLocaleString()} tokens today. Resets tomorrow.`, type: "rate_limit_error", code: "daily_token_limit_exceeded" } }, 429);
       }
@@ -1542,7 +1537,7 @@ const targetProvider = await getProviderForModel(model);
       const dw = new Date(wibNow); dw.setUTCHours(0, 0, 0, 0);
       const ds = new Date(dw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
       const whereClause = and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL);
-      const du = await db.select({ total: turnPromptTokensSql(whereClause) }).from(requestLogs).where(whereClause).get();
+      const du = await db.select({ total: turnPromptTokensSql(whereClause) }).from(requestLogs).where(whereClause).then(r => r[0]);
       if (du && du.total >= dailyInputLimit) {
         return c.json({ error: { message: `Daily input token limit reached: ${du.total.toLocaleString()}/${dailyInputLimit.toLocaleString()} input tokens today. Resets tomorrow.`, type: "rate_limit_error", code: "daily_input_token_limit_exceeded" } }, 429);
       }
@@ -1554,7 +1549,7 @@ const targetProvider = await getProviderForModel(model);
       const dw = new Date(wibNow); dw.setUTCHours(0, 0, 0, 0);
       const ds = new Date(dw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
       const whereClause = and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL);
-      const du = await db.select({ total: turnCompletionTokensSql(whereClause) }).from(requestLogs).where(whereClause).get();
+      const du = await db.select({ total: turnCompletionTokensSql(whereClause) }).from(requestLogs).where(whereClause).then(r => r[0]);
       if (du && du.total >= dailyOutputLimit) {
         return c.json({ error: { message: `Daily output token limit reached: ${du.total.toLocaleString()}/${dailyOutputLimit.toLocaleString()} output tokens today. Resets tomorrow.`, type: "rate_limit_error", code: "daily_output_token_limit_exceeded" } }, 429);
       }
@@ -1565,7 +1560,7 @@ const targetProvider = await getProviderForModel(model);
       const mw2 = new Date(wibNow); mw2.setUTCDate(1); mw2.setUTCHours(0, 0, 0, 0);
       const ms2 = new Date(mw2.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
       const whereClause = and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms2}`, BILLABLE_LOG_SQL);
-      const mu2 = await db.select({ total: turnTotalTokensSql(whereClause) }).from(requestLogs).where(whereClause).get();
+      const mu2 = await db.select({ total: turnTotalTokensSql(whereClause) }).from(requestLogs).where(whereClause).then(r => r[0]);
       if (mu2 && mu2.total >= globalMonthlyTokenLimit) {
         return c.json({ error: { message: `Monthly token limit reached: ${mu2.total.toLocaleString()}/${globalMonthlyTokenLimit.toLocaleString()} tokens. Resets next month.`, type: "rate_limit_error", code: "global_monthly_token_limit_exceeded" } }, 429);
       }
@@ -1582,7 +1577,7 @@ const targetProvider = await getProviderForModel(model);
 
       if (overrideDailyToken && overrideDailyToken > 0) {
         const whereClause = and(eq(requestLogs.apiKeyId, keyRecord.id), eq(requestLogs.model, model), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL);
-        const du = await db.select({ total: turnTotalTokensSql(whereClause) }).from(requestLogs).where(whereClause).get();
+        const du = await db.select({ total: turnTotalTokensSql(whereClause) }).from(requestLogs).where(whereClause).then(r => r[0]);
         if (du && du.total >= overrideDailyToken) {
           return c.json({ error: { message: `Daily token limit reached for model "${model}": ${du.total.toLocaleString()}/${overrideDailyToken.toLocaleString()} tokens today. Resets tomorrow.`, type: "rate_limit_error", code: "model_daily_token_limit_exceeded" } }, 429);
         }
@@ -1590,7 +1585,7 @@ const targetProvider = await getProviderForModel(model);
 
       if (overrideMonthlyToken && overrideMonthlyToken > 0) {
         const whereClause = and(eq(requestLogs.apiKeyId, keyRecord.id), eq(requestLogs.model, model), sql`created_at >= ${ms}`, BILLABLE_LOG_SQL);
-        const mu = await db.select({ total: turnTotalTokensSql(whereClause) }).from(requestLogs).where(whereClause).get();
+        const mu = await db.select({ total: turnTotalTokensSql(whereClause) }).from(requestLogs).where(whereClause).then(r => r[0]);
         if (mu && mu.total >= overrideMonthlyToken) {
           return c.json({ error: { message: `Monthly token limit reached for model "${model}": ${mu.total.toLocaleString()}/${overrideMonthlyToken.toLocaleString()} tokens. Resets next month.`, type: "rate_limit_error", code: "model_monthly_token_limit_exceeded" } }, 429);
         }
@@ -1598,7 +1593,7 @@ const targetProvider = await getProviderForModel(model);
 
       if (overrideDailyInputToken && overrideDailyInputToken > 0) {
         const whereClause = and(eq(requestLogs.apiKeyId, keyRecord.id), eq(requestLogs.model, model), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL);
-        const du = await db.select({ total: turnPromptTokensSql(whereClause) }).from(requestLogs).where(whereClause).get();
+        const du = await db.select({ total: turnPromptTokensSql(whereClause) }).from(requestLogs).where(whereClause).then(r => r[0]);
         if (du && du.total >= overrideDailyInputToken) {
           return c.json({ error: { message: `Daily input token limit reached for model "${model}": ${du.total.toLocaleString()}/${overrideDailyInputToken.toLocaleString()} input tokens today. Resets tomorrow.`, type: "rate_limit_error", code: "model_daily_input_token_limit_exceeded" } }, 429);
         }
@@ -1606,7 +1601,7 @@ const targetProvider = await getProviderForModel(model);
 
       if (overrideDailyOutputToken && overrideDailyOutputToken > 0) {
         const whereClause = and(eq(requestLogs.apiKeyId, keyRecord.id), eq(requestLogs.model, model), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL);
-        const du = await db.select({ total: turnCompletionTokensSql(whereClause) }).from(requestLogs).where(whereClause).get();
+        const du = await db.select({ total: turnCompletionTokensSql(whereClause) }).from(requestLogs).where(whereClause).then(r => r[0]);
         if (du && du.total >= overrideDailyOutputToken) {
           return c.json({ error: { message: `Daily output token limit reached for model "${model}": ${du.total.toLocaleString()}/${overrideDailyOutputToken.toLocaleString()} output tokens today. Resets tomorrow.`, type: "rate_limit_error", code: "model_daily_output_token_limit_exceeded" } }, 429);
         }
@@ -1674,7 +1669,7 @@ const targetProvider = await getProviderForModel(model);
     enqueueLogWrite(async (tx) => {
       logEntry.isCountedRequest = counted ? 1 : 0;
       logEntry.isBillableToken = isBillableToken ? 1 : 0;
-      await tx.insert(requestLogs).values(logEntry).run();
+      await tx.insert(requestLogs).values(logEntry);
       logEmitter.emit({
         ...logEntry,
         toolsUsed: parseToolJson(logEntry.toolsUsed),
@@ -1687,8 +1682,7 @@ const targetProvider = await getProviderForModel(model);
             lastUserMessageHash: messageAnalysis.messageHash,
             lastMessageRole: messageAnalysis.messageRole || null,
           })
-          .where(eq(chatSessions.sessionId, sessionInfo.sessionId))
-          .run();
+          .where(eq(chatSessions.sessionId, sessionInfo.sessionId));
       }
 
       if (counted) {
@@ -1701,23 +1695,22 @@ const targetProvider = await getProviderForModel(model);
         }
         
         const nowMs = Date.now();
-        const nowStr = formatSqliteDate();
+        const nowStr = new Date();
 
         if (!globalWindowStartMs || nowMs >= globalWindowStartMs + globalWindowMs) {
           await tx.update(apiKeys)
             .set({ promptWindowStart: nowStr })
-            .where(eq(apiKeys.id, keyRecord.id))
-            .run();
+            .where(eq(apiKeys.id, keyRecord.id));
         }
 
         // Model limit tracking
         const keyOverride = await tx.select().from(modelLimits)
           .where(and(eq(modelLimits.scope, "key"), eq(modelLimits.scopeId, keyRecord.id), eq(modelLimits.model, model)))
-          .get();
+          .then(r => r[0]);
 
         const globalOverride = await tx.select().from(modelLimits)
           .where(and(eq(modelLimits.scope, "global"), eq(modelLimits.scopeId, 0), eq(modelLimits.model, model)))
-          .get();
+          .then(r => r[0]);
 
         const activeOverride = (keyOverride && keyOverride.promptLimit > 0) ? keyOverride : (globalOverride && globalOverride.promptLimit > 0) ? globalOverride : null;
 
@@ -1731,8 +1724,7 @@ const targetProvider = await getProviderForModel(model);
           if (!modelWindowStartMs || nowMs >= modelWindowStartMs + modelWindowMs) {
             await tx.update(modelLimits)
               .set({ promptWindowStart: nowStr })
-              .where(eq(modelLimits.id, activeOverride.id))
-              .run();
+              .where(eq(modelLimits.id, activeOverride.id));
           }
         }
       }
@@ -1852,7 +1844,7 @@ const targetProvider = await getProviderForModel(model);
     if (existingDevice) {
       await db.update(devices)
         .set({
-          lastSeen: formatSqliteDate(),
+          lastSeen: new Date(),
           requestCount: existingDevice.requestCount + 1,
           ipAddress: clientIp,
           userAgentRaw: userAgent,
@@ -1860,8 +1852,7 @@ const targetProvider = await getProviderForModel(model);
           deviceName: deviceName || null,
           ideDetected: ide,
         })
-        .where(eq(devices.id, existingDevice.id))
-        .run();
+        .where(eq(devices.id, existingDevice.id));
     } else {
       await db.insert(devices).values({
         apiKeyId: keyRecord.id,
@@ -1872,7 +1863,7 @@ const targetProvider = await getProviderForModel(model);
         deviceName: deviceName || null,
         ideDetected: ide,
         requestCount: 1,
-      }).run();
+      });
     }
 
     // ΓöÇΓöÇΓöÇ 12. Handle Streaming Response ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ

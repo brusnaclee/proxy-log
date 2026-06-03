@@ -155,9 +155,9 @@ logs.get("/logs", async (c) => {
     estimatedCost: requestLogs.estimatedCost,
     createdAt: requestLogs.createdAt,
   }).from(requestLogs).where(whereClause)
-    .orderBy(desc(requestLogs.createdAt)).limit(limit).offset(offset).all();
+    .orderBy(desc(requestLogs.createdAt)).limit(limit).offset(offset);
 
-  const totalResult = await db.select({ count: sql<number>`count(*)` }).from(requestLogs).where(whereClause).get();
+  const totalResult = (await db.select({ count: sql<number>`count(*)` }).from(requestLogs).where(whereClause))[0];
   const total = totalResult?.count || 0;
 
   const mappedRows = rows.map((row: any) => mapTimelineRow(row));
@@ -194,9 +194,9 @@ logs.get("/logs/sessions", async (c) => {
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
   const rows = await db.select().from(chatSessions).where(whereClause)
-    .orderBy(desc(chatSessions.lastSeenAt)).limit(limit).offset(offset).all();
+    .orderBy(desc(chatSessions.lastSeenAt)).limit(limit).offset(offset);
 
-  const totalResult = await db.select({ count: sql<number>`count(*)` }).from(chatSessions).where(whereClause).get();
+  const totalResult = (await db.select({ count: sql<number>`count(*)` }).from(chatSessions).where(whereClause))[0];
   const total = totalResult?.count || 0;
 
   return c.json({ data: rows, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
@@ -205,7 +205,7 @@ logs.get("/logs/sessions", async (c) => {
 logs.get("/logs/sessions/:sessionId", async (c) => {
   const sessionId = c.req.param("sessionId");
   const mode = (c.req.query("mode") || "collapsed").toLowerCase();
-  const session = await db.select().from(chatSessions).where(eq(chatSessions.sessionId, sessionId)).get();
+  const session = (await db.select().from(chatSessions).where(eq(chatSessions.sessionId, sessionId)))[0];
   if (!session) return c.json({ error: "Session not found" }, 404);
 
   // Limit timeline to latest 500 rows to avoid slowness on very active sessions
@@ -242,8 +242,7 @@ logs.get("/logs/sessions/:sessionId", async (c) => {
   }).from(requestLogs)
     .where(eq(requestLogs.sessionId, sessionId))
     .orderBy(requestLogs.createdAt)
-    .limit(500)
-    .all();
+    .limit(500);
 
   const mappedTimeline = timeline.map((row: any) => mapTimelineRow(row));
   const collapsedTimeline = collapseTimelineRows(timeline);
@@ -284,30 +283,28 @@ logs.get("/logs/stream", (c) => {
 logs.delete("/logs", async (c) => {
   const days = parseInt(c.req.query("days") || "90");
   
-  let result;
   if (days <= 0) {
     // days=0 means delete ALL logs
-    result = await db.delete(requestLogs).run();
-    await db.delete(chatSessions).run();
-    return c.json({ success: true, message: "Deleted all logs and sessions", deletedCount: result.rowsAffected });
+    await db.delete(requestLogs);
+    await db.delete(chatSessions);
+    return c.json({ success: true, message: "Deleted all logs and sessions", deletedCount: 0 });
   }
 
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - days);
-  // Format as SQLite-compatible string (matches how timestamps are stored in DB)
+  // Format as timestamp string (matches how timestamps are stored in DB)
   const cutoffStr = cutoff.toISOString().replace("T", " ").substring(0, 19);
-  result = await db.delete(requestLogs).where(sql`created_at < ${cutoffStr}`).run();
+  await db.delete(requestLogs).where(sql`created_at < ${cutoffStr}`);
 
   // Also delete chat sessions that haven't been seen since cutoff
-  await db.delete(chatSessions).where(sql`last_seen_at < ${cutoffStr}`).run();
+  await db.delete(chatSessions).where(sql`last_seen_at < ${cutoffStr}`);
 
   // Clear transcript/preview data from remaining older logs to save space
   await db.update(requestLogs)
     .set({ transcriptSnapshot: "", requestPreview: "", responsePreview: "" })
-    .where(sql`created_at < datetime('now', '-1 day')`)
-    .run();
+    .where(sql`created_at < NOW() - INTERVAL '1 day'`);
 
-  return c.json({ success: true, message: `Deleted logs older than ${days} days`, deletedCount: result.rowsAffected });
+  return c.json({ success: true, message: `Deleted logs older than ${days} days`, deletedCount: 0 });
 });
 
 // Manual transcript cleanup endpoint (force run)
@@ -347,8 +344,8 @@ logs.get("/logs/cleanup-status", async (c) => {
 
 logs.post("/logs/clear-all", async (c) => {
   try {
-    await db.delete(requestLogs).run();
-    await db.delete(chatSessions).run();
+    await db.delete(requestLogs);
+    await db.delete(chatSessions);
     return c.json({ success: true });
   } catch (error: any) {
     return c.json({ error: "Failed to clear all logs", details: error.message }, 500);
@@ -358,13 +355,13 @@ logs.post("/logs/clear-all", async (c) => {
 // ─── Nuclear Reset: delete everything including API keys & devices ────────────
 logs.post("/logs/nuke-all", async (c) => {
   try {
-    await db.delete(requestLogs).run();
-    await db.delete(chatSessions).run();
-    await db.delete(allowedIdes).run();
-    await db.delete(allowedDevices).run();
-    await db.delete(devices).run();
-    await db.delete(apiKeys).run();
-    await db.delete(modelMonitor).run();
+    await db.delete(requestLogs);
+    await db.delete(chatSessions);
+    await db.delete(allowedIdes);
+    await db.delete(allowedDevices);
+    await db.delete(devices);
+    await db.delete(apiKeys);
+    await db.delete(modelMonitor);
     return c.json({ success: true, message: "All data wiped: logs, sessions, API keys, devices, and model monitor." });
   } catch (error: any) {
     return c.json({ error: "Failed to nuke all data", details: error.message }, 500);

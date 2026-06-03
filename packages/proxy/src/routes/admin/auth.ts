@@ -9,7 +9,7 @@ auth.post("/login", async (c) => {
   const { password } = await c.req.json<{ password: string }>();
   if (!password) return c.json({ error: "Password is required" }, 400);
 
-  const config = await db.select().from(adminConfig).get();
+  const config = (await db.select().from(adminConfig))[0];
   if (!config) return c.json({ error: "Admin not configured" }, 500);
 
   const { verify } = await import("@node-rs/argon2");

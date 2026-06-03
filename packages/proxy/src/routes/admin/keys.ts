@@ -27,8 +27,8 @@ function calculateBreakdownCosts(modelBreakdown: Array<{ model: string | null, p
 
 keys.get("/keys", async (c) => {
   return c.json(await statsCache.getOrFetch("keys-list", async () => {
-  const allKeys = await db.select().from(apiKeys).all();
-  const config = await db.select().from(adminConfig).get();
+  const allKeys = await db.select().from(apiKeys);
+  const config = (await db.select().from(adminConfig))[0];
   const result = [];
 
   for (const key of allKeys) {
@@ -39,19 +39,19 @@ keys.get("/keys", async (c) => {
     const _d = new Date(_wibNow.getTime() - _wibOffset);
     const todayUtcStr = _d.toISOString().replace('T', ' ').substring(0, 19);
     const todayWhere = and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${todayUtcStr}`, VALID_LOG_SQL)!;
-    const todayStats = await db.select({
+    const todayStats = (await db.select({
       count: turnCountSql(todayWhere),
       tokens: turnTotalTokensSql(todayWhere),
       cost: sql<number>`COALESCE(SUM(estimated_cost), 0)`,
     })
-      .from(requestLogs).where(todayWhere).get();
-    const deviceCount = await db.select({ count: sql<number>`count(*)` }).from(devices).where(eq(devices.apiKeyId, key.id)).get();
+      .from(requestLogs).where(todayWhere))[0];
+    const deviceCount = (await db.select({ count: sql<number>`count(*)` }).from(devices).where(eq(devices.apiKeyId, key.id)))[0];
     const totalWhere = and(eq(requestLogs.apiKeyId, key.id), VALID_LOG_SQL)!;
-    const totalStats = await db.select({
+    const totalStats = (await db.select({
       count: turnCountSql(totalWhere),
       tokens: turnTotalTokensSql(totalWhere),
     })
-      .from(requestLogs).where(totalWhere).get();
+      .from(requestLogs).where(totalWhere))[0];
 
     result.push({
       id: key.id, name: key.name, keyPrefix: key.keyPrefix, keyMasked: maskKey(key.key),
@@ -79,21 +79,21 @@ keys.post("/keys", async (c) => {
   if (!name || !name.trim()) return c.json({ error: "Name is required" }, 400);
 
   const key = generateApiKey();
-  const result = await db.insert(apiKeys).values({
+  const [result] = await db.insert(apiKeys).values({
     name: name.trim(), key, keyPrefix: getKeyPrefix(key), keyHash: sha256(key),
     discordUserId: discordUserId || null,
     discordUsername: discordUsername || null,
     provisionedBy: provisionedBy || "dashboard",
-  }).returning().get();
+  }).returning();
 
   return c.json({ id: result.id, name: result.name, key, keyPrefix: result.keyPrefix, isActive: result.isActive, createdAt: result.createdAt }, 201);
 });
 
 keys.get("/keys/:id", async (c) => {
   const id = parseInt(c.req.param("id"));
-  const key = await db.select().from(apiKeys).where(eq(apiKeys.id, id)).get();
+  const key = (await db.select().from(apiKeys).where(eq(apiKeys.id, id)))[0];
   if (!key) return c.json({ error: "API key not found" }, 404);
-  const config = await db.select().from(adminConfig).get();
+  const config = (await db.select().from(adminConfig))[0];
 
   // Period start timestamps
   const now = new Date();
@@ -120,16 +120,16 @@ keys.get("/keys/:id", async (c) => {
       ? and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${since}`, VALID_LOG_SQL)!
       : and(eq(requestLogs.apiKeyId, key.id), VALID_LOG_SQL)!;
 
-    const s = await db.select({
+    const s = (await db.select({
       turns:            turnCountSql(whereClause),
       tokens:           turnTotalTokensSql(whereClause),
       promptTokens:     turnPromptTokensSql(whereClause),
       completionTokens: turnCompletionTokensSql(whereClause),
       contextTokens:    sql<number>`0`,
       estimatedCost:    sql<number>`COALESCE(SUM(estimated_cost), 0)`,
-    }).from(requestLogs).where(whereClause).get();
+    }).from(requestLogs).where(whereClause))[0];
 
-    const breakdown = await db.all(sql`
+    const breakdown = (await db.execute(sql`
       SELECT model, COALESCE(SUM(sum_delta), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
       FROM (
         SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
@@ -137,13 +137,13 @@ keys.get("/keys/:id", async (c) => {
         FROM request_logs WHERE api_key_id = ${key.id} ${since ? sql`AND created_at >= ${since}` : sql``} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
         GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
         UNION ALL
-        SELECT TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
+        SELECT TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
           turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
         FROM request_logs WHERE model LIKE 'auto (%)%' AND api_key_id = ${key.id} ${since ? sql`AND created_at >= ${since}` : sql``} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-        GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
+        GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
       )
       GROUP BY model
-    `);
+    `)).rows;
     const costs = calculateBreakdownCosts(breakdown as any);
     return {
       requests:         s?.turns           || 0,
@@ -164,9 +164,9 @@ keys.get("/keys/:id", async (c) => {
     buildPeriodStats(),
   ]);
 
-  const deviceCount = await db.select({ count: sql<number>`count(*)` }).from(devices).where(eq(devices.apiKeyId, key.id)).get();
+  const deviceCount = (await db.select({ count: sql<number>`count(*)` }).from(devices).where(eq(devices.apiKeyId, key.id)))[0];
 
-  const topModels = await db.all(sql`
+  const topModels = (await db.execute(sql`
     SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta + sum_c), 0) as tokens, 0 as estimatedCost
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
@@ -174,15 +174,15 @@ keys.get("/keys/:id", async (c) => {
       FROM request_logs WHERE api_key_id = ${key.id} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 ${analyticsDateFilter}
       GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
       UNION ALL
-      SELECT TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
+      SELECT TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
         turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
       FROM request_logs WHERE model LIKE 'auto (%)%' AND api_key_id = ${key.id} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 ${analyticsDateFilter}
-      GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
+      GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
     )
     GROUP BY model ORDER BY count DESC LIMIT 10
-  `);
+  `)).rows;
 
-  const topModelsByTokens = await db.all(sql`
+  const topModelsByTokens = (await db.execute(sql`
     SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta + sum_c), 0) as tokens, 0 as estimatedCost
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
@@ -190,15 +190,15 @@ keys.get("/keys/:id", async (c) => {
       FROM request_logs WHERE api_key_id = ${key.id} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 ${analyticsDateFilter}
       GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
       UNION ALL
-      SELECT TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
+      SELECT TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
         turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
       FROM request_logs WHERE model LIKE 'auto (%)%' AND api_key_id = ${key.id} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 ${analyticsDateFilter}
-      GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
+      GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
     )
     GROUP BY model ORDER BY tokens DESC LIMIT 10
-  `);
+  `)).rows;
 
-  const topDevices = await db.all(sql`
+  const topDevices = (await db.execute(sql`
     SELECT device_fingerprint as deviceFingerprint, ip_address as ipAddress,
       ide_detected as ideDetected, os_detected as osDetected, client_name as clientName,
       COUNT(*) as requests, COUNT(DISTINCT session_id) as sessions,
@@ -209,7 +209,7 @@ keys.get("/keys/:id", async (c) => {
       FROM request_logs WHERE api_key_id = ${key.id} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL ${analyticsDateFilter}
       GROUP BY device_fingerprint, turn_id)
     GROUP BY device_fingerprint ORDER BY tokens DESC LIMIT 20
-  `);
+  `)).rows;
 
   const deviceSessionsWhere = analyticsSince
     ? and(eq(chatSessions.apiKeyId, key.id), sql`last_seen_at >= ${analyticsSince}`)
@@ -233,36 +233,33 @@ keys.get("/keys/:id", async (c) => {
   }).from(chatSessions)
     .where(deviceSessionsWhere)
     .orderBy(sql`total_tokens DESC`)
-    .limit(500)
-    .all();
+    .limit(500);
 
-  const devicePolicyCounts = await db.select({
+  const devicePolicyCounts = (await db.select({
     deviceAllowCount: sql<number>`COALESCE(SUM(CASE WHEN list_type = 'allow' AND fingerprint IS NOT NULL THEN 1 ELSE 0 END), 0)`,
     deviceBlockCount: sql<number>`COALESCE(SUM(CASE WHEN list_type = 'block' AND fingerprint IS NOT NULL THEN 1 ELSE 0 END), 0)`,
     ipAllowCount: sql<number>`COALESCE(SUM(CASE WHEN list_type = 'allow' AND ip_address IS NOT NULL THEN 1 ELSE 0 END), 0)`,
     ipBlockCount: sql<number>`COALESCE(SUM(CASE WHEN list_type = 'block' AND ip_address IS NOT NULL THEN 1 ELSE 0 END), 0)`,
-  }).from(allowedDevices).where(eq(allowedDevices.apiKeyId, key.id)).get();
+  }).from(allowedDevices).where(eq(allowedDevices.apiKeyId, key.id)))[0];
 
-  const idePolicyCounts = await db.select({
+  const idePolicyCounts = (await db.select({
     ideAllowCount: sql<number>`COALESCE(SUM(CASE WHEN list_type = 'allow' THEN 1 ELSE 0 END), 0)`,
     ideBlockCount: sql<number>`COALESCE(SUM(CASE WHEN list_type = 'block' THEN 1 ELSE 0 END), 0)`,
-  }).from(allowedIdes).where(eq(allowedIdes.apiKeyId, key.id)).get();
+  }).from(allowedIdes).where(eq(allowedIdes.apiKeyId, key.id)))[0];
 
   const devicePolicies = await db
     .select()
     .from(allowedDevices)
     .where(eq(allowedDevices.apiKeyId, key.id))
     .orderBy(sql`created_at DESC`)
-    .limit(200)
-    .all();
+    .limit(200);
 
   const idePolicies = await db
     .select()
     .from(allowedIdes)
     .where(eq(allowedIdes.apiKeyId, key.id))
     .orderBy(sql`created_at DESC`)
-    .limit(200)
-    .all();
+    .limit(200);
 
   return c.json({
     id: key.id, name: key.name, keyPrefix: key.keyPrefix, keyMasked: maskKey(key.key),
@@ -308,10 +305,10 @@ keys.get("/keys/:id", async (c) => {
 keys.put("/keys/:id", async (c) => {
   const id = parseInt(c.req.param("id"));
   const body = await c.req.json<any>();
-  const key = await db.select().from(apiKeys).where(eq(apiKeys.id, id)).get();
+  const key = (await db.select().from(apiKeys).where(eq(apiKeys.id, id)))[0];
   if (!key) return c.json({ error: "API key not found" }, 404);
 
-  const updates: Record<string, any> = { updatedAt: new Date().toISOString().replace("T", " ").substring(0, 19) };
+  const updates: Record<string, any> = { updatedAt: new Date() };
   if (body.name !== undefined) updates.name = body.name.trim();
   if (body.isActive !== undefined) updates.isActive = body.isActive;
   if (body.maxDevices !== undefined) updates.maxDevices = body.maxDevices;
@@ -331,7 +328,7 @@ keys.put("/keys/:id", async (c) => {
   if (body.dailyInputTokenLimit !== undefined) updates.dailyInputTokenLimit = body.dailyInputTokenLimit;
   if (body.dailyOutputTokenLimit !== undefined) updates.dailyOutputTokenLimit = body.dailyOutputTokenLimit;
 
-  await db.update(apiKeys).set(updates).where(eq(apiKeys.id, id)).run();
+  await db.update(apiKeys).set(updates).where(eq(apiKeys.id, id));
   apiKeyCache.clear(); // invalidate all cached keys since we matched by id, not key string
   statsCache.invalidate("keys-list"); // invalidate keys list cache
   return c.json({ success: true, message: "API key updated" });
@@ -339,9 +336,9 @@ keys.put("/keys/:id", async (c) => {
 
 keys.delete("/keys/:id", async (c) => {
   const id = parseInt(c.req.param("id"));
-  const key = await db.select().from(apiKeys).where(eq(apiKeys.id, id)).get();
+  const key = (await db.select().from(apiKeys).where(eq(apiKeys.id, id)))[0];
   if (!key) return c.json({ error: "API key not found" }, 404);
-  await db.delete(apiKeys).where(eq(apiKeys.id, id)).run();
+  await db.delete(apiKeys).where(eq(apiKeys.id, id));
   apiKeyCache.clear();
   statsCache.invalidate("keys-list");
   return c.json({ success: true, message: "API key deleted" });
@@ -349,14 +346,14 @@ keys.delete("/keys/:id", async (c) => {
 
 keys.post("/keys/:id/rotate", async (c) => {
   const id = parseInt(c.req.param("id"));
-  const key = await db.select().from(apiKeys).where(eq(apiKeys.id, id)).get();
+  const key = (await db.select().from(apiKeys).where(eq(apiKeys.id, id)))[0];
   if (!key) return c.json({ error: "API key not found" }, 404);
 
   const newKey = generateApiKey();
   await db.update(apiKeys).set({
     key: newKey, keyPrefix: getKeyPrefix(newKey), keyHash: sha256(newKey),
-    updatedAt: new Date().toISOString().replace("T", " ").substring(0, 19),
-  }).where(eq(apiKeys.id, id)).run();
+    updatedAt: new Date(),
+  }).where(eq(apiKeys.id, id));
 
   apiKeyCache.clear(); // invalidate cached keys after rotation
   statsCache.invalidate("keys-list");
@@ -365,7 +362,7 @@ keys.post("/keys/:id/rotate", async (c) => {
 
 keys.get("/keys/:id/devices", async (c) => {
   const id = parseInt(c.req.param("id"));
-  const allDevices = await db.select().from(devices).where(eq(devices.apiKeyId, id)).orderBy(desc(devices.lastSeen)).all();
+  const allDevices = await db.select().from(devices).where(eq(devices.apiKeyId, id)).orderBy(desc(devices.lastSeen));
   return c.json(allDevices);
 });
 
@@ -373,12 +370,13 @@ keys.post("/keys/:id/devices/:fingerprint/block", async (c) => {
   const keyId = parseInt(c.req.param("id"));
   const fingerprint = c.req.param("fingerprint");
 
-  await db.update(devices).set({ isBlocked: true }).where(and(eq(devices.apiKeyId, keyId), eq(devices.fingerprint, fingerprint))).run();
+  await db.update(devices).set({ isBlocked: true }).where(and(eq(devices.apiKeyId, keyId), eq(devices.fingerprint, fingerprint)));
 
   const existing = await db.select().from(allowedDevices)
-    .where(and(eq(allowedDevices.apiKeyId, keyId), eq(allowedDevices.fingerprint, fingerprint), eq(allowedDevices.listType, "block"))).get();
-  if (!existing) {
-    await db.insert(allowedDevices).values({ apiKeyId: keyId, fingerprint, listType: "block", label: "Blocked via dashboard" }).run();
+    .where(and(eq(allowedDevices.apiKeyId, keyId), eq(allowedDevices.fingerprint, fingerprint), eq(allowedDevices.listType, "block")));
+  const blockExisting = existing[0];
+  if (!blockExisting) {
+    await db.insert(allowedDevices).values({ apiKeyId: keyId, fingerprint, listType: "block", label: "Blocked via dashboard" });
   }
   return c.json({ success: true, message: "Device blocked" });
 });
@@ -387,13 +385,14 @@ keys.post("/keys/:id/devices/:fingerprint/allow", async (c) => {
   const keyId = parseInt(c.req.param("id"));
   const fingerprint = c.req.param("fingerprint");
 
-  await db.update(devices).set({ isBlocked: false }).where(and(eq(devices.apiKeyId, keyId), eq(devices.fingerprint, fingerprint))).run();
-  await db.delete(allowedDevices).where(and(eq(allowedDevices.apiKeyId, keyId), eq(allowedDevices.fingerprint, fingerprint), eq(allowedDevices.listType, "block"))).run();
+  await db.update(devices).set({ isBlocked: false }).where(and(eq(devices.apiKeyId, keyId), eq(devices.fingerprint, fingerprint)));
+  await db.delete(allowedDevices).where(and(eq(allowedDevices.apiKeyId, keyId), eq(allowedDevices.fingerprint, fingerprint), eq(allowedDevices.listType, "block")));
 
   const existing = await db.select().from(allowedDevices)
-    .where(and(eq(allowedDevices.apiKeyId, keyId), eq(allowedDevices.fingerprint, fingerprint), eq(allowedDevices.listType, "allow"))).get();
-  if (!existing) {
-    await db.insert(allowedDevices).values({ apiKeyId: keyId, fingerprint, listType: "allow", label: "Allowed via dashboard" }).run();
+    .where(and(eq(allowedDevices.apiKeyId, keyId), eq(allowedDevices.fingerprint, fingerprint), eq(allowedDevices.listType, "allow")));
+  const allowExisting = existing[0];
+  if (!allowExisting) {
+    await db.insert(allowedDevices).values({ apiKeyId: keyId, fingerprint, listType: "allow", label: "Allowed via dashboard" });
   }
   return c.json({ success: true, message: "Device allowed" });
 });
@@ -401,8 +400,8 @@ keys.post("/keys/:id/devices/:fingerprint/allow", async (c) => {
 keys.delete("/keys/:id/devices/:fingerprint", async (c) => {
   const keyId = parseInt(c.req.param("id"));
   const fingerprint = c.req.param("fingerprint");
-  await db.delete(allowedDevices).where(and(eq(allowedDevices.apiKeyId, keyId), eq(allowedDevices.fingerprint, fingerprint))).run();
-  await db.update(devices).set({ isBlocked: false }).where(and(eq(devices.apiKeyId, keyId), eq(devices.fingerprint, fingerprint))).run();
+  await db.delete(allowedDevices).where(and(eq(allowedDevices.apiKeyId, keyId), eq(allowedDevices.fingerprint, fingerprint)));
+  await db.update(devices).set({ isBlocked: false }).where(and(eq(devices.apiKeyId, keyId), eq(devices.fingerprint, fingerprint)));
   return c.json({ success: true, message: "Device removed from list" });
 });
 
@@ -415,7 +414,7 @@ keys.post("/keys/:id/policies/device", async (c) => {
     label?: string;
   }>();
 
-  const key = await db.select().from(apiKeys).where(eq(apiKeys.id, keyId)).get();
+  const key = (await db.select().from(apiKeys).where(eq(apiKeys.id, keyId)))[0];
   if (!key) return c.json({ error: "API key not found" }, 404);
 
   const targetType = body.targetType === "ip" ? "ip" : "fingerprint";
@@ -431,30 +430,28 @@ keys.post("/keys/:id/policies/device", async (c) => {
     ? and(eq(allowedDevices.apiKeyId, keyId), eq(allowedDevices.ipAddress, value), eq(allowedDevices.listType, listType))
     : and(eq(allowedDevices.apiKeyId, keyId), eq(allowedDevices.fingerprint, value), eq(allowedDevices.listType, listType));
 
-  const existing = await db.select().from(allowedDevices).where(where).get();
+  const existing = (await db.select().from(allowedDevices).where(where))[0];
   if (existing) {
     return c.json({ success: true, message: "Rule already exists", id: existing.id });
   }
 
-  const inserted = await db.insert(allowedDevices).values({
+  const [inserted] = await db.insert(allowedDevices).values({
     apiKeyId: keyId,
     fingerprint: targetType === "fingerprint" ? value : null,
     ipAddress: targetType === "ip" ? value : null,
     listType,
     label: label || `${listType === "block" ? "Blocked" : "Allowed"} via dashboard`,
-  }).returning().get();
+  }).returning();
 
   if (targetType === "fingerprint") {
     if (listType === "block") {
       await db.update(devices)
         .set({ isBlocked: true })
-        .where(and(eq(devices.apiKeyId, keyId), eq(devices.fingerprint, value)))
-        .run();
+        .where(and(eq(devices.apiKeyId, keyId), eq(devices.fingerprint, value)));
     } else {
       await db.update(devices)
         .set({ isBlocked: false })
-        .where(and(eq(devices.apiKeyId, keyId), eq(devices.fingerprint, value)))
-        .run();
+        .where(and(eq(devices.apiKeyId, keyId), eq(devices.fingerprint, value)));
     }
   }
 
@@ -465,21 +462,18 @@ keys.delete("/keys/:id/policies/device/:ruleId", async (c) => {
   const keyId = parseInt(c.req.param("id"));
   const ruleId = parseInt(c.req.param("ruleId"));
 
-  const existing = await db.select().from(allowedDevices)
-    .where(and(eq(allowedDevices.id, ruleId), eq(allowedDevices.apiKeyId, keyId)))
-    .get();
+  const existing = (await db.select().from(allowedDevices)
+    .where(and(eq(allowedDevices.id, ruleId), eq(allowedDevices.apiKeyId, keyId))))[0];
 
   if (!existing) return c.json({ error: "Rule not found" }, 404);
 
   await db.delete(allowedDevices)
-    .where(and(eq(allowedDevices.id, ruleId), eq(allowedDevices.apiKeyId, keyId)))
-    .run();
+    .where(and(eq(allowedDevices.id, ruleId), eq(allowedDevices.apiKeyId, keyId)));
 
   if (existing.fingerprint && existing.listType === "block") {
     await db.update(devices)
       .set({ isBlocked: false })
-      .where(and(eq(devices.apiKeyId, keyId), eq(devices.fingerprint, existing.fingerprint)))
-      .run();
+      .where(and(eq(devices.apiKeyId, keyId), eq(devices.fingerprint, existing.fingerprint)));
   }
 
   return c.json({ success: true, message: "Rule removed" });
@@ -488,7 +482,7 @@ keys.delete("/keys/:id/policies/device/:ruleId", async (c) => {
 keys.post("/keys/:id/policies/ide", async (c) => {
   const keyId = parseInt(c.req.param("id"));
   const body = await c.req.json<{ ideName?: string; listType?: "allow" | "block" }>();
-  const key = await db.select().from(apiKeys).where(eq(apiKeys.id, keyId)).get();
+  const key = (await db.select().from(apiKeys).where(eq(apiKeys.id, keyId)))[0];
   if (!key) return c.json({ error: "API key not found" }, 404);
 
   const ideName = normalizeIdeName(body.ideName || "");
@@ -498,15 +492,14 @@ keys.post("/keys/:id/policies/ide", async (c) => {
     return c.json({ error: "Valid IDE name is required" }, 400);
   }
 
-  const existing = await db.select().from(allowedIdes)
-    .where(and(eq(allowedIdes.apiKeyId, keyId), eq(allowedIdes.ideName, ideName), eq(allowedIdes.listType, listType)))
-    .get();
+  const existing = (await db.select().from(allowedIdes)
+    .where(and(eq(allowedIdes.apiKeyId, keyId), eq(allowedIdes.ideName, ideName), eq(allowedIdes.listType, listType))))[0];
 
   if (existing) {
     return c.json({ success: true, message: "IDE rule already exists", id: existing.id });
   }
 
-  const inserted = await db.insert(allowedIdes).values({ apiKeyId: keyId, ideName, listType }).returning().get();
+  const [inserted] = await db.insert(allowedIdes).values({ apiKeyId: keyId, ideName, listType }).returning();
   return c.json({ success: true, id: inserted.id, message: "IDE rule added" }, 201);
 });
 
@@ -514,15 +507,13 @@ keys.delete("/keys/:id/policies/ide/:ruleId", async (c) => {
   const keyId = parseInt(c.req.param("id"));
   const ruleId = parseInt(c.req.param("ruleId"));
 
-  const existing = await db.select().from(allowedIdes)
-    .where(and(eq(allowedIdes.id, ruleId), eq(allowedIdes.apiKeyId, keyId)))
-    .get();
+  const existing = (await db.select().from(allowedIdes)
+    .where(and(eq(allowedIdes.id, ruleId), eq(allowedIdes.apiKeyId, keyId))))[0];
 
   if (!existing) return c.json({ error: "IDE rule not found" }, 404);
 
   await db.delete(allowedIdes)
-    .where(and(eq(allowedIdes.id, ruleId), eq(allowedIdes.apiKeyId, keyId)))
-    .run();
+    .where(and(eq(allowedIdes.id, ruleId), eq(allowedIdes.apiKeyId, keyId)));
 
   return c.json({ success: true, message: "IDE rule removed" });
 });
@@ -532,8 +523,7 @@ keys.delete("/keys/:id/policies/ide/:ruleId", async (c) => {
 keys.get("/keys/:id/model-limits", async (c) => {
   const keyId = parseInt(c.req.param("id"));
   const rows = await db.select().from(modelLimits)
-    .where(and(eq(modelLimits.scope, "key"), eq(modelLimits.scopeId, keyId)))
-    .all();
+    .where(and(eq(modelLimits.scope, "key"), eq(modelLimits.scopeId, keyId)));
   return c.json({ data: rows });
 });
 
@@ -553,7 +543,7 @@ keys.put("/keys/:id/model-limits", async (c) => {
     eq(modelLimits.scope, "key"),
     eq(modelLimits.scopeId, keyId),
     eq(modelLimits.model, modelName),
-  )).run();
+  ));
 
   if (limit > 0 || dailyTokenLimit > 0 || monthlyTokenLimit > 0 || dailyInputTokenLimit > 0 || dailyOutputTokenLimit > 0) {
     await db.insert(modelLimits).values({
@@ -563,7 +553,7 @@ keys.put("/keys/:id/model-limits", async (c) => {
       monthlyTokenLimit,
       dailyInputTokenLimit,
       dailyOutputTokenLimit
-    }).run();
+    });
   }
 
   return c.json({ success: true, model: modelName, promptLimit: limit, dailyTokenLimit, monthlyTokenLimit, dailyInputTokenLimit, dailyOutputTokenLimit });
@@ -576,7 +566,7 @@ keys.delete("/keys/:id/model-limits/:model", async (c) => {
     eq(modelLimits.scope, "key"),
     eq(modelLimits.scopeId, keyId),
     eq(modelLimits.model, model),
-  )).run();
+  ));
   return c.json({ success: true, message: `Model limit for "${model}" removed` });
 });
 

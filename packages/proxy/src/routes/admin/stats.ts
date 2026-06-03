@@ -8,15 +8,15 @@ import { statsCache } from "../../utils/cache.js";
 
 const stats = new Hono();
 
-/** Convert a Date to the 'YYYY-MM-DD HH:MM:SS' format stored in SQLite (UTC-based). */
-function toSqliteUtc(date: Date): string {
+/** Convert a Date to the 'YYYY-MM-DD HH:MM:SS' UTC string for DB comparison. */
+function toUtcStr(date: Date): string {
   return date.toISOString().replace("T", " ").substring(0, 19);
 }
 
 /**
- * Return "today" midnight in LOCAL server time, formatted as SQLite UTC string.
- * SQLite stores timestamps as UTC strings without timezone — comparing with
- * local-midnight ISO string gives correct "today" results regardless of server TZ.
+ * Return "today" midnight in LOCAL server time as a UTC Date.
+ * Timestamps are stored as UTC strings — comparing with local-midnight ISO
+ * string gives correct "today" results regardless of server TZ.
  */
 function localTodayStart(): Date {
   // Use WIB (UTC+7) as the reference timezone
@@ -49,13 +49,13 @@ stats.get("/stats/overview", async (c) => {
   // month: 1st of current month at local midnight
   const monthStart  = new Date(todayStart); monthStart.setDate(1);
 
-  const todayStr  = toSqliteUtc(todayStart);
-  const weekStr   = toSqliteUtc(weekStart);
-  const monthStr  = toSqliteUtc(monthStart);
+  const todayStr  = toUtcStr(todayStart);
+  const weekStr   = toUtcStr(weekStart);
+  const monthStr  = toUtcStr(monthStart);
 
   // Today — turn-based aggregation (MAX prompt per turn, SUM completion per turn)
   const todayWhere = and(sql`created_at >= ${todayStr}`, VALID_LOG_SQL);
-  const todayStats = await db.select({
+  const todayStats = (await db.select({
     requests: turnCountSql(todayWhere),
     tokens: turnTotalTokensSql(todayWhere),
     promptTokens: turnPromptTokensSql(todayWhere),
@@ -64,10 +64,9 @@ stats.get("/stats/overview", async (c) => {
     uniqueDevices: sql<number>`COUNT(DISTINCT device_fingerprint)`
   })
   .from(requestLogs)
-  .where(todayWhere)
-  .get();
+  .where(todayWhere))[0];
 
-  const todayBreakdown = await db.all(sql`
+  const todayBreakdown = (await db.execute(sql`
     SELECT model, COALESCE(SUM(sum_delta), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
@@ -75,18 +74,18 @@ stats.get("/stats/overview", async (c) => {
       FROM request_logs WHERE created_at >= ${todayStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
       GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
       UNION ALL
-      SELECT TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
+      SELECT TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
         turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
       FROM request_logs WHERE model LIKE 'auto (%)%' AND created_at >= ${todayStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
+      GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
     )
     GROUP BY model
-  `);
+  `)).rows;
   const todayCosts = calculateBreakdownCosts(todayBreakdown as any);
 
   // Week
   const weekWhere = and(sql`created_at >= ${weekStr}`, VALID_LOG_SQL);
-  const weekStats = await db.select({
+  const weekStats = (await db.select({
     requests: turnCountSql(weekWhere),
     tokens: turnTotalTokensSql(weekWhere),
     promptTokens: turnPromptTokensSql(weekWhere),
@@ -94,10 +93,9 @@ stats.get("/stats/overview", async (c) => {
     contextTokens: sql<number>`0`
   })
   .from(requestLogs)
-  .where(weekWhere)
-  .get();
+  .where(weekWhere))[0];
 
-  const weekBreakdown = await db.all(sql`
+  const weekBreakdown = (await db.execute(sql`
     SELECT model, COALESCE(SUM(sum_delta), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
@@ -105,18 +103,18 @@ stats.get("/stats/overview", async (c) => {
       FROM request_logs WHERE created_at >= ${weekStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
       GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
       UNION ALL
-      SELECT TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
+      SELECT TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
         turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
       FROM request_logs WHERE model LIKE 'auto (%)%' AND created_at >= ${weekStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
+      GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
     )
     GROUP BY model
-  `);
+  `)).rows;
   const weekCosts = calculateBreakdownCosts(weekBreakdown as any);
 
   // Month
   const monthWhere = and(sql`created_at >= ${monthStr}`, VALID_LOG_SQL);
-  const monthStats = await db.select({
+  const monthStats = (await db.select({
     requests: turnCountSql(monthWhere),
     tokens: turnTotalTokensSql(monthWhere),
     promptTokens: turnPromptTokensSql(monthWhere),
@@ -124,10 +122,9 @@ stats.get("/stats/overview", async (c) => {
     contextTokens: sql<number>`0`
   })
   .from(requestLogs)
-  .where(monthWhere)
-  .get();
+  .where(monthWhere))[0];
 
-  const monthBreakdown = await db.all(sql`
+  const monthBreakdown = (await db.execute(sql`
     SELECT model, COALESCE(SUM(sum_delta), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
@@ -135,18 +132,18 @@ stats.get("/stats/overview", async (c) => {
       FROM request_logs WHERE created_at >= ${monthStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
       GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
       UNION ALL
-      SELECT TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
+      SELECT TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
         turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
       FROM request_logs WHERE model LIKE 'auto (%)%' AND created_at >= ${monthStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
+      GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
     )
     GROUP BY model
-  `);
+  `)).rows;
   const monthCosts = calculateBreakdownCosts(monthBreakdown as any);
 
   // All Time - live data
   const allTimeWhere = VALID_LOG_SQL;
-  const allTimeLive = await db.select({
+  const allTimeLive = (await db.select({
     requests: turnCountSql(allTimeWhere),
     tokens: turnTotalTokensSql(allTimeWhere),
     promptTokens: turnPromptTokensSql(allTimeWhere),
@@ -154,19 +151,17 @@ stats.get("/stats/overview", async (c) => {
     contextTokens: sql<number>`0`
   })
   .from(requestLogs)
-  .where(allTimeWhere)
-  .get();
+  .where(allTimeWhere))[0];
 
   // All Time - archived data from monthly_stats (survives 3-month cleanup)
-  const allTimeArchived = await db.select({
+  const allTimeArchived = (await db.select({
     requests: sql<number>`COALESCE(SUM(turn_count), 0)`,
     tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
     promptTokens: sql<number>`COALESCE(SUM(input_tokens), 0)`,
     completionTokens: sql<number>`COALESCE(SUM(output_tokens), 0)`,
   })
   .from(monthlyStats)
-  .where(sql`api_key_id IS NULL AND model = '_all_'`)
-  .get();
+  .where(sql`api_key_id IS NULL AND model = '_all_'`))[0];
 
   // Combine live + archived
   const allTimeStats = {
@@ -178,7 +173,7 @@ stats.get("/stats/overview", async (c) => {
   };
 
   // All Time breakdown - live data
-  const allTimeLiveBreakdown = await db.all(sql`
+  const allTimeLiveBreakdown = (await db.execute(sql`
     SELECT model, COALESCE(SUM(sum_delta), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
@@ -186,13 +181,13 @@ stats.get("/stats/overview", async (c) => {
       FROM request_logs WHERE status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
       GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
       UNION ALL
-      SELECT TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
+      SELECT TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
         turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
       FROM request_logs WHERE model LIKE 'auto (%)%' AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
+      GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
     )
     GROUP BY model
-  `);
+  `)).rows;
 
   // All Time breakdown - archived model data
   const allTimeArchivedBreakdown = await db.select({
@@ -202,8 +197,7 @@ stats.get("/stats/overview", async (c) => {
   })
   .from(monthlyStats)
   .where(sql`api_key_id IS NULL AND model != '_all_'`)
-  .groupBy(monthlyStats.model)
-  .all();
+  .groupBy(monthlyStats.model);
 
   // Merge live and archived breakdowns by model
   const breakdownMap = new Map<string, { promptTokens: number; completionTokens: number }>();
@@ -222,12 +216,12 @@ stats.get("/stats/overview", async (c) => {
   const allTimeBreakdown = Array.from(breakdownMap.entries()).map(([model, v]) => ({ model, ...v }));
   const allTimeCosts = calculateBreakdownCosts(allTimeBreakdown as any);
 
-  const activeKeys = await db.select({ count: sql<number>`count(*)` }).from(apiKeys).where(eq(apiKeys.isActive, true)).get();
-  const totalKeys = await db.select({ count: sql<number>`count(*)` }).from(apiKeys).get();
-  const totalDevices = await db.select({ count: sql<number>`count(*)` }).from(devices).get();
+  const activeKeys = (await db.select({ count: sql<number>`count(*)` }).from(apiKeys).where(eq(apiKeys.isActive, true)))[0];
+  const totalKeys = (await db.select({ count: sql<number>`count(*)` }).from(apiKeys))[0];
+  const totalDevices = (await db.select({ count: sql<number>`count(*)` }).from(devices))[0];
   
   // Sessions & Average calculations
-  const sessionCountResult = await db.select({ count: sql<number>`count(*)` }).from(chatSessions).get();
+  const sessionCountResult = (await db.select({ count: sql<number>`count(*)` }).from(chatSessions))[0];
   const totalSessions = sessionCountResult?.count || 0;
   const avgRequestsPerSession = totalSessions > 0 ? (allTimeStats?.requests || 0) / totalSessions : 0;
 
@@ -288,31 +282,31 @@ stats.get("/stats/by-key", async (c) => {
     ? new Date(Date.now() - days * 86400000).toISOString().replace("T", " ").substring(0, 19)
     : null;
 
-  const allKeys = await db.select().from(apiKeys).all();
+  const allKeys = await db.select().from(apiKeys);
   const result = [];
   for (const key of allKeys) {
     const whereClause = startDate
       ? and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${startDate}`, VALID_LOG_SQL)
       : and(eq(requestLogs.apiKeyId, key.id), VALID_LOG_SQL);
 
-    const keyStats = await db.select({
+    const keyStats = (await db.select({
       requests: turnCountSql(whereClause),
       tokens: turnTotalTokensSql(whereClause),
       promptTokens: turnPromptTokensSql(whereClause),
       completionTokens: turnCompletionTokensSql(whereClause),
       uniqueDevices: sql<number>`COUNT(DISTINCT device_fingerprint)`
-    }).from(requestLogs).where(whereClause).get();
+    }).from(requestLogs).where(whereClause))[0];
 
-    const topModel = await db.select({ model: requestLogs.model, count: sql<number>`count(*)` })
-      .from(requestLogs).where(whereClause).groupBy(requestLogs.model).orderBy(sql`count(*) DESC`).limit(1).get();
+    const topModel = (await db.select({ model: requestLogs.model, count: sql<number>`count(*)` })
+      .from(requestLogs).where(whereClause).groupBy(requestLogs.model).orderBy(sql`count(*) DESC`).limit(1))[0];
 
-    const modelBreakdown = await db.all(sql`
+    const modelBreakdown = (await db.execute(sql`
       SELECT model, COALESCE(SUM(max_p), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
       FROM (SELECT model, turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
         FROM request_logs WHERE api_key_id = ${key.id} ${startDate ? sql`AND created_at >= ${startDate}` : sql``} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
         GROUP BY model, turn_id)
       GROUP BY model
-    `);
+    `)).rows;
 
     let estimatedCost = 0;
     for (const row of modelBreakdown as any[]) {
@@ -345,14 +339,14 @@ stats.get("/stats/by-model", async (c) => {
   const dateFilter = startDate ? sql`AND created_at >= ${startDate}` : sql``;
   const keyFilter = apiKeyId ? sql`AND api_key_id = ${apiKeyId}` : sql``;
 
-  const rows = await db.all(sql`
+  const rows = (await db.execute(sql`
     SELECT
       model,
       COUNT(*) as turns,
       COALESCE(SUM(sum_delta), 0) as tokens,
       COALESCE(SUM(sum_delta), 0) as promptTokens,
       COALESCE(SUM(sum_c), 0) as completionTokens,
-      ROUND(AVG(avg_lat), 0) as avgLatency
+      ROUND(AVG(avg_lat)::numeric, 0) as avgLatency
     FROM (
       SELECT
         CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
@@ -364,15 +358,15 @@ stats.get("/stats/by-model", async (c) => {
       UNION ALL
 
       SELECT
-        TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)) as model,
+        TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
         turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c, AVG(latency_ms) as avg_lat
       FROM request_logs
       WHERE model LIKE 'auto (%)%' AND turn_id IS NOT NULL ${dateFilter} ${keyFilter} AND status_code BETWEEN 200 AND 299
-      GROUP BY TRIM(SUBSTR(model, 7, INSTR(SUBSTR(model, 7), ')') - 1)), turn_id
+      GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
     )
     GROUP BY model
     ORDER BY turns DESC
-  `);
+  `)).rows;
 
   const withCost = (rows as any[]).map(row => {
     const rates = getModelRates(row.model || "");
@@ -394,7 +388,7 @@ stats.get("/stats/by-device", async (c) => {
 
   const dateFilter = startDate ? sql`AND created_at >= ${startDate}` : sql``;
 
-  const rows = await db.all(sql`
+  const rows = (await db.execute(sql`
     SELECT
       device_fingerprint as fingerprint,
       ide_detected as ide,
@@ -416,7 +410,7 @@ stats.get("/stats/by-device", async (c) => {
     GROUP BY device_fingerprint
     ORDER BY requests DESC
     LIMIT 50
-  `);
+  `)).rows;
 
   const result = (rows as any[]).map(row => {
     const estimatedCost = Math.round((row.promptTokens || 0) * 1.50 + (row.completionTokens || 0) * 6.00);
@@ -430,11 +424,11 @@ stats.get("/stats/timeseries", async (c) => {
   const period = c.req.query("period") || "daily";
   const days = parseInt(c.req.query("days") || "7");
   const startDate = new Date(Date.now() - days * 86400000);
-  const startStr = toSqliteUtc(startDate);
+  const startStr = toUtcStr(startDate);
 
-  const groupExpr = period === "hourly" ? "strftime('%Y-%m-%d %H:00', created_at)" : "strftime('%Y-%m-%d', created_at)";
+  const groupExpr = period === "hourly" ? "to_char(created_at, 'YYYY-MM-DD HH24:00')" : "to_char(created_at, 'YYYY-MM-DD')";
 
-  const result = await db.all(sql`
+  const result = (await db.execute(sql`
     SELECT
       period_group as period,
       COUNT(*) as requests,
@@ -456,7 +450,7 @@ stats.get("/stats/timeseries", async (c) => {
     )
     GROUP BY period_group
     ORDER BY period_group
-  `);
+  `)).rows;
 
   return c.json(result);
 });
@@ -473,7 +467,7 @@ stats.get("/stats/top-users", async (c) => {
   const dateFilter = startDate ? sql`AND created_at >= ${startDate}` : sql``;
 
   // Aggregate per api_key_id using turn-level token aggregation
-  const aggRows = await db.all(sql`
+  const aggRows = (await db.execute(sql`
     SELECT
       api_key_id as apiKeyId,
       COUNT(*) as turns,
@@ -489,18 +483,18 @@ stats.get("/stats/top-users", async (c) => {
       GROUP BY api_key_id, turn_id
     )
     GROUP BY api_key_id
-  `);
+  `)).rows;
 
   // Join with api_keys for display info
   const enriched = await Promise.all(
     (aggRows as any[])
       .filter(r => r.apiKeyId != null)
       .map(async (r: any) => {
-        const key = await db.select({
+        const key = (await db.select({
           name: apiKeys.name,
           discordUserId: apiKeys.discordUserId,
           discordUsername: apiKeys.discordUsername,
-        }).from(apiKeys).where(eq(apiKeys.id, r.apiKeyId!)).get();
+        }).from(apiKeys).where(eq(apiKeys.id, r.apiKeyId!)))[0];
 
         const displayName = key?.discordUsername
           || (key?.discordUserId ? `Discord #${key.discordUserId.substring(0, 8)}` : null)

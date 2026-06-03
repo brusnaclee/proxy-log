@@ -62,7 +62,7 @@ monitor.get("/settings/bot", async (c) => {
   const authErr = checkAdminSession(c);
   if (authErr) return authErr;
   
-  const config = await db.select().from(adminConfig).get();
+  const [config] = await db.select().from(adminConfig);
   if (!config) return c.json({ error: "Admin config not found" }, 500);
 
   return c.json({
@@ -83,7 +83,7 @@ monitor.post("/settings/bot", async (c) => {
   if (authErr) return authErr;
   
   const body = await c.req.json();
-  const config = await db.select().from(adminConfig).get();
+  const [config] = await db.select().from(adminConfig);
   if (!config) return c.json({ error: "Admin config not found" }, 500);
 
   const updates: Record<string, any> = {
@@ -100,7 +100,7 @@ monitor.post("/settings/bot", async (c) => {
   if (body.verifAutoEnabled !== undefined) updates.verifAutoEnabled = Boolean(body.verifAutoEnabled);
   if (body.tokitoApiKey !== undefined) updates.tokitoApiKey = body.tokitoApiKey;
 
-  await db.update(adminConfig).set(updates).where(eq(adminConfig.id, config.id)).run();
+  await db.update(adminConfig).set(updates).where(eq(adminConfig.id, config.id));
 
   return c.json({ success: true });
 });
@@ -125,8 +125,7 @@ monitor.get("/monitor/models", async (c) => {
       latestSubquery,
       sql`${modelMonitor.modelId} = ${latestSubquery.modelId} AND COALESCE(${modelMonitor.provider}, '') = COALESCE(${latestSubquery.provider}, '') AND ${modelMonitor.checkedAt} = ${latestSubquery.maxCheckedAt}`
     )
-    .orderBy(modelMonitor.provider, modelMonitor.modelId)
-    .all();
+    .orderBy(modelMonitor.provider, modelMonitor.modelId);
 
   const data = rows
     .map((r) => r.model_monitor)
@@ -150,8 +149,7 @@ monitor.get("/monitor/models/:modelId/history", async (c) => {
     .from(modelMonitor)
     .where(eq(modelMonitor.modelId, modelId))
     .orderBy(desc(modelMonitor.checkedAt))
-    .limit(100)
-    .all();
+    .limit(100);
 
   return c.json(rows);
 });
@@ -201,7 +199,7 @@ monitor.post("/monitor/models/single", async (c) => {
     errorMessage: item.errorMessage ? String(item.errorMessage) : null,
     baseUrl: item.baseUrl ? String(item.baseUrl) : null,
     checkedAt: now,
-  }).run();
+  });
 
   return c.json({ success: true });
 });
@@ -271,8 +269,7 @@ monitor.get("/internal/monitor/models", async (c) => {
       latestSubquery,
       sql`${modelMonitor.modelId} = ${latestSubquery.modelId} AND COALESCE(${modelMonitor.provider}, '') = COALESCE(${latestSubquery.provider}, '') AND ${modelMonitor.checkedAt} = ${latestSubquery.maxCheckedAt}`
     )
-    .orderBy(modelMonitor.provider, modelMonitor.modelId)
-    .all();
+    .orderBy(modelMonitor.provider, modelMonitor.modelId);
 
   const data = rows
     .map((r) => r.model_monitor)
@@ -322,13 +319,13 @@ monitor.post("/monitor/sweep", async (c) => {
   (async () => {
     try {
       // Clear ALL old model_monitor rows before sweep to remove stale data
-      await db.delete(modelMonitor).run();
+      await db.delete(modelMonitor);
       await resetAllTestStates();
-      const activeProviders = await db.select().from(providers).where(eq(providers.isActive, true)).orderBy(sql`${providers.priority} DESC`).all();
+      const activeProviders = await db.select().from(providers).where(eq(providers.isActive, true)).orderBy(sql`${providers.priority} DESC`);
       const allModels: Array<{ modelId: string; providerName: string; providerId: number; baseUrl: string; apiKey: string }> = [];
 
       for (const prov of activeProviders) {
-        const keys = await db.select().from(providerApiKeys).where(sql`${providerApiKeys.providerId} = ${prov.id} AND ${providerApiKeys.isActive} = 1 AND ${providerApiKeys.isLimited} = 0`).orderBy(providerApiKeys.id).all();
+        const keys = await db.select().from(providerApiKeys).where(sql`${providerApiKeys.providerId} = ${prov.id} AND ${providerApiKeys.isActive} = true AND ${providerApiKeys.isLimited} = false`).orderBy(providerApiKeys.id);
         if (keys.length === 0) continue;
         const urls = [`${prov.endpoint}/v1/models`, `${prov.endpoint}/models`];
         if (prov.endpoint.endsWith("/v1")) urls.unshift(`${prov.endpoint}/models`);
@@ -351,7 +348,7 @@ monitor.post("/monitor/sweep", async (c) => {
       sweepProgress.total = allModels.length;
       for (const m of allModels) {
         let tested = false;
-        const keys = await db.select().from(providerApiKeys).where(sql`${providerApiKeys.providerId} = ${m.providerId} AND ${providerApiKeys.isActive} = 1 AND ${providerApiKeys.isLimited} = 0`).orderBy(providerApiKeys.id).all();
+        const keys = await db.select().from(providerApiKeys).where(sql`${providerApiKeys.providerId} = ${m.providerId} AND ${providerApiKeys.isActive} = true AND ${providerApiKeys.isLimited} = false`).orderBy(providerApiKeys.id);
         for (const key of keys) {
           try {
             const controller = new AbortController();
