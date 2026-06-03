@@ -37,8 +37,8 @@ keys.get("/keys", async (c) => {
     const _wibNow = new Date(_now.getTime() + _wibOffset);
     _wibNow.setUTCHours(0, 0, 0, 0);
     const _d = new Date(_wibNow.getTime() - _wibOffset);
-    const todayUtcStr = _d.toISOString().replace('T', ' ').substring(0, 19);
-    const todayWhere = and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${todayUtcStr}`, VALID_LOG_SQL)!;
+    const todayUtcDate = _d;
+    const todayWhere = and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${todayUtcDate}`, VALID_LOG_SQL)!;
     const todayStats = (await db.select({
       count: turnCountSql(todayWhere),
       tokens: turnTotalTokensSql(todayWhere),
@@ -104,18 +104,16 @@ keys.get("/keys/:id", async (c) => {
   const weekStart  = new Date(now); weekStart.setDate(now.getDate() - 7);
   const monthStart = new Date(wibMonthStartSql().replace(" ", "T") + "Z");
 
-  const toSqlDate = (d: Date) => d.toISOString().replace('T', ' ').substring(0, 19);
-
   // Analytics period filter: days=1 (today), 7 (week), 30 (month), 0/absent (all time)
   const days = parseInt(c.req.query("days") || "0");
-  const analyticsSince: string | null = days === 1
-    ? toSqlDate(todayStart)
+  const analyticsSince: Date | null = days === 1
+    ? todayStart
     : days > 0
-      ? new Date(Date.now() - days * 86400000).toISOString().replace("T", " ").substring(0, 19)
+      ? new Date(Date.now() - days * 86400000)
       : null;
   const analyticsDateFilter = analyticsSince ? sql`AND created_at >= ${analyticsSince}` : sql``;
 
-  const buildPeriodStats = async (since?: string) => {
+  const buildPeriodStats = async (since?: Date) => {
     const whereClause = since
       ? and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${since}`, VALID_LOG_SQL)!
       : and(eq(requestLogs.apiKeyId, key.id), VALID_LOG_SQL)!;
@@ -158,9 +156,9 @@ keys.get("/keys/:id", async (c) => {
   };
 
   const [todayStats, weekStats, monthStats, allTimeStats] = await Promise.all([
-    buildPeriodStats(toSqlDate(todayStart)),
-    buildPeriodStats(toSqlDate(weekStart)),
-    buildPeriodStats(toSqlDate(monthStart)),
+    buildPeriodStats(todayStart),
+    buildPeriodStats(weekStart),
+    buildPeriodStats(monthStart),
     buildPeriodStats(),
   ]);
 

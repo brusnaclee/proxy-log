@@ -13,6 +13,11 @@ function toUtcStr(date: Date): string {
   return date.toISOString().replace("T", " ").substring(0, 19);
 }
 
+/** Return a Date object for use in Drizzle parameterized queries against timestamp columns. */
+function toUtcDate(date: Date): Date {
+  return date;
+}
+
 /**
  * Return "today" midnight in LOCAL server time as a UTC Date.
  * Timestamps are stored as UTC strings — comparing with local-midnight ISO
@@ -49,9 +54,9 @@ stats.get("/stats/overview", async (c) => {
   // month: 1st of current month at local midnight
   const monthStart  = new Date(todayStart); monthStart.setDate(1);
 
-  const todayStr  = toUtcStr(todayStart);
-  const weekStr   = toUtcStr(weekStart);
-  const monthStr  = toUtcStr(monthStart);
+  const todayStr  = todayStart;
+  const weekStr   = weekStart;
+  const monthStr  = monthStart;
 
   // Today — turn-based aggregation (MAX prompt per turn, SUM completion per turn)
   const todayWhere = and(sql`created_at >= ${todayStr}`, VALID_LOG_SQL);
@@ -279,7 +284,7 @@ stats.get("/stats/by-key", async (c) => {
   const cacheKey = `by-key:${days}`;
   return c.json(await statsCache.getOrFetch(cacheKey, async () => {
   const startDate = days > 0
-    ? new Date(Date.now() - days * 86400000).toISOString().replace("T", " ").substring(0, 19)
+    ? new Date(Date.now() - days * 86400000)
     : null;
 
   const allKeys = await db.select().from(apiKeys);
@@ -332,7 +337,7 @@ stats.get("/stats/by-model", async (c) => {
   const cacheKey = `by-model:${days}:${apiKeyId}`;
   return c.json(await statsCache.getOrFetch(cacheKey, async () => {
   const startDate = days > 0
-    ? new Date(Date.now() - days * 86400000).toISOString().replace("T", " ").substring(0, 19)
+    ? new Date(Date.now() - days * 86400000)
     : null;
 
   // Build WHERE fragments for raw SQL
@@ -383,7 +388,7 @@ stats.get("/stats/by-model", async (c) => {
 stats.get("/stats/by-device", async (c) => {
   const days = parseInt(c.req.query("days") || "0");
   const startDate = days > 0
-    ? new Date(Date.now() - days * 86400000).toISOString().replace("T", " ").substring(0, 19)
+    ? new Date(Date.now() - days * 86400000)
     : null;
 
   const dateFilter = startDate ? sql`AND created_at >= ${startDate}` : sql``;
@@ -463,7 +468,7 @@ stats.get("/stats/top-users", async (c) => {
   const cacheKey = `top-users:${days}`;
   return c.json(await statsCache.getOrFetch(cacheKey, async () => {
   const startDate = days > 0
-    ? new Date(Date.now() - days * 86400000).toISOString().replace("T", " ").substring(0, 19)
+    ? new Date(Date.now() - days * 86400000)
     : null;
 
   const dateFilter = startDate ? sql`AND created_at >= ${startDate}` : sql``;

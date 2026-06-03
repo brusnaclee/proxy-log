@@ -368,8 +368,8 @@ internal.get("/internal/stats/overview", async (c) => {
   wibNow.setUTCHours(0, 0, 0, 0);
   const todayStart = new Date(wibNow.getTime() - wibOffset);
 
-  const todayStr = todayStart.toISOString().replace("T", " ").substring(0, 19);
-  const todayWhere = and(sql`created_at >= ${todayStr}`, VALID_LOG_SQL);
+  const todayDate = todayStart;
+  const todayWhere = and(sql`created_at >= ${todayDate}`, VALID_LOG_SQL);
   const [today] = await db.select({
     requests: turnCountSql(todayWhere),
     tokens: turnTotalTokensSql(todayWhere),
@@ -394,10 +394,10 @@ internal.get("/internal/stats/ranking", async (c) => {
   const todayStart = new Date(wibNow.getTime() - wibOffset);
   const monthStart = new Date(wibNow); monthStart.setUTCDate(1);
   const monthStartFinal = new Date(monthStart.getTime() - wibOffset);
-  const todayStr = todayStart.toISOString().replace("T", " ").substring(0, 19);
-  const monthStr = monthStartFinal.toISOString().replace("T", " ").substring(0, 19);
+  const todayDate = todayStart;
+  const monthDate = monthStartFinal;
 
-  async function getTopModelsByRequests(since: string) {
+  async function getTopModelsByRequests(since: Date) {
     const rows = sanitizeRows((await db.execute(sql`
       SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta + sum_c), 0) as tokens
       FROM (
@@ -416,7 +416,7 @@ internal.get("/internal/stats/ranking", async (c) => {
     return rows as any[];
   }
 
-  async function getTopModelsByTokens(since: string) {
+  async function getTopModelsByTokens(since: Date) {
     const rows = (await db.execute(sql`
       SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta + sum_c), 0) as tokens
       FROM (
@@ -435,7 +435,7 @@ internal.get("/internal/stats/ranking", async (c) => {
     return rows as any[];
   }
 
-  async function getTopUsersByRequests(since: string) {
+  async function getTopUsersByRequests(since: Date) {
     const rows = (await db.execute(sql`
       SELECT api_key_id as "apiKeyId", COUNT(*) as requests, COALESCE(SUM(sum_delta + sum_c), 0) as tokens
       FROM (SELECT api_key_id, turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
@@ -463,7 +463,7 @@ internal.get("/internal/stats/ranking", async (c) => {
     return result;
   }
 
-    async function getTopUsersByTokens(since: string) {
+    async function getTopUsersByTokens(since: Date) {
     const rows = (await db.execute(sql`
       SELECT api_key_id as "apiKeyId", COUNT(*) as requests,
         COALESCE(SUM(sum_delta + sum_c), 0) as tokens,
@@ -509,14 +509,14 @@ internal.get("/internal/stats/ranking", async (c) => {
     todayUsersByTok,
     monthUsersByTok,
   ] = await Promise.all([
-    getTopModelsByRequests(todayStr),
-    getTopModelsByRequests(monthStr),
-    getTopModelsByTokens(todayStr),
-    getTopModelsByTokens(monthStr),
-    getTopUsersByRequests(todayStr),
-    getTopUsersByRequests(monthStr),
-    getTopUsersByTokens(todayStr),
-    getTopUsersByTokens(monthStr),
+    getTopModelsByRequests(todayDate),
+    getTopModelsByRequests(monthDate),
+    getTopModelsByTokens(todayDate),
+    getTopModelsByTokens(monthDate),
+    getTopUsersByRequests(todayDate),
+    getTopUsersByRequests(monthDate),
+    getTopUsersByTokens(todayDate),
+    getTopUsersByTokens(monthDate),
   ]);
 
   return c.json({
@@ -548,10 +548,10 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   const todayStart = new Date(wibNow.getTime() - wibOffset);
   const monthWib = new Date(wibNow); monthWib.setUTCDate(1);
   const monthStart = new Date(monthWib.getTime() - wibOffset);
-  const todayStr = todayStart.toISOString().replace("T", " ").substring(0, 19);
-  const monthStr = monthStart.toISOString().replace("T", " ").substring(0, 19);
+  const todayDate = todayStart;
+  const monthDate = monthStart;
 
-  async function getTopModels(since: string) {
+  async function getTopModels(since: Date) {
     const rows = (await db.execute(sql`
       SELECT model, COUNT(*) as requests, COALESCE(SUM(sum_delta + sum_c), 0) as tokens
       FROM (
@@ -570,7 +570,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     return rows as any[];
   }
 
-  async function getPeriodStats(since: string) {
+  async function getPeriodStats(since: Date) {
     const whereClause = and(eq(requestLogs.apiKeyId, keyId), sql`created_at >= ${since}`, VALID_LOG_SQL);
     return (await db.select({
       requests: turnCountSql(whereClause),
@@ -585,10 +585,10 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   }
 
   const [todayStats, monthStats, todayModels, monthModels] = await Promise.all([
-    getPeriodStats(todayStr),
-    getPeriodStats(monthStr),
-    getTopModels(todayStr),
-    getTopModels(monthStr),
+    getPeriodStats(todayDate),
+    getPeriodStats(monthDate),
+    getTopModels(todayDate),
+    getTopModels(monthDate),
   ]);
 
   const [config] = await db.select().from(adminConfig);

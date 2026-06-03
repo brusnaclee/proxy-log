@@ -1,4 +1,4 @@
-﻿import { Hono } from "hono";
+import { Hono } from "hono";
 import * as zlib from "zlib";
 import { db } from "../db/index.js";
 import { apiKeys, devices, allowedDevices, allowedIdes, requestLogs, adminConfig, chatSessions, modelMonitor, providers, modelLimits } from "../db/schema.js";
@@ -378,7 +378,7 @@ async function resolveChatSession(params: {
 
   // Also look for any very recent session from this device (within sub-agent window)
   // to handle async race conditions where row N+1 arrives before row N's session is committed
-  const recentCutoff = new Date(Date.now() - SWITCH_PROMPT_MIN_GAP_MS).toISOString().replace("T", " ").substring(0, 19);
+  const recentCutoff = new Date(Date.now() - SWITCH_PROMPT_MIN_GAP_MS);
   const veryRecent = await db
     .select()
     .from(chatSessions)
@@ -1514,7 +1514,7 @@ const targetProvider = await getProviderForModel(model);
 
     if (keyRecord.monthlyTokenLimit && keyRecord.monthlyTokenLimit > 0) {
       const mw = new Date(wibNow); mw.setUTCDate(1); mw.setUTCHours(0, 0, 0, 0);
-      const ms = new Date(mw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
+      const ms = new Date(mw.getTime() - wibOffset);
       const whereClause = and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms}`, BILLABLE_LOG_SQL);
       const mu = await db.select({ total: turnTotalTokensSql(whereClause) }).from(requestLogs).where(whereClause).then(r => r[0]);
       if (mu && mu.total >= keyRecord.monthlyTokenLimit) {
@@ -1525,7 +1525,7 @@ const targetProvider = await getProviderForModel(model);
     const globalDailyTokenLimit = (keyRecord.dailyTokenLimit && keyRecord.dailyTokenLimit > 0) ? keyRecord.dailyTokenLimit : (config.globalDailyTokenLimit || 0);
     if (globalDailyTokenLimit > 0) {
       const dw = new Date(wibNow); dw.setUTCHours(0, 0, 0, 0);
-      const ds = new Date(dw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
+      const ds = new Date(dw.getTime() - wibOffset);
       const whereClause = and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL);
       const du = await db.select({ total: turnTotalTokensSql(whereClause) }).from(requestLogs).where(whereClause).then(r => r[0]);
       if (du && du.total >= globalDailyTokenLimit) {
@@ -1537,7 +1537,7 @@ const targetProvider = await getProviderForModel(model);
     const dailyInputLimit = (keyRecord.dailyInputTokenLimit && keyRecord.dailyInputTokenLimit > 0) ? keyRecord.dailyInputTokenLimit : (config.globalDailyInputTokenLimit || 0);
     if (dailyInputLimit > 0) {
       const dw = new Date(wibNow); dw.setUTCHours(0, 0, 0, 0);
-      const ds = new Date(dw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
+      const ds = new Date(dw.getTime() - wibOffset);
       const whereClause = and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL);
       const du = await db.select({ total: turnPromptTokensSql(whereClause) }).from(requestLogs).where(whereClause).then(r => r[0]);
       if (du && du.total >= dailyInputLimit) {
@@ -1549,7 +1549,7 @@ const targetProvider = await getProviderForModel(model);
     const dailyOutputLimit = (keyRecord.dailyOutputTokenLimit && keyRecord.dailyOutputTokenLimit > 0) ? keyRecord.dailyOutputTokenLimit : (config.globalDailyOutputTokenLimit || 0);
     if (dailyOutputLimit > 0) {
       const dw = new Date(wibNow); dw.setUTCHours(0, 0, 0, 0);
-      const ds = new Date(dw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
+      const ds = new Date(dw.getTime() - wibOffset);
       const whereClause = and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL);
       const du = await db.select({ total: turnCompletionTokensSql(whereClause) }).from(requestLogs).where(whereClause).then(r => r[0]);
       if (du && du.total >= dailyOutputLimit) {
@@ -1560,7 +1560,7 @@ const targetProvider = await getProviderForModel(model);
     const globalMonthlyTokenLimit = config.globalMonthlyTokenLimit || 0;
     if (globalMonthlyTokenLimit > 0) {
       const mw2 = new Date(wibNow); mw2.setUTCDate(1); mw2.setUTCHours(0, 0, 0, 0);
-      const ms2 = new Date(mw2.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
+      const ms2 = new Date(mw2.getTime() - wibOffset);
       const whereClause = and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms2}`, BILLABLE_LOG_SQL);
       const mu2 = await db.select({ total: turnTotalTokensSql(whereClause) }).from(requestLogs).where(whereClause).then(r => r[0]);
       if (mu2 && mu2.total >= globalMonthlyTokenLimit) {
@@ -1573,9 +1573,9 @@ const targetProvider = await getProviderForModel(model);
       const { dailyTokenLimit: overrideDailyToken, monthlyTokenLimit: overrideMonthlyToken, dailyInputTokenLimit: overrideDailyInputToken, dailyOutputTokenLimit: overrideDailyOutputToken } = modelOverride;
       
       const dw = new Date(wibNow); dw.setUTCHours(0, 0, 0, 0);
-      const ds = new Date(dw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
+      const ds = new Date(dw.getTime() - wibOffset);
       const mw = new Date(wibNow); mw.setUTCDate(1); mw.setUTCHours(0, 0, 0, 0);
-      const ms = new Date(mw.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
+      const ms = new Date(mw.getTime() - wibOffset);
 
       if (overrideDailyToken && overrideDailyToken > 0) {
         const whereClause = and(eq(requestLogs.apiKeyId, keyRecord.id), eq(requestLogs.model, model), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL);

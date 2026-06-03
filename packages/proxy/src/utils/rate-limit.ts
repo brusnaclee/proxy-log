@@ -50,13 +50,13 @@ export async function checkPromptLimit(
   }
 
   // Window is active, calculate how many requests have been made since windowStart
-  const windowStartStr = new Date(windowStartMs).toISOString().replace("T", " ").substring(0, 19);
+  const windowStartDate = new Date(windowStartMs);
   
   const usage = await db.select({ count: sql<number>`count(*)` })
     .from(requestLogs)
     .where(and(
       eq(requestLogs.apiKeyId, apiKeyId),
-      gte(requestLogs.createdAt, windowStartStr),
+      gte(requestLogs.createdAt, windowStartDate),
       COUNTED_LOG_SQL,
     ));
 
@@ -124,14 +124,14 @@ export async function checkModelPromptLimit(
      windowStartMs = Math.floor(nowMs / windowMs) * windowMs;
   }
 
-  const windowStartStr = new Date(windowStartMs).toISOString().replace("T", " ").substring(0, 19);
+  const windowStartDate = new Date(windowStartMs);
 
   const usage = await db.select({ count: sql<number>`count(*)` })
     .from(requestLogs)
     .where(and(
       eq(requestLogs.apiKeyId, apiKeyId),
       eq(requestLogs.model, model),
-      gte(requestLogs.createdAt, windowStartStr),
+      gte(requestLogs.createdAt, windowStartDate),
       COUNTED_LOG_SQL,
     ));
 

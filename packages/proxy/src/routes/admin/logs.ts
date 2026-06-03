@@ -292,12 +292,11 @@ logs.delete("/logs", async (c) => {
 
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - days);
-  // Format as timestamp string (matches how timestamps are stored in DB)
-  const cutoffStr = cutoff.toISOString().replace("T", " ").substring(0, 19);
-  await db.delete(requestLogs).where(sql`created_at < ${cutoffStr}`);
+  // Use Date object for Drizzle timestamp column comparison
+  await db.delete(requestLogs).where(sql`created_at < ${cutoff}`);
 
   // Also delete chat sessions that haven't been seen since cutoff
-  await db.delete(chatSessions).where(sql`last_seen_at < ${cutoffStr}`);
+  await db.delete(chatSessions).where(sql`last_seen_at < ${cutoff}`);
 
   // Clear transcript/preview data from remaining older logs to save space
   await db.update(requestLogs)
