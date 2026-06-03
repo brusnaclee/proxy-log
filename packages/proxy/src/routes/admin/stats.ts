@@ -67,7 +67,7 @@ stats.get("/stats/overview", async (c) => {
   .where(todayWhere))[0];
 
   const todayBreakdown = (await db.execute(sql`
-    SELECT model, COALESCE(SUM(sum_delta), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
+    SELECT model, COALESCE(SUM(sum_delta), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
         turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
@@ -96,7 +96,7 @@ stats.get("/stats/overview", async (c) => {
   .where(weekWhere))[0];
 
   const weekBreakdown = (await db.execute(sql`
-    SELECT model, COALESCE(SUM(sum_delta), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
+    SELECT model, COALESCE(SUM(sum_delta), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
         turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
@@ -125,7 +125,7 @@ stats.get("/stats/overview", async (c) => {
   .where(monthWhere))[0];
 
   const monthBreakdown = (await db.execute(sql`
-    SELECT model, COALESCE(SUM(sum_delta), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
+    SELECT model, COALESCE(SUM(sum_delta), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
         turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
@@ -174,7 +174,7 @@ stats.get("/stats/overview", async (c) => {
 
   // All Time breakdown - live data
   const allTimeLiveBreakdown = (await db.execute(sql`
-    SELECT model, COALESCE(SUM(sum_delta), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
+    SELECT model, COALESCE(SUM(sum_delta), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
         turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
@@ -301,7 +301,7 @@ stats.get("/stats/by-key", async (c) => {
       .from(requestLogs).where(whereClause).groupBy(requestLogs.model).orderBy(sql`count(*) DESC`).limit(1))[0];
 
     const modelBreakdown = (await db.execute(sql`
-      SELECT model, COALESCE(SUM(max_p), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
+      SELECT model, COALESCE(SUM(max_p), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
       FROM (SELECT model, turn_id, MAX(prompt_tokens) as max_p, SUM(completion_tokens) as sum_c
         FROM request_logs WHERE api_key_id = ${key.id} ${startDate ? sql`AND created_at >= ${startDate}` : sql``} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
         GROUP BY model, turn_id)
@@ -342,11 +342,11 @@ stats.get("/stats/by-model", async (c) => {
   const rows = (await db.execute(sql`
     SELECT
       model,
-      COUNT(*) as turns,
+      COUNT(*) as "requests",
       COALESCE(SUM(sum_delta), 0) as tokens,
-      COALESCE(SUM(sum_delta), 0) as promptTokens,
-      COALESCE(SUM(sum_c), 0) as completionTokens,
-      ROUND(AVG(avg_lat)::numeric, 0) as avgLatency
+      COALESCE(SUM(sum_delta), 0) as "promptTokens",
+      COALESCE(SUM(sum_c), 0) as "completionTokens",
+      ROUND(AVG(avg_lat)::numeric, 0) as "avgLatency"
     FROM (
       SELECT
         CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
@@ -365,7 +365,7 @@ stats.get("/stats/by-model", async (c) => {
       GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
     )
     GROUP BY model
-    ORDER BY turns DESC
+    ORDER BY "requests" DESC
   `)).rows;
 
   const withCost = (rows as any[]).map(row => {
@@ -392,12 +392,12 @@ stats.get("/stats/by-device", async (c) => {
     SELECT
       device_fingerprint as fingerprint,
       ide_detected as ide,
-      ip_address as ipAddress,
+      ip_address as "ipAddress",
       COUNT(*) as requests,
       COALESCE(SUM(max_p), 0) as tokens,
-      COALESCE(SUM(max_p), 0) as promptTokens,
-      COALESCE(SUM(sum_c), 0) as completionTokens,
-      MAX(last_seen) as lastSeen
+      COALESCE(SUM(max_p), 0) as "promptTokens",
+      COALESCE(SUM(sum_c), 0) as "completionTokens",
+      MAX(last_seen) as "lastSeen"
     FROM (
       SELECT device_fingerprint, ide_detected, ip_address, turn_id,
         MAX(prompt_tokens) as max_p,
@@ -433,19 +433,20 @@ stats.get("/stats/timeseries", async (c) => {
       period_group as period,
       COUNT(*) as requests,
       COALESCE(SUM(sum_delta + sum_c), 0) as tokens,
-      COALESCE(SUM(sum_delta), 0) as promptTokens,
-      COALESCE(SUM(sum_c), 0) as completionTokens,
-      0 as estimatedCost,
-      0 as uniqueDevices
+      COALESCE(SUM(sum_delta), 0) as "promptTokens",
+      COALESCE(SUM(sum_c), 0) as "completionTokens",
+      0 as "estimatedCost",
+      COUNT(DISTINCT device_fingerprint) as "uniqueDevices"
     FROM (
       SELECT
         ${groupExpr} as period_group,
+        device_fingerprint,
         turn_id,
         SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta,
         SUM(completion_tokens) as sum_c
       FROM request_logs
       WHERE created_at >= ${startStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY ${groupExpr}, turn_id
+      GROUP BY ${groupExpr}, device_fingerprint, turn_id
     ) sub
     GROUP BY period_group
     ORDER BY period_group
@@ -468,11 +469,11 @@ stats.get("/stats/top-users", async (c) => {
   // Aggregate per api_key_id using turn-level token aggregation
   const aggRows = (await db.execute(sql`
     SELECT
-      api_key_id as apiKeyId,
-      COUNT(*) as turns,
+      api_key_id as "apiKeyId",
+      COUNT(*) as "requests",
       COALESCE(SUM(sum_delta + sum_c), 0) as tokens,
-      COALESCE(SUM(sum_delta), 0) as promptTokens,
-      COALESCE(SUM(sum_c), 0) as completionTokens
+      COALESCE(SUM(sum_delta), 0) as "promptTokens",
+      COALESCE(SUM(sum_c), 0) as "completionTokens"
     FROM (
       SELECT api_key_id, turn_id,
         SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta,
@@ -506,7 +507,7 @@ stats.get("/stats/top-users", async (c) => {
           keyName: key?.name || `Key #${r.apiKeyId}`,
           displayName,
           discordUserId: key?.discordUserId || null,
-          turns: r.turns,
+          turns: r.requests,
           tokens: r.tokens,
           promptTokens: r.promptTokens,
           completionTokens: r.completionTokens,
@@ -515,10 +516,10 @@ stats.get("/stats/top-users", async (c) => {
       })
   );
 
-  const byTurns = [...enriched].sort((a, b) => b.turns - a.turns).slice(0, 10);
+  const byRequests = [...enriched].sort((a, b) => b.turns - a.turns).slice(0, 10);
   const byTokens = [...enriched].sort((a, b) => b.tokens - a.tokens).slice(0, 10);
 
-  return { byTurns, byTokens };
+  return { byRequests, byTokens };
   })); // end statsCache.getOrFetch
 });
 

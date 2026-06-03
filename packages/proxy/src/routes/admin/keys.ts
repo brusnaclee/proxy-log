@@ -130,7 +130,7 @@ keys.get("/keys/:id", async (c) => {
     }).from(requestLogs).where(whereClause))[0];
 
     const breakdown = (await db.execute(sql`
-      SELECT model, COALESCE(SUM(sum_delta), 0) as promptTokens, COALESCE(SUM(sum_c), 0) as completionTokens
+      SELECT model, COALESCE(SUM(sum_delta), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
       FROM (
         SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
           turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
@@ -167,7 +167,7 @@ keys.get("/keys/:id", async (c) => {
   const deviceCount = (await db.select({ count: sql<number>`count(*)` }).from(devices).where(eq(devices.apiKeyId, key.id)))[0];
 
   const topModels = (await db.execute(sql`
-    SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta + sum_c), 0) as tokens, 0 as estimatedCost
+    SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta + sum_c), 0) as tokens, 0 as "estimatedCost"
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
         turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
@@ -183,7 +183,7 @@ keys.get("/keys/:id", async (c) => {
   `)).rows;
 
   const topModelsByTokens = (await db.execute(sql`
-    SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta + sum_c), 0) as tokens, 0 as estimatedCost
+    SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta + sum_c), 0) as tokens, 0 as "estimatedCost"
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
         turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
@@ -199,11 +199,11 @@ keys.get("/keys/:id", async (c) => {
   `)).rows;
 
   const topDevices = (await db.execute(sql`
-    SELECT device_fingerprint as deviceFingerprint, ip_address as ipAddress,
-      ide_detected as ideDetected, os_detected as osDetected, client_name as clientName,
+    SELECT device_fingerprint as "deviceFingerprint", ip_address as "ipAddress",
+      ide_detected as "ideDetected", os_detected as "osDetected", client_name as "clientName",
       COUNT(*) as requests, COUNT(DISTINCT session_id) as sessions,
-      COALESCE(SUM(sum_delta + sum_c), 0) as tokens, 0 as estimatedCost,
-      MAX(last_seen) as lastSeen
+      COALESCE(SUM(sum_delta + sum_c), 0) as tokens, 0 as "estimatedCost",
+      MAX(last_seen) as "lastSeen"
     FROM (SELECT device_fingerprint, ip_address, ide_detected, os_detected, client_name, session_id, turn_id,
         SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c, MAX(created_at) as last_seen
       FROM request_logs WHERE api_key_id = ${key.id} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL ${analyticsDateFilter}

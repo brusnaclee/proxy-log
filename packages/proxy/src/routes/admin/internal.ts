@@ -437,7 +437,7 @@ internal.get("/internal/stats/ranking", async (c) => {
 
   async function getTopUsersByRequests(since: string) {
     const rows = (await db.execute(sql`
-      SELECT api_key_id as apiKeyId, COUNT(*) as requests, COALESCE(SUM(sum_delta + sum_c), 0) as tokens
+      SELECT api_key_id as "apiKeyId", COUNT(*) as requests, COALESCE(SUM(sum_delta + sum_c), 0) as tokens
       FROM (SELECT api_key_id, turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
         FROM request_logs WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 AND is_counted_request = true
         GROUP BY api_key_id, turn_id)
@@ -465,10 +465,10 @@ internal.get("/internal/stats/ranking", async (c) => {
 
     async function getTopUsersByTokens(since: string) {
     const rows = (await db.execute(sql`
-      SELECT api_key_id as apiKeyId, COUNT(*) as requests,
+      SELECT api_key_id as "apiKeyId", COUNT(*) as requests,
         COALESCE(SUM(sum_delta + sum_c), 0) as tokens,
-        COALESCE(SUM(sum_delta), 0) as promptTokens,
-        COALESCE(SUM(sum_c), 0) as completionTokens
+        COALESCE(SUM(sum_delta), 0) as "promptTokens",
+        COALESCE(SUM(sum_c), 0) as "completionTokens"
       FROM (SELECT api_key_id, turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
         FROM request_logs WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 AND is_billable_token = true
         GROUP BY api_key_id, turn_id)
