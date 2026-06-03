@@ -50,9 +50,9 @@ function isToolResultContent(content: string): boolean {
 
   // Cline / Roo Code: tool results wrapped as user messages
   // e.g. "[read_file for 'src/foo.ts'] Result: ..."
-  // e.g. "[list_files for 'src'] Result: ..."
+  // e.g. "[replace_in_file for 'src/foo.ts'] Result: ..."
   // e.g. "[execute_command for 'npm test'] Result: ..."
-  if (/^\[(?:read_file|list_files|search_files|write_to_file|execute_command|apply_diff|browser_action|access_mcp_resource)\s+for\s+/.test(content.trimStart())) return true;
+  if (/^\[(?:read_file|list_files|search_files|write_to_file|replace_in_file|execute_command|apply_diff|apply_patch|browser_action|access_mcp_resource|web_search|web_fetch|list_code_definition_names|use_mcp_tool)\s+for\s+/.test(content.trimStart())) return true;
 
   // Cline / Roo Code: "[ERROR] You did not use a tool..."
   if (trimmed.startsWith("[error] you did not use a tool")) return true;
