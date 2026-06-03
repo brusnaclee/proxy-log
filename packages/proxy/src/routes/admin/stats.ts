@@ -3,7 +3,7 @@ import { db } from "../../db/index.js";
 import { requestLogs, apiKeys, devices, chatSessions, monthlyStats } from "../../db/schema.js";
 import { eq, sql, and } from "drizzle-orm";
 import { getModelRates } from "../../utils/cost-calculator.js";
-import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, wibTodayStartSql, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql } from "../../utils/counting.js";
+import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, wibTodayStartSql, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, sanitizeRows } from "../../utils/counting.js";
 import { statsCache } from "../../utils/cache.js";
 
 const stats = new Hono();
@@ -66,7 +66,7 @@ stats.get("/stats/overview", async (c) => {
   .from(requestLogs)
   .where(todayWhere))[0];
 
-  const todayBreakdown = (await db.execute(sql`
+  const todayBreakdown = sanitizeRows((await db.execute(sql`
     SELECT model, COALESCE(SUM(sum_delta), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
@@ -80,7 +80,7 @@ stats.get("/stats/overview", async (c) => {
       GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
     )
     GROUP BY model
-  `)).rows;
+  `)).rows as any[], ['promptTokens', 'completionTokens']);
   const todayCosts = calculateBreakdownCosts(todayBreakdown as any);
 
   // Week
@@ -95,7 +95,7 @@ stats.get("/stats/overview", async (c) => {
   .from(requestLogs)
   .where(weekWhere))[0];
 
-  const weekBreakdown = (await db.execute(sql`
+  const weekBreakdown = sanitizeRows((await db.execute(sql`
     SELECT model, COALESCE(SUM(sum_delta), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
@@ -109,7 +109,7 @@ stats.get("/stats/overview", async (c) => {
       GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
     )
     GROUP BY model
-  `)).rows;
+  `)).rows as any[], ['promptTokens', 'completionTokens']);
   const weekCosts = calculateBreakdownCosts(weekBreakdown as any);
 
   // Month
@@ -124,7 +124,7 @@ stats.get("/stats/overview", async (c) => {
   .from(requestLogs)
   .where(monthWhere))[0];
 
-  const monthBreakdown = (await db.execute(sql`
+  const monthBreakdown = sanitizeRows((await db.execute(sql`
     SELECT model, COALESCE(SUM(sum_delta), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
@@ -138,7 +138,7 @@ stats.get("/stats/overview", async (c) => {
       GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
     )
     GROUP BY model
-  `)).rows;
+  `)).rows as any[], ['promptTokens', 'completionTokens']);
   const monthCosts = calculateBreakdownCosts(monthBreakdown as any);
 
   // All Time - live data
@@ -173,7 +173,7 @@ stats.get("/stats/overview", async (c) => {
   };
 
   // All Time breakdown - live data
-  const allTimeLiveBreakdown = (await db.execute(sql`
+  const allTimeLiveBreakdown = sanitizeRows((await db.execute(sql`
     SELECT model, COALESCE(SUM(sum_delta), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
@@ -187,7 +187,7 @@ stats.get("/stats/overview", async (c) => {
       GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
     )
     GROUP BY model
-  `)).rows;
+  `)).rows as any[], ['promptTokens', 'completionTokens']);
 
   // All Time breakdown - archived model data
   const allTimeArchivedBreakdown = await db.select({
@@ -306,7 +306,7 @@ stats.get("/stats/by-key", async (c) => {
         FROM request_logs WHERE api_key_id = ${key.id} ${startDate ? sql`AND created_at >= ${startDate}` : sql``} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
         GROUP BY model, turn_id)
       GROUP BY model
-    `)).rows;
+    `)).rows as any[], ['promptTokens', 'completionTokens']);
 
     let estimatedCost = 0;
     for (const row of modelBreakdown as any[]) {
@@ -366,7 +366,7 @@ stats.get("/stats/by-model", async (c) => {
     )
     GROUP BY model
     ORDER BY "requests" DESC
-  `)).rows;
+  `)).rows as any[], ['requests', 'tokens', 'promptTokens', 'completionTokens', 'avgLatency']);
 
   const withCost = (rows as any[]).map(row => {
     const rates = getModelRates(row.model || "");
@@ -410,7 +410,7 @@ stats.get("/stats/by-device", async (c) => {
     GROUP BY device_fingerprint, ide_detected, ip_address
     ORDER BY requests DESC
     LIMIT 50
-  `)).rows;
+  `)).rows as any[], ['requests', 'tokens', 'promptTokens', 'completionTokens']);
 
   const result = (rows as any[]).map(row => {
     const estimatedCost = Math.round((row.promptTokens || 0) * 1.50 + (row.completionTokens || 0) * 6.00);
@@ -450,7 +450,7 @@ stats.get("/stats/timeseries", async (c) => {
     ) sub
     GROUP BY period_group
     ORDER BY period_group
-  `)).rows;
+  `)).rows as any[], ['requests', 'tokens', 'promptTokens', 'completionTokens', 'estimatedCost', 'uniqueDevices']);
 
   return c.json(result);
 });
@@ -483,9 +483,7 @@ stats.get("/stats/top-users", async (c) => {
       GROUP BY api_key_id, turn_id
     )
     GROUP BY api_key_id
-  `)).rows;
-
-  // Join with api_keys for display info
+  `)).rows as any[], ['requests', 'tokens', 'promptTokens', 'completionTokens']);
   const enriched = await Promise.all(
     (aggRows as any[])
       .filter(r => r.apiKeyId != null)
@@ -507,10 +505,12 @@ stats.get("/stats/top-users", async (c) => {
           keyName: key?.name || `Key #${r.apiKeyId}`,
           displayName,
           discordUserId: key?.discordUserId || null,
-          turns: r.requests,
+          requests: Number(r.requests) || 0,
+          turns: Number(r.requests) || 0,
           tokens: r.tokens,
           promptTokens: r.promptTokens,
           completionTokens: r.completionTokens,
+          cost: estimatedCost,
           estimatedCost,
         };
       })

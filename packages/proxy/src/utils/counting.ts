@@ -1,5 +1,25 @@
 import { sql, type SQL } from "drizzle-orm";
 
+/**
+ * PostgreSQL returns bigint/numeric columns as strings.
+ * This converts string numbers to actual numbers.
+ */
+export function num(v: any): number {
+  if (v === null || v === undefined) return 0;
+  if (typeof v === 'number') return v;
+  const n = Number(v);
+  return Number.isNaN(n) ? 0 : n;
+}
+
+/** Sanitize numeric fields in query result rows */
+export function sanitizeRows<T extends Record<string, any>>(rows: T[], keys: string[]): T[] {
+  return rows.map(row => {
+    const s = { ...row };
+    for (const k of keys) if (k in s) s[k] = num(s[k]);
+    return s;
+  });
+}
+
 /** Rows that count toward user prompt usage. */
 export const COUNTED_LOG_SQL = sql`is_counted_request = true AND status_code BETWEEN 200 AND 299`;
 

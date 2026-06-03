@@ -5,7 +5,7 @@ import { eq, sql, and, desc } from "drizzle-orm";
 import { generateApiKey, getKeyPrefix, sha256, maskKey } from "../../utils/crypto.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
-import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql } from "../../utils/counting.js";
+import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, sanitizeRows } from "../../utils/counting.js";
 import { apiKeyCache, statsCache } from "../../utils/cache.js";
 
 const keys = new Hono();
@@ -129,7 +129,7 @@ keys.get("/keys/:id", async (c) => {
       estimatedCost:    sql<number>`COALESCE(SUM(estimated_cost), 0)`,
     }).from(requestLogs).where(whereClause))[0];
 
-    const breakdown = (await db.execute(sql`
+    const breakdown = sanitizeRows((await db.execute(sql`
       SELECT model, COALESCE(SUM(sum_delta), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
       FROM (
         SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
@@ -143,7 +143,7 @@ keys.get("/keys/:id", async (c) => {
         GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
       )
       GROUP BY model
-    `)).rows;
+    `)).rows as any[], ['promptTokens', 'completionTokens']);
     const costs = calculateBreakdownCosts(breakdown as any);
     return {
       requests:         s?.turns           || 0,
@@ -166,7 +166,7 @@ keys.get("/keys/:id", async (c) => {
 
   const deviceCount = (await db.select({ count: sql<number>`count(*)` }).from(devices).where(eq(devices.apiKeyId, key.id)))[0];
 
-  const topModels = (await db.execute(sql`
+  const topModels = sanitizeRows((await db.execute(sql`
     SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta + sum_c), 0) as tokens, 0 as "estimatedCost"
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
@@ -180,9 +180,9 @@ keys.get("/keys/:id", async (c) => {
       GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
     )
     GROUP BY model ORDER BY count DESC LIMIT 10
-  `)).rows;
+  `)).rows as any[], ['tokens']);
 
-  const topModelsByTokens = (await db.execute(sql`
+  const topModelsByTokens = sanitizeRows((await db.execute(sql`
     SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta + sum_c), 0) as tokens, 0 as "estimatedCost"
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
@@ -196,9 +196,9 @@ keys.get("/keys/:id", async (c) => {
       GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
     )
     GROUP BY model ORDER BY tokens DESC LIMIT 10
-  `)).rows;
+  `)).rows as any[], ['tokens']);
 
-  const topDevices = (await db.execute(sql`
+  const topDevices = sanitizeRows((await db.execute(sql`
     SELECT device_fingerprint as "deviceFingerprint", ip_address as "ipAddress",
       ide_detected as "ideDetected", os_detected as "osDetected", client_name as "clientName",
       COUNT(*) as requests, COUNT(DISTINCT session_id) as sessions,
@@ -209,7 +209,7 @@ keys.get("/keys/:id", async (c) => {
       FROM request_logs WHERE api_key_id = ${key.id} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL ${analyticsDateFilter}
       GROUP BY device_fingerprint, ip_address, ide_detected, os_detected, client_name, session_id, turn_id)
     GROUP BY device_fingerprint, ip_address, ide_detected, os_detected, client_name ORDER BY tokens DESC LIMIT 20
-  `)).rows;
+  `)).rows as any[], ['requests', 'sessions', 'tokens']);
 
   const deviceSessionsWhere = analyticsSince
     ? and(eq(chatSessions.apiKeyId, key.id), sql`last_seen_at >= ${analyticsSince}`)

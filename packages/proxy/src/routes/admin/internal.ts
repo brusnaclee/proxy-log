@@ -6,7 +6,7 @@ import { generateApiKey, getKeyPrefix, sha256 } from "../../utils/crypto.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
 import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindowResetMs } from "../../utils/rate-limit.js";
 import { isInternalRequest } from "../../middleware/session.js";
-import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql } from "../../utils/counting.js";
+import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, sanitizeRows } from "../../utils/counting.js";
 
 const internal = new Hono();
 
@@ -398,7 +398,7 @@ internal.get("/internal/stats/ranking", async (c) => {
   const monthStr = monthStartFinal.toISOString().replace("T", " ").substring(0, 19);
 
   async function getTopModelsByRequests(since: string) {
-    const rows = (await db.execute(sql`
+    const rows = sanitizeRows((await db.execute(sql`
       SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta + sum_c), 0) as tokens
       FROM (
         SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
@@ -412,7 +412,7 @@ internal.get("/internal/stats/ranking", async (c) => {
         GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
       )
       GROUP BY model ORDER BY count DESC LIMIT 10
-    `)).rows;
+    `)).rows as any[], ['count', 'tokens']);
     return rows as any[];
   }
 
