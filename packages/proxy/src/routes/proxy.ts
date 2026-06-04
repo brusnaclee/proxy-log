@@ -1127,36 +1127,38 @@ proxy.all('/*', async (c) => {
 			const rawBuffer = await c.req.raw.arrayBuffer();
 			if (rawBuffer.byteLength > 0) {
 				requestBodyBytes = new Uint8Array(rawBuffer);
+
+				// Always decompress if Content-Encoding is set, regardless of content type.
+				// We strip Content-Encoding from upstream headers, so we MUST decompress here
+				// or the upstream receives binary garbage it cannot parse.
+				const encoding = (
+					c.req.header('Content-Encoding') || ''
+				).toLowerCase();
+				if (encoding) {
+					try {
+						if (encoding.includes('gzip')) {
+							requestBodyBytes = zlib.gunzipSync(requestBodyBytes);
+						} else if (encoding.includes('deflate')) {
+							requestBodyBytes = zlib.inflateSync(requestBodyBytes);
+						} else if (encoding.includes('br')) {
+							requestBodyBytes = zlib.brotliDecompressSync(requestBodyBytes);
+						}
+					} catch (err) {
+						// Decompression failed — keep original bytes and hope upstream can handle it
+					}
+				}
+
 				const isProbablyJson = contentType
 					.toLowerCase()
 					.includes('application/json');
 				const isTextLike = contentType.toLowerCase().startsWith('text/');
 
 				if (isProbablyJson || isTextLike) {
-					let decompressedBytes = requestBodyBytes;
-					const encoding = (
-						c.req.header('Content-Encoding') || ''
-					).toLowerCase();
-					try {
-						if (encoding.includes('gzip')) {
-							decompressedBytes = zlib.gunzipSync(requestBodyBytes);
-						} else if (encoding.includes('deflate')) {
-							decompressedBytes = zlib.inflateSync(requestBodyBytes);
-						} else if (encoding.includes('br')) {
-							decompressedBytes = zlib.brotliDecompressSync(requestBodyBytes);
-						}
-					} catch (err) {
-						// Ignore decompression errors and try decoding anyway
-					}
-
-					const bodyText = new TextDecoder().decode(decompressedBytes);
+					const bodyText = new TextDecoder().decode(requestBodyBytes);
 					if (bodyText) {
 						try {
 							requestBody = JSON.parse(bodyText);
-							// Always re-encode body from parsed JSON to ensure upstream receives
-							// valid JSON (not compressed binary). This is critical when the client
-							// sends gzip/deflate/brotli-compressed bodies — the original
-							// requestBodyBytes still holds compressed bytes at this point.
+							// Re-encode to ensure clean JSON bytes for upstream
 							requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
 						} catch {
 							const normalizedBody = bodyText.replace(/\s+/g, ' ').trim();
