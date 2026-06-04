@@ -1153,6 +1153,11 @@ proxy.all('/*', async (c) => {
 					if (bodyText) {
 						try {
 							requestBody = JSON.parse(bodyText);
+							// Always re-encode body from parsed JSON to ensure upstream receives
+							// valid JSON (not compressed binary). This is critical when the client
+							// sends gzip/deflate/brotli-compressed bodies — the original
+							// requestBodyBytes still holds compressed bytes at this point.
+							requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
 						} catch {
 							const normalizedBody = bodyText.replace(/\s+/g, ' ').trim();
 							requestPreview = normalizedBody.slice(0, 220);
