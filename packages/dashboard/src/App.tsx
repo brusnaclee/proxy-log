@@ -11,6 +11,7 @@ import AnalyticsPage from "@/pages/AnalyticsPage";
 import SettingsPage from "@/pages/SettingsPage";
 import SessionDetailPage from "@/pages/SessionDetailPage";
 import ModelMonitorPage from "@/pages/ModelMonitorPage";
+import BugLogPage from "@/pages/BugLogPage";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const [checking, setChecking] = useState(true);
@@ -57,6 +58,7 @@ export default function App() {
         <Route path="logs" element={<LogsPage />} />
         <Route path="analytics" element={<AnalyticsPage />} />
         <Route path="monitor" element={<ModelMonitorPage />} />
+        <Route path="buglog" element={<BugLogPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

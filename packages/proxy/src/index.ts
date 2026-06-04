@@ -16,6 +16,7 @@ import logsRoutes from "./routes/admin/logs.js";
 import statsRoutes from "./routes/admin/stats.js";
 import internalRoutes from "./routes/admin/internal.js";
 import monitorRoutes from "./routes/admin/monitor.js";
+import buglogRoutes from "./routes/admin/buglog.js";
 import { initializeModelCatalogScheduler, initializeMetadataEnrichmentScheduler } from "./utils/model-catalog.js";
 import { runTranscriptCleanup, run3MonthCleanup } from "./utils/cleanup.js";
 
@@ -65,6 +66,7 @@ app.route("/admin", logsRoutes);
 app.route("/admin", statsRoutes);
 app.route("/admin", internalRoutes);
 app.route("/admin", monitorRoutes);
+app.route("/admin", buglogRoutes);
 
 // ─── Proxy Routes (catch-all for /v1/*) ─────────────────────────────────────────
 app.route("/v1", proxyRoutes);

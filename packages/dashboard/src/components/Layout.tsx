@@ -14,6 +14,7 @@ import {
   Menu,
   X,
   ChevronLeft,
+  Bug,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -23,6 +24,7 @@ const mainNav = [
   { to: "/logs", icon: ScrollText, label: "Logs" },
   { to: "/analytics", icon: BarChart3, label: "Analytics" },
   { to: "/monitor", icon: Activity, label: "Model Monitor" },
+  { to: "/buglog", icon: Bug, label: "Bug Log" },
 ];
 
 const sysNav = [

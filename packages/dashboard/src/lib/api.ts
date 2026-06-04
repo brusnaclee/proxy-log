@@ -468,3 +468,40 @@ export const stats = {
   userDetail: (discordUserId: string) =>
     request<any>(`/internal/stats/user-detail/${encodeURIComponent(discordUserId)}`),
 };
+
+// ─── Bug Log ──────────────────────────────────────────────────────────────
+export interface BugLogEntry {
+  id: number;
+  statusCode: number;
+  errorMessage: string;
+  model: string;
+  endpointPath: string;
+  count: number;
+  sampleId: number;
+  firstSeen: string;
+  lastSeen: string;
+  affectedUsers: number;
+  ideDetections: string[];
+  providers: string[];
+  signature: string;
+}
+
+export const buglog = {
+  list: (params: { days?: number; status?: number } = {}) => {
+    const query = new URLSearchParams();
+    if (params.days) query.set("days", String(params.days));
+    if (params.status !== undefined) query.set("status", String(params.status));
+    return request<{ data: BugLogEntry[]; total: number; days: number; limit: number }>(
+      `/buglog?${query.toString()}`
+    );
+  },
+  deleteSignature: (sig: { statusCode: number; errorMessage: string; model: string; endpointPath: string }) =>
+    request<{ success: boolean; deletedCount: number }>("/buglog/signature", {
+      method: "DELETE",
+      body: JSON.stringify(sig),
+    }),
+  clearOld: (days: number = 30) =>
+    request<{ success: boolean; deletedCount: number }>(`/buglog/clear?days=${days}`, { method: "DELETE" }),
+  clearAll: () =>
+    request<{ success: boolean; deletedCount: number }>("/buglog/all", { method: "DELETE" }),
+};
