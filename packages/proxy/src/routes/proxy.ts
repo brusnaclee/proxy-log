@@ -3062,7 +3062,11 @@ proxy.all('/*', async (c) => {
 				completionTokens = Math.max(estimateTokens(responseBody), 1);
 			}
 		} catch {
-			// Body might not be JSON.
+			// Body might not be JSON — capture raw error for non-2xx responses
+			if (statusCode >= 400 && responseBody) {
+				errorMessage = responseBody.slice(0, 500);
+				console.warn(`[proxy] Upstream ${statusCode} for model "${model}": ${errorMessage.slice(0, 200)}`);
+			}
 		}
 
 		const billableTokens = resolveBillableTokens(
