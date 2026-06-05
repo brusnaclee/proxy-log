@@ -322,6 +322,48 @@ export async function getModelCatalogResponse() {
     }
   }
 
+  // Add custom models from database
+  const { customModels } = await import("../../db/schema.js");
+  const activeCustomModels = await db.select().from(customModels).where(eq(customModels.isActive, true));
+  for (const cm of activeCustomModels) {
+    const providerName = providerIdToName.get(cm.providerId) || "unknown";
+    const publicId = `${providerName}/${cm.modelId}`;
+
+    if (seen.has(publicId)) continue;
+    seen.add(publicId);
+
+    const enriched: any = {
+      id: publicId,
+      object: "model",
+      created: Math.floor(cm.createdAt.getTime() / 1000),
+      owned_by: providerName,
+      provider: providerName,
+      upstream_provider: providerName,
+      name: cm.displayName || cm.modelId,
+      description: cm.description || null,
+      context_length: cm.contextLength || null,
+      max_output_tokens: cm.maxOutputTokens || null,
+      pricing: (cm.inputPricePerMtok || cm.outputPricePerMtok) ? {
+        prompt: (cm.inputPricePerMtok || 0) / 1_000_000,
+        completion: (cm.outputPricePerMtok || 0) / 1_000_000,
+      } : undefined,
+      input_modalities: cm.inputModalities ? (() => { try { return JSON.parse(cm.inputModalities); } catch { return ["text"]; } })() : ["text"],
+      output_modalities: cm.outputModalities ? (() => { try { return JSON.parse(cm.outputModalities); } catch { return ["text"]; } })() : ["text"],
+      supported_features: cm.supportedFeatures ? (() => { try { return JSON.parse(cm.supportedFeatures); } catch { return []; } })() : [],
+      custom: true,
+    };
+
+    // Merge metadata if available
+    const meta = metadataMap.get(cm.modelId);
+    if (meta) {
+      if (meta.contextLength) enriched.context_length = meta.contextLength;
+      if (meta.maxOutputTokens) enriched.max_output_tokens = meta.maxOutputTokens;
+      if (meta.description) enriched.description = meta.description;
+    }
+
+    publicModels.push(enriched);
+  }
+
   return {
     object: "list",
     data: publicModels,
@@ -470,7 +512,18 @@ export async function getProviderForModel(modelId: string): Promise<any | null> 
     : [];
 
   if (resolvedCandidates.length === 0 && candidateIds.length === 0) {
-    // No catalog match — don't blindly pick first provider; try any that lists the model via owned_by heuristic
+    // No catalog match — check custom models table
+    const { customModels } = await import("../../db/schema.js");
+    const customModel = (await db.select().from(customModels)
+      .where(eq(customModels.modelId, modelId))
+      .where(eq(customModels.isActive, true)))[0];
+
+    if (customModel) {
+      const customProvider = await resolveProviderById(customModel.providerId);
+      if (customProvider) return customProvider;
+    }
+
+    // Fall back to any active provider
     resolvedCandidates = allActive;
   }
 

@@ -4,7 +4,7 @@ import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Trash, Plus, ChevronDown, ChevronRight, RotateCcw, Key, Copy, Eye, EyeOff, Pencil, Check, X } from "lucide-react";
+import { Trash, Plus, ChevronDown, ChevronRight, RotateCcw, Key, Copy, Eye, EyeOff, Pencil, Check, X, Box } from "lucide-react";
 
 interface ProviderApiKey {
   id: number;
@@ -26,6 +26,13 @@ export function ProvidersManager() {
   const [showKeys, setShowKeys] = useState<Record<number, boolean>>({});
   const [editingKey, setEditingKey] = useState<number | null>(null);
   const [editValue, setEditValue] = useState("");
+
+  // Custom models state
+  const [providerCustomModels, setProviderCustomModels] = useState<Record<number, any[]>>({});
+  const [expandedCustomModels, setExpandedCustomModels] = useState<number | null>(null);
+  const [newModelInputs, setNewModelInputs] = useState<Record<number, { modelId: string; displayName: string; contextLength: string; inputPricePerMtok: string; outputPricePerMtok: string }>>({});
+  const [editingModel, setEditingModel] = useState<{ providerId: number; modelId: string } | null>(null);
+  const [editModelValue, setEditModelValue] = useState({ displayName: "", contextLength: "", inputPricePerMtok: "", outputPricePerMtok: "" });
 
   const [name, setName] = useState("");
   const [endpoint, setEndpoint] = useState("");
@@ -63,6 +70,7 @@ export function ProvidersManager() {
     } else {
       setExpandedProvider(providerId);
       await loadKeys(providerId);
+      await loadCustomModels(providerId);
     }
   };
 
@@ -159,6 +167,70 @@ export function ProvidersManager() {
       document.execCommand("copy");
       document.body.removeChild(ta);
     });
+  };
+
+  // Custom models handlers
+  const loadCustomModels = async (providerId: number) => {
+    try {
+      const res = await request<any[]>(`/providers/${providerId}/custom-models`);
+      setProviderCustomModels(prev => ({ ...prev, [providerId]: res }));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleAddCustomModel = async (providerId: number) => {
+    const inputs = newModelInputs[providerId];
+    if (!inputs?.modelId) return;
+    try {
+      await request(`/providers/${providerId}/custom-models`, {
+        method: "POST",
+        body: JSON.stringify({
+          modelId: inputs.modelId,
+          displayName: inputs.displayName || inputs.modelId,
+          contextLength: inputs.contextLength ? parseInt(inputs.contextLength) : undefined,
+          inputPricePerMtok: inputs.inputPricePerMtok ? parseFloat(inputs.inputPricePerMtok) * 1000000 : undefined,
+          outputPricePerMtok: inputs.outputPricePerMtok ? parseFloat(inputs.outputPricePerMtok) * 1000000 : undefined,
+        }),
+      });
+      setNewModelInputs(prev => ({ ...prev, [providerId]: { modelId: "", displayName: "", contextLength: "", inputPricePerMtok: "", outputPricePerMtok: "" } }));
+      loadCustomModels(providerId);
+    } catch (e: any) {
+      alert("Error: " + e.message);
+    }
+  };
+
+  const handleUpdateCustomModel = async (providerId: number, modelId: string) => {
+    try {
+      await request(`/providers/${providerId}/custom-models/${encodeURIComponent(modelId)}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          displayName: editModelValue.displayName || undefined,
+          contextLength: editModelValue.contextLength ? parseInt(editModelValue.contextLength) : undefined,
+          inputPricePerMtok: editModelValue.inputPricePerMtok ? parseFloat(editModelValue.inputPricePerMtok) * 1000000 : undefined,
+          outputPricePerMtok: editModelValue.outputPricePerMtok ? parseFloat(editModelValue.outputPricePerMtok) * 1000000 : undefined,
+        }),
+      });
+      setEditingModel(null);
+      loadCustomModels(providerId);
+    } catch (e: any) {
+      alert("Error: " + e.message);
+    }
+  };
+
+  const handleDeleteCustomModel = async (providerId: number, modelId: string) => {
+    if (!window.confirm(`Delete custom model ${modelId}?`)) return;
+    try {
+      await request(`/providers/${providerId}/custom-models/${encodeURIComponent(modelId)}`, { method: "DELETE" });
+      loadCustomModels(providerId);
+    } catch (e: any) {
+      alert("Error: " + e.message);
+    }
+  };
+
+  const formatPrice = (microcents: number | null) => {
+    if (!microcents) return "-";
+    return `$${(microcents / 1000000).toFixed(2)}`;
   };
 
   const maskKey = (key: string) => {
@@ -362,6 +434,103 @@ export function ProvidersManager() {
                     <Button size="sm" onClick={() => handleAddKey(p.id)} disabled={!newKeyInputs[p.id]}>
                       <Plus className="w-3 h-3 mr-1" /> Add Key
                     </Button>
+                  </div>
+
+                  {/* Custom Models Section */}
+                  <div className="mt-4 pt-4 border-t border-border/50">
+                    <button
+                      onClick={() => {
+                        if (expandedCustomModels === p.id) {
+                          setExpandedCustomModels(null);
+                        } else {
+                          setExpandedCustomModels(p.id);
+                          loadCustomModels(p.id);
+                        }
+                      }}
+                      className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground"
+                    >
+                      <Box className="w-4 h-4" />
+                      <span>Custom Models ({(providerCustomModels[p.id] || []).length})</span>
+                      {expandedCustomModels === p.id ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                    </button>
+
+                    {expandedCustomModels === p.id && (
+                      <div className="mt-3 space-y-2">
+                        {(providerCustomModels[p.id] || []).length === 0 ? (
+                          <p className="text-xs text-muted-foreground">No custom models. Add one below.</p>
+                        ) : (
+                          <div className="space-y-1">
+                            {(providerCustomModels[p.id] || []).map((m) => {
+                              const isEditing = editingModel?.providerId === p.id && editingModel?.modelId === m.modelId;
+                              return (
+                                <div key={m.modelId} className="flex items-center gap-2 p-2 bg-background rounded border border-border/50 text-xs">
+                                  {isEditing ? (
+                                    <div className="flex-1 grid grid-cols-4 gap-1">
+                                      <Input value={editModelValue.displayName} onChange={e => setEditModelValue(prev => ({ ...prev, displayName: e.target.value }))} placeholder="Display Name" className="h-6 text-xs" />
+                                      <Input value={editModelValue.contextLength} onChange={e => setEditModelValue(prev => ({ ...prev, contextLength: e.target.value }))} placeholder="Context Length" className="h-6 text-xs" />
+                                      <Input value={editModelValue.inputPricePerMtok} onChange={e => setEditModelValue(prev => ({ ...prev, inputPricePerMtok: e.target.value }))} placeholder="In $/M" className="h-6 text-xs" />
+                                      <Input value={editModelValue.outputPricePerMtok} onChange={e => setEditModelValue(prev => ({ ...prev, outputPricePerMtok: e.target.value }))} placeholder="Out $/M" className="h-6 text-xs" />
+                                    </div>
+                                  ) : (
+                                    <div className="flex-1 min-w-0">
+                                      <code className="font-mono">{m.modelId}</code>
+                                      <span className="text-muted-foreground ml-2">{m.displayName}</span>
+                                      {m.contextLength && <span className="text-muted-foreground ml-2">{Math.round(m.contextLength / 1000)}K</span>}
+                                      {m.inputPricePerMtok > 0 && <span className="text-muted-foreground ml-2">{formatPrice(m.inputPricePerMtok)}/M</span>}
+                                    </div>
+                                  )}
+                                  <div className="flex gap-1">
+                                    {isEditing ? (
+                                      <>
+                                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleUpdateCustomModel(p.id, m.modelId)}><Check className="w-3 h-3 text-green-500" /></Button>
+                                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setEditingModel(null)}><X className="w-3 h-3 text-red-500" /></Button>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { setEditingModel({ providerId: p.id, modelId: m.modelId }); setEditModelValue({ displayName: m.displayName || "", contextLength: m.contextLength?.toString() || "", inputPricePerMtok: m.inputPricePerMtok ? (m.inputPricePerMtok / 1000000).toString() : "", outputPricePerMtok: m.outputPricePerMtok ? (m.outputPricePerMtok / 1000000).toString() : "" }); }}><Pencil className="w-3 h-3" /></Button>
+                                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleDeleteCustomModel(p.id, m.modelId)}><Trash className="w-3 h-3 text-red-500" /></Button>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Add new custom model */}
+                        <div className="grid grid-cols-5 gap-1 mt-2">
+                          <Input
+                            value={newModelInputs[p.id]?.modelId || ""}
+                            onChange={e => setNewModelInputs(prev => ({ ...prev, [p.id]: { ...prev[p.id], modelId: e.target.value } }))}
+                            placeholder="Model ID (e.g. minimax/MiniMax-M3)"
+                            className="text-xs h-7"
+                          />
+                          <Input
+                            value={newModelInputs[p.id]?.displayName || ""}
+                            onChange={e => setNewModelInputs(prev => ({ ...prev, [p.id]: { ...prev[p.id], displayName: e.target.value } }))}
+                            placeholder="Display Name"
+                            className="text-xs h-7"
+                          />
+                          <Input
+                            value={newModelInputs[p.id]?.contextLength || ""}
+                            onChange={e => setNewModelInputs(prev => ({ ...prev, [p.id]: { ...prev[p.id], contextLength: e.target.value } }))}
+                            placeholder="Context Length"
+                            type="number"
+                            className="text-xs h-7"
+                          />
+                          <Input
+                            value={newModelInputs[p.id]?.inputPricePerMtok || ""}
+                            onChange={e => setNewModelInputs(prev => ({ ...prev, [p.id]: { ...prev[p.id], inputPricePerMtok: e.target.value } }))}
+                            placeholder="In $/M tokens"
+                            className="text-xs h-7"
+                          />
+                          <Button size="sm" className="h-7" onClick={() => handleAddCustomModel(p.id)} disabled={!newModelInputs[p.id]?.modelId}>
+                            <Plus className="w-3 h-3 mr-1" /> Add
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

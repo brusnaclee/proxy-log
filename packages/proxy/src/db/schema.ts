@@ -221,6 +221,28 @@ export const providerApiKeys = pgTable('provider_api_keys', {
 	providerIdIdx: index('idx_provider_keys_provider_id').on(table.providerId),
 }));
 
+// ─── Custom Models (per provider) ────────────────────────────────────────────
+export const customModels = pgTable('custom_models', {
+	id: serial('id').primaryKey(),
+	providerId: integer('provider_id').notNull().references(() => providers.id, { onDelete: 'cascade' }),
+	modelId: text('model_id').notNull(),
+	displayName: text('display_name'),
+	description: text('description'),
+	contextLength: integer('context_length'),
+	maxOutputTokens: integer('max_output_tokens'),
+	inputPricePerMtok: integer('input_price_per_mtok').default(0),
+	outputPricePerMtok: integer('output_price_per_mtok').default(0),
+	inputModalities: text('input_modalities'),
+	outputModalities: text('output_modalities'),
+	supportedFeatures: text('supported_features'),
+	isActive: boolean('is_active').notNull().default(true),
+	createdAt: timestamp('created_at').notNull().defaultNow(),
+	updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => ({
+	providerIdIdx: index('idx_custom_models_provider_id').on(table.providerId),
+	modelIdIdx: index('idx_custom_models_model_id').on(table.modelId),
+}));
+
 // ─── Model Monitor ─────────────────────────────────────────────────────────────
 export const modelMonitor = pgTable('model_monitor', {
 	id: serial('id').primaryKey(),

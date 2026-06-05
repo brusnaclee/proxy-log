@@ -1,6 +1,6 @@
 ﻿import { Hono } from "hono";
 import { db } from "../../db/index.js";
-import { providers } from "../../db/schema.js";
+import { providers, customModels } from "../../db/schema.js";
 import { eq, desc } from "drizzle-orm";
 import { refreshModelCatalog, getProviderApiKeys, addProviderApiKey, resetKeyLimited, deleteApiKey, toggleKeyActive, updateApiKey } from "../../utils/model-catalog.js";
 import { sanitizeProviderApiKey } from "../../utils/crypto.js";
@@ -126,6 +126,117 @@ providersApi.put("/providers/:id/keys/:keyId", async (c) => {
 providersApi.delete("/providers/:id/keys/:keyId", async (c) => {
   const keyId = parseInt(c.req.param("keyId"));
   await deleteApiKey(keyId);
+  return c.json({ success: true });
+});
+
+// ─── Custom Models Management ──────────────────────────────────────────────────
+
+// List custom models for a provider
+providersApi.get("/providers/:id/custom-models", async (c) => {
+  const providerId = parseInt(c.req.param("id"));
+  const models = await db.select().from(customModels)
+    .where(eq(customModels.providerId, providerId))
+    .orderBy(customModels.createdAt);
+  return c.json(models);
+});
+
+// Add a custom model to a provider
+providersApi.post("/providers/:id/custom-models", async (c) => {
+  const providerId = parseInt(c.req.param("id"));
+  const [existing] = await db.select().from(providers).where(eq(providers.id, providerId));
+  if (!existing) return c.json({ error: "Provider not found" }, 404);
+
+  const body = await c.req.json<{
+    modelId: string;
+    displayName?: string;
+    description?: string;
+    contextLength?: number;
+    maxOutputTokens?: number;
+    inputPricePerMtok?: number;
+    outputPricePerMtok?: number;
+    inputModalities?: string[];
+    outputModalities?: string[];
+    supportedFeatures?: string[];
+  }>();
+
+  if (!body.modelId) return c.json({ error: "modelId is required" }, 400);
+
+  const [result] = await db.insert(customModels).values({
+    providerId,
+    modelId: body.modelId,
+    displayName: body.displayName || body.modelId,
+    description: body.description || null,
+    contextLength: body.contextLength || null,
+    maxOutputTokens: body.maxOutputTokens || null,
+    inputPricePerMtok: body.inputPricePerMtok || 0,
+    outputPricePerMtok: body.outputPricePerMtok || 0,
+    inputModalities: body.inputModalities ? JSON.stringify(body.inputModalities) : null,
+    outputModalities: body.outputModalities ? JSON.stringify(body.outputModalities) : null,
+    supportedFeatures: body.supportedFeatures ? JSON.stringify(body.supportedFeatures) : null,
+  }).returning();
+
+  void refreshModelCatalog();
+  return c.json({ success: true, model: result });
+});
+
+// Update a custom model
+providersApi.put("/providers/:id/custom-models/:modelId", async (c) => {
+  const providerId = parseInt(c.req.param("id"));
+  const modelId = c.req.param("modelId");
+
+  const [existing] = await db.select().from(customModels)
+    .where(eq(customModels.providerId, providerId))
+    .where(eq(customModels.modelId, modelId));
+  if (!existing) return c.json({ error: "Custom model not found" }, 404);
+
+  const body = await c.req.json<{
+    displayName?: string;
+    description?: string;
+    contextLength?: number;
+    maxOutputTokens?: number;
+    inputPricePerMtok?: number;
+    outputPricePerMtok?: number;
+    inputModalities?: string[];
+    outputModalities?: string[];
+    supportedFeatures?: string[];
+    isActive?: boolean;
+  }>();
+
+  const updates: any = { updatedAt: new Date() };
+  if (body.displayName !== undefined) updates.displayName = body.displayName;
+  if (body.description !== undefined) updates.description = body.description;
+  if (body.contextLength !== undefined) updates.contextLength = body.contextLength;
+  if (body.maxOutputTokens !== undefined) updates.maxOutputTokens = body.maxOutputTokens;
+  if (body.inputPricePerMtok !== undefined) updates.inputPricePerMtok = body.inputPricePerMtok;
+  if (body.outputPricePerMtok !== undefined) updates.outputPricePerMtok = body.outputPricePerMtok;
+  if (body.inputModalities !== undefined) updates.inputModalities = JSON.stringify(body.inputModalities);
+  if (body.outputModalities !== undefined) updates.outputModalities = JSON.stringify(body.outputModalities);
+  if (body.supportedFeatures !== undefined) updates.supportedFeatures = JSON.stringify(body.supportedFeatures);
+  if (body.isActive !== undefined) updates.isActive = body.isActive;
+
+  await db.update(customModels).set(updates)
+    .where(eq(customModels.providerId, providerId))
+    .where(eq(customModels.modelId, modelId));
+
+  void refreshModelCatalog();
+  return c.json({ success: true });
+});
+
+// Delete a custom model
+providersApi.delete("/providers/:id/custom-models/:modelId", async (c) => {
+  const providerId = parseInt(c.req.param("id"));
+  const modelId = c.req.param("modelId");
+
+  const [existing] = await db.select().from(customModels)
+    .where(eq(customModels.providerId, providerId))
+    .where(eq(customModels.modelId, modelId));
+  if (!existing) return c.json({ error: "Custom model not found" }, 404);
+
+  await db.delete(customModels)
+    .where(eq(customModels.providerId, providerId))
+    .where(eq(customModels.modelId, modelId));
+
+  void refreshModelCatalog();
   return c.json({ success: true });
 });
 

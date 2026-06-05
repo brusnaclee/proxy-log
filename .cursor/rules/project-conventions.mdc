@@ -1,0 +1,37 @@
+---
+description: Git and deployment conventions for this project
+alwaysApply: true
+---
+
+# Project: monit_api (Groupy Proxy)
+
+## Documentation
+
+**Always read `docs/` folder before making changes.** The docs contain:
+- Architecture overview: `docs/architecture/system_overview.md`
+- Database schema: `docs/database/schema_and_models.md`
+- Features: `docs/features/`
+- Deployment guide: `docs/scripts_and_ops/deploy_script.md`
+
+## Git Account
+- GitHub account: **brusnaclee** (brusnaclee@gmail.com)
+- Remote: `https://brusnaclee@github.com/brusnaclee/proxy-log.git`
+- If git push fails with "Permission denied to Sadamdi", run:
+  `git remote set-url origin https://brusnaclee@github.com/brusnaclee/proxy-log.git`
+
+## Server Deployment
+- Server: `root@146.190.102.65` (password: rendang123)
+- Deploy script: `node scripts/deploy.mjs`
+- SSH via node-ssh not available locally — deploy via tarball upload using `upload-rebuild.mjs` OR commit + git pull on server
+- Quick rebuild: `cd /root/proxy-log && git pull && pnpm --filter proxy build && pm2 restart proxy-api`
+
+## Stack
+- Proxy: Hono + Drizzle ORM + PostgreSQL (node-postgres)
+- Dashboard: React + Vite + Recharts + Tailwind CSS
+- Bot: Discord.js
+- DB: PostgreSQL at localhost:5432, db=monit_api, user=monit_api
+
+## Custom Models
+- Admins can add custom models per upstream provider via Dashboard > Settings > Upstream Providers > Custom Models
+- Custom models appear in `/v1/models` as `{provider}/{modelId}` and are routable through the proxy
+- See `docs/features/custom_models.md` for details
