@@ -1110,12 +1110,13 @@ async function pollModelStatus() {
 							const provDetail = await proxyInternal(`/admin/providers/${prov.id}`, 'GET');
 							const baseUrl = provDetail?.endpoint || '';
 							
+							console.log(`[tokito-monitor] custom model debug: id=${id} baseUrl=${baseUrl} apiKey=${apiKey ? apiKey.substring(0, 15) + '...' : 'EMPTY'}`);
 							if (!allModels.includes(id)) {
 								allModels.push(id);
 								const entry = { modelId: id, provider: prov.name, baseUrl, apiKey };
 								runtime.modelEntries.push(entry);
 								runtime.modelProviderMap.set(id, { provider: prov.name, baseUrl, apiKey });
-								console.log(`[tokito-monitor] added custom model: ${id} from provider: ${prov.name}`);
+								console.log(`[tokito-monitor] added custom model: ${id} from provider: ${prov.name} baseUrl=${baseUrl} apiKey=${apiKey ? 'OK' : 'EMPTY'}`);
 							}
 						}
 					}
@@ -1235,6 +1236,11 @@ async function runLatencyTest() {
 		const started = Date.now();
 		const baseUrl = entry.baseUrl;
 		const apiKey = entry.apiKey;
+		const probeUrl = `${baseUrl}/chat/completions`;
+		// Log custom model probes for debugging
+		if (!entry.baseUrl.includes('/v1/models')) {
+			console.log(`[tokito-monitor] probing ${entry.modelId}: url=${probeUrl} apiKey=${apiKey ? apiKey.substring(0, 15) + '...' : 'EMPTY'}`);
+		}
 
 		let result;
 		try {
