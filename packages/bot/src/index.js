@@ -1075,6 +1075,42 @@ async function pollModelStatus() {
 		}
 	}
 
+	// Fetch custom models from proxy API and add them to the list
+	try {
+		const customModelsResult = await proxyInternal(`/admin/providers`, 'GET');
+		if (Array.isArray(customModelsResult)) {
+			for (const prov of customModelsResult) {
+				try {
+					const customModels = await proxyInternal(`/admin/providers/${prov.id}/custom-models`, 'GET');
+					if (Array.isArray(customModels)) {
+						for (const cm of customModels) {
+							if (!cm.isActive) continue;
+							const id = cm.modelId;
+							// Get the provider's API key for probing
+							const keysResult = await proxyInternal(`/admin/providers/${prov.id}/keys`, 'GET');
+							const activeKey = Array.isArray(keysResult) ? keysResult.find(k => k.isActive && !k.isLimited) : null;
+							const apiKey = activeKey ? activeKey.apiKey : '';
+							// Get provider endpoint for probing
+							const provDetail = await proxyInternal(`/admin/providers/${prov.id}`, 'GET');
+							const baseUrl = provDetail?.endpoint || '';
+							
+							if (!allModels.includes(id)) {
+								allModels.push(id);
+								const entry = { modelId: id, provider: prov.name, baseUrl, apiKey };
+								runtime.modelEntries.push(entry);
+								runtime.modelProviderMap.set(id, { provider: prov.name, baseUrl, apiKey });
+							}
+						}
+					}
+				} catch (err) {
+					console.error(`[tokito-monitor] error fetching custom models from ${prov.name}:`, err.message);
+				}
+			}
+		}
+	} catch (err) {
+		console.error(`[tokito-monitor] error fetching providers for custom models:`, err.message);
+	}
+
 	runtime.models = allModels;
 
 	// Drop cached latency for providers no longer active
