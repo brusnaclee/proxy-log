@@ -1099,20 +1099,17 @@ async function pollModelStatus() {
 					const customModels = await proxyInternal(`/admin/providers/${prov.id}/custom-models`, 'GET');
 					if (Array.isArray(customModels) && customModels.length > 0) {
 						console.log(`[tokito-monitor] found ${customModels.length} custom models for provider: ${prov.name}`);
+						// Resolve API key: use provider's main apiKey as primary, then try keys from runtime.providerKeys
+						const provKeys = runtime.providerKeys.get(prov.name) || [];
+						const fallbackApiKey = prov.apiKey || (provKeys.length > 0 ? provKeys[0] : '');
+						// Resolve baseUrl: use provider's endpoint
+						const baseUrl = prov.endpoint || '';
+						
 						for (const cm of customModels) {
 							if (!cm.isActive) continue;
 							const id = cm.modelId;
-							// Get the provider's API key for probing
-							const keysResult = await proxyInternal(`/admin/providers/${prov.id}/keys`, 'GET');
-							console.log(`[tokito-monitor] keys result type=${typeof keysResult} isArray=${Array.isArray(keysResult)} keys=${JSON.stringify(keysResult).substring(0, 200)}`);
-							const activeKey = Array.isArray(keysResult) ? keysResult.find(k => k.isActive && !k.isLimited) : null;
-							const apiKey = activeKey ? activeKey.apiKey : '';
-							// Get provider endpoint for probing
-							const provDetail = await proxyInternal(`/admin/providers/${prov.id}`, 'GET');
-							console.log(`[tokito-monitor] provDetail type=${typeof provDetail} endpoint=${provDetail?.endpoint}`);
-							const baseUrl = provDetail?.endpoint || '';
+							const apiKey = fallbackApiKey;
 							
-							console.log(`[tokito-monitor] custom model debug: id=${id} baseUrl=${baseUrl} apiKey=${apiKey ? apiKey.substring(0, 15) + '...' : 'EMPTY'}`);
 							if (!allModels.includes(id)) {
 								allModels.push(id);
 								const entry = { modelId: id, provider: prov.name, baseUrl, apiKey };
@@ -1238,11 +1235,6 @@ async function runLatencyTest() {
 		const started = Date.now();
 		const baseUrl = entry.baseUrl;
 		const apiKey = entry.apiKey;
-		const probeUrl = `${baseUrl}/chat/completions`;
-		// Log custom model probes for debugging
-		if (!entry.baseUrl.includes('/v1/models')) {
-			console.log(`[tokito-monitor] probing ${entry.modelId}: url=${probeUrl} apiKey=${apiKey ? apiKey.substring(0, 15) + '...' : 'EMPTY'}`);
-		}
 
 		let result;
 		try {
