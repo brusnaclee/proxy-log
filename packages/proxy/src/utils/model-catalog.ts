@@ -245,6 +245,17 @@ export async function getModelCatalogResponse() {
   // Load metadata for enrichment
   const metadataMap = await getModelMetadataMap();
 
+  // Build provider ID → name map for upstream provider resolution
+  const providerIdToName = new Map<number, string>();
+  const allProviderIds = new Set<number>();
+  for (const providerIds of Object.values(cache.modelProviderMap)) {
+    for (const pid of providerIds) allProviderIds.add(pid);
+  }
+  for (const pid of allProviderIds) {
+    const p = await resolveProviderById(pid);
+    if (p) providerIdToName.set(pid, p.name);
+  }
+
   // Deduplicate by model id for public listing (first occurrence wins for display)
   const seen = new Set<string>();
   const publicModels: any[] = [];
@@ -263,12 +274,27 @@ export async function getModelCatalogResponse() {
   for (const m of cache.models) {
     if (seen.has(m.id)) continue;
     seen.add(m.id);
+
+    // Resolve upstream provider(s) for this model
+    const providerIds = cache.modelProviderMap[m.id] || [];
+    const upstreamProviderName = providerIds.length > 0
+      ? (providerIdToName.get(providerIds[0]) || null)
+      : null;
+
+    // Build the public ID with upstream provider prefix
+    const publicId = upstreamProviderName
+      ? `${upstreamProviderName}/${m.id}`
+      : m.id;
+
     const { provider_id: _pid, ...rest } = m;
+    rest.id = publicId;
 
     // Merge metadata if available
     const meta = metadataMap.get(m.id);
     if (meta) {
       const enriched: any = { ...rest };
+      enriched.provider = enriched.owned_by || null;
+      enriched.upstream_provider = upstreamProviderName;
       if (meta.contextLength) enriched.context_length = meta.contextLength;
       if (meta.maxOutputTokens) enriched.max_output_tokens = meta.maxOutputTokens;
       if (meta.displayName) enriched.name = meta.displayName;
@@ -290,6 +316,8 @@ export async function getModelCatalogResponse() {
       }
       publicModels.push(enriched);
     } else {
+      rest.provider = rest.owned_by || null;
+      rest.upstream_provider = upstreamProviderName;
       publicModels.push(rest);
     }
   }

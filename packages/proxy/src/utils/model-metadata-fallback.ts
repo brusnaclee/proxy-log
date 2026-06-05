@@ -41,6 +41,14 @@ export const FALLBACK_METADATA: FallbackMetadata[] = [
   { modelId: "ag/gpt-oss-120b-medium", displayName: "GPT-OSS 120B Medium", description: "Open-source GPT 120B via AG — medium compute", contextLength: 128_000, maxOutputTokens: 16_384, inputPricePerMtok: usd(0.90), outputPricePerMtok: usd(0.90), inputModalities: ["text"], outputModalities: ["text"], supportedFeatures: ["tools"] },
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // xai/ — xAI Grok models
+  // ═══════════════════════════════════════════════════════════════════════════
+  { modelId: "xai/grok-3", displayName: "Grok 3", description: "xAI Grok 3 — fast reasoning, 131K context", contextLength: 131_072, maxOutputTokens: 131_072, inputPricePerMtok: usd(3.00), outputPricePerMtok: usd(15.00), inputModalities: ["text"], outputModalities: ["text"], supportedFeatures: ["tools", "reasoning"] },
+  { modelId: "xai/grok-4", displayName: "Grok 4", description: "xAI Grok 4 — flagship, 1M context", contextLength: 1_000_000, maxOutputTokens: 131_072, inputPricePerMtok: usd(5.00), outputPricePerMtok: usd(25.00), inputModalities: ["text"], outputModalities: ["text"], supportedFeatures: ["tools", "reasoning"] },
+  { modelId: "xai/grok-code-fast-1", displayName: "Grok Code Fast 1", description: "xAI Grok Code — optimized for coding", contextLength: 131_072, maxOutputTokens: 131_072, inputPricePerMtok: usd(0.30), outputPricePerMtok: usd(0.50), inputModalities: ["text"], outputModalities: ["text"], supportedFeatures: ["tools", "coding"] },
+  { modelId: "xai/grok-4-fast-reasoning", displayName: "Grok 4 Fast Reasoning", description: "xAI Grok 4 — fast reasoning variant", contextLength: 1_000_000, maxOutputTokens: 131_072, inputPricePerMtok: usd(5.00), outputPricePerMtok: usd(25.00), inputModalities: ["text"], outputModalities: ["text"], supportedFeatures: ["tools", "reasoning"] },
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // glm/ — Zhipu AI GLM models
   // ═══════════════════════════════════════════════════════════════════════════
   { modelId: "glm/glm-5.1", displayName: "GLM 5.1", description: "Zhipu AI GLM-5.1 — 744B MoE (40B active), 200K context, agentic coding", contextLength: 200_000, maxOutputTokens: 128_000, inputPricePerMtok: usd(1.40), outputPricePerMtok: usd(4.40), inputModalities: ["text", "image", "pdf"], outputModalities: ["text"], supportedFeatures: ["tools", "reasoning", "structured_outputs"] },

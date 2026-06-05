@@ -1786,7 +1786,9 @@ function buildTokitoEmbed(kind, session) {
 		if (kind === 'details') {
 			// Find enriched metadata from cache
 			const detailsCache = runtime._modelDetailsCache || [];
-			const meta = detailsCache.find(m => m.id === entry.modelId);
+			// Match against original model ID (without upstream provider prefix)
+			const originalId = entry.modelId.includes('/') ? entry.modelId.substring(entry.modelId.indexOf('/') + 1) : entry.modelId;
+			const meta = detailsCache.find(m => m.id === entry.modelId || m.id === originalId);
 			const icon = lt?.ok ? '🟢' : (lt?.status === 429 ? '🟡' : (lt ? '🔴' : '⚪'));
 			const name = meta?.name || entry.modelId;
 			const ctx = meta?.context_length ? `${Math.round(meta.context_length / 1024)}K` : '—';
