@@ -161,6 +161,12 @@ providersApi.post("/providers/:id/custom-models", async (c) => {
 
   if (!body.modelId) return c.json({ error: "modelId is required" }, 400);
 
+  // Check for duplicate model in this provider
+  const [duplicate] = await db.select().from(customModels)
+    .where(eq(customModels.providerId, providerId))
+    .where(eq(customModels.modelId, body.modelId));
+  if (duplicate) return c.json({ error: "Model already exists for this provider" }, 409);
+
   const [result] = await db.insert(customModels).values({
     providerId,
     modelId: body.modelId,
