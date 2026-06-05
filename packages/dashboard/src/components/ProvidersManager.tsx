@@ -30,9 +30,9 @@ export function ProvidersManager() {
   // Custom models state
   const [providerCustomModels, setProviderCustomModels] = useState<Record<number, any[]>>({});
   const [expandedCustomModels, setExpandedCustomModels] = useState<number | null>(null);
-  const [newModelInputs, setNewModelInputs] = useState<Record<number, { modelId: string; displayName: string; contextLength: string; inputPricePerMtok: string; outputPricePerMtok: string }>>({});
+  const [newModelInputs, setNewModelInputs] = useState<Record<number, { modelId: string; displayName: string; description: string; contextLength: string; maxOutputTokens: string; inputPricePerMtok: string; outputPricePerMtok: string; inputModalities: string; outputModalities: string; supportedFeatures: string }>>({});
   const [editingModel, setEditingModel] = useState<{ providerId: number; modelId: string } | null>(null);
-  const [editModelValue, setEditModelValue] = useState({ displayName: "", contextLength: "", inputPricePerMtok: "", outputPricePerMtok: "" });
+  const [editModelValue, setEditModelValue] = useState({ displayName: "", description: "", contextLength: "", maxOutputTokens: "", inputPricePerMtok: "", outputPricePerMtok: "", inputModalities: "", outputModalities: "", supportedFeatures: "" });
 
   const [name, setName] = useState("");
   const [endpoint, setEndpoint] = useState("");
@@ -188,12 +188,17 @@ export function ProvidersManager() {
         body: JSON.stringify({
           modelId: inputs.modelId,
           displayName: inputs.displayName || inputs.modelId,
+          description: inputs.description || undefined,
           contextLength: inputs.contextLength ? parseInt(inputs.contextLength) : undefined,
+          maxOutputTokens: inputs.maxOutputTokens ? parseInt(inputs.maxOutputTokens) : undefined,
           inputPricePerMtok: inputs.inputPricePerMtok ? parseFloat(inputs.inputPricePerMtok) * 1000000 : undefined,
           outputPricePerMtok: inputs.outputPricePerMtok ? parseFloat(inputs.outputPricePerMtok) * 1000000 : undefined,
+          inputModalities: inputs.inputModalities ? inputs.inputModalities.split(",").map(s => s.trim()) : undefined,
+          outputModalities: inputs.outputModalities ? inputs.outputModalities.split(",").map(s => s.trim()) : undefined,
+          supportedFeatures: inputs.supportedFeatures ? inputs.supportedFeatures.split(",").map(s => s.trim()) : undefined,
         }),
       });
-      setNewModelInputs(prev => ({ ...prev, [providerId]: { modelId: "", displayName: "", contextLength: "", inputPricePerMtok: "", outputPricePerMtok: "" } }));
+      setNewModelInputs(prev => ({ ...prev, [providerId]: { modelId: "", displayName: "", description: "", contextLength: "", maxOutputTokens: "", inputPricePerMtok: "", outputPricePerMtok: "", inputModalities: "", outputModalities: "", supportedFeatures: "" } }));
       loadCustomModels(providerId);
     } catch (e: any) {
       alert("Error: " + e.message);
@@ -206,9 +211,14 @@ export function ProvidersManager() {
         method: "PUT",
         body: JSON.stringify({
           displayName: editModelValue.displayName || undefined,
+          description: editModelValue.description || undefined,
           contextLength: editModelValue.contextLength ? parseInt(editModelValue.contextLength) : undefined,
+          maxOutputTokens: editModelValue.maxOutputTokens ? parseInt(editModelValue.maxOutputTokens) : undefined,
           inputPricePerMtok: editModelValue.inputPricePerMtok ? parseFloat(editModelValue.inputPricePerMtok) * 1000000 : undefined,
           outputPricePerMtok: editModelValue.outputPricePerMtok ? parseFloat(editModelValue.outputPricePerMtok) * 1000000 : undefined,
+          inputModalities: editModelValue.inputModalities ? editModelValue.inputModalities.split(",").map(s => s.trim()) : undefined,
+          outputModalities: editModelValue.outputModalities ? editModelValue.outputModalities.split(",").map(s => s.trim()) : undefined,
+          supportedFeatures: editModelValue.supportedFeatures ? editModelValue.supportedFeatures.split(",").map(s => s.trim()) : undefined,
         }),
       });
       setEditingModel(null);
@@ -465,18 +475,30 @@ export function ProvidersManager() {
                               return (
                                 <div key={m.modelId} className="flex items-center gap-2 p-2 bg-background rounded border border-border/50 text-xs">
                                   {isEditing ? (
-                                    <div className="flex-1 grid grid-cols-4 gap-1">
-                                      <Input value={editModelValue.displayName} onChange={e => setEditModelValue(prev => ({ ...prev, displayName: e.target.value }))} placeholder="Display Name" className="h-6 text-xs" />
-                                      <Input value={editModelValue.contextLength} onChange={e => setEditModelValue(prev => ({ ...prev, contextLength: e.target.value }))} placeholder="Context Length" className="h-6 text-xs" />
-                                      <Input value={editModelValue.inputPricePerMtok} onChange={e => setEditModelValue(prev => ({ ...prev, inputPricePerMtok: e.target.value }))} placeholder="In $/M" className="h-6 text-xs" />
-                                      <Input value={editModelValue.outputPricePerMtok} onChange={e => setEditModelValue(prev => ({ ...prev, outputPricePerMtok: e.target.value }))} placeholder="Out $/M" className="h-6 text-xs" />
+                                    <div className="flex-1 space-y-1">
+                                      <div className="grid grid-cols-4 gap-1">
+                                        <Input value={editModelValue.displayName} onChange={e => setEditModelValue(prev => ({ ...prev, displayName: e.target.value }))} placeholder="Display Name" className="h-6 text-xs" />
+                                        <Input value={editModelValue.description} onChange={e => setEditModelValue(prev => ({ ...prev, description: e.target.value }))} placeholder="Description" className="h-6 text-xs" />
+                                        <Input value={editModelValue.contextLength} onChange={e => setEditModelValue(prev => ({ ...prev, contextLength: e.target.value }))} placeholder="Context Length" className="h-6 text-xs" />
+                                        <Input value={editModelValue.maxOutputTokens} onChange={e => setEditModelValue(prev => ({ ...prev, maxOutputTokens: e.target.value }))} placeholder="Max Output Tokens" className="h-6 text-xs" />
+                                      </div>
+                                      <div className="grid grid-cols-4 gap-1">
+                                        <Input value={editModelValue.inputPricePerMtok} onChange={e => setEditModelValue(prev => ({ ...prev, inputPricePerMtok: e.target.value }))} placeholder="In $/M" className="h-6 text-xs" />
+                                        <Input value={editModelValue.outputPricePerMtok} onChange={e => setEditModelValue(prev => ({ ...prev, outputPricePerMtok: e.target.value }))} placeholder="Out $/M" className="h-6 text-xs" />
+                                        <Input value={editModelValue.inputModalities} onChange={e => setEditModelValue(prev => ({ ...prev, inputModalities: e.target.value }))} placeholder="Input (text,image)" className="h-6 text-xs" />
+                                        <Input value={editModelValue.outputModalities} onChange={e => setEditModelValue(prev => ({ ...prev, outputModalities: e.target.value }))} placeholder="Output (text)" className="h-6 text-xs" />
+                                      </div>
+                                      <Input value={editModelValue.supportedFeatures} onChange={e => setEditModelValue(prev => ({ ...prev, supportedFeatures: e.target.value }))} placeholder="Features (tools,reasoning)" className="h-6 text-xs" />
                                     </div>
                                   ) : (
                                     <div className="flex-1 min-w-0">
                                       <code className="font-mono">{m.modelId}</code>
                                       <span className="text-muted-foreground ml-2">{m.displayName}</span>
+                                      {m.description && <span className="text-muted-foreground ml-2 text-[10px] truncate max-w-[200px]">({m.description})</span>}
                                       {m.contextLength && <span className="text-muted-foreground ml-2">{Math.round(m.contextLength / 1000)}K</span>}
+                                      {m.maxOutputTokens && <span className="text-muted-foreground ml-2">out:{Math.round(m.maxOutputTokens / 1000)}K</span>}
                                       {m.inputPricePerMtok > 0 && <span className="text-muted-foreground ml-2">{formatPrice(m.inputPricePerMtok)}/M</span>}
+                                      {m.outputPricePerMtok > 0 && <span className="text-muted-foreground ml-2">{formatPrice(m.outputPricePerMtok)}/M</span>}
                                     </div>
                                   )}
                                   <div className="flex gap-1">
@@ -487,7 +509,7 @@ export function ProvidersManager() {
                                       </>
                                     ) : (
                                       <>
-                                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { setEditingModel({ providerId: p.id, modelId: m.modelId }); setEditModelValue({ displayName: m.displayName || "", contextLength: m.contextLength?.toString() || "", inputPricePerMtok: m.inputPricePerMtok ? (m.inputPricePerMtok / 1000000).toString() : "", outputPricePerMtok: m.outputPricePerMtok ? (m.outputPricePerMtok / 1000000).toString() : "" }); }}><Pencil className="w-3 h-3" /></Button>
+                                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { setEditingModel({ providerId: p.id, modelId: m.modelId }); setEditModelValue({ displayName: m.displayName || "", description: m.description || "", contextLength: m.contextLength?.toString() || "", maxOutputTokens: m.maxOutputTokens?.toString() || "", inputPricePerMtok: m.inputPricePerMtok ? (m.inputPricePerMtok / 1000000).toString() : "", outputPricePerMtok: m.outputPricePerMtok ? (m.outputPricePerMtok / 1000000).toString() : "", inputModalities: (() => { try { return JSON.parse(m.inputModalities || "[]").join(", "); } catch { return ""; } })(), outputModalities: (() => { try { return JSON.parse(m.outputModalities || "[]").join(", "); } catch { return ""; } })(), supportedFeatures: (() => { try { return JSON.parse(m.supportedFeatures || "[]").join(", "); } catch { return ""; } })() }); }}><Pencil className="w-3 h-3" /></Button>
                                         <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleDeleteCustomModel(p.id, m.modelId)}><Trash className="w-3 h-3 text-red-500" /></Button>
                                       </>
                                     )}
@@ -499,35 +521,78 @@ export function ProvidersManager() {
                         )}
 
                         {/* Add new custom model */}
-                        <div className="grid grid-cols-5 gap-1 mt-2">
-                          <Input
-                            value={newModelInputs[p.id]?.modelId || ""}
-                            onChange={e => setNewModelInputs(prev => ({ ...prev, [p.id]: { ...prev[p.id], modelId: e.target.value } }))}
-                            placeholder="Model ID (e.g. minimax/MiniMax-M3)"
-                            className="text-xs h-7"
-                          />
-                          <Input
-                            value={newModelInputs[p.id]?.displayName || ""}
-                            onChange={e => setNewModelInputs(prev => ({ ...prev, [p.id]: { ...prev[p.id], displayName: e.target.value } }))}
-                            placeholder="Display Name"
-                            className="text-xs h-7"
-                          />
-                          <Input
-                            value={newModelInputs[p.id]?.contextLength || ""}
-                            onChange={e => setNewModelInputs(prev => ({ ...prev, [p.id]: { ...prev[p.id], contextLength: e.target.value } }))}
-                            placeholder="Context Length"
-                            type="number"
-                            className="text-xs h-7"
-                          />
-                          <Input
-                            value={newModelInputs[p.id]?.inputPricePerMtok || ""}
-                            onChange={e => setNewModelInputs(prev => ({ ...prev, [p.id]: { ...prev[p.id], inputPricePerMtok: e.target.value } }))}
-                            placeholder="In $/M tokens"
-                            className="text-xs h-7"
-                          />
-                          <Button size="sm" className="h-7" onClick={() => handleAddCustomModel(p.id)} disabled={!newModelInputs[p.id]?.modelId}>
-                            <Plus className="w-3 h-3 mr-1" /> Add
-                          </Button>
+                        <div className="space-y-1 mt-2 p-2 bg-muted/30 rounded border border-border/50">
+                          <div className="grid grid-cols-4 gap-1">
+                            <Input
+                              value={newModelInputs[p.id]?.modelId || ""}
+                              onChange={e => setNewModelInputs(prev => ({ ...prev, [p.id]: { ...prev[p.id], modelId: e.target.value } }))}
+                              placeholder="Model ID (e.g. minimax/MiniMax-M3)"
+                              className="text-xs h-7"
+                            />
+                            <Input
+                              value={newModelInputs[p.id]?.displayName || ""}
+                              onChange={e => setNewModelInputs(prev => ({ ...prev, [p.id]: { ...prev[p.id], displayName: e.target.value } }))}
+                              placeholder="Display Name"
+                              className="text-xs h-7"
+                            />
+                            <Input
+                              value={newModelInputs[p.id]?.contextLength || ""}
+                              onChange={e => setNewModelInputs(prev => ({ ...prev, [p.id]: { ...prev[p.id], contextLength: e.target.value } }))}
+                              placeholder="Context Length"
+                              type="number"
+                              className="text-xs h-7"
+                            />
+                            <Input
+                              value={newModelInputs[p.id]?.maxOutputTokens || ""}
+                              onChange={e => setNewModelInputs(prev => ({ ...prev, [p.id]: { ...prev[p.id], maxOutputTokens: e.target.value } }))}
+                              placeholder="Max Output Tokens"
+                              type="number"
+                              className="text-xs h-7"
+                            />
+                          </div>
+                          <div className="grid grid-cols-4 gap-1">
+                            <Input
+                              value={newModelInputs[p.id]?.inputPricePerMtok || ""}
+                              onChange={e => setNewModelInputs(prev => ({ ...prev, [p.id]: { ...prev[p.id], inputPricePerMtok: e.target.value } }))}
+                              placeholder="In $/M tokens"
+                              className="text-xs h-7"
+                            />
+                            <Input
+                              value={newModelInputs[p.id]?.outputPricePerMtok || ""}
+                              onChange={e => setNewModelInputs(prev => ({ ...prev, [p.id]: { ...prev[p.id], outputPricePerMtok: e.target.value } }))}
+                              placeholder="Out $/M tokens"
+                              className="text-xs h-7"
+                            />
+                            <Input
+                              value={newModelInputs[p.id]?.inputModalities || ""}
+                              onChange={e => setNewModelInputs(prev => ({ ...prev, [p.id]: { ...prev[p.id], inputModalities: e.target.value } }))}
+                              placeholder="Input (text,image)"
+                              className="text-xs h-7"
+                            />
+                            <Input
+                              value={newModelInputs[p.id]?.outputModalities || ""}
+                              onChange={e => setNewModelInputs(prev => ({ ...prev, [p.id]: { ...prev[p.id], outputModalities: e.target.value } }))}
+                              placeholder="Output (text)"
+                              className="text-xs h-7"
+                            />
+                          </div>
+                          <div className="grid grid-cols-5 gap-1">
+                            <Input
+                              value={newModelInputs[p.id]?.description || ""}
+                              onChange={e => setNewModelInputs(prev => ({ ...prev, [p.id]: { ...prev[p.id], description: e.target.value } }))}
+                              placeholder="Description"
+                              className="text-xs h-7 col-span-3"
+                            />
+                            <Input
+                              value={newModelInputs[p.id]?.supportedFeatures || ""}
+                              onChange={e => setNewModelInputs(prev => ({ ...prev, [p.id]: { ...prev[p.id], supportedFeatures: e.target.value } }))}
+                              placeholder="Features (tools,reasoning)"
+                              className="text-xs h-7"
+                            />
+                            <Button size="sm" className="h-7" onClick={() => handleAddCustomModel(p.id)} disabled={!newModelInputs[p.id]?.modelId}>
+                              <Plus className="w-3 h-3 mr-1" /> Add
+                            </Button>
+                          </div>
                         </div>
                       </div>
                     )}
