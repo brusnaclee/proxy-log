@@ -1,4 +1,4 @@
-﻿import { mkdir, readFile, writeFile } from "fs/promises";
+import { mkdir, readFile, writeFile } from "fs/promises";
 import { dirname } from "path";
 import { db } from "../db/index.js";
 import { providers, modelMonitor, providerApiKeys, modelMetadata } from "../db/schema.js";
@@ -245,7 +245,7 @@ export async function getModelCatalogResponse() {
   // Load metadata for enrichment
   const metadataMap = await getModelMetadataMap();
 
-  // Build provider ID → name map for upstream provider resolution
+  // Build provider ID ? name map for upstream provider resolution
   const providerIdToName = new Map<number, string>();
   const allProviderIds = new Set<number>();
   for (const providerIds of Object.values(cache.modelProviderMap)) {
@@ -323,7 +323,7 @@ export async function getModelCatalogResponse() {
   }
 
   // Add custom models from database
-  const { customModels } = await import("../../db/schema.js");
+  const { customModels } = await import("../db/schema.js");
   const activeCustomModels = await db.select().from(customModels).where(eq(customModels.isActive, true));
   for (const cm of activeCustomModels) {
     const providerName = providerIdToName.get(cm.providerId) || "unknown";
@@ -468,7 +468,7 @@ async function isProviderOnlineForModel(providerName: string, upstreamModel: str
     return Boolean(legacy.isOnline) && legacy.httpStatus === 200;
   }
 
-  // No monitor data — treat as eligible (don't block)
+  // No monitor data ? treat as eligible (don't block)
   return true;
 }
 
@@ -512,8 +512,8 @@ export async function getProviderForModel(modelId: string): Promise<any | null> 
     : [];
 
   if (resolvedCandidates.length === 0 && candidateIds.length === 0) {
-    // No catalog match — check custom models table
-    const { customModels } = await import("../../db/schema.js");
+    // No catalog match ? check custom models table
+    const { customModels } = await import("../db/schema.js");
     const customModel = (await db.select().from(customModels)
       .where(eq(customModels.modelId, modelId))
       .where(eq(customModels.isActive, true)))[0];
@@ -547,7 +547,7 @@ export async function getProviderForModel(modelId: string): Promise<any | null> 
   return weightedRandomProvider(pool);
 }
 
-/** Strip registered provider prefix only (e.g. tokito/glm/glm-5 → glm/glm-5). */
+/** Strip registered provider prefix only (e.g. tokito/glm/glm-5 ? glm/glm-5). */
 export async function stripProviderPrefix(modelId: string): Promise<string> {
   const { upstreamModel } = await parseModelWithProvider(modelId);
   return upstreamModel;
@@ -634,7 +634,7 @@ export async function getOnlineModelsByLatency(): Promise<Array<{
     }));
 }
 
-// ─── Provider API Key Rotation (multi-key load balancing) ────────────────────
+// --- Provider API Key Rotation (multi-key load balancing) --------------------
 
 export interface ProviderApiKeyRow {
   id: number;
@@ -783,7 +783,7 @@ export async function addProviderApiKey(providerId: number, apiKey: string): Pro
   return result.id;
 }
 
-// ─── Model Metadata Enrichment (OpenRouter + Fallback) ────────────────────────
+// --- Model Metadata Enrichment (OpenRouter + Fallback) ------------------------
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/models";
 const ENRICHMENT_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
@@ -1055,7 +1055,7 @@ export async function enrichModelMetadata(): Promise<void> {
           continue;
         }
 
-        // Unknown model — check if already in DB (e.g., manually added), skip if so
+        // Unknown model ? check if already in DB (e.g., manually added), skip if so
         const existing = (await db.select().from(modelMetadata).where(eq(modelMetadata.modelId, modelId)))[0];
         if (!existing) {
           // Insert with safe defaults for unknown models
