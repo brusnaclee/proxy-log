@@ -1453,6 +1453,73 @@ proxy.all('/*', async (c) => {
 				}
 			}
 
+			// ─── Token Limits for Auto Model (Daily & Monthly) ────────────────────
+			// Same checks as non-auto path to prevent exceeding limits
+			{
+				const wibOffset = 7 * 60 * 60 * 1000;
+				const wibNow = new Date(Date.now() + wibOffset);
+
+				// Monthly token limit
+				if (keyRecord.monthlyTokenLimit && keyRecord.monthlyTokenLimit > 0) {
+					const mw = new Date(wibNow);
+					mw.setUTCDate(1);
+					mw.setUTCHours(0, 0, 0, 0);
+					const ms = new Date(mw.getTime() - wibOffset);
+					const mu = await db.select({ total: turnTotalTokensSql(
+						and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms}`, BILLABLE_LOG_SQL)
+					) }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms}`, BILLABLE_LOG_SQL)).then((r: any[]) => r[0]);
+					if (mu && mu.total >= keyRecord.monthlyTokenLimit) {
+						tried.push(`${candidate.provider}/${candidate.modelId} (monthly token limit)`);
+						continue;
+					}
+				}
+
+				// Daily token limit
+				const globalDailyTokenLimit = keyRecord.dailyTokenLimit && keyRecord.dailyTokenLimit > 0 ? keyRecord.dailyTokenLimit : config.globalDailyTokenLimit || 0;
+				if (globalDailyTokenLimit > 0) {
+					const dw = new Date(wibNow);
+					dw.setUTCHours(0, 0, 0, 0);
+					const ds = new Date(dw.getTime() - wibOffset);
+					const du = await db.select({ total: turnTotalTokensSql(
+						and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)
+					) }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).then((r: any[]) => r[0]);
+					if (du && du.total >= globalDailyTokenLimit) {
+						tried.push(`${candidate.provider}/${candidate.modelId} (daily token limit)`);
+						continue;
+					}
+				}
+
+				// Daily Input Token Limit
+				const dailyInputLimit = keyRecord.dailyInputTokenLimit && keyRecord.dailyInputTokenLimit > 0 ? keyRecord.dailyInputTokenLimit : config.globalDailyInputTokenLimit || 0;
+				if (dailyInputLimit > 0) {
+					const dw = new Date(wibNow);
+					dw.setUTCHours(0, 0, 0, 0);
+					const ds = new Date(dw.getTime() - wibOffset);
+					const di = await db.select({ total: turnPromptTokensSql(
+						and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)
+					) }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).then((r: any[]) => r[0]);
+					if (di && di.total >= dailyInputLimit) {
+						tried.push(`${candidate.provider}/${candidate.modelId} (daily input token limit)`);
+						continue;
+					}
+				}
+
+				// Daily Output Token Limit
+				const dailyOutputLimit = keyRecord.dailyOutputTokenLimit && keyRecord.dailyOutputTokenLimit > 0 ? keyRecord.dailyOutputTokenLimit : config.globalDailyOutputTokenLimit || 0;
+				if (dailyOutputLimit > 0) {
+					const dw = new Date(wibNow);
+					dw.setUTCHours(0, 0, 0, 0);
+					const ds = new Date(dw.getTime() - wibOffset);
+					const do_ = await db.select({ total: turnCompletionTokensSql(
+						and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)
+					) }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).then((r: any[]) => r[0]);
+					if (do_ && do_.total >= dailyOutputLimit) {
+						tried.push(`${candidate.provider}/${candidate.modelId} (daily output token limit)`);
+						continue;
+					}
+				}
+			}
+
 			// Build body with this specific model
 			const trialBody = {
 				...requestBody,
