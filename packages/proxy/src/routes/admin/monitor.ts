@@ -3,7 +3,7 @@ import { db } from "../../db/index.js";
 import { modelMonitor } from "../../db/schema.js";
 import { eq, sql, desc } from "drizzle-orm";
 import { isInternalRequest, isAuthenticated } from "../../middleware/session.js";
-import { adminConfig, providers, providerApiKeys } from "../../db/schema.js";
+import { adminConfig, providers, providerApiKeys, customModels } from "../../db/schema.js";
 import {
   getActiveProviderNames,
   monitorStaleCutoffIso,
@@ -342,6 +342,15 @@ monitor.post("/monitor/sweep", async (c) => {
             for (const m of models) allModels.push({ modelId: m.id, providerName: prov.name, providerId: prov.id, baseUrl: prov.endpoint, apiKey: keys[0].apiKey });
             break;
           } catch { continue; }
+        }
+
+        // Also include custom models for this provider
+        const customModelsList = await db.select().from(customModels).where(sql`${customModels.providerId} = ${prov.id} AND ${customModels.isActive} = true`);
+        for (const cm of customModelsList) {
+          const alreadyHas = allModels.some(m => m.modelId === cm.modelId && m.providerId === prov.id);
+          if (!alreadyHas) {
+            allModels.push({ modelId: cm.modelId, providerName: prov.name, providerId: prov.id, baseUrl: prov.endpoint, apiKey: keys[0]?.apiKey || '' });
+          }
         }
       }
 
