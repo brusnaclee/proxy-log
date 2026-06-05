@@ -13,7 +13,20 @@
 } = require('discord.js');
 const fs = require('fs').promises;
 const path = require('path');
-require('dotenv').config({ path: path.resolve(__dirname, '../../../.env') });
+
+// Load .env from project root - try multiple paths
+const envPaths = [
+  path.resolve(__dirname, '../../.env'),        // packages/bot/src -> ../../.env
+  path.resolve(__dirname, '../../../.env'),      // packages/bot/src -> ../../../.env
+  path.resolve(process.cwd(), '.env'),           // current working directory
+  path.resolve(process.cwd(), '../.env'),        // parent of cwd
+];
+for (const envPath of envPaths) {
+  if (require('fs').existsSync(envPath)) {
+    require('dotenv').config({ path: envPath });
+    break;
+  }
+}
 
 const client = new Client({
 	intents: [
