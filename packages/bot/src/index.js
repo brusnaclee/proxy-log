@@ -1104,10 +1104,12 @@ async function pollModelStatus() {
 							const id = cm.modelId;
 							// Get the provider's API key for probing
 							const keysResult = await proxyInternal(`/admin/providers/${prov.id}/keys`, 'GET');
+							console.log(`[tokito-monitor] keys result type=${typeof keysResult} isArray=${Array.isArray(keysResult)} keys=${JSON.stringify(keysResult).substring(0, 200)}`);
 							const activeKey = Array.isArray(keysResult) ? keysResult.find(k => k.isActive && !k.isLimited) : null;
 							const apiKey = activeKey ? activeKey.apiKey : '';
 							// Get provider endpoint for probing
 							const provDetail = await proxyInternal(`/admin/providers/${prov.id}`, 'GET');
+							console.log(`[tokito-monitor] provDetail type=${typeof provDetail} endpoint=${provDetail?.endpoint}`);
 							const baseUrl = provDetail?.endpoint || '';
 							
 							console.log(`[tokito-monitor] custom model debug: id=${id} baseUrl=${baseUrl} apiKey=${apiKey ? apiKey.substring(0, 15) + '...' : 'EMPTY'}`);
