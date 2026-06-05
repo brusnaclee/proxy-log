@@ -172,6 +172,7 @@ export async function initializeDatabase() {
 	}
 
 	// Migrate existing provider api_key values into provider_api_keys table (one-time)
+	// Ensure custom_models table exists (new table for custom model support)
 	try {
 		const existingKeys = await db
 			.select({ count: sql<number>`count(*)` })
@@ -192,6 +193,34 @@ export async function initializeDatabase() {
 			'⚠️  Could not migrate provider API keys (table may not exist yet):',
 			err,
 		);
+	}
+
+	// Ensure custom_models table exists
+	try {
+		await pool.query(`
+			CREATE TABLE IF NOT EXISTS custom_models (
+				id SERIAL PRIMARY KEY,
+				provider_id INTEGER NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+				model_id TEXT NOT NULL,
+				display_name TEXT,
+				description TEXT,
+				context_length INTEGER,
+				max_output_tokens INTEGER,
+				input_price_per_mtok INTEGER DEFAULT 0,
+				output_price_per_mtok INTEGER DEFAULT 0,
+				input_modalities TEXT,
+				output_modalities TEXT,
+				supported_features TEXT,
+				is_active BOOLEAN NOT NULL DEFAULT true,
+				created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+				updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+			);
+			CREATE INDEX IF NOT EXISTS idx_custom_models_provider_id ON custom_models(provider_id);
+			CREATE INDEX IF NOT EXISTS idx_custom_models_model_id ON custom_models(model_id);
+		`);
+		console.log('✅ custom_models table ensured');
+	} catch (err) {
+		console.warn('⚠️  Could not ensure custom_models table:', err);
 	}
 
 	console.log('✅ Database initialized successfully');

@@ -97,7 +97,8 @@ async function proxyInternal(pathname, method = 'GET', body = null) {
 	});
 	const data = await res.json().catch(() => ({}));
 	if (!res.ok) {
-		throw new Error(data.error || `Proxy internal API failed: ${res.status}`);
+		const errMsg = typeof data.error === 'object' ? JSON.stringify(data.error) : (data.error || `Proxy internal API failed: ${res.status}`);
+		throw new Error(errMsg);
 	}
 	return data;
 }
@@ -1092,10 +1093,12 @@ async function pollModelStatus() {
 	try {
 		const customModelsResult = await proxyInternal(`/admin/providers`, 'GET');
 		if (Array.isArray(customModelsResult)) {
+			console.log(`[tokito-monitor] fetched ${customModelsResult.length} providers from proxy for custom models check`);
 			for (const prov of customModelsResult) {
 				try {
 					const customModels = await proxyInternal(`/admin/providers/${prov.id}/custom-models`, 'GET');
-					if (Array.isArray(customModels)) {
+					if (Array.isArray(customModels) && customModels.length > 0) {
+						console.log(`[tokito-monitor] found ${customModels.length} custom models for provider: ${prov.name}`);
 						for (const cm of customModels) {
 							if (!cm.isActive) continue;
 							const id = cm.modelId;
@@ -1112,6 +1115,7 @@ async function pollModelStatus() {
 								const entry = { modelId: id, provider: prov.name, baseUrl, apiKey };
 								runtime.modelEntries.push(entry);
 								runtime.modelProviderMap.set(id, { provider: prov.name, baseUrl, apiKey });
+								console.log(`[tokito-monitor] added custom model: ${id} from provider: ${prov.name}`);
 							}
 						}
 					}

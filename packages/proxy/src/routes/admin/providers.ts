@@ -13,6 +13,14 @@ providersApi.get("/providers", async (c) => {
   return c.json(list);
 });
 
+// Get a single provider by ID
+providersApi.get("/providers/:id", async (c) => {
+  const id = parseInt(c.req.param("id"));
+  const [provider] = await db.select().from(providers).where(eq(providers.id, id));
+  if (!provider) return c.json({ error: "Provider not found" }, 404);
+  return c.json(provider);
+});
+
 providersApi.post("/providers", async (c) => {
   const body = await c.req.json<{ name: string; endpoint: string; apiKey: string; isActive?: boolean; priority?: number; endpointType?: string }>();
   if (!body.name || !body.endpoint || !body.apiKey) {
