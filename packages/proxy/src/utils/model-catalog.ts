@@ -289,30 +289,54 @@ export async function getModelCatalogResponse() {
     const { provider_id: _pid, ...rest } = m;
     rest.id = publicId;
 
-    // Merge metadata if available
+    // Start from hardcoded fallback metadata (keyed by raw model id), then
+    // overlay DB-enriched metadata (from OpenRouter) which takes priority.
+    const fb = getFallbackMetadata(m.id);
     const meta = metadataMap.get(m.id);
-    if (meta) {
+
+    if (meta || fb) {
       const enriched: any = { ...rest };
       enriched.provider = enriched.owned_by || null;
       enriched.upstream_provider = upstreamProviderName;
-      if (meta.contextLength) enriched.context_length = meta.contextLength;
-      if (meta.maxOutputTokens) enriched.max_output_tokens = meta.maxOutputTokens;
-      if (meta.displayName) enriched.name = meta.displayName;
-      if (meta.description) enriched.description = meta.description;
-      if (meta.inputPricePerMtok || meta.outputPricePerMtok) {
-        enriched.pricing = {
-          prompt: (meta.inputPricePerMtok || 0) / 1_000_000,
-          completion: (meta.outputPricePerMtok || 0) / 1_000_000,
-        };
+
+      // Apply fallback first
+      if (fb) {
+        if (fb.contextLength) enriched.context_length = fb.contextLength;
+        if (fb.maxOutputTokens) enriched.max_output_tokens = fb.maxOutputTokens;
+        if (fb.displayName) enriched.name = fb.displayName;
+        if (fb.description) enriched.description = fb.description;
+        if (fb.inputPricePerMtok || fb.outputPricePerMtok) {
+          enriched.pricing = {
+            prompt: (fb.inputPricePerMtok || 0) / 1_000_000,
+            completion: (fb.outputPricePerMtok || 0) / 1_000_000,
+          };
+        }
+        if (fb.inputModalities) enriched.input_modalities = fb.inputModalities;
+        if (fb.outputModalities) enriched.output_modalities = fb.outputModalities;
+        if (fb.supportedFeatures) enriched.supported_features = fb.supportedFeatures;
       }
-      if (meta.inputModalities) {
-        try { enriched.input_modalities = JSON.parse(meta.inputModalities); } catch {}
-      }
-      if (meta.outputModalities) {
-        try { enriched.output_modalities = JSON.parse(meta.outputModalities); } catch {}
-      }
-      if (meta.supportedFeatures) {
-        try { enriched.supported_features = JSON.parse(meta.supportedFeatures); } catch {}
+
+      // Overlay DB metadata (higher priority when present)
+      if (meta) {
+        if (meta.contextLength) enriched.context_length = meta.contextLength;
+        if (meta.maxOutputTokens) enriched.max_output_tokens = meta.maxOutputTokens;
+        if (meta.displayName) enriched.name = meta.displayName;
+        if (meta.description) enriched.description = meta.description;
+        if (meta.inputPricePerMtok || meta.outputPricePerMtok) {
+          enriched.pricing = {
+            prompt: (meta.inputPricePerMtok || 0) / 1_000_000,
+            completion: (meta.outputPricePerMtok || 0) / 1_000_000,
+          };
+        }
+        if (meta.inputModalities) {
+          try { enriched.input_modalities = JSON.parse(meta.inputModalities); } catch {}
+        }
+        if (meta.outputModalities) {
+          try { enriched.output_modalities = JSON.parse(meta.outputModalities); } catch {}
+        }
+        if (meta.supportedFeatures) {
+          try { enriched.supported_features = JSON.parse(meta.supportedFeatures); } catch {}
+        }
       }
       publicModels.push(enriched);
     } else {
