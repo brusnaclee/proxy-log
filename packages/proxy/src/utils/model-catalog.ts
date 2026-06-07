@@ -330,7 +330,21 @@ export async function getModelCatalogResponse() {
     const publicId = `${providerName}/${cm.modelId}`;
 
     if (seen.has(publicId)) continue;
+    // Also skip if a catalog entry already covers this raw model id
+    // (e.g. regular path emitted "tokito/minimax/MiniMax-M3" for raw "minimax/MiniMax-M3")
+    if (publicModels.some((pm) => pm.id === cm.modelId || pm.id.endsWith("/" + cm.modelId))) continue;
     seen.add(publicId);
+
+    // Pull fallback metadata for the raw model id to fill any gaps
+    const fb = getFallbackMetadata(cm.modelId);
+
+    const parseList = (raw: string | null, fallbackList: string[] | undefined, def: string[]) => {
+      if (raw) { try { const v = JSON.parse(raw); if (Array.isArray(v) && v.length) return v; } catch {} }
+      return fallbackList && fallbackList.length ? fallbackList : def;
+    };
+
+    const inputPrice = cm.inputPricePerMtok || fb?.inputPricePerMtok || 0;
+    const outputPrice = cm.outputPricePerMtok || fb?.outputPricePerMtok || 0;
 
     const enriched: any = {
       id: publicId,
@@ -339,21 +353,21 @@ export async function getModelCatalogResponse() {
       owned_by: providerName,
       provider: providerName,
       upstream_provider: providerName,
-      name: cm.displayName || cm.modelId,
-      description: cm.description || null,
-      context_length: cm.contextLength || null,
-      max_output_tokens: cm.maxOutputTokens || null,
-      pricing: (cm.inputPricePerMtok || cm.outputPricePerMtok) ? {
-        prompt: (cm.inputPricePerMtok || 0) / 1_000_000,
-        completion: (cm.outputPricePerMtok || 0) / 1_000_000,
+      name: cm.displayName || fb?.displayName || cm.modelId,
+      description: cm.description || fb?.description || null,
+      context_length: cm.contextLength || fb?.contextLength || null,
+      max_output_tokens: cm.maxOutputTokens || fb?.maxOutputTokens || null,
+      pricing: (inputPrice || outputPrice) ? {
+        prompt: inputPrice / 1_000_000,
+        completion: outputPrice / 1_000_000,
       } : undefined,
-      input_modalities: cm.inputModalities ? (() => { try { return JSON.parse(cm.inputModalities); } catch { return ["text"]; } })() : ["text"],
-      output_modalities: cm.outputModalities ? (() => { try { return JSON.parse(cm.outputModalities); } catch { return ["text"]; } })() : ["text"],
-      supported_features: cm.supportedFeatures ? (() => { try { return JSON.parse(cm.supportedFeatures); } catch { return []; } })() : [],
+      input_modalities: parseList(cm.inputModalities, fb?.inputModalities, ["text"]),
+      output_modalities: parseList(cm.outputModalities, fb?.outputModalities, ["text"]),
+      supported_features: parseList(cm.supportedFeatures, fb?.supportedFeatures, []),
       custom: true,
     };
 
-    // Merge metadata if available
+    // Merge DB metadata (from OpenRouter enrichment) if available — highest priority
     const meta = metadataMap.get(cm.modelId);
     if (meta) {
       if (meta.contextLength) enriched.context_length = meta.contextLength;
