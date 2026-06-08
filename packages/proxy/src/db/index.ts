@@ -23,8 +23,21 @@ function getPool(): pg.Pool {
   return pool;
 }
 
-// Create Drizzle instance with schema
-export const db = drizzle(getPool(), { schema });
+// Create Drizzle instance with schema (lazy — initialized on first use after dotenv loads)
+let _db: ReturnType<typeof drizzle> | null = null;
+function getDb() {
+  if (!_db) {
+    _db = drizzle(getPool(), { schema });
+  }
+  return _db;
+}
+
+// Proxy export so existing `import { db } from "./db/index.js"` still works
+export const db = new Proxy({} as ReturnType<typeof drizzle>, {
+  get(_target, prop, receiver) {
+    return Reflect.get(getDb(), prop, receiver);
+  },
+});
 
 /**
  * Initialize the database — push schema via Drizzle and seed defaults.
