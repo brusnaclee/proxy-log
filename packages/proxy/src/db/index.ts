@@ -101,21 +101,23 @@ export async function initializeDatabase() {
     console.log('✅ Seeded bot config from environment');
   }
 
-  // Ensure admin_config has all required columns
+  // Ensure admin_config columns exist (safe migration)
+  // Columns are defined in schema.ts and created by drizzle push.
+  // This block only runs if the table already exists but is missing columns.
   try {
-    await getPool().query(`
-      DO $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='admin_config' AND column_name='agverif_channel_id') THEN ALTER TABLE admin_config ADD COLUMN agverif_channel_id TEXT; END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='admin_config' AND column_name='tokito_channel_id') THEN ALTER TABLE admin_config ADD COLUMN tokito_channel_id TEXT; END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='admin_config' AND column_name='required_role_id') THEN ALTER TABLE admin_config ADD COLUMN required_role_id TEXT; END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='admin_config' AND column_name='owner_groupy_role_id') THEN ALTER TABLE admin_config ADD COLUMN owner_groupy_role_id TEXT; END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='admin_config' AND column_name='verified_role_id') THEN ALTER TABLE admin_config ADD COLUMN verified_role_id TEXT; END IF;
-      END $$;
+    const colCheck = await getPool().query(`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'admin_config' AND column_name = 'agverif_channel_id'
     `);
-  } catch (err: any) {
-    if (err.code !== '42701' && err.code !== '42P07') {
-      console.warn('⚠️  Could not ensure admin_config columns:', err.message);
+    if (colCheck.rows.length === 0) {
+      await getPool().query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS agverif_channel_id TEXT`);
+      await getPool().query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS tokito_channel_id TEXT`);
+      await getPool().query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS required_role_id TEXT`);
+      await getPool().query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS owner_groupy_role_id TEXT`);
+      await getPool().query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS verified_role_id TEXT`);
     }
+  } catch (err: any) {
+    // Column already exists or table not yet created — non-critical
   }
 
   // Ensure provider_api_keys table
