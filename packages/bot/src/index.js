@@ -1563,15 +1563,7 @@ function buildPanelEmbed() {
 					'Klik `Model Status` untuk melihat online/offline per model, atau `Latency Benchmark` untuk melihat waktu respons terbaru.',
 				inline: false,
 			},
-			{
-				name: 'Current Active Endpoint',
-				value: PROXY_PUBLIC_BASE_URL,
-				inline: false,
-			},
-		)
-		.setFooter({
-			text: `Groupy API: ${PROXY_PUBLIC_BASE_URL}`,
-		});
+		);
 }
 
 function formatRelative(ts) {
@@ -1580,19 +1572,19 @@ function formatRelative(ts) {
 }
 
 async function ensurePanelMessage() {
-	if (!AGVERIF_CHANNEL_ID) {
-		console.log('[tokito] ensurePanelMessage: AGVERIF_CHANNEL_ID is empty');
+	if (!TOKITO_CHANNEL_ID) {
+		console.log('[tokito] ensurePanelMessage: TOKITO_CHANNEL_ID is empty');
 		return;
 	}
 	const state = await loadTokitoState();
 	const channel = await client.channels
-		.fetch(AGVERIF_CHANNEL_ID)
+		.fetch(TOKITO_CHANNEL_ID)
 		.catch((e) => {
 			console.error('[tokito] Failed to fetch channel:', e.message);
 			return null;
 		});
 	if (!channel || !channel.isTextBased()) {
-		console.log('[tokito] ensurePanelMessage: Channel not found or not text based. ID:', AGVERIF_CHANNEL_ID);
+		console.log('[tokito] ensurePanelMessage: Channel not found or not text based. ID:', TOKITO_CHANNEL_ID);
 		return;
 	}
 
@@ -2992,7 +2984,7 @@ client.once('clientReady', async () => {
 	}, RANKING_REFRESH_INTERVAL_MS);
 
 	if (TOKITO_API_KEY) {
-		console.log(`[tokito] Monitor active. Panel Channel ID: ${AGVERIF_CHANNEL_ID}`);
+		console.log(`[tokito] Monitor active. Panel Channel ID: ${TOKITO_CHANNEL_ID}`);
 		await ensurePanelMessage();
 		await pollModelStatus();
 		await recoverRetryState();
@@ -3480,8 +3472,8 @@ client.on('messageCreate', async (message) => {
 
 		if (
 			TOKITO_API_KEY &&
-			AGVERIF_CHANNEL_ID &&
-			message.channelId === AGVERIF_CHANNEL_ID &&
+			TOKITO_CHANNEL_ID &&
+			message.channelId === TOKITO_CHANNEL_ID &&
 			message.author.id !== client.user.id
 		) {
 			await refreshPanelToBottom();
@@ -3500,6 +3492,17 @@ client.on('interactionCreate', async (interaction) => {
 				interaction.customId === PANEL_LATENCY ||
 				interaction.customId === PANEL_DETAILS
 			) {
+				// Role-gate: require REQUIRED_ROLE_ID
+				if (REQUIRED_ROLE_ID && !interaction.member.roles.cache.has(REQUIRED_ROLE_ID)) {
+					const role = interaction.guild.roles.cache.get(REQUIRED_ROLE_ID);
+					const roleName = role ? role.name : 'Required Role';
+					await interaction.reply({
+						content: `Anda memerlukan role **${roleName}** untuk menggunakan fitur ini.`,
+						ephemeral: true,
+					});
+					return;
+				}
+
 				const kind =
 					interaction.customId === PANEL_STATUS ? 'status' : 
 					interaction.customId === PANEL_LATENCY ? 'latency' : 'details';
@@ -3525,6 +3528,11 @@ client.on('interactionCreate', async (interaction) => {
 				// Store interaction for message deletion on expiry
 				session.interaction = interaction;
 				const { embed, components } = buildTokitoEmbed(kind, session);
+				
+				// Add endpoint info footer to the embed
+				embed.setFooter({
+					text: `Endpoint: ${PROXY_PUBLIC_BASE_URL}  •  ${embed.data.footer?.text || ''}`.trim(),
+				});
 				
 				// Edit with actual results
 				await interaction.editReply({
