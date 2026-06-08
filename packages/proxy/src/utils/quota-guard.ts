@@ -185,10 +185,15 @@ async function loadState(): Promise<void> {
 
 let sessionCookie: string | null = null;
 let tokenObtainedAt: number = 0;
-const TOKEN_MAX_AGE_MS = 23 * 60 * 60 * 1000; // Re-login before 24h JWT expiry
+const TOKEN_MAX_AGE_MS = 23 * 60 * 60 * 1000;
+let loginLockedUntil: number = 0;
 
 function isTokenValid(): boolean {
   return !!sessionCookie && (Date.now() - tokenObtainedAt) < TOKEN_MAX_AGE_MS;
+}
+
+function isLoginLocked(): boolean {
+  return Date.now() < loginLockedUntil;
 }
 
 function invalidateToken() {
@@ -198,6 +203,11 @@ function invalidateToken() {
 
 async function ensureAuthenticated(): Promise<boolean> {
   if (isTokenValid()) return true;
+  if (isLoginLocked()) {
+    const waitSec = Math.ceil((loginLockedUntil - Date.now()) / 1000);
+    console.log(`[QuotaGuard] Login locked, retry in ${waitSec}s`);
+    return false;
+  }
   return await login();
 }
 
@@ -210,7 +220,10 @@ async function login(): Promise<boolean> {
     });
 
     if (!res.ok) {
-      console.error(`[QuotaGuard] Login failed: ${res.status} ${res.statusText}`);
+      const body: any = await res.json().catch(() => ({}));
+      const retryAfter = body.retryAfter || 300;
+      loginLockedUntil = Date.now() + retryAfter * 1000;
+      console.error(`[QuotaGuard] Login failed: ${res.status} — locked ${retryAfter}s`);
       return false;
     }
 
@@ -221,20 +234,22 @@ async function login(): Promise<boolean> {
         const cookieName = setCookie.includes("auth_token=") ? "auth_token" : "jwt";
         sessionCookie = `${cookieName}=${match[1]}`;
         tokenObtainedAt = Date.now();
-        console.log("[QuotaGuard] Logged in to 9Router (token cached)");
+        loginLockedUntil = 0;
+        console.log("[QuotaGuard] Logged in (token cached)");
         return true;
       }
     }
 
-    const body: any = await res.json().catch(() => ({}));
-    if (body.token) {
-      sessionCookie = `auth_token=${body.token}`;
+    const body2: any = await res.json().catch(() => ({}));
+    if (body2.token) {
+      sessionCookie = `auth_token=${body2.token}`;
       tokenObtainedAt = Date.now();
-      console.log("[QuotaGuard] Logged in to 9Router (token cached)");
+      loginLockedUntil = 0;
+      console.log("[QuotaGuard] Logged in (token cached)");
       return true;
     }
 
-    console.error("[QuotaGuard] Login succeeded but no token found");
+    console.error("[QuotaGuard] Login OK but no token found");
     return false;
   } catch (err) {
     console.error("[QuotaGuard] Login error:", err);
