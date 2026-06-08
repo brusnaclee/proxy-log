@@ -505,3 +505,55 @@ export const buglog = {
   clearAll: () =>
     request<{ success: boolean; deletedCount: number }>("/buglog/all", { method: "DELETE" }),
 };
+
+// ─── Quota Guard ────────────────────────────────────────────────────────────
+
+export interface QuotaGuardSnapshot {
+  scheduler: {
+    enabled: boolean;
+    pollIntervalMs: number;
+    threshold: number;
+    isRunning: boolean;
+    lastCycleAt: string | null;
+    excludedProviders: string[];
+  };
+  providers: ProviderSnapshot[];
+}
+
+export interface ProviderSnapshot {
+  name: string;
+  connections: ConnectionSnapshot[];
+}
+
+export interface ConnectionSnapshot {
+  id: string;
+  name: string;
+  isActive: boolean;
+  quotaType: string;
+  quotas: Record<string, {
+    used: number;
+    total: number;
+    remainingPercentage: number;
+    resetAt?: string;
+    unlimited?: boolean;
+    displayName?: string;
+  }>;
+  guardState: {
+    phase: string;
+    retryCount: number;
+    lockoutCount: number;
+    disabledByGuard: boolean;
+    excluded: boolean;
+    lastResetAt?: string;
+  };
+}
+
+export const quotaGuard = {
+  getStatus: () => request<QuotaGuardSnapshot>("/quota-guard/status"),
+  disable: (data: { providerAlias: string; type: string; id: string }) =>
+    request<{ success: boolean }>("/quota-guard/disable", { method: "POST", body: JSON.stringify(data) }),
+  enable: (data: { providerAlias: string; type: string; id: string }) =>
+    request<{ success: boolean }>("/quota-guard/enable", { method: "POST", body: JSON.stringify(data) }),
+  updateScheduler: (data: { enabled?: boolean }) =>
+    request<{ success: boolean }>("/quota-guard/scheduler", { method: "PUT", body: JSON.stringify(data) }),
+};

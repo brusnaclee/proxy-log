@@ -3166,8 +3166,45 @@ client.on('interactionCreate', async (interaction) => {
 				const hasVerifiedRoleNow = member.roles.cache.has(VERIFIED_ROLE_ID);
 				const existingVerifiedData = client.agverifData.verifiedUsers[userId];
 
-				if (hasVerifiedRoleNow) {
-					// Jika user memang masih punya role verif, anggap sudah terverifikasi
+			if (hasVerifiedRoleNow) {
+				// Cek apakah thread verifikasi masih ada di Discord
+				if (existingVerifiedData) {
+					let threadStillExists = false;
+					try {
+						const thread = await client.channels.fetch(existingVerifiedData.threadId);
+						if (thread && thread.isThread()) {
+							threadStillExists = true;
+						}
+					} catch (_) {}
+
+					if (!threadStillExists) {
+						// Thread sudah dihapus — bersihkan data dan izinkan verifikasi ulang
+						await removeVerifiedUser(userId);
+						if (client.agverifData.threads[existingVerifiedData.threadId]) {
+							await removeThreadFromData(existingVerifiedData.threadId);
+						}
+						// Juga hapus role karena thread sudah tidak ada
+						try {
+							await member.roles.remove(VERIFIED_ROLE_ID, 'Thread verifikasi sudah tidak ada, role dihapus');
+						} catch (_) {}
+						// Lanjut buat tiket baru (jangan return)
+					} else {
+						// Thread masih ada — tampilkan "sudah terverifikasi"
+						const infoEmbed = new EmbedBuilder()
+							.setTitle('✅ Sudah Terverifikasi')
+							.setDescription(
+								`Anda sudah terverifikasi antigravity.\nThread verifikasi: <#${existingVerifiedData.threadId}>`,
+							)
+							.setColor(0x57f287);
+
+						await interaction.reply({
+							embeds: [infoEmbed],
+							ephemeral: true,
+						});
+						return;
+					}
+				} else {
+					// Punya role tapi tidak ada data verifikasi — tampilkan "sudah terverifikasi"
 					const infoEmbed = new EmbedBuilder()
 						.setTitle('✅ Sudah Terverifikasi')
 						.setDescription(
@@ -3181,6 +3218,7 @@ client.on('interactionCreate', async (interaction) => {
 					});
 					return;
 				}
+			}
 
 				// Sampai di sini user TIDAK punya role verif saat ini → anggap BELUM terverifikasi,
 				// walaupun mungkin masih ada data lama di verifiedUsers / threads.

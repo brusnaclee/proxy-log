@@ -4,19 +4,19 @@
  * Monitors 9Router provider quotas and auto-disables models/connections
  * when quota drops below a configurable threshold.
  *
- * Retry flow:
- *   1. Quota low -> DISABLE
- *   2. Quota resets -> wait 10 min COOLDOWN -> ENABLE
- *   3. 5 min after ENABLE -> RECHECK
- *   4. If still exhausted -> DISABLE again -> repeat steps 2-3
- *   5. Max 3 retries -> if still exhausted -> LOCKOUT 1 hour -> ENABLE -> RECHECK 5 min
- *   6. If still exhausted after lockout -> LOCKOUT 1 hour again (repeat forever)
- *
- * Three quota types:
- * - Per-Model (antigravity): disable individual models
- * - Per-Session (glm): disable entire connections
- * - Per-Category (minimax): disable model groups by category
+ * Features:
+ * - Persists state to data/quota_guard_state.json (survives restarts)
+ * - Tracks resetAt per entity (detects quota period changes)
+ * - Checks ALL connections per provider (per-session)
+ * - Tracks which entities guard disabled vs manually disabled
+ * - Race condition mutex (prevents overlapping cycles)
+ * - Provider exclusion (e.g. GLM excluded per owner request)
+ * - Exports state for dashboard API
  */
+
+import { readFile, writeFile, mkdir } from "fs/promises";
+import { existsSync } from "fs";
+import { dirname, resolve } from "path";
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
@@ -24,19 +24,21 @@ const BASE_URL = (process.env.NINEROUTER_BASE_URL || "https://api3.tokito.xyz").
 const PASSWORD = process.env.NINEROUTER_PASSWORD || "rendang123!";
 const QUOTA_THRESHOLD = parseInt(process.env.NINEROUTER_QUOTA_THRESHOLD || "20", 10);
 const POLL_INTERVAL_MS = parseInt(process.env.NINEROUTER_POLL_INTERVAL_MS || "60000", 10);
-const COOLDOWN_MS = 10 * 60 * 1000;   // 10 min wait before re-enable
-const RECHECK_MS = 5 * 60 * 1000;     // 5 min after enable before recheck
-const LOCKOUT_MS = 60 * 60 * 1000;    // 1 hour lockout after 3 failed retries
+const COOLDOWN_MS = 10 * 60 * 1000;
+const RECHECK_MS = 5 * 60 * 1000;
+const LOCKOUT_MS = 60 * 60 * 1000;
 const MAX_RETRIES = 3;
+const EXCLUDED_PROVIDERS = (process.env.NINEROUTER_EXCLUDED_PROVIDERS || "glm").split(",").map(s => s.trim().toLowerCase());
+const STATE_FILE = process.env.QUOTA_GUARD_STATE_PATH || resolve(process.cwd(), "data/quota_guard_state.json");
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type QuotaType = "per-model" | "per-session" | "per-category" | "no-quota";
+export type QuotaType = "per-model" | "per-session" | "per-category" | "no-quota";
 type GuardPhase = "idle" | "cooldown" | "waiting-recheck";
 
-interface Connection {
-  id: string;           // UUID string
-  provider: string;     // e.g. "glm", "antigravity", "minimax"
+export interface Connection {
+  id: string;
+  provider: string;
   name: string;
   isActive: boolean;
 }
@@ -45,23 +47,21 @@ interface ProvidersResponse {
   connections: Connection[];
 }
 
-interface UsageQuotaValue {
+export interface UsageQuotaValue {
   used: number;
   total: number;
-  remaining?: number;           // not always present (antigravity)
-  remainingPercentage: number;  // always present — use this
+  remaining?: number;
+  remainingPercentage: number;
   resetAt?: string;
   unlimited?: boolean;
   displayName?: string;
 }
 
-interface UsageResponse {
+export interface UsageResponse {
   plan?: string;
   quotas?: Record<string, UsageQuotaValue>;
   message?: string;
 }
-
-// ─── Guard State Machine ──────────────────────────────────────────────────────
 
 interface GuardState {
   phase: GuardPhase;
@@ -69,9 +69,52 @@ interface GuardState {
   phaseStartedAt: number;
   retryCount: number;
   lockoutCount: number;
+  lastResetAt?: string;
 }
 
+export interface QuotaGuardSnapshot {
+  scheduler: {
+    enabled: boolean;
+    pollIntervalMs: number;
+    threshold: number;
+    isRunning: boolean;
+    lastCycleAt: string | null;
+    excludedProviders: string[];
+  };
+  providers: ProviderSnapshot[];
+}
+
+export interface ProviderSnapshot {
+  name: string;
+  connections: ConnectionSnapshot[];
+}
+
+export interface ConnectionSnapshot {
+  id: string;
+  name: string;
+  isActive: boolean;
+  quotaType: QuotaType;
+  quotas: Record<string, UsageQuotaValue>;
+  guardState: {
+    phase: GuardPhase;
+    retryCount: number;
+    lockoutCount: number;
+    disabledByGuard: boolean;
+    excluded: boolean;
+    lastResetAt?: string;
+  };
+}
+
+// ─── State ────────────────────────────────────────────────────────────────────
+
 const guardStates: Map<string, GuardState> = new Map();
+const disabledByGuard: Set<string> = new Set();
+let isRunning = false;
+let lastCycleAt: string | null = null;
+let schedulerEnabled = true;
+
+// Latest snapshot for dashboard API
+let latestSnapshot: QuotaGuardSnapshot | null = null;
 
 function getGuardState(key: string): GuardState {
   if (!guardStates.has(key)) {
@@ -84,6 +127,50 @@ function getGuardState(key: string): GuardState {
     });
   }
   return guardStates.get(key)!;
+}
+
+// ─── Persistence ──────────────────────────────────────────────────────────────
+
+interface PersistedState {
+  guardStates: Record<string, GuardState>;
+  disabledByGuard: string[];
+}
+
+async function saveState(): Promise<void> {
+  try {
+    const dir = dirname(STATE_FILE);
+    if (!existsSync(dir)) {
+      await mkdir(dir, { recursive: true });
+    }
+    const data: PersistedState = {
+      guardStates: Object.fromEntries(guardStates),
+      disabledByGuard: Array.from(disabledByGuard),
+    };
+    await writeFile(STATE_FILE, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error("[QuotaGuard] Failed to save state:", err);
+  }
+}
+
+async function loadState(): Promise<void> {
+  try {
+    if (!existsSync(STATE_FILE)) return;
+    const raw = await readFile(STATE_FILE, "utf-8");
+    const data: PersistedState = JSON.parse(raw);
+    if (data.guardStates) {
+      for (const [key, state] of Object.entries(data.guardStates)) {
+        guardStates.set(key, state);
+      }
+    }
+    if (data.disabledByGuard) {
+      for (const key of data.disabledByGuard) {
+        disabledByGuard.add(key);
+      }
+    }
+    console.log(`[QuotaGuard] Loaded state: ${guardStates.size} entities, ${disabledByGuard.size} disabled by guard`);
+  } catch (err) {
+    console.error("[QuotaGuard] Failed to load state:", err);
+  }
 }
 
 // ─── HTTP Helpers ─────────────────────────────────────────────────────────────
@@ -113,7 +200,6 @@ async function login(): Promise<boolean> {
       }
     }
 
-    // Fallback: check body for token
     const body: any = await res.json().catch(() => ({}));
     if (body.token) {
       sessionCookie = `auth_token=${body.token}`;
@@ -229,17 +315,38 @@ async function disableEntity(
   gs.phase = "cooldown";
   gs.disabledAt = Date.now();
   gs.phaseStartedAt = Date.now();
+  disabledByGuard.add(key);
+  await saveState();
 }
 
 async function handleGuardPhases(
   key: string,
   label: string,
   quotaNowLow: boolean,
+  currentResetAt: string | undefined,
   disableAction: () => Promise<void>,
   enableAction: () => Promise<void>
 ) {
   const gs = getGuardState(key);
   const now = Date.now();
+
+  // Detect quota reset by comparing resetAt
+  if (currentResetAt && gs.lastResetAt && currentResetAt !== gs.lastResetAt) {
+    console.log(`[QuotaGuard] RESET DETECTED -> ${label} (old: ${gs.lastResetAt}, new: ${currentResetAt})`);
+    if (gs.phase === "cooldown" || gs.phase === "waiting-recheck") {
+      console.log(`[QuotaGuard] Quota reset during ${gs.phase} -> enabling immediately -> ${label}`);
+      await enableAction();
+      gs.phase = "idle";
+      gs.retryCount = 0;
+      gs.lockoutCount = 0;
+      disabledByGuard.delete(key);
+      await saveState();
+      return;
+    }
+  }
+  if (currentResetAt) {
+    gs.lastResetAt = currentResetAt;
+  }
 
   switch (gs.phase) {
     case "idle": {
@@ -256,6 +363,7 @@ async function handleGuardPhases(
         await enableAction();
         gs.phase = "waiting-recheck";
         gs.phaseStartedAt = now;
+        await saveState();
       }
       break;
     }
@@ -281,6 +389,8 @@ async function handleGuardPhases(
           gs.phase = "idle";
           gs.retryCount = 0;
           gs.lockoutCount = 0;
+          disabledByGuard.delete(key);
+          await saveState();
         }
       }
       break;
@@ -288,7 +398,7 @@ async function handleGuardPhases(
   }
 }
 
-// ─── Per-Model Handler (antigravity-style) ────────────────────────────────────
+// ─── Per-Model Handler ────────────────────────────────────────────────────────
 
 async function handlePerModelQuota(
   providerAlias: string,
@@ -299,11 +409,11 @@ async function handlePerModelQuota(
     if (modelId === "session") continue;
     const pct = quota.remainingPercentage ?? 0;
     const isLow = pct <= QUOTA_THRESHOLD;
-    const key = `${providerId}:${modelId}`;
+    const key = `${providerId}:model:${modelId}`;
     const label = `model:${providerAlias}/${modelId} (${pct}%)`;
 
     await handleGuardPhases(
-      key, label, isLow,
+      key, label, isLow, quota.resetAt,
       async () => {
         await apiPost("/api/models/disabled", { providerAlias, ids: [modelId] });
       },
@@ -314,57 +424,64 @@ async function handlePerModelQuota(
   }
 }
 
-// ─── Per-Session Handler (glm-style) ──────────────────────────────────────────
+// ─── Per-Session Handler ──────────────────────────────────────────────────────
 
 async function handlePerSessionQuota(
   providerAlias: string,
-  providerId: string,
   connections: Connection[],
-  sessionQuota: UsageQuotaValue
+  quotas: Record<string, UsageQuotaValue>
 ) {
+  const sessionQuota = quotas["session"];
+  if (!sessionQuota) return;
+
   const pct = sessionQuota.remainingPercentage ?? 0;
   const isLow = pct <= QUOTA_THRESHOLD;
-  const key = `${providerId}:session`;
-  const label = `session:${providerAlias} (${pct}%)`;
 
-  await handleGuardPhases(
-    key, label, isLow,
-    async () => {
-      for (const conn of connections) {
+  // Check each connection independently
+  for (const conn of connections) {
+    const key = `${conn.id}:session`;
+    const label = `session:${providerAlias}/${conn.name} (${pct}%)`;
+
+    await handleGuardPhases(
+      key, label, isLow, sessionQuota.resetAt,
+      async () => {
         await apiPut(`/api/providers/${conn.id}`, { isActive: false });
-      }
-    },
-    async () => {
-      for (const conn of connections) {
+      },
+      async () => {
         await apiPut(`/api/providers/${conn.id}`, { isActive: true });
       }
-    }
-  );
+    );
+  }
 }
 
-// ─── Per-Category Handler (minimax-style) ─────────────────────────────────────
+// ─── Per-Category Handler ─────────────────────────────────────────────────────
 
 async function handlePerCategoryQuota(
   providerAlias: string,
   providerId: string,
   quotas: Record<string, UsageQuotaValue>
 ) {
-  const categories: Map<string, Array<{ quota: UsageQuotaValue }>> = new Map();
+  const categories: Map<string, Array<{ key: string; quota: UsageQuotaValue }>> = new Map();
 
   for (const [catKey, quota] of Object.entries(quotas)) {
     const catMatch = catKey.match(/^(.+?)\s*\(/);
     const catName = catMatch ? catMatch[1].trim() : catKey;
     if (!categories.has(catName)) categories.set(catName, []);
-    categories.get(catName)!.push({ quota });
+    categories.get(catName)!.push({ key: catKey, quota });
   }
 
   for (const [catName, entries] of categories) {
     const anyLow = entries.some((e) => (e.quota.remainingPercentage ?? 0) <= QUOTA_THRESHOLD);
+    // Use the earliest resetAt among the entries
+    const earliestReset = entries
+      .map(e => e.quota.resetAt)
+      .filter(Boolean)
+      .sort()[0];
     const key = `${providerId}:cat:${catName}`;
     const label = `category:${providerAlias}/${catName}`;
 
     await handleGuardPhases(
-      key, label, anyLow,
+      key, label, anyLow, earliestReset,
       async () => {
         await apiPost("/api/models/disabled", { providerAlias, ids: [`${catName}/*`] });
       },
@@ -378,67 +495,180 @@ async function handlePerCategoryQuota(
 // ─── Main Cycle ───────────────────────────────────────────────────────────────
 
 async function runQuotaGuardCycle() {
-  console.log("[QuotaGuard] Cycle starting...");
-
-  const loggedIn = await login();
-  if (!loggedIn) {
-    console.error("[QuotaGuard] Login failed, skipping cycle");
+  if (isRunning) {
+    console.log("[QuotaGuard] Previous cycle still running, skipping");
     return;
   }
 
-  const providersData = await apiGet<ProvidersResponse>("/api/providers");
-  if (!providersData?.connections) {
-    console.error("[QuotaGuard] Failed to fetch providers, skipping cycle");
-    return;
-  }
+  isRunning = true;
+  const startTime = Date.now();
 
-  // Group connections by provider name
-  const byProvider = new Map<string, Connection[]>();
-  for (const conn of providersData.connections) {
-    const name = conn.provider;
-    if (!byProvider.has(name)) byProvider.set(name, []);
-    byProvider.get(name)!.push(conn);
-  }
+  try {
+    console.log("[QuotaGuard] Cycle starting...");
 
-  for (const [providerName, conns] of byProvider) {
-    if (conns.length === 0) continue;
-
-    // Fetch usage from first connection for this provider
-    const firstConnId = conns[0].id;
-    const usageData = await apiGet<UsageResponse>(`/api/usage/${firstConnId}`);
-    if (!usageData?.quotas) continue; // No quota data (xai, ollama, nvidia)
-
-    const quotas = usageData.quotas;
-    const quotaType = detectQuotaType(quotas);
-
-    switch (quotaType) {
-      case "per-session": {
-        const sessionQuota = quotas["session"];
-        if (sessionQuota) {
-          await handlePerSessionQuota(providerName, firstConnId, conns, sessionQuota);
-        }
-        break;
-      }
-      case "per-category":
-        await handlePerCategoryQuota(providerName, firstConnId, quotas);
-        break;
-      case "per-model":
-        await handlePerModelQuota(providerName, firstConnId, quotas);
-        break;
-      case "no-quota":
-      default:
-        break;
+    const loggedIn = await login();
+    if (!loggedIn) {
+      console.error("[QuotaGuard] Login failed, skipping cycle");
+      return;
     }
-  }
 
-  console.log("[QuotaGuard] Cycle complete");
+    const providersData = await apiGet<ProvidersResponse>("/api/providers");
+    if (!providersData?.connections) {
+      console.error("[QuotaGuard] Failed to fetch providers, skipping cycle");
+      return;
+    }
+
+    // Group connections by provider name
+    const byProvider = new Map<string, Connection[]>();
+    for (const conn of providersData.connections) {
+      const name = conn.provider;
+      if (!byProvider.has(name)) byProvider.set(name, []);
+      byProvider.get(name)!.push(conn);
+    }
+
+    const providerSnapshots: ProviderSnapshot[] = [];
+
+    for (const [providerName, conns] of byProvider) {
+      if (conns.length === 0) continue;
+
+      const isExcluded = EXCLUDED_PROVIDERS.includes(providerName.toLowerCase());
+      if (isExcluded) {
+        console.log(`[QuotaGuard] Skipping excluded provider: ${providerName}`);
+      }
+
+      // Build connection snapshots
+      const connSnapshots: ConnectionSnapshot[] = [];
+
+      for (const conn of conns) {
+        const usageData = await apiGet<UsageResponse>(`/api/usage/${conn.id}`);
+        const quotas = usageData?.quotas || {};
+        const quotaType = detectQuotaType(quotas);
+
+        const gsKey = quotaType === "per-session"
+          ? `${conn.id}:session`
+          : `${conn.id}:${quotaType}`;
+        const gs = guardStates.get(gsKey);
+
+        connSnapshots.push({
+          id: conn.id,
+          name: conn.name,
+          isActive: conn.isActive,
+          quotaType,
+          quotas,
+          guardState: {
+            phase: gs?.phase || "idle",
+            retryCount: gs?.retryCount || 0,
+            lockoutCount: gs?.lockoutCount || 0,
+            disabledByGuard: disabledByGuard.has(gsKey),
+            excluded: isExcluded,
+            lastResetAt: gs?.lastResetAt,
+          },
+        });
+
+        // Skip guard actions for excluded providers
+        if (isExcluded) continue;
+
+        // Skip if no quota data
+        if (!usageData?.quotas || Object.keys(quotas).length === 0) continue;
+
+        switch (quotaType) {
+          case "per-session":
+            await handlePerSessionQuota(providerName, conns, quotas);
+            break;
+          case "per-category":
+            await handlePerCategoryQuota(providerName, conn.id, quotas);
+            break;
+          case "per-model":
+            await handlePerModelQuota(providerName, conn.id, quotas);
+            break;
+          case "no-quota":
+          default:
+            break;
+        }
+      }
+
+      providerSnapshots.push({
+        name: providerName,
+        connections: connSnapshots,
+      });
+    }
+
+    lastCycleAt = new Date().toISOString();
+
+    // Build snapshot for dashboard
+    latestSnapshot = {
+      scheduler: {
+        enabled: schedulerEnabled,
+        pollIntervalMs: POLL_INTERVAL_MS,
+        threshold: QUOTA_THRESHOLD,
+        isRunning: false,
+        lastCycleAt,
+        excludedProviders: EXCLUDED_PROVIDERS,
+      },
+      providers: providerSnapshots,
+    };
+
+    console.log(`[QuotaGuard] Cycle complete (${Date.now() - startTime}ms)`);
+  } catch (err) {
+    console.error("[QuotaGuard] Cycle error:", err);
+  } finally {
+    isRunning = false;
+  }
+}
+
+// ─── Public API for Dashboard ─────────────────────────────────────────────────
+
+export function getQuotaGuardSnapshot(): QuotaGuardSnapshot {
+  return latestSnapshot || {
+    scheduler: {
+      enabled: schedulerEnabled,
+      pollIntervalMs: POLL_INTERVAL_MS,
+      threshold: QUOTA_THRESHOLD,
+      isRunning,
+      lastCycleAt,
+      excludedProviders: EXCLUDED_PROVIDERS,
+    },
+    providers: [],
+  };
+}
+
+export function setSchedulerEnabled(enabled: boolean) {
+  schedulerEnabled = enabled;
+  console.log(`[QuotaGuard] Scheduler ${enabled ? "enabled" : "disabled"}`);
+}
+
+export function isSchedulerRunning() {
+  return isRunning;
+}
+
+// Manual disable/enable for dashboard
+export async function manualDisable(providerAlias: string, type: "model" | "connection" | "category", id: string): Promise<boolean> {
+  switch (type) {
+    case "model":
+      return !!(await apiPost("/api/models/disabled", { providerAlias, ids: [id] }));
+    case "connection":
+      return !!(await apiPut(`/api/providers/${id}`, { isActive: false }));
+    case "category":
+      return !!(await apiPost("/api/models/disabled", { providerAlias, ids: [`${id}/*`] }));
+  }
+}
+
+export async function manualEnable(providerAlias: string, type: "model" | "connection" | "category", id: string): Promise<boolean> {
+  switch (type) {
+    case "model":
+      return !!(await apiDelete(`/api/models/disabled?providerAlias=${providerAlias}&id=${id}`));
+    case "connection":
+      return !!(await apiPut(`/api/providers/${id}`, { isActive: true }));
+    case "category":
+      return !!(await apiDelete(`/api/models/disabled?providerAlias=${providerAlias}&id=${id}/*`));
+  }
 }
 
 // ─── Scheduler ────────────────────────────────────────────────────────────────
 
 let schedulerStarted = false;
 
-export function initializeQuotaGuardScheduler() {
+export async function initializeQuotaGuardScheduler() {
   const baseUrl = process.env.NINEROUTER_BASE_URL;
   const password = process.env.NINEROUTER_PASSWORD;
 
@@ -453,13 +683,19 @@ export function initializeQuotaGuardScheduler() {
   }
 
   schedulerStarted = true;
-  console.log(`[QuotaGuard] Initialized — poll: ${POLL_INTERVAL_MS / 1000}s, threshold: ${QUOTA_THRESHOLD}%, cooldown: ${COOLDOWN_MS / 60000}min, recheck: ${RECHECK_MS / 60000}min, lockout: ${LOCKOUT_MS / 60000}min, maxRetries: ${MAX_RETRIES}`);
+
+  // Load persisted state
+  await loadState();
+
+  console.log(`[QuotaGuard] Initialized — poll: ${POLL_INTERVAL_MS / 1000}s, threshold: ${QUOTA_THRESHOLD}%, cooldown: ${COOLDOWN_MS / 60000}min, recheck: ${RECHECK_MS / 60000}min, lockout: ${LOCKOUT_MS / 60000}min, maxRetries: ${MAX_RETRIES}, excluded: [${EXCLUDED_PROVIDERS.join(", ")}]`);
 
   setTimeout(async () => {
     await runQuotaGuardCycle();
   }, 30_000);
 
   setInterval(async () => {
-    await runQuotaGuardCycle();
+    if (schedulerEnabled) {
+      await runQuotaGuardCycle();
+    }
   }, POLL_INTERVAL_MS);
 }

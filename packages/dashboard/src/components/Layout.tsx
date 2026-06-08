@@ -15,6 +15,7 @@ import {
   X,
   ChevronLeft,
   Bug,
+  Shield,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -29,6 +30,7 @@ const mainNav = [
 
 const sysNav = [
   { to: "/settings", icon: Settings, label: "Settings" },
+  { to: "/quota-guard", icon: Shield, label: "Quota Guard" },
 ];
 
 export default function Layout() {

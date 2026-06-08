@@ -12,6 +12,7 @@ import SettingsPage from "@/pages/SettingsPage";
 import SessionDetailPage from "@/pages/SessionDetailPage";
 import ModelMonitorPage from "@/pages/ModelMonitorPage";
 import BugLogPage from "@/pages/BugLogPage";
+import QuotaGuardPage from "@/pages/QuotaGuardPage";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const [checking, setChecking] = useState(true);
@@ -59,6 +60,7 @@ export default function App() {
         <Route path="analytics" element={<AnalyticsPage />} />
         <Route path="monitor" element={<ModelMonitorPage />} />
         <Route path="buglog" element={<BugLogPage />} />
+        <Route path="quota-guard" element={<QuotaGuardPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
