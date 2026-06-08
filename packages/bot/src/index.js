@@ -39,7 +39,7 @@ const client = new Client({
 });
 
 let AGVERIF_CHANNEL_ID =
-	process.env.AGVERIF_CHANNEL_ID || '1470106180255744123';
+	process.env.AGVERIF_CHANNEL_ID || '1507648903900565514';
 let REQUIRED_ROLE_ID = process.env.REQUIRED_ROLE_ID || '1354646304042651728';
 let OWNER_GROUPY_ROLE_ID =
 	process.env.OWNER_GROUPY_ROLE_ID || '1354642878063710260';
@@ -1578,19 +1578,19 @@ function formatRelative(ts) {
 }
 
 async function ensurePanelMessage() {
-	if (!TOKITO_CHANNEL_ID) {
-		console.log('[tokito] ensurePanelMessage: TOKITO_CHANNEL_ID is empty');
+	if (!AGVERIF_CHANNEL_ID) {
+		console.log('[tokito] ensurePanelMessage: AGVERIF_CHANNEL_ID is empty');
 		return;
 	}
 	const state = await loadTokitoState();
 	const channel = await client.channels
-		.fetch(TOKITO_CHANNEL_ID)
+		.fetch(AGVERIF_CHANNEL_ID)
 		.catch((e) => {
 			console.error('[tokito] Failed to fetch channel:', e.message);
 			return null;
 		});
 	if (!channel || !channel.isTextBased()) {
-		console.log('[tokito] ensurePanelMessage: Channel not found or not text based. ID:', TOKITO_CHANNEL_ID);
+		console.log('[tokito] ensurePanelMessage: Channel not found or not text based. ID:', AGVERIF_CHANNEL_ID);
 		return;
 	}
 
@@ -2510,13 +2510,34 @@ function buildRankingEmbed(title, color, todayItems, monthItems, formatItem) {
 		.setFooter({ text: `🔄 Auto-refresh setiap 1 menit  •  ${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB` });
 }
 
-function buildSearchEmbed() {
+async function buildSearchEmbed() {
+	let limits = {};
+	try {
+		limits = await proxyInternal('/admin/settings/global');
+	} catch (err) {
+		console.error('[ranking] Failed to fetch global limits:', err.message);
+	}
+
+	const fmt = (v, unit) => v > 0 ? `${v.toLocaleString()} ${unit}` : 'Unlimited';
+	const lines = [
+		'Klik tombol di bawah untuk mencari data penggunaan API seorang user.',
+		'Masukkan **Discord User ID** saat diminta.',
+		'',
+		'**📊 Global Limits:**',
+		`- Prompt Limit: ${fmt(limits.globalPromptLimit, 'req')} / ${limits.globalPromptLimitWindow || '1d'}`,
+		`- Per-Model Prompt Limit: ${fmt(limits.globalPerModelPromptLimit, 'req')} / ${limits.globalPerModelPromptLimitWindow || '1d'}`,
+		`- Rate Limit: ${fmt(limits.globalRateLimit, 'req')} / ${limits.globalRateLimitWindow || '1h'}`,
+		`- Daily Token Limit: ${fmt(limits.globalDailyTokenLimit, 'tok')}`,
+		`- Monthly Token Limit: ${fmt(limits.globalMonthlyTokenLimit, 'tok')}`,
+		`- Daily Input Token Limit: ${fmt(limits.globalDailyInputTokenLimit, 'tok')}`,
+		`- Daily Output Token Limit: ${fmt(limits.globalDailyOutputTokenLimit, 'tok')}`,
+		'',
+		'_Per-user limits bervariasi per API key. Klik tombol untuk cek usage spesifik._',
+	];
+
 	return new EmbedBuilder()
 		.setTitle('🔍 Cari Usage User')
-		.setDescription(
-			'Klik tombol di bawah untuk mencari data penggunaan API seorang user.\n' +
-			'Masukkan **Discord User ID** saat diminta.',
-		)
+		.setDescription(lines.join('\n'))
 		.setColor(0x57f287);
 }
 
@@ -2531,7 +2552,7 @@ function buildSearchRow() {
 
 // ─── Refresh Ranking Embeds ────────────────────────────────────────────────────
 async function refreshRankingEmbeds() {
-	if (!AGVERIF_CHANNEL_ID) return;
+	if (!TOKITO_CHANNEL_ID) return;
 	const { messages } = rankingState;
 	if (!messages.modelByRequests || !messages.modelByTokens || !messages.userByRequests || !messages.userByTokens) return;
 
@@ -2543,7 +2564,7 @@ async function refreshRankingEmbeds() {
 		return;
 	}
 
-	const channel = await client.channels.fetch(AGVERIF_CHANNEL_ID).catch(() => null);
+	const channel = await client.channels.fetch(TOKITO_CHANNEL_ID).catch(() => null);
 	if (!channel || !channel.isTextBased()) return;
 
 	const { today, month } = ranking;
@@ -2619,16 +2640,24 @@ async function refreshRankingEmbeds() {
 			await msg.edit({ embeds: [embed] });
 		}
 	} catch (err) { console.error('[ranking] Edit userByTokens failed:', err.message); }
+
+	// Embed 5: Search User (with refreshed limits)
+	try {
+		const msg = await channel.messages.fetch(messages.searchUser).catch(() => null);
+		if (msg) {
+			await msg.edit({ embeds: [await buildSearchEmbed()] });
+		}
+	} catch (err) { console.error('[ranking] Edit searchUser failed:', err.message); }
 }
 
 // ─── Ensure Ranking Messages (check/repair/create) ────────────────────────────
 async function ensureRankingMessages() {
-	if (!AGVERIF_CHANNEL_ID) {
-		console.log('[ranking] AGVERIF_CHANNEL_ID not set, skipping ranking setup.');
+	if (!TOKITO_CHANNEL_ID) {
+		console.log('[ranking] TOKITO_CHANNEL_ID not set, skipping ranking setup.');
 		return;
 	}
 
-	const channel = await client.channels.fetch(AGVERIF_CHANNEL_ID).catch((e) => {
+	const channel = await client.channels.fetch(TOKITO_CHANNEL_ID).catch((e) => {
 		console.error('[ranking] Failed to fetch channel:', e.message);
 		return null;
 	});
@@ -2673,16 +2702,6 @@ async function ensureRankingMessages() {
 			} catch {}
 		}
 
-		// Also delete old agverif setup message so we resend it below the new ones
-		if (client.agverifData.setupState.messageId) {
-			try {
-				const oldVerif = await channel.messages.fetch(client.agverifData.setupState.messageId).catch(() => null);
-				if (oldVerif && oldVerif.author.id === client.user.id) await oldVerif.delete();
-			} catch {}
-			client.agverifData.setupState.messageId = null;
-			await saveSetupState();
-		}
-
 		// Initial embed content (will be refreshed right after)
 		const placeholder = new EmbedBuilder().setTitle('⏳ Loading...').setDescription('Data sedang dimuat...').setColor(0x888888);
 
@@ -2691,11 +2710,11 @@ async function ensureRankingMessages() {
 		const m3 = await channel.send({ embeds: [placeholder] });
 		const m4 = await channel.send({ embeds: [placeholder] });
 		const m5 = await channel.send({
-			embeds: [buildSearchEmbed()],
+			embeds: [await buildSearchEmbed()],
 			components: [buildSearchRow()],
 		});
 
-		rankingState.channelId = AGVERIF_CHANNEL_ID;
+		rankingState.channelId = TOKITO_CHANNEL_ID;
 		rankingState.messages = {
 			modelByRequests: m1.id,
 			modelByTokens: m2.id,
@@ -2930,7 +2949,7 @@ client.once('clientReady', async () => {
 	}, RANKING_REFRESH_INTERVAL_MS);
 
 	if (TOKITO_API_KEY) {
-		console.log(`[tokito] Monitor active. Panel Channel ID: ${TOKITO_CHANNEL_ID}`);
+		console.log(`[tokito] Monitor active. Panel Channel ID: ${AGVERIF_CHANNEL_ID}`);
 		await ensurePanelMessage();
 		await pollModelStatus();
 		await recoverRetryState();
@@ -3068,6 +3087,16 @@ client.on('interactionCreate', async (interaction) => {
 	try {
 		// ─── Ranking Search Button ───────────────────────────────────────────
 		if (interaction.isButton() && interaction.customId === 'ranking_search_user') {
+			// Role-gate: require REQUIRED_ROLE_ID
+			if (REQUIRED_ROLE_ID && !interaction.member.roles.cache.has(REQUIRED_ROLE_ID)) {
+				const role = interaction.guild.roles.cache.get(REQUIRED_ROLE_ID);
+				const roleName = role ? role.name : 'Required Role';
+				await interaction.reply({
+					content: `Anda memerlukan role **${roleName}** untuk menggunakan fitur ini.`,
+					ephemeral: true,
+				});
+				return;
+			}
 			await handleRankingSearchButton(interaction);
 			return;
 		}
@@ -3408,8 +3437,8 @@ client.on('messageCreate', async (message) => {
 
 		if (
 			TOKITO_API_KEY &&
-			TOKITO_CHANNEL_ID &&
-			message.channelId === TOKITO_CHANNEL_ID &&
+			AGVERIF_CHANNEL_ID &&
+			message.channelId === AGVERIF_CHANNEL_ID &&
 			message.author.id !== client.user.id
 		) {
 			await refreshPanelToBottom();
