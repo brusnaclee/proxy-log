@@ -2512,28 +2512,69 @@ function buildRankingEmbed(title, color, todayItems, monthItems, formatItem) {
 
 async function buildSearchEmbed() {
 	let limits = {};
+	let modelLimitsData = [];
 	try {
-		limits = await proxyInternal('/admin/settings/global');
+		[limits, modelLimitsData] = await Promise.all([
+			proxyInternal('/admin/settings/global'),
+			proxyInternal('/admin/settings/model-limits').then(r => r.data || []).catch(() => []),
+		]);
 	} catch (err) {
-		console.error('[ranking] Failed to fetch global limits:', err.message);
+		console.error('[ranking] Failed to fetch limits:', err.message);
 	}
 
 	const fmt = (v, unit) => v > 0 ? `${v.toLocaleString()} ${unit}` : 'Unlimited';
+	const fmtTok = (v) => {
+		if (!v || v <= 0) return 'Unlimited';
+		if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+		if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
+		return String(v);
+	};
+
 	const lines = [
 		'Klik tombol di bawah untuk mencari data penggunaan API seorang user.',
 		'Masukkan **Discord User ID** saat diminta.',
 		'',
-		'**📊 Global Limits:**',
-		`- Prompt Limit: ${fmt(limits.globalPromptLimit, 'req')} / ${limits.globalPromptLimitWindow || '1d'}`,
-		`- Per-Model Prompt Limit: ${fmt(limits.globalPerModelPromptLimit, 'req')} / ${limits.globalPerModelPromptLimitWindow || '1d'}`,
-		`- Rate Limit: ${fmt(limits.globalRateLimit, 'req')} / ${limits.globalRateLimitWindow || '1h'}`,
-		`- Daily Token Limit: ${fmt(limits.globalDailyTokenLimit, 'tok')}`,
-		`- Monthly Token Limit: ${fmt(limits.globalMonthlyTokenLimit, 'tok')}`,
-		`- Daily Input Token Limit: ${fmt(limits.globalDailyInputTokenLimit, 'tok')}`,
-		`- Daily Output Token Limit: ${fmt(limits.globalDailyOutputTokenLimit, 'tok')}`,
-		'',
-		'_Per-user limits bervariasi per API key. Klik tombol untuk cek usage spesifik._',
+		'**Global Prompt Limits:**',
+		`- Prompt Limit: ${fmt(limits.globalPromptLimit, 'req')} (${limits.globalPromptLimitWindow || '1d'})`,
+		`- Rate Limit: ${fmt(limits.globalRateLimit, 'req')} (${limits.globalRateLimitWindow || '1h'})`,
 	];
+
+	// Per-model prompt limits from model_limits table
+	const promptModelLimits = modelLimitsData.filter(m => m.promptLimit > 0);
+	if (promptModelLimits.length > 0) {
+		lines.push('');
+		lines.push('**Per-Model Prompt Limits:**');
+		for (const m of promptModelLimits) {
+			lines.push(`- \`${m.model}\`: ${m.promptLimit} req`);
+		}
+	} else if (limits.globalPerModelPromptLimit > 0) {
+		lines.push(`- Per-Model Default: ${limits.globalPerModelPromptLimit} req (${limits.globalPerModelPromptLimitWindow || '1d'})`);
+	}
+
+	lines.push('');
+	lines.push('**Token Limits:**');
+	lines.push(`- Input Harian: ${fmtTok(limits.globalDailyInputTokenLimit)}`);
+	lines.push(`- Output Harian: ${fmtTok(limits.globalDailyOutputTokenLimit)}`);
+	lines.push(`- Total Harian: ${fmtTok(limits.globalDailyTokenLimit)}`);
+	lines.push(`- Bulanan: ${fmtTok(limits.globalMonthlyTokenLimit)}`);
+
+	// Per-model token limits
+	const tokenModelLimits = modelLimitsData.filter(m => m.dailyTokenLimit > 0 || m.monthlyTokenLimit > 0 || m.dailyInputTokenLimit > 0 || m.dailyOutputTokenLimit > 0);
+	if (tokenModelLimits.length > 0) {
+		lines.push('');
+		lines.push('**Per-Model Token Limits:**');
+		for (const m of tokenModelLimits) {
+			const parts = [];
+			if (m.dailyInputTokenLimit > 0) parts.push(`In:${fmtTok(m.dailyInputTokenLimit)}`);
+			if (m.dailyOutputTokenLimit > 0) parts.push(`Out:${fmtTok(m.dailyOutputTokenLimit)}`);
+			if (m.dailyTokenLimit > 0) parts.push(`Day:${fmtTok(m.dailyTokenLimit)}`);
+			if (m.monthlyTokenLimit > 0) parts.push(`Month:${fmtTok(m.monthlyTokenLimit)}`);
+			lines.push(`- \`${m.model}\`: ${parts.join(' / ')}`);
+		}
+	}
+
+	lines.push('');
+	lines.push('_Per-user limits bervariasi per API key. Klik tombol untuk cek usage spesifik._');
 
 	return new EmbedBuilder()
 		.setTitle('🔍 Cari Usage User')
@@ -2761,7 +2802,7 @@ async function handleRankingSearchModal(interaction) {
 	} catch (err) {
 		const msg = err.message || 'Unknown error';
 		if (msg.includes('User not found') || msg.includes('404')) {
-			await interaction.editReply({ content: `❌ User dengan ID \`${discordUserId}\` tidak ditemukan atau belum memiliki API key.` });
+			await interaction.editReply({ content: `❌ User dengan ID \`${discordUserId}\` tidak ditemukan atau belum memiliki API key.\n\nJika Anda belum terdaftar, silakan verifikasi terlebih dahulu di <#1507648903900565514>.` });
 		} else {
 			await interaction.editReply({ content: `❌ Gagal mengambil data: ${msg}` });
 		}
