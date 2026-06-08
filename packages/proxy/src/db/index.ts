@@ -47,7 +47,7 @@ export const db = new Proxy({} as ReturnType<typeof drizzle>, {
 export async function initializeDatabase() {
 	// Verify connection
 	try {
-		await pool.query('SELECT 1');
+		await getPool().query('SELECT 1');
 		console.log('✅ PostgreSQL connection established');
 	} catch (err) {
 		console.error('❌ Failed to connect to PostgreSQL:', err);
@@ -145,12 +145,12 @@ export async function initializeDatabase() {
 
 	// Seed default cleanup states if not exists
 	try {
-		await pool.query(
+		await getPool().query(
 			`INSERT INTO cleanup_state (cleanup_type, cleaned_months, cleaned_days, created_at, updated_at)
 			 VALUES ('transcripts', '[]', '[]', NOW(), NOW())
 			 ON CONFLICT (cleanup_type) DO NOTHING`
 		);
-		await pool.query(
+		await getPool().query(
 			`INSERT INTO cleanup_state (cleanup_type, cleaned_months, cleaned_days, created_at, updated_at)
 			 VALUES ('3month', '[]', '[]', NOW(), NOW())
 			 ON CONFLICT (cleanup_type) DO NOTHING`
@@ -201,7 +201,7 @@ export async function initializeDatabase() {
 		const keyCount = Number(existingKeys[0]?.count || 0);
 		if (keyCount === 0) {
 			// No keys in the new table yet — migrate from providers.api_key
-			await pool.query(`
+			await getPool().query(`
         INSERT INTO provider_api_keys (provider_id, api_key, request_count, created_at)
 				SELECT id, api_key, 0, NOW() FROM providers WHERE api_key IS NOT NULL AND api_key != ''
       `);
@@ -218,7 +218,7 @@ export async function initializeDatabase() {
 
 	// Ensure custom_models table exists
 	try {
-		await pool.query(`
+		await getPool().query(`
 			CREATE TABLE IF NOT EXISTS custom_models (
 				id SERIAL PRIMARY KEY,
 				provider_id INTEGER NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
@@ -247,4 +247,4 @@ export async function initializeDatabase() {
 	console.log('✅ Database initialized successfully');
 }
 
-export { pool };
+export { getPool as pool };
