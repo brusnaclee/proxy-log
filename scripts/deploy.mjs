@@ -34,11 +34,16 @@ async function main() {
     console.log('Dependencies up to date.');
   }
 
-  // 3. Build Proxy
+  // 3. Build Proxy & Dashboard
   console.log('\n--- Building proxy package ---');
   const build = await ssh.execCommand('npx tsc', { cwd: `${projectDir}/packages/proxy` });
   if (build.stderr) console.log('Build stderr:', build.stderr);
   console.log('Build completed.');
+
+  console.log('\n--- Building dashboard ---');
+  const buildDash = await ssh.execCommand('pnpm --filter dashboard build', { cwd: projectDir });
+  if (buildDash.stderr) console.log('Dashboard build stderr:', buildDash.stderr);
+  console.log('Dashboard build completed.');
 
   // 4. Update server .env AGVERIF_CHANNEL_ID
   console.log('\n--- Updating server .env ---');
@@ -56,7 +61,7 @@ async function main() {
 
   // 6. Restart PM2 Services
   console.log('\n--- Restarting PM2 services ---');
-  const restart = await ssh.execCommand('pm2 restart proxy-api discord-bot', { cwd: projectDir });
+  const restart = await ssh.execCommand('pm2 restart proxy-api discord-bot dashboard', { cwd: projectDir });
   console.log('Services restarted.');
 
   // 7. Verification
@@ -64,7 +69,7 @@ async function main() {
   const status = await ssh.execCommand('pm2 status');
   console.log('\n--- PM2 Status ---');
   // Only show the proxy and bot lines to keep output clean
-  const statusLines = status.stdout.split('\n').filter(line => line.includes('proxy-api') || line.includes('discord-bot') || line.includes('name'));
+  const statusLines = status.stdout.split('\n').filter(line => line.includes('proxy-api') || line.includes('discord-bot') || line.includes('dashboard') || line.includes('name'));
   console.log(statusLines.join('\n'));
 
   ssh.dispose();

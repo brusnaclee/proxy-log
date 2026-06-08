@@ -184,6 +184,22 @@ async function loadState(): Promise<void> {
 // ─── HTTP Helpers ─────────────────────────────────────────────────────────────
 
 let sessionCookie: string | null = null;
+let tokenObtainedAt: number = 0;
+const TOKEN_MAX_AGE_MS = 23 * 60 * 60 * 1000; // Re-login before 24h JWT expiry
+
+function isTokenValid(): boolean {
+  return !!sessionCookie && (Date.now() - tokenObtainedAt) < TOKEN_MAX_AGE_MS;
+}
+
+function invalidateToken() {
+  sessionCookie = null;
+  tokenObtainedAt = 0;
+}
+
+async function ensureAuthenticated(): Promise<boolean> {
+  if (isTokenValid()) return true;
+  return await login();
+}
 
 async function login(): Promise<boolean> {
   try {
@@ -204,6 +220,8 @@ async function login(): Promise<boolean> {
       if (match) {
         const cookieName = setCookie.includes("auth_token=") ? "auth_token" : "jwt";
         sessionCookie = `${cookieName}=${match[1]}`;
+        tokenObtainedAt = Date.now();
+        console.log("[QuotaGuard] Logged in to 9Router (token cached)");
         return true;
       }
     }
@@ -211,6 +229,8 @@ async function login(): Promise<boolean> {
     const body: any = await res.json().catch(() => ({}));
     if (body.token) {
       sessionCookie = `auth_token=${body.token}`;
+      tokenObtainedAt = Date.now();
+      console.log("[QuotaGuard] Logged in to 9Router (token cached)");
       return true;
     }
 
@@ -228,6 +248,11 @@ async function apiGet<T = any>(path: string): Promise<T | null> {
     const res = await fetch(`${BASE_URL}${path}`, {
       headers: { Cookie: sessionCookie },
     });
+    if (res.status === 401) {
+      console.log(`[QuotaGuard] GET ${path} got 401, invalidating token`);
+      invalidateToken();
+      return null;
+    }
     if (!res.ok) {
       console.error(`[QuotaGuard] GET ${path} failed: ${res.status}`);
       return null;
@@ -518,7 +543,7 @@ async function runQuotaGuardCycle() {
   try {
     console.log("[QuotaGuard] Cycle starting...");
 
-    const loggedIn = await login();
+    const loggedIn = await ensureAuthenticated();
     if (!loggedIn) {
       console.error("[QuotaGuard] Login failed, skipping cycle");
       return;
