@@ -18,6 +18,7 @@ import internalRoutes from "./routes/admin/internal.js";
 import monitorRoutes from "./routes/admin/monitor.js";
 import buglogRoutes from "./routes/admin/buglog.js";
 import { initializeModelCatalogScheduler, initializeMetadataEnrichmentScheduler } from "./utils/model-catalog.js";
+import { initializeQuotaGuardScheduler } from "./utils/quota-guard.js";
 import { runTranscriptCleanup, run3MonthCleanup } from "./utils/cleanup.js";
 
 // Load environment from root .env regardless of current working directory.
@@ -100,6 +101,7 @@ async function main() {
   await initializeDatabase();
   await initializeModelCatalogScheduler();
   initializeMetadataEnrichmentScheduler();
+  initializeQuotaGuardScheduler();
 
   // Check every 3 hours if yesterday's data needs cleanup
   // Only clears YESTERDAY's heavy fields, NEVER touches today's data
