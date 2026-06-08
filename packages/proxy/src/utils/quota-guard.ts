@@ -2,15 +2,15 @@
  * 9Router Quota Guard Scheduler
  *
  * Monitors 9Router provider quotas and auto-disables models/connections
- * when quota drops below a threshold.
+ * when quota drops below a configurable threshold.
  *
  * Retry flow:
- *   1. Quota low → DISABLE
- *   2. Quota resets → wait 10 min COOLDOWN → ENABLE
- *   3. 5 min after ENABLE → RECHECK
- *   4. If still exhausted → DISABLE again → repeat steps 2-3
- *   5. Max 3 retries → if still exhausted → LOCKOUT 1 hour → ENABLE → RECHECK 5 min
- *   6. If still exhausted after lockout → LOCKOUT 1 hour again (repeat forever)
+ *   1. Quota low -> DISABLE
+ *   2. Quota resets -> wait 10 min COOLDOWN -> ENABLE
+ *   3. 5 min after ENABLE -> RECHECK
+ *   4. If still exhausted -> DISABLE again -> repeat steps 2-3
+ *   5. Max 3 retries -> if still exhausted -> LOCKOUT 1 hour -> ENABLE -> RECHECK 5 min
+ *   6. If still exhausted after lockout -> LOCKOUT 1 hour again (repeat forever)
  *
  * Three quota types:
  * - Per-Model (antigravity): disable individual models
@@ -23,81 +23,54 @@
 const BASE_URL = (process.env.NINEROUTER_BASE_URL || "https://api3.tokito.xyz").replace(/\/$/, "");
 const PASSWORD = process.env.NINEROUTER_PASSWORD || "rendang123!";
 const QUOTA_THRESHOLD = parseInt(process.env.NINEROUTER_QUOTA_THRESHOLD || "20", 10);
-const POLL_INTERVAL_MS = parseInt(process.env.NINEROUTER_POLL_INTERVAL_MS || "60000", 10); // 1 min default
-const COOLDOWN_MS = 10 * 60 * 1000;   // 10 min wait before re-enable after quota reset
-const RECHECK_MS = 5 * 60 * 1000;     // 5 min after enable before rechecking
+const POLL_INTERVAL_MS = parseInt(process.env.NINEROUTER_POLL_INTERVAL_MS || "60000", 10);
+const COOLDOWN_MS = 10 * 60 * 1000;   // 10 min wait before re-enable
+const RECHECK_MS = 5 * 60 * 1000;     // 5 min after enable before recheck
 const LOCKOUT_MS = 60 * 60 * 1000;    // 1 hour lockout after 3 failed retries
-const MAX_RETRIES = 3;                 // max normal retries before lockout
+const MAX_RETRIES = 3;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type QuotaType = "per-model" | "per-session" | "per-category" | "no-quota";
-type GuardPhase = "idle" | "cooldown" | "waiting-recheck" | "locked-out";
+type GuardPhase = "idle" | "cooldown" | "waiting-recheck";
 
 interface Connection {
-  id: number;
+  id: string;           // UUID string
+  provider: string;     // e.g. "glm", "antigravity", "minimax"
+  name: string;
   isActive: boolean;
 }
 
-interface ProviderEntry {
-  id: number;
-  name: string;
-  alias: string;
+interface ProvidersResponse {
   connections: Connection[];
 }
 
-interface ProvidersResponse {
-  providers: ProviderEntry[];
-}
-
 interface UsageQuotaValue {
-  total: number;
   used: number;
-  remaining: number;
+  total: number;
+  remaining?: number;           // not always present (antigravity)
+  remainingPercentage: number;  // always present — use this
+  resetAt?: string;
+  unlimited?: boolean;
+  displayName?: string;
 }
 
 interface UsageResponse {
-  quotas: Record<string, UsageQuotaValue>;
+  plan?: string;
+  quotas?: Record<string, UsageQuotaValue>;
   message?: string;
 }
 
 // ─── Guard State Machine ──────────────────────────────────────────────────────
 
-/**
- * Per-entity state machine:
- *
- *  IDLE ──[quota low]──► DISABLED + COOLDOWN
- *    ▲                        │
- *    │                   [10 min elapsed]
- *    │                        ▼
- *    │                    ENABLE + WAITING-RECHECK
- *    │                        │
- *    │                   [5 min elapsed]
- *    │                        ▼
- *    ◄──[quota OK]──── RECHECK (success)
- *    │
- *    │──[quota low]──► DISABLED + COOLDOWN (retry++, up to MAX_RETRIES)
- *    │
- *    │──[retry > MAX_RETRIES]──► DISABLED + LOCKED-OUT (1 hour)
- *                                    │
- *                               [1 hour elapsed]
- *                                    ▼
- *                                ENABLE + WAITING-RECHECK
- *                                    │
- *                               [5 min elapsed]
- *                                    ▼
- *                          RECHECK (if low → LOCKED-OUT again, repeat)
- */
-
 interface GuardState {
   phase: GuardPhase;
-  disabledAt: number;          // timestamp when we disabled
-  phaseStartedAt: number;      // timestamp when current phase started
-  retryCount: number;          // retries in current lockout cycle (0-3)
-  lockoutCount: number;        // total lockout rounds (for logging)
+  disabledAt: number;
+  phaseStartedAt: number;
+  retryCount: number;
+  lockoutCount: number;
 }
 
-// key: "providerId:modelId" or "providerId:conn:connId" or "providerId:cat:catName"
 const guardStates: Map<string, GuardState> = new Map();
 
 function getGuardState(key: string): GuardState {
@@ -132,20 +105,22 @@ async function login(): Promise<boolean> {
 
     const setCookie = res.headers.get("set-cookie");
     if (setCookie) {
-      const match = setCookie.match(/jwt=([^;]+)/);
+      const match = setCookie.match(/auth_token=([^;]+)/) || setCookie.match(/jwt=([^;]+)/);
       if (match) {
-        sessionCookie = `jwt=${match[1]}`;
+        const cookieName = setCookie.includes("auth_token=") ? "auth_token" : "jwt";
+        sessionCookie = `${cookieName}=${match[1]}`;
         return true;
       }
     }
 
+    // Fallback: check body for token
     const body: any = await res.json().catch(() => ({}));
     if (body.token) {
-      sessionCookie = `jwt=${body.token}`;
+      sessionCookie = `auth_token=${body.token}`;
       return true;
     }
 
-    console.error("[QuotaGuard] Login succeeded but no JWT found");
+    console.error("[QuotaGuard] Login succeeded but no token found");
     return false;
   } catch (err) {
     console.error("[QuotaGuard] Login error:", err);
@@ -247,9 +222,9 @@ async function disableEntity(
   disableAction: () => Promise<void>
 ) {
   const gs = getGuardState(key);
-  if (gs.phase !== "idle") return; // already in some phase
+  if (gs.phase !== "idle") return;
 
-  console.log(`[QuotaGuard] DISABLE → ${label}`);
+  console.log(`[QuotaGuard] DISABLE -> ${label}`);
   await disableAction();
   gs.phase = "cooldown";
   gs.disabledAt = Date.now();
@@ -275,10 +250,9 @@ async function handleGuardPhases(
     }
 
     case "cooldown": {
-      // Waiting 10 min (or 1h lockout) before enabling
       const waitMs = gs.lockoutCount > 0 ? LOCKOUT_MS : COOLDOWN_MS;
       if (now - gs.phaseStartedAt >= waitMs) {
-        console.log(`[QuotaGuard] ENABLE (cooldown done) → ${label}`);
+        console.log(`[QuotaGuard] ENABLE (cooldown done) -> ${label}`);
         await enableAction();
         gs.phase = "waiting-recheck";
         gs.phaseStartedAt = now;
@@ -287,39 +261,28 @@ async function handleGuardPhases(
     }
 
     case "waiting-recheck": {
-      // Waiting 5 min after enable before rechecking
       if (now - gs.phaseStartedAt >= RECHECK_MS) {
         if (quotaNowLow) {
-          // Still exhausted after recheck
           gs.retryCount++;
           if (gs.retryCount > MAX_RETRIES) {
-            // Enter lockout
-            console.log(`[QuotaGuard] LOCKOUT (retry ${gs.retryCount-1}/${MAX_RETRIES} failed) → ${label} — disabling for 1 hour`);
+            console.log(`[QuotaGuard] LOCKOUT (retry ${gs.retryCount - 1}/${MAX_RETRIES} failed) -> ${label} -- disabling for 1 hour`);
             gs.lockoutCount++;
             gs.phase = "cooldown";
             gs.phaseStartedAt = now;
             await disableAction();
           } else {
-            console.log(`[QuotaGuard] RETRY ${gs.retryCount}/${MAX_RETRIES} (still low) → ${label} — disabling again`);
+            console.log(`[QuotaGuard] RETRY ${gs.retryCount}/${MAX_RETRIES} (still low) -> ${label} -- disabling again`);
             gs.phase = "cooldown";
             gs.phaseStartedAt = now;
             await disableAction();
           }
         } else {
-          // Quota is OK — back to idle, reset retry counts
-          console.log(`[QuotaGuard] RECHECK OK → ${label} — quota recovered, resuming normal monitoring`);
+          console.log(`[QuotaGuard] RECHECK OK -> ${label} -- quota recovered`);
           gs.phase = "idle";
           gs.retryCount = 0;
           gs.lockoutCount = 0;
         }
       }
-      break;
-    }
-
-    case "locked-out": {
-      // Shouldn't reach here (lockout uses cooldown phase), but handle gracefully
-      gs.phase = "cooldown";
-      gs.phaseStartedAt = now;
       break;
     }
   }
@@ -329,15 +292,15 @@ async function handleGuardPhases(
 
 async function handlePerModelQuota(
   providerAlias: string,
-  providerId: number,
+  providerId: string,
   quotas: Record<string, UsageQuotaValue>
 ) {
   for (const [modelId, quota] of Object.entries(quotas)) {
     if (modelId === "session") continue;
-    const pct = quota.total > 0 ? (quota.remaining / quota.total) * 100 : 0;
+    const pct = quota.remainingPercentage ?? 0;
     const isLow = pct <= QUOTA_THRESHOLD;
     const key = `${providerId}:${modelId}`;
-    const label = `model:${providerAlias}/${modelId} (${pct.toFixed(1)}%)`;
+    const label = `model:${providerAlias}/${modelId} (${pct}%)`;
 
     await handleGuardPhases(
       key, label, isLow,
@@ -355,14 +318,14 @@ async function handlePerModelQuota(
 
 async function handlePerSessionQuota(
   providerAlias: string,
-  providerId: number,
+  providerId: string,
   connections: Connection[],
   sessionQuota: UsageQuotaValue
 ) {
-  const pct = sessionQuota.total > 0 ? (sessionQuota.remaining / sessionQuota.total) * 100 : 0;
+  const pct = sessionQuota.remainingPercentage ?? 0;
   const isLow = pct <= QUOTA_THRESHOLD;
   const key = `${providerId}:session`;
-  const label = `session:${providerAlias} (${pct.toFixed(1)}%)`;
+  const label = `session:${providerAlias} (${pct}%)`;
 
   await handleGuardPhases(
     key, label, isLow,
@@ -383,24 +346,20 @@ async function handlePerSessionQuota(
 
 async function handlePerCategoryQuota(
   providerAlias: string,
-  providerId: number,
+  providerId: string,
   quotas: Record<string, UsageQuotaValue>
 ) {
   const categories: Map<string, Array<{ quota: UsageQuotaValue }>> = new Map();
 
-  for (const [key, quota] of Object.entries(quotas)) {
-    const catMatch = key.match(/^(.+?)\s*\(/);
-    const catName = catMatch ? catMatch[1].trim() : key;
+  for (const [catKey, quota] of Object.entries(quotas)) {
+    const catMatch = catKey.match(/^(.+?)\s*\(/);
+    const catName = catMatch ? catMatch[1].trim() : catKey;
     if (!categories.has(catName)) categories.set(catName, []);
     categories.get(catName)!.push({ quota });
   }
 
   for (const [catName, entries] of categories) {
-    const anyLow = entries.some((e) => {
-      const pct = e.quota.total > 0 ? (e.quota.remaining / e.quota.total) * 100 : 0;
-      return pct <= QUOTA_THRESHOLD;
-    });
-
+    const anyLow = entries.some((e) => (e.quota.remainingPercentage ?? 0) <= QUOTA_THRESHOLD);
     const key = `${providerId}:cat:${catName}`;
     const label = `category:${providerAlias}/${catName}`;
 
@@ -428,18 +387,26 @@ async function runQuotaGuardCycle() {
   }
 
   const providersData = await apiGet<ProvidersResponse>("/api/providers");
-  if (!providersData?.providers) {
+  if (!providersData?.connections) {
     console.error("[QuotaGuard] Failed to fetch providers, skipping cycle");
     return;
   }
 
-  for (const provider of providersData.providers) {
-    const connections = provider.connections || [];
-    if (connections.length === 0) continue;
+  // Group connections by provider name
+  const byProvider = new Map<string, Connection[]>();
+  for (const conn of providersData.connections) {
+    const name = conn.provider;
+    if (!byProvider.has(name)) byProvider.set(name, []);
+    byProvider.get(name)!.push(conn);
+  }
 
-    const firstConnId = connections[0].id;
+  for (const [providerName, conns] of byProvider) {
+    if (conns.length === 0) continue;
+
+    // Fetch usage from first connection for this provider
+    const firstConnId = conns[0].id;
     const usageData = await apiGet<UsageResponse>(`/api/usage/${firstConnId}`);
-    if (!usageData?.quotas) continue;
+    if (!usageData?.quotas) continue; // No quota data (xai, ollama, nvidia)
 
     const quotas = usageData.quotas;
     const quotaType = detectQuotaType(quotas);
@@ -448,15 +415,15 @@ async function runQuotaGuardCycle() {
       case "per-session": {
         const sessionQuota = quotas["session"];
         if (sessionQuota) {
-          await handlePerSessionQuota(provider.alias, provider.id, connections, sessionQuota);
+          await handlePerSessionQuota(providerName, firstConnId, conns, sessionQuota);
         }
         break;
       }
       case "per-category":
-        await handlePerCategoryQuota(provider.alias, provider.id, quotas);
+        await handlePerCategoryQuota(providerName, firstConnId, quotas);
         break;
       case "per-model":
-        await handlePerModelQuota(provider.alias, provider.id, quotas);
+        await handlePerModelQuota(providerName, firstConnId, quotas);
         break;
       case "no-quota":
       default:
