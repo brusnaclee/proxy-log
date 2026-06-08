@@ -997,7 +997,7 @@ async function fetchProvidersFromProxy() {
 			return res;
 		}
 	} catch (err) {
-		console.error('[tokito-monitor] failed to fetch providers:', err.message);
+		console.error('[tokito-monitor] failed to fetch providers:', err.message || JSON.stringify(err));
 	}
 	return null;
 }
@@ -1067,7 +1067,7 @@ async function pollModelStatus() {
 					}
 				}
 			} catch (err) {
-				console.error(`[tokito-monitor] failed to fetch keys for ${prov.name}:`, err.message);
+				console.error(`[tokito-monitor] failed to fetch keys for ${prov.name}:`, err.message || JSON.stringify(err));
 			}
 
 			const result = await fetchProviderModelList(prov);
@@ -1085,7 +1085,7 @@ async function pollModelStatus() {
 			}
 			console.log(`[tokito-monitor] fetched ${arr.length} models from provider: ${prov.name} (${url})`);
 		} catch (err) {
-			console.error(`[tokito-monitor] error fetching from ${prov.name}:`, err.message);
+			console.error(`[tokito-monitor] error fetching from ${prov.name}:`, err.message || JSON.stringify(err));
 		}
 	}
 
@@ -1120,12 +1120,14 @@ async function pollModelStatus() {
 						}
 					}
 				} catch (err) {
-					console.error(`[tokito-monitor] error fetching custom models from ${prov.name}:`, err.message);
+					const errMsg = err.message || (typeof err === 'object' ? JSON.stringify(err) : String(err));
+					console.error(`[tokito-monitor] error fetching custom models from ${prov.name}:`, errMsg);
 				}
 			}
 		}
 	} catch (err) {
-		console.error(`[tokito-monitor] error fetching providers for custom models:`, err.message);
+		const errMsg = err.message || (typeof err === 'object' ? JSON.stringify(err) : String(err));
+		console.error(`[tokito-monitor] error fetching providers for custom models:`, errMsg);
 	}
 
 	runtime.models = allModels;
@@ -1221,7 +1223,7 @@ async function refreshLatencyFromProxy() {
 			console.log(`[tokito-monitor] refreshed ${newEntries.length} models from proxy DB`);
 		}
 	} catch (err) {
-		console.error('[tokito-monitor] failed to refresh from proxy:', err.message);
+		console.error('[tokito-monitor] failed to refresh from proxy:', err.message || JSON.stringify(err));
 	}
 }
 
@@ -1467,7 +1469,7 @@ async function midnightReset() {
 		runtime.modelRetryState.clear();
 		console.log('[tokito-monitor] midnight reset complete — all models eligible for testing');
 	} catch (err) {
-		console.error('[tokito-monitor] midnight reset failed:', err.message);
+		console.error('[tokito-monitor] midnight reset failed:', err.message || JSON.stringify(err));
 	}
 }
 
@@ -1494,7 +1496,7 @@ async function recoverRetryState() {
 			console.log(`[tokito-monitor] recovered retry state for ${states.length} models`);
 		}
 	} catch (err) {
-		console.error('[tokito-monitor] failed to recover retry state:', err.message);
+		console.error('[tokito-monitor] failed to recover retry state:', err.message || JSON.stringify(err));
 	}
 }
 
@@ -3514,7 +3516,7 @@ client.on('interactionCreate', async (interaction) => {
 						const detailsData = await proxyInternal('/admin/internal/models/details');
 						runtime._modelDetailsCache = detailsData?.data || [];
 					} catch (err) {
-						console.error('[tokito] Failed to fetch model details:', err.message);
+						console.error('[tokito] Failed to fetch model details:', err.message || JSON.stringify(err));
 						runtime._modelDetailsCache = [];
 					}
 				}
@@ -3577,7 +3579,7 @@ client.on('interactionCreate', async (interaction) => {
 
 					await interaction.editReply({ embeds: [embed] });
 				} catch (err) {
-					console.error('[tokito] Model details error:', err.message);
+					console.error('[tokito] Model details error:', err.message || JSON.stringify(err));
 					await interaction.editReply({ content: 'Failed to fetch model details.' });
 				}
 				return;
