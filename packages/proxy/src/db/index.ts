@@ -3,161 +3,227 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 import * as schema from './schema.js';
 
-// DATABASE_URL: loaded by dotenv (may not be set at ES module import time)
-// getPool()/getDb() defer creation so dotenv has time to load first
-function getPool(): pg.Pool {
-  const url = process.env.DATABASE_URL;
-  if (!url) {
-    throw new Error('DATABASE_URL environment variable is required');
-  }
-  return new pg.Pool({
-    connectionString: url,
-    max: 20,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 5000,
-  });
-}
+const DATABASE_URL =
+	process.env.DATABASE_URL ||
+	'postgresql://monit_api:rendang123pg@localhost:5432/monit_api';
 
-let _db: ReturnType<typeof drizzle> | null = null;
-function getDb() {
-  if (!_db) _db = drizzle(getPool(), { schema });
-  return _db;
-}
-
-// Lazy proxy: actual pg.Pool created only on first query (after dotenv loads)
-export const db = new Proxy({} as ReturnType<typeof drizzle>, {
-  get(_, prop) {
-    return (getDb() as any)[prop];
-  },
+// Create pg Pool
+const pool = new pg.Pool({
+	connectionString: DATABASE_URL,
+	max: 20,
+	idleTimeoutMillis: 30000,
+	connectionTimeoutMillis: 5000,
 });
 
-export { getPool as pool };
+// Create Drizzle instance with schema
+export const db = drizzle(pool, { schema });
 
 /**
  * Initialize the database — push schema via Drizzle and seed defaults.
+ * All table creation / column migration is handled by drizzle-orm push or
+ * the pgTable definitions in schema.ts. No manual CREATE TABLE needed.
  */
 export async function initializeDatabase() {
-  try {
-    await getPool().query('SELECT 1');
-    console.log('✅ PostgreSQL connection established');
-  } catch (err) {
-    console.error('❌ Failed to connect to PostgreSQL:', err);
-    throw err;
-  }
+	// Verify connection
+	try {
+		await pool.query('SELECT 1');
+		console.log('✅ PostgreSQL connection established');
+	} catch (err) {
+		console.error('❌ Failed to connect to PostgreSQL:', err);
+		throw err;
+	}
 
-  const envUpstreamEndpoint = (process.env.UPSTREAM_ENDPOINT || '')
-    .trim()
-    .replace(/\/$/, '');
-  const envUpstreamApiKey = (process.env.UPSTREAM_API_KEY || '').trim();
+	// Push schema using drizzle-kit push equivalent at runtime:
+	// We rely on drizzle-kit push:pg being run before first start.
+	// But we still seed defaults below.
 
-  // Seed default admin if none exists
-  const existingAdminRows = await db.select().from(schema.adminConfig);
-  const existingAdmin = existingAdminRows[0] ?? null;
-  if (!existingAdmin) {
-    const defaultPassword = process.env.DEFAULT_ADMIN_PASSWORD || 'admin';
-    const { hash } = await import('@node-rs/argon2');
-    const passwordHash = await hash(defaultPassword);
+	const envUpstreamEndpoint = (process.env.UPSTREAM_ENDPOINT || '')
+		.trim()
+		.replace(/\/$/, '');
+	const envUpstreamApiKey = (process.env.UPSTREAM_API_KEY || '').trim();
 
-    await db
-      .insert(schema.adminConfig)
-      .values({
-        passwordHash,
-        upstreamEndpoint: envUpstreamEndpoint || 'https://api.openai.com',
-        upstreamApiKey: envUpstreamApiKey || '',
-      });
+	// Seed default admin if none exists
+	const existingAdminRows = await db.select().from(schema.adminConfig);
+	const existingAdmin = existingAdminRows[0] ?? null;
+	if (!existingAdmin) {
+		const defaultPassword = process.env.DEFAULT_ADMIN_PASSWORD || 'admin';
+		// Use argon2 for password hashing
+		const { hash } = await import('@node-rs/argon2');
+		const passwordHash = await hash(defaultPassword);
 
-    console.log(`✅ Default admin created with password: "${defaultPassword}"`);
-    console.log('⚠️  Please change the default password via the dashboard!');
-  } else {
-    const updates: Record<string, any> = {};
-    if (envUpstreamEndpoint && existingAdmin.upstreamEndpoint !== envUpstreamEndpoint) {
-      updates.upstreamEndpoint = envUpstreamEndpoint;
-    }
-    if (envUpstreamApiKey && existingAdmin.upstreamApiKey !== envUpstreamApiKey) {
-      updates.upstreamApiKey = envUpstreamApiKey;
-    }
-    if (Object.keys(updates).length > 0) {
-      await db
-        .update(schema.adminConfig)
-        .set(updates)
-        .where(eq(schema.adminConfig.id, existingAdmin.id));
-      console.log('✅ Updated upstream config from environment');
-    }
-  }
+		await db
+			.insert(schema.adminConfig)
+			.values({
+				passwordHash,
+				upstreamEndpoint: envUpstreamEndpoint || 'https://api.openai.com',
+				upstreamApiKey: envUpstreamApiKey || '',
+			});
 
-  // Seed default bot config
-  const adminConfig = existingAdmin ?? (await db.select().from(schema.adminConfig))[0];
-  if (adminConfig && !adminConfig.agverif_channel_id) {
-    await db
-      .update(schema.adminConfig)
-      .set({
-        agverif_channel_id: process.env.AGVERIF_CHANNEL_ID || null,
-        tokito_channel_id: process.env.TOKITO_CHANNEL_ID || null,
-        required_role_id: process.env.REQUIRED_ROLE_ID || null,
-        owner_groupy_role_id: process.env.OWNER_GROUPY_ROLE_ID || null,
-        verified_role_id: process.env.VERIFIED_ROLE_ID || null,
-      })
-      .where(eq(schema.adminConfig.id, adminConfig.id));
-    console.log('✅ Seeded bot config from environment');
-  }
+		console.log(`✅ Default admin created with password: "${defaultPassword}"`);
+		console.log('⚠️  Please change the default password via the dashboard!');
+	} else {
+		// Optional env bootstrap for existing DB (only fill if currently empty/default)
+		const updates: Record<string, string> = {};
+		if (envUpstreamApiKey && !existingAdmin.upstreamApiKey) {
+			updates.upstreamApiKey = envUpstreamApiKey;
+		}
+		if (
+			envUpstreamEndpoint &&
+			(!existingAdmin.upstreamEndpoint ||
+				existingAdmin.upstreamEndpoint === 'https://api.openai.com')
+		) {
+			updates.upstreamEndpoint = envUpstreamEndpoint;
+		}
+		if (Object.keys(updates).length > 0) {
+			await db
+				.update(schema.adminConfig)
+				.set({
+					...updates,
+					updatedAt: new Date(),
+				})
+				.where(eq(schema.adminConfig.id, existingAdmin.id));
+			console.log('✅ Applied UPSTREAM_* env bootstrap into admin_config');
+		}
 
-  // Ensure admin_config columns exist (safe migration)
-  // Columns are defined in schema.ts and created by drizzle push.
-  // This block only runs if the table already exists but is missing columns.
-  try {
-    const colCheck = await getPool().query(`
-      SELECT column_name FROM information_schema.columns
-      WHERE table_name = 'admin_config' AND column_name = 'agverif_channel_id'
-    `);
-    if (colCheck.rows.length === 0) {
-      await getPool().query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS agverif_channel_id TEXT`);
-      await getPool().query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS tokito_channel_id TEXT`);
-      await getPool().query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS required_role_id TEXT`);
-      await getPool().query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS owner_groupy_role_id TEXT`);
-      await getPool().query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS verified_role_id TEXT`);
-    }
-  } catch (err: any) {
-    // Column already exists or table not yet created — non-critical
-  }
+		// Also bootstrap bot settings if empty
+		const envBotToken = process.env.BOT_TOKEN || '';
+		const envAgVerifChannelId = process.env.AGVERIF_CHANNEL_ID || '';
+		const envTokitoChannelId =
+			process.env.TOKITO_CHANNEL_ID || '1470313934752972993';
+		const envRequiredRole = process.env.REQUIRED_ROLE_ID || '';
+		const envOwnerRole = process.env.OWNER_GROUPY_ROLE_ID || '';
+		const envVerifiedRole = process.env.VERIFIED_ROLE_ID || '';
+		const envGemini = process.env.GOOGLE_API_KEY || '';
+		const envVerifAuto =
+			String(process.env.VERIF_AUTO || 'false').toLowerCase() === 'true';
+		const envTokitoKey = process.env.TOKITO_API_KEY || '';
 
-  // Ensure provider_api_keys table
-  try {
-    const keyCountResult = await getPool().query(`SELECT COUNT(*)::int as count FROM provider_api_keys`);
-    const keyCount = (keyCountResult.rows[0] as any)?.count ?? 0;
-    if (keyCount === 0) {
-      await getPool().query(`
+		// We update them even if they exist if the user has hardcoded them in .env so .env takes precedence on boot
+		const botUpdates: Record<string, any> = {};
+		if (envBotToken) botUpdates.discordBotToken = envBotToken;
+		if (envAgVerifChannelId) botUpdates.agverifChannelId = envAgVerifChannelId;
+		if (envTokitoChannelId) botUpdates.tokitoChannelId = envTokitoChannelId;
+		if (envRequiredRole) botUpdates.requiredRoleId = envRequiredRole;
+		if (envOwnerRole) botUpdates.ownerGroupyRoleId = envOwnerRole;
+		if (envVerifiedRole) botUpdates.verifiedRoleId = envVerifiedRole;
+		if (envGemini) botUpdates.geminiApiKey = envGemini;
+		botUpdates.verifAutoEnabled = envVerifAuto;
+		if (envTokitoKey) botUpdates.tokitoApiKey = envTokitoKey;
+
+		if (Object.keys(botUpdates).length > 0) {
+			await db
+				.update(schema.adminConfig)
+				.set({
+					...botUpdates,
+					updatedAt: new Date(),
+				})
+				.where(eq(schema.adminConfig.id, existingAdmin.id));
+			console.log('✅ Synced .env bot variables to admin_config database');
+		}
+	}
+
+	// Seed default cleanup states if not exists
+	try {
+		await pool.query(
+			`INSERT INTO cleanup_state (cleanup_type, cleaned_months, cleaned_days, created_at, updated_at)
+			 VALUES ('transcripts', '[]', '[]', NOW(), NOW())
+			 ON CONFLICT (cleanup_type) DO NOTHING`
+		);
+		await pool.query(
+			`INSERT INTO cleanup_state (cleanup_type, cleaned_months, cleaned_days, created_at, updated_at)
+			 VALUES ('3month', '[]', '[]', NOW(), NOW())
+			 ON CONFLICT (cleanup_type) DO NOTHING`
+		);
+	} catch {
+		// cleanup_state may not have unique constraint on cleanup_type yet
+		// Check if rows exist first
+		const existing = await db.select().from(schema.cleanupState);
+		if (existing.length === 0) {
+			await db.insert(schema.cleanupState).values([
+				{ cleanupType: 'transcripts', cleanedMonths: '[]', cleanedDays: '[]' },
+				{ cleanupType: '3month', cleanedMonths: '[]', cleanedDays: '[]' },
+			]);
+		}
+	}
+
+	// Migrate existing upstream to providers table if empty
+	const providerCount = await db
+		.select({ count: sql<number>`count(*)` })
+		.from(schema.providers);
+	if (!providerCount[0] || Number(providerCount[0].count) === 0) {
+		const defaultEndpoint =
+			existingAdmin?.upstreamEndpoint ||
+			envUpstreamEndpoint ||
+			'https://api.openai.com';
+		const defaultApiKey =
+			existingAdmin?.upstreamApiKey || envUpstreamApiKey || '';
+		if (defaultEndpoint && defaultApiKey) {
+			await db
+				.insert(schema.providers)
+				.values({
+					name: 'Default Provider',
+					endpoint: defaultEndpoint,
+					apiKey: defaultApiKey,
+					isActive: true,
+					priority: 100,
+				});
+			console.log('✅ Migrated legacy upstream config to providers table');
+		}
+	}
+
+	// Migrate existing provider api_key values into provider_api_keys table (one-time)
+	// Ensure custom_models table exists (new table for custom model support)
+	try {
+		const existingKeys = await db
+			.select({ count: sql<number>`count(*)` })
+			.from(schema.providerApiKeys);
+		const keyCount = Number(existingKeys[0]?.count || 0);
+		if (keyCount === 0) {
+			// No keys in the new table yet — migrate from providers.api_key
+			await pool.query(`
         INSERT INTO provider_api_keys (provider_id, api_key, request_count, created_at)
-            SELECT id, api_key, 0, NOW() FROM providers WHERE api_key IS NOT NULL AND api_key != ''
-            ON CONFLICT DO NOTHING
+				SELECT id, api_key, 0, NOW() FROM providers WHERE api_key IS NOT NULL AND api_key != ''
       `);
-      console.log('✅ Migrated API keys from providers to provider_api_keys');
-    }
-  } catch (err: any) {
-    if (err.code !== '42P01') {
-      console.warn('⚠️  provider_api_keys migration check:', err.message);
-    }
-  }
+			console.log(
+				'✅ Migrated existing provider API keys to provider_api_keys table',
+			);
+		}
+	} catch (err) {
+		console.warn(
+			'⚠️  Could not migrate provider API keys (table may not exist yet):',
+			err,
+		);
+	}
 
-  // Ensure custom_models table
-  try {
-    await getPool().query(`
-      CREATE TABLE IF NOT EXISTS custom_models (
-        id SERIAL PRIMARY KEY,
-        provider_id INTEGER NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
-        model_id TEXT NOT NULL,
-        display_name TEXT,
-        context_length INTEGER,
-        input_price_per_1k NUMERIC(10,6),
-        output_price_per_1k NUMERIC(10,6),
-        modality TEXT,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW(),
-        UNIQUE(provider_id, model_id)
-      );
-    `);
-  } catch (err: any) {
-    if (err.code !== '42710' && err.code !== '42P07') {
-      console.warn('⚠️  Could not ensure custom_models table:', err.message);
-    }
-  }
+	// Ensure custom_models table exists
+	try {
+		await pool.query(`
+			CREATE TABLE IF NOT EXISTS custom_models (
+				id SERIAL PRIMARY KEY,
+				provider_id INTEGER NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+				model_id TEXT NOT NULL,
+				display_name TEXT,
+				description TEXT,
+				context_length INTEGER,
+				max_output_tokens INTEGER,
+				input_price_per_mtok INTEGER DEFAULT 0,
+				output_price_per_mtok INTEGER DEFAULT 0,
+				input_modalities TEXT,
+				output_modalities TEXT,
+				supported_features TEXT,
+				is_active BOOLEAN NOT NULL DEFAULT true,
+				created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+				updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+			);
+			CREATE INDEX IF NOT EXISTS idx_custom_models_provider_id ON custom_models(provider_id);
+			CREATE INDEX IF NOT EXISTS idx_custom_models_model_id ON custom_models(model_id);
+		`);
+		console.log('✅ custom_models table ensured');
+	} catch (err) {
+		console.warn('⚠️  Could not ensure custom_models table:', err);
+	}
+
+	console.log('✅ Database initialized successfully');
 }
+
+export { pool };
