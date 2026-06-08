@@ -29,7 +29,7 @@ const RECHECK_MS = 5 * 60 * 1000;
 const LOCKOUT_MS = 60 * 60 * 1000;
 const MAX_RETRIES = 3;
 const EXCLUDED_PROVIDERS = (process.env.NINEROUTER_EXCLUDED_PROVIDERS || "glm").split(",").map(s => s.trim().toLowerCase());
-const STATE_FILE = process.env.QUOTA_GUARD_STATE_PATH || resolve(process.cwd(), "data/quota_guard_state.json");
+const STATE_FILE = process.env.QUOTA_GUARD_STATE_PATH || resolve(process.cwd(), "data", "quota_guard_state.json");
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -330,18 +330,22 @@ async function handleGuardPhases(
   const gs = getGuardState(key);
   const now = Date.now();
 
-  // Detect quota reset by comparing resetAt
-  if (currentResetAt && gs.lastResetAt && currentResetAt !== gs.lastResetAt) {
-    console.log(`[QuotaGuard] RESET DETECTED -> ${label} (old: ${gs.lastResetAt}, new: ${currentResetAt})`);
-    if (gs.phase === "cooldown" || gs.phase === "waiting-recheck") {
-      console.log(`[QuotaGuard] Quota reset during ${gs.phase} -> enabling immediately -> ${label}`);
-      await enableAction();
-      gs.phase = "idle";
-      gs.retryCount = 0;
-      gs.lockoutCount = 0;
-      disabledByGuard.delete(key);
-      await saveState();
-      return;
+  // Detect quota reset by comparing resetAt (compare date only, not exact time)
+  if (currentResetAt && gs.lastResetAt) {
+    const oldDate = gs.lastResetAt.split("T")[0];
+    const newDate = currentResetAt.split("T")[0];
+    if (oldDate !== newDate) {
+      console.log(`[QuotaGuard] RESET DETECTED -> ${label} (old: ${gs.lastResetAt}, new: ${currentResetAt})`);
+      if (gs.phase === "cooldown" || gs.phase === "waiting-recheck") {
+        console.log(`[QuotaGuard] Quota reset during ${gs.phase} -> enabling immediately -> ${label}`);
+        await enableAction();
+        gs.phase = "idle";
+        gs.retryCount = 0;
+        gs.lockoutCount = 0;
+        disabledByGuard.delete(key);
+        await saveState();
+        return;
+      }
     }
   }
   if (currentResetAt) {
