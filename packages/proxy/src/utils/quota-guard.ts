@@ -21,14 +21,15 @@ import { dirname, resolve } from "path";
 // ─── Configuration ────────────────────────────────────────────────────────────
 
 const BASE_URL = (process.env.NINEROUTER_BASE_URL || "https://api3.tokito.xyz").replace(/\/$/, "");
-const PASSWORD = process.env.NINEROUTER_PASSWORD || "rendang123!";
+const PASSWORD = process.env.NINEROUTER_PASSWORD || "";
 const QUOTA_THRESHOLD = parseInt(process.env.NINEROUTER_QUOTA_THRESHOLD || "20", 10);
 const POLL_INTERVAL_MS = parseInt(process.env.NINEROUTER_POLL_INTERVAL_MS || "60000", 10);
 const COOLDOWN_MS = 10 * 60 * 1000;
 const RECHECK_MS = 5 * 60 * 1000;
 const LOCKOUT_MS = 60 * 60 * 1000;
 const MAX_RETRIES = 3;
-const EXCLUDED_PROVIDERS = (process.env.NINEROUTER_EXCLUDED_PROVIDERS || "glm").split(",").map(s => s.trim().toLowerCase());
+const EXCLUDED_PROVIDERS_DEFAULT = (process.env.NINEROUTER_EXCLUDED_PROVIDERS || "glm").split(",").map(s => s.trim().toLowerCase());
+const excludedProviders: Set<string> = new Set(EXCLUDED_PROVIDERS_DEFAULT);
 const STATE_FILE = process.env.QUOTA_GUARD_STATE_PATH || resolve(process.cwd(), "data", "quota_guard_state.json");
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -542,7 +543,7 @@ async function runQuotaGuardCycle() {
     for (const [providerName, conns] of byProvider) {
       if (conns.length === 0) continue;
 
-      const isExcluded = EXCLUDED_PROVIDERS.includes(providerName.toLowerCase());
+      const isExcluded = excludedProviders.has(providerName.toLowerCase());
       if (isExcluded) {
         console.log(`[QuotaGuard] Skipping excluded provider: ${providerName}`);
       }
@@ -617,7 +618,7 @@ async function runQuotaGuardCycle() {
         threshold: QUOTA_THRESHOLD,
         isRunning: false,
         lastCycleAt,
-        excludedProviders: EXCLUDED_PROVIDERS,
+        excludedProviders: Array.from(excludedProviders),
       },
       providers: providerSnapshots,
     };
@@ -640,7 +641,7 @@ export function getQuotaGuardSnapshot(): QuotaGuardSnapshot {
       threshold: QUOTA_THRESHOLD,
       isRunning,
       lastCycleAt,
-      excludedProviders: EXCLUDED_PROVIDERS,
+      excludedProviders: Array.from(excludedProviders),
     },
     providers: [],
   };
@@ -648,7 +649,25 @@ export function getQuotaGuardSnapshot(): QuotaGuardSnapshot {
 
 export function setSchedulerEnabled(enabled: boolean) {
   schedulerEnabled = enabled;
+  if (latestSnapshot) latestSnapshot.scheduler.enabled = enabled;
   console.log(`[QuotaGuard] Scheduler ${enabled ? "enabled" : "disabled"}`);
+}
+
+export function getExcludedProviders(): string[] {
+  return Array.from(excludedProviders);
+}
+
+export function setProviderExcluded(provider: string, excluded: boolean) {
+  const name = provider.toLowerCase();
+  if (excluded) {
+    excludedProviders.add(name);
+  } else {
+    excludedProviders.delete(name);
+  }
+  if (latestSnapshot) {
+    latestSnapshot.scheduler.excludedProviders = Array.from(excludedProviders);
+  }
+  console.log(`[QuotaGuard] Provider ${name} ${excluded ? "excluded" : "included"}`);
 }
 
 export function isSchedulerRunning() {
@@ -701,7 +720,7 @@ export async function initializeQuotaGuardScheduler() {
   // Load persisted state
   await loadState();
 
-  console.log(`[QuotaGuard] Initialized — poll: ${POLL_INTERVAL_MS / 1000}s, threshold: ${QUOTA_THRESHOLD}%, cooldown: ${COOLDOWN_MS / 60000}min, recheck: ${RECHECK_MS / 60000}min, lockout: ${LOCKOUT_MS / 60000}min, maxRetries: ${MAX_RETRIES}, excluded: [${EXCLUDED_PROVIDERS.join(", ")}]`);
+  console.log(`[QuotaGuard] Initialized — poll: ${POLL_INTERVAL_MS / 1000}s, threshold: ${QUOTA_THRESHOLD}%, cooldown: ${COOLDOWN_MS / 60000}min, recheck: ${RECHECK_MS / 60000}min, lockout: ${LOCKOUT_MS / 60000}min, maxRetries: ${MAX_RETRIES}, excluded: [${Array.from(excludedProviders).join(", ")}]`);
 
   setTimeout(async () => {
     await runQuotaGuardCycle();

@@ -5,6 +5,6 @@ export default defineConfig({
   out: "./drizzle",
   dialect: "postgresql",
   dbCredentials: {
-    url: process.env.DATABASE_URL || "postgresql://monit_api:rendang123pg@localhost:5432/monit_api",
+    url: process.env.DATABASE_URL || "",
   },
 });

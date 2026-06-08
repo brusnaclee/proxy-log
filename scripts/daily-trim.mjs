@@ -10,13 +10,17 @@
  * 
  * Setup (on server):
  *   crontab -e
- *   0 20 * * * cd /root/proxy-log && DATABASE_URL=postgresql://monit_api:rendang123pg@localhost:5432/monit_api node scripts/daily-trim.mjs >> /var/log/monit-trim.log 2>&1
+ *   0 20 * * * cd /root/proxy-log && node scripts/daily-trim.mjs >> /var/log/monit-trim.log 2>&1
  *   (20:00 UTC = 03:00 WIB)
  */
 
 import pg from 'pg';
 
-const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://monit_api:rendang123pg@localhost:5432/monit_api';
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+	console.error('Error: DATABASE_URL environment variable is required');
+	process.exit(1);
+}
 
 async function dailyTrim() {
   const pool = new pg.Pool({ connectionString: DATABASE_URL, max: 3 });

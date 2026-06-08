@@ -10,7 +10,11 @@ import Database from 'better-sqlite3';
 import pg from 'pg';
 
 const SQLITE_PATH = process.env.SQLITE_PATH || 'packages/proxy/data/gateway.db';
-const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://monit_api:rendang123pg@localhost:5432/monit_api';
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+	console.error('Error: DATABASE_URL environment variable is required');
+	process.exit(1);
+}
 const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || '200');
 
 function toBool(val) {

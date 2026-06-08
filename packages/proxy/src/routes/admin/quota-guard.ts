@@ -5,6 +5,8 @@ import {
   manualDisable,
   manualEnable,
   setSchedulerEnabled,
+  setProviderExcluded,
+  getExcludedProviders,
 } from "../../utils/quota-guard.js";
 
 const quotaGuard = new Hono();
@@ -64,6 +66,20 @@ quotaGuard.put("/quota-guard/scheduler", async (c) => {
   }
 
   return c.json({ success: true, enabled: body.enabled });
+});
+
+// PUT /admin/quota-guard/provider — toggle guard for a specific provider
+quotaGuard.put("/quota-guard/provider", async (c) => {
+  const authErr = checkAdmin(c);
+  if (authErr) return authErr;
+
+  const body = await c.req.json<{ provider: string; excluded: boolean }>();
+  if (!body.provider || typeof body.excluded !== "boolean") {
+    return c.json({ error: "Missing provider or excluded" }, 400);
+  }
+
+  setProviderExcluded(body.provider, body.excluded);
+  return c.json({ success: true, excludedProviders: getExcludedProviders() });
 });
 
 export default quotaGuard;

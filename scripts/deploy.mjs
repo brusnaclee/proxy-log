@@ -4,10 +4,15 @@ const ssh = new NodeSSH();
 
 async function main() {
   console.log('Connecting to server...');
+  const SSH_PASSWORD = process.env.DEPLOY_SSH_PASSWORD;
+  if (!SSH_PASSWORD) {
+    console.error('Error: DEPLOY_SSH_PASSWORD environment variable is required');
+    process.exit(1);
+  }
   await ssh.connect({
-    host: '146.190.102.65',
-    username: 'root',
-    password: 'rendang123',
+    host: process.env.DEPLOY_SSH_HOST || '146.190.102.65',
+    username: process.env.DEPLOY_SSH_USER || 'root',
+    password: SSH_PASSWORD,
   });
   console.log('Connected!');
 

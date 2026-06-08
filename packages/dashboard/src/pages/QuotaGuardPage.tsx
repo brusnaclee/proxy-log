@@ -33,14 +33,64 @@ function QuotaBadge({ pct }: { pct: number }) {
   return <Badge variant="destructive">{pct}%</Badge>;
 }
 
+function ModelRow({
+  modelKey,
+  quota,
+  providerAlias,
+  onToggleModel,
+}: {
+  modelKey: string;
+  quota: { used: number; total: number; remainingPercentage: number; resetAt?: string; displayName?: string };
+  providerAlias: string;
+  onToggleModel: (providerAlias: string, modelId: string, enable: boolean) => Promise<void>;
+}) {
+  const [loading, setLoading] = useState(false);
+  const pct = quota.remainingPercentage ?? 0;
+
+  const handleToggle = async (enable: boolean) => {
+    setLoading(true);
+    try {
+      await onToggleModel(providerAlias, modelKey, enable);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2 sm:gap-3">
+      <span className="text-xs text-muted-foreground w-28 sm:w-40 truncate" title={quota.displayName || modelKey}>
+        {quota.displayName || modelKey}
+      </span>
+      <div className="flex-1">
+        <QuotaBar pct={pct} />
+      </div>
+      <span className="text-xs text-muted-foreground w-14 sm:w-16 text-right">{quota.used}/{quota.total}</span>
+      <span className="text-xs text-muted-foreground w-12 sm:w-14 text-right" title={quota.resetAt}>
+        {formatResetAt(quota.resetAt)}
+      </span>
+      <div className="w-10 flex justify-end">
+        <Switch
+          checked={pct > 0}
+          onCheckedChange={handleToggle}
+          disabled={loading}
+          className="scale-75"
+        />
+        {loading && <Loader2 className="h-3 w-3 animate-spin ml-1" />}
+      </div>
+    </div>
+  );
+}
+
 function ConnectionCard({
   conn,
   providerAlias,
   onToggle,
+  onToggleModel,
 }: {
   conn: ConnectionSnapshot;
   providerAlias: string;
   onToggle: (type: "model" | "connection" | "category", id: string, enable: boolean) => Promise<void>;
+  onToggleModel: (providerAlias: string, modelId: string, enable: boolean) => Promise<void>;
 }) {
   const [loading, setLoading] = useState(false);
 
@@ -86,18 +136,13 @@ function ConnectionCard({
       {conn.quotas && Object.keys(conn.quotas).length > 0 && (
         <div className="space-y-2">
           {Object.entries(conn.quotas).map(([key, q]) => (
-            <div key={key} className="flex items-center gap-3">
-              <span className="text-xs text-muted-foreground w-28 sm:w-40 truncate" title={q.displayName || key}>
-                {q.displayName || key}
-              </span>
-              <div className="flex-1">
-                <QuotaBar pct={q.remainingPercentage ?? 0} />
-              </div>
-              <span className="text-xs text-muted-foreground w-16 text-right">{q.used}/{q.total}</span>
-              <span className="text-xs text-muted-foreground w-14 text-right" title={q.resetAt}>
-                {formatResetAt(q.resetAt)}
-              </span>
-            </div>
+            <ModelRow
+              key={key}
+              modelKey={key}
+              quota={q}
+              providerAlias={providerAlias}
+              onToggleModel={onToggleModel}
+            />
           ))}
         </div>
       )}
@@ -120,18 +165,35 @@ function ConnectionCard({
 
 function ProviderSection({
   provider,
+  excludedProviders,
   onToggle,
+  onToggleModel,
+  onToggleProvider,
 }: {
   provider: ProviderSnapshot;
+  excludedProviders: string[];
   onToggle: (type: "model" | "connection" | "category", id: string, enable: boolean) => Promise<void>;
+  onToggleModel: (providerAlias: string, modelId: string, enable: boolean) => Promise<void>;
+  onToggleProvider: (provider: string, excluded: boolean) => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(true);
+  const [loading, setLoading] = useState(false);
 
   const allPcts = provider.connections
     .flatMap(c => Object.values(c.quotas || {}))
     .map(q => q.remainingPercentage ?? 100);
   const overallPct = allPcts.length > 0 ? Math.min(...allPcts) : 100;
   const hasQuota = provider.connections.some(c => c.quotaType !== "no-quota");
+  const isExcluded = excludedProviders.includes(provider.name.toLowerCase());
+
+  const handleProviderToggle = async (excluded: boolean) => {
+    setLoading(true);
+    try {
+      await onToggleProvider(provider.name, excluded);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <Card>
@@ -144,9 +206,16 @@ function ProviderSection({
             <CardTitle className="text-base sm:text-lg truncate">{provider.name}</CardTitle>
             <Badge variant="outline" className="shrink-0">{provider.connections.length} conns</Badge>
             {!hasQuota && <Badge variant="secondary" className="shrink-0">No quota</Badge>}
+            {isExcluded && <Badge variant="destructive" className="shrink-0">Guard Off</Badge>}
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
             {hasQuota && <QuotaBadge pct={overallPct} />}
+            <Switch
+              checked={!isExcluded}
+              onCheckedChange={(checked) => handleProviderToggle(!checked)}
+              disabled={loading}
+            />
+            {loading && <Loader2 className="h-4 w-4 animate-spin" />}
             <svg className={`h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="m6 9 6 6 6-6"/>
             </svg>
@@ -161,6 +230,7 @@ function ProviderSection({
               conn={conn}
               providerAlias={provider.name}
               onToggle={onToggle}
+              onToggleModel={onToggleModel}
             />
           ))}
         </CardContent>
@@ -194,11 +264,44 @@ export default function QuotaGuardPage() {
 
   const handleToggle = async (type: "model" | "connection" | "category", id: string, enable: boolean) => {
     try {
-      if (enable) {
-        await quotaGuard.enable({ providerAlias: "", type, id });
-      } else {
-        await quotaGuard.disable({ providerAlias: "", type, id });
+      let providerAlias = "";
+      for (const p of snapshot?.providers || []) {
+        for (const c of p.connections) {
+          if (c.id === id) {
+            providerAlias = p.name;
+            break;
+          }
+        }
+        if (providerAlias) break;
       }
+
+      if (enable) {
+        await quotaGuard.enable({ providerAlias, type, id });
+      } else {
+        await quotaGuard.disable({ providerAlias, type, id });
+      }
+      await fetchStatus();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  const handleToggleModel = async (providerAlias: string, modelId: string, enable: boolean) => {
+    try {
+      if (enable) {
+        await quotaGuard.enable({ providerAlias, type: "model", id: modelId });
+      } else {
+        await quotaGuard.disable({ providerAlias, type: "model", id: modelId });
+      }
+      await fetchStatus();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  const handleToggleProvider = async (provider: string, excluded: boolean) => {
+    try {
+      await quotaGuard.setProviderExcluded(provider, excluded);
       await fetchStatus();
     } catch (err: any) {
       setError(err.message);
@@ -296,7 +399,10 @@ export default function QuotaGuardPage() {
           <ProviderSection
             key={provider.name}
             provider={provider}
+            excludedProviders={scheduler?.excludedProviders || []}
             onToggle={handleToggle}
+            onToggleModel={handleToggleModel}
+            onToggleProvider={handleToggleProvider}
           />
         ))}
       </div>

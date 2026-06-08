@@ -10,12 +10,6 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: '3000',
-        DATABASE_URL: 'postgresql://monit_api:rendang123pg@localhost:5432/monit_api',
-        INTERNAL_API_SECRET: 'change-me-in-production',
-        PROXY_INTERNAL_BASE_URL: 'http://localhost:3000',
-        SESSION_SECRET: 'change-me-to-a-random-secret-string',
-        UPSTREAM_API_KEY: 'sk-16857f01c151b31f-toufiu-bf0391aa',
-        UPSTREAM_ENDPOINT: 'https://api3.tokito.xyz/v1',
       },
       error_file: './logs/proxy-error.log',
       out_file: './logs/proxy-out.log',

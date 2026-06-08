@@ -556,4 +556,6 @@ export const quotaGuard = {
     request<{ success: boolean }>("/quota-guard/enable", { method: "POST", body: JSON.stringify(data) }),
   updateScheduler: (data: { enabled?: boolean }) =>
     request<{ success: boolean }>("/quota-guard/scheduler", { method: "PUT", body: JSON.stringify(data) }),
+  setProviderExcluded: (provider: string, excluded: boolean) =>
+    request<{ success: boolean; excludedProviders: string[] }>("/quota-guard/provider", { method: "PUT", body: JSON.stringify({ provider, excluded }) }),
 };
