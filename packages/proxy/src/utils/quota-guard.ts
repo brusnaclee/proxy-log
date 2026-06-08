@@ -154,7 +154,14 @@ async function saveState(): Promise<void> {
 
 async function loadState(): Promise<void> {
   try {
-    if (!existsSync(STATE_FILE)) return;
+    const dir = dirname(STATE_FILE);
+    if (!existsSync(dir)) {
+      await mkdir(dir, { recursive: true });
+    }
+    if (!existsSync(STATE_FILE)) {
+      console.log(`[QuotaGuard] No state file found, starting fresh`);
+      return;
+    }
     const raw = await readFile(STATE_FILE, "utf-8");
     const data: PersistedState = JSON.parse(raw);
     if (data.guardStates) {
@@ -598,6 +605,9 @@ async function runQuotaGuardCycle() {
     }
 
     lastCycleAt = new Date().toISOString();
+
+    // Save state after each cycle
+    await saveState();
 
     // Build snapshot for dashboard
     latestSnapshot = {
