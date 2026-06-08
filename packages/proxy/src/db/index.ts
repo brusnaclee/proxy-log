@@ -4,20 +4,27 @@ import pg from 'pg';
 import * as schema from './schema.js';
 
 const DATABASE_URL = process.env.DATABASE_URL;
-if (!DATABASE_URL) {
-	throw new Error('DATABASE_URL environment variable is required');
+
+// Create pg Pool (deferred — dotenv loads env after ES module imports)
+let pool: pg.Pool;
+function getPool(): pg.Pool {
+  if (!pool) {
+    const url = DATABASE_URL || process.env.DATABASE_URL;
+    if (!url) {
+      throw new Error('DATABASE_URL environment variable is required');
+    }
+    pool = new pg.Pool({
+      connectionString: url,
+      max: 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 5000,
+    });
+  }
+  return pool;
 }
 
-// Create pg Pool
-const pool = new pg.Pool({
-	connectionString: DATABASE_URL,
-	max: 20,
-	idleTimeoutMillis: 30000,
-	connectionTimeoutMillis: 5000,
-});
-
 // Create Drizzle instance with schema
-export const db = drizzle(pool, { schema });
+export const db = drizzle(getPool(), { schema });
 
 /**
  * Initialize the database — push schema via Drizzle and seed defaults.
