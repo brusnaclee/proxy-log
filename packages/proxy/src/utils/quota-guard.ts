@@ -467,29 +467,116 @@ async function handleGuardPhases(
   }
 }
 
-// ─── Per-Model Handler ────────────────────────────────────────────────────────
+// ─── Per-Model Handler (Two-Tier: per-connection first, then global) ──────────
+
+// Track which models caused each connection to be disabled
+// connId -> Set of modelIds that are low on that connection
+const connDisabledReasons: Map<string, Set<string>> = new Map();
+
+// Track globally disabled models per provider
+// "providerAlias:modelId" -> { resetAt, disabledAt }
+const globalModelDisabled: Map<string, { resetAt: string; disabledAt: number }> = new Map();
 
 async function handlePerModelQuota(
   providerAlias: string,
   providerId: string,
-  quotas: Record<string, UsageQuotaValue>
+  connections: Connection[],
+  allConnectionQuotas: Map<string, Record<string, UsageQuotaValue>>
 ) {
-  for (const [modelId, quota] of Object.entries(quotas)) {
-    if (modelId === "session") continue;
-    const pct = quota.remainingPercentage ?? 0;
-    const isLow = pct <= QUOTA_THRESHOLD;
-    const key = `${providerId}:model:${modelId}`;
-    const label = `model:${providerAlias}/${modelId} (${pct}%)`;
+  // Collect all model IDs across all connections
+  const allModelIds = new Set<string>();
+  for (const quotas of allConnectionQuotas.values()) {
+    for (const modelId of Object.keys(quotas)) {
+      if (modelId !== "session") allModelIds.add(modelId);
+    }
+  }
 
-    await handleGuardPhases(
-      key, label, isLow, quota.resetAt,
-      async () => {
-        await apiPost("/api/models/disabled", { providerAlias, ids: [modelId] });
-      },
-      async () => {
-        await apiDelete(`/api/models/disabled?providerAlias=${providerAlias}&id=${modelId}`);
+  // Tier 1: Check each connection for each model
+  // Track which connections are disabled for each model
+  const modelDisabledConns: Map<string, Set<string>> = new Map(); // modelId -> Set<connId>
+  const modelResetAts: Map<string, string[]> = new Map(); // modelId -> [resetAt values]
+
+  for (const [connId, quotas] of allConnectionQuotas) {
+    for (const modelId of allModelIds) {
+      const quota = quotas[modelId];
+      if (!quota) continue;
+
+      const pct = quota.remainingPercentage ?? 0;
+      const isLow = pct <= QUOTA_THRESHOLD;
+      const key = `${connId}:model:${modelId}`;
+
+      if (isLow) {
+        // Track this connection as disabled for this model
+        if (!modelDisabledConns.has(modelId)) modelDisabledConns.set(modelId, new Set());
+        modelDisabledConns.get(modelId)!.add(connId);
+
+        // Track resetAt
+        if (quota.resetAt) {
+          if (!modelResetAts.has(modelId)) modelResetAts.set(modelId, []);
+          modelResetAts.get(modelId)!.push(quota.resetAt);
+        }
+
+        // Disable this connection if not already disabled
+        const gs = getGuardState(key);
+        if (gs.phase === "idle") {
+          console.log(`[QuotaGuard] DISABLE connection ${connId} for model ${providerAlias}/${modelId} (quota: ${pct}%)`);
+          await apiPut(`/api/providers/${connId}`, { isActive: false });
+          gs.phase = "cooldown";
+          gs.disabledAt = Date.now();
+          gs.phaseStartedAt = Date.now();
+          disabledByGuard.add(key);
+
+          // Track reason
+          if (!connDisabledReasons.has(connId)) connDisabledReasons.set(connId, new Set());
+          connDisabledReasons.get(connId)!.add(modelId);
+        }
+      } else {
+        // Model is OK on this connection — check if this connection was disabled for this model
+        const gs = getGuardState(key);
+        const wasDisabledForModel = connDisabledReasons.get(connId)?.has(modelId);
+
+        if (gs.phase !== "idle" && wasDisabledForModel) {
+          // Remove this model from the disabled reasons
+          connDisabledReasons.get(connId)?.delete(modelId);
+
+          // Only re-enable if NO other models are keeping this connection disabled
+          const remainingReasons = connDisabledReasons.get(connId);
+          if (!remainingReasons || remainingReasons.size === 0) {
+            console.log(`[QuotaGuard] ENABLE connection ${connId} for ${providerAlias} (all model reasons cleared)`);
+            await apiPut(`/api/providers/${connId}`, { isActive: true });
+            gs.phase = "idle";
+            gs.retryCount = 0;
+            gs.lockoutCount = 0;
+            disabledByGuard.delete(key);
+          }
+        }
       }
-    );
+    }
+  }
+
+  // Tier 2: For each model, check if ALL connections are disabled
+  const totalConns = allConnectionQuotas.size;
+
+  for (const modelId of allModelIds) {
+    const disabledConns = modelDisabledConns.get(modelId) || new Set();
+    const allDisabled = disabledConns.size >= totalConns && totalConns > 0;
+    const globalKey = `global:${providerId}:model:${modelId}`;
+    const wasGlobalDisabled = globalModelDisabled.has(globalKey);
+
+    if (allDisabled && !wasGlobalDisabled) {
+      // Use the longest resetAt across all connections
+      const resetAts = modelResetAts.get(modelId) || [];
+      const longestReset = resetAts.sort().reverse()[0] || "";
+
+      console.log(`[QuotaGuard] GLOBAL DISABLE model ${providerAlias}/${modelId} (all ${totalConns} connections disabled, resetAt: ${longestReset})`);
+      await apiPost("/api/models/disabled", { providerAlias, ids: [modelId] });
+      globalModelDisabled.set(globalKey, { resetAt: longestReset, disabledAt: Date.now() });
+    } else if (!allDisabled && wasGlobalDisabled) {
+      // At least one connection recovered — re-enable model globally
+      console.log(`[QuotaGuard] GLOBAL ENABLE model ${providerAlias}/${modelId} (connection recovered)`);
+      await apiDelete(`/api/models/disabled?providerAlias=${providerAlias}&id=${modelId}`);
+      globalModelDisabled.delete(globalKey);
+    }
   }
 }
 
@@ -608,6 +695,8 @@ async function runQuotaGuardCycle() {
 
       // Build connection snapshots
       const connSnapshots: ConnectionSnapshot[] = [];
+      // Collect per-model quotas across all connections for two-tier handling
+      const allConnectionQuotas: Map<string, Record<string, UsageQuotaValue>> = new Map();
 
       for (const conn of conns) {
         const usageData = await apiGet<UsageResponse>(`/api/usage/${conn.id}`);
@@ -641,6 +730,11 @@ async function runQuotaGuardCycle() {
         // Skip if no quota data
         if (!usageData?.quotas || Object.keys(quotas).length === 0) continue;
 
+        // Collect per-model quotas for two-tier handling (processed after loop)
+        if (quotaType === "per-model") {
+          allConnectionQuotas.set(conn.id, quotas);
+        }
+
         switch (quotaType) {
           case "per-session":
             await handlePerSessionQuota(providerAlias, conns, quotas);
@@ -649,12 +743,17 @@ async function runQuotaGuardCycle() {
             await handlePerCategoryQuota(providerAlias, conn.id, quotas);
             break;
           case "per-model":
-            await handlePerModelQuota(providerAlias, conn.id, quotas);
+            // Per-model handled after loop (two-tier: per-connection then global)
             break;
           case "no-quota":
           default:
             break;
         }
+      }
+
+      // Two-tier per-model handling: process all connections at once
+      if (allConnectionQuotas.size > 0 && !isExcluded) {
+        await handlePerModelQuota(providerAlias, providerName, conns, allConnectionQuotas);
       }
 
       providerSnapshots.push({
