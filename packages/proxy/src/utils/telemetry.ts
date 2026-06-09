@@ -31,6 +31,11 @@ function extractText(value: any): string {
   }
 
   if (typeof value === "object") {
+    // Skip image_url / image content blocks (base64 data inflates token count)
+    if (value.type === "image_url" || value.type === "image") return "";
+    // Skip data URIs (base64 encoded content)
+    if (typeof value.url === "string" && value.url.startsWith("data:")) return "";
+
     if (typeof value.text === "string") return value.text;
     if (typeof value.input_text === "string") return value.input_text;
     if (typeof value.output_text === "string") return value.output_text;
@@ -193,6 +198,11 @@ export function extractContextInfo(requestBody: any): ContextInfo {
     anchorSeed = canonicalContext;
     previewSource = canonicalContext;
     transcriptSnapshot = canonicalContext;
+  }
+
+  // Truncate context to ~1M tokens max (4M chars) to prevent inflated estimates from base64/binary data
+  if (canonicalContext.length > 4_000_000) {
+    canonicalContext = canonicalContext.slice(0, 4_000_000);
   }
 
   const contextTokensBefore = canonicalContext ? estimateTokens(canonicalContext) : 0;

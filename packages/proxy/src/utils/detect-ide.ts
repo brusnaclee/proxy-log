@@ -167,7 +167,8 @@ export function normalizeIdeName(ideName: string | null | undefined): string {
  * Estimate token count from text using the ~4 chars per token heuristic
  */
 export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
+  // Cap at 1M tokens — larger estimates are almost certainly inflated by base64/binary data
+  return Math.min(Math.ceil(text.length / 4), 1_000_000);
 }
 
 /**

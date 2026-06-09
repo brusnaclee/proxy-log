@@ -522,6 +522,7 @@ export interface QuotaGuardSnapshot {
 
 export interface ProviderSnapshot {
   name: string;
+  alias: string;
   connections: ConnectionSnapshot[];
 }
 

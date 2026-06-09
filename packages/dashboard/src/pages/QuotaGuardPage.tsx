@@ -228,7 +228,7 @@ function ProviderSection({
             <ConnectionCard
               key={conn.id}
               conn={conn}
-              providerAlias={provider.name}
+              providerAlias={provider.alias}
               onToggle={onToggle}
               onToggleModel={onToggleModel}
             />
@@ -268,7 +268,7 @@ export default function QuotaGuardPage() {
       for (const p of snapshot?.providers || []) {
         for (const c of p.connections) {
           if (c.id === id) {
-            providerAlias = p.name;
+            providerAlias = p.alias;
             break;
           }
         }
@@ -280,6 +280,7 @@ export default function QuotaGuardPage() {
       } else {
         await quotaGuard.disable({ providerAlias, type, id });
       }
+      await new Promise(r => setTimeout(r, 1500));
       await fetchStatus();
     } catch (err: any) {
       setError(err.message);
@@ -293,6 +294,7 @@ export default function QuotaGuardPage() {
       } else {
         await quotaGuard.disable({ providerAlias, type: "model", id: modelId });
       }
+      await new Promise(r => setTimeout(r, 1500));
       await fetchStatus();
     } catch (err: any) {
       setError(err.message);

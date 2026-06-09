@@ -34,6 +34,20 @@ const EXCLUDED_PROVIDERS_DEFAULT = (process.env.NINEROUTER_EXCLUDED_PROVIDERS ||
 const excludedProviders: Set<string> = new Set(EXCLUDED_PROVIDERS_DEFAULT);
 const STATE_FILE = process.env.QUOTA_GUARD_STATE_PATH || resolve(process.cwd(), "data", "quota_guard_state.json");
 
+// ─── Provider Alias Mapping ─────────────────────────────────────────────────
+// 9Router API uses short aliases (e.g. "ag") but /api/providers returns full names (e.g. "antigravity")
+const PROVIDER_ALIAS_MAP: Record<string, string> = {
+  antigravity: "ag",
+  glm: "glm",
+  minimax: "minimax",
+  xai: "xai",
+  ollama: "ollama",
+  nvidia: "nvidia",
+};
+function toAlias(name: string): string {
+  return PROVIDER_ALIAS_MAP[name.toLowerCase()] || name;
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type QuotaType = "per-model" | "per-session" | "per-category" | "no-quota";
@@ -89,6 +103,7 @@ export interface QuotaGuardSnapshot {
 
 export interface ProviderSnapshot {
   name: string;
+  alias: string;
   connections: ConnectionSnapshot[];
 }
 
@@ -585,6 +600,7 @@ async function runQuotaGuardCycle() {
     for (const [providerName, conns] of byProvider) {
       if (conns.length === 0) continue;
 
+      const providerAlias = toAlias(providerName);
       const isExcluded = excludedProviders.has(providerName.toLowerCase());
       if (isExcluded) {
         console.log(`[QuotaGuard] Skipping excluded provider: ${providerName}`);
@@ -627,13 +643,13 @@ async function runQuotaGuardCycle() {
 
         switch (quotaType) {
           case "per-session":
-            await handlePerSessionQuota(providerName, conns, quotas);
+            await handlePerSessionQuota(providerAlias, conns, quotas);
             break;
           case "per-category":
-            await handlePerCategoryQuota(providerName, conn.id, quotas);
+            await handlePerCategoryQuota(providerAlias, conn.id, quotas);
             break;
           case "per-model":
-            await handlePerModelQuota(providerName, conn.id, quotas);
+            await handlePerModelQuota(providerAlias, conn.id, quotas);
             break;
           case "no-quota":
           default:
@@ -643,6 +659,7 @@ async function runQuotaGuardCycle() {
 
       providerSnapshots.push({
         name: providerName,
+        alias: providerAlias,
         connections: connSnapshots,
       });
     }
@@ -718,24 +735,26 @@ export function isSchedulerRunning() {
 
 // Manual disable/enable for dashboard
 export async function manualDisable(providerAlias: string, type: "model" | "connection" | "category", id: string): Promise<boolean> {
+  const alias = toAlias(providerAlias);
   switch (type) {
     case "model":
-      return !!(await apiPost("/api/models/disabled", { providerAlias, ids: [id] }));
+      return !!(await apiPost("/api/models/disabled", { providerAlias: alias, ids: [id] }));
     case "connection":
       return !!(await apiPut(`/api/providers/${id}`, { isActive: false }));
     case "category":
-      return !!(await apiPost("/api/models/disabled", { providerAlias, ids: [`${id}/*`] }));
+      return !!(await apiPost("/api/models/disabled", { providerAlias: alias, ids: [`${id}/*`] }));
   }
 }
 
 export async function manualEnable(providerAlias: string, type: "model" | "connection" | "category", id: string): Promise<boolean> {
+  const alias = toAlias(providerAlias);
   switch (type) {
     case "model":
-      return !!(await apiDelete(`/api/models/disabled?providerAlias=${providerAlias}&id=${id}`));
+      return !!(await apiDelete(`/api/models/disabled?providerAlias=${alias}&id=${id}`));
     case "connection":
       return !!(await apiPut(`/api/providers/${id}`, { isActive: true }));
     case "category":
-      return !!(await apiDelete(`/api/models/disabled?providerAlias=${providerAlias}&id=${id}/*`));
+      return !!(await apiDelete(`/api/models/disabled?providerAlias=${alias}&id=${id}/*`));
   }
 }
 
