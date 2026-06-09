@@ -304,6 +304,8 @@ export default function QuotaGuardPage() {
   const handleToggleProvider = async (provider: string, excluded: boolean) => {
     try {
       await quotaGuard.setProviderExcluded(provider, excluded);
+      // Wait for 9Router to process connection changes
+      await new Promise(r => setTimeout(r, 2000));
       await fetchStatus();
     } catch (err: any) {
       setError(err.message);

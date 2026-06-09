@@ -733,6 +733,34 @@ export function isSchedulerRunning() {
   return isRunning;
 }
 
+// Toggle all connections for a provider on 9Router
+export async function toggleProviderConnections(providerName: string, active: boolean): Promise<{ success: boolean; toggled: number; errors: number }> {
+  const snapshot = latestSnapshot;
+  if (!snapshot) return { success: false, toggled: 0, errors: 0 };
+
+  const provider = snapshot.providers.find(p => p.name === providerName || p.alias === providerName);
+  if (!provider) {
+    console.error(`[QuotaGuard] Provider not found: ${providerName}`);
+    return { success: false, toggled: 0, errors: 0 };
+  }
+
+  let toggled = 0;
+  let errors = 0;
+
+  for (const conn of provider.connections) {
+    const result = await apiPut(`/api/providers/${conn.id}`, { isActive: active });
+    if (result !== null) {
+      toggled++;
+      console.log(`[QuotaGuard] ${active ? "Enabled" : "Disabled"} connection ${conn.name} (${conn.id})`);
+    } else {
+      errors++;
+      console.error(`[QuotaGuard] Failed to ${active ? "enable" : "disable"} connection ${conn.name} (${conn.id})`);
+    }
+  }
+
+  return { success: errors === 0, toggled, errors };
+}
+
 // Manual disable/enable for dashboard
 export async function manualDisable(providerAlias: string, type: "model" | "connection" | "category", id: string): Promise<boolean> {
   const alias = toAlias(providerAlias);

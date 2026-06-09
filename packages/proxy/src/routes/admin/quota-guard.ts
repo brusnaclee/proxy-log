@@ -7,6 +7,7 @@ import {
   setSchedulerEnabled,
   setProviderExcluded,
   getExcludedProviders,
+  toggleProviderConnections,
 } from "../../utils/quota-guard.js";
 
 const quotaGuard = new Hono();
@@ -68,7 +69,7 @@ quotaGuard.put("/quota-guard/scheduler", async (c) => {
   return c.json({ success: true, enabled: body.enabled });
 });
 
-// PUT /admin/quota-guard/provider — toggle guard for a specific provider
+// PUT /admin/quota-guard/provider — toggle guard exclusion AND connections on 9Router
 quotaGuard.put("/quota-guard/provider", async (c) => {
   const authErr = checkAdmin(c);
   if (authErr) return authErr;
@@ -78,8 +79,19 @@ quotaGuard.put("/quota-guard/provider", async (c) => {
     return c.json({ error: "Missing provider or excluded" }, 400);
   }
 
+  // Toggle guard exclusion (in-memory)
   setProviderExcluded(body.provider, body.excluded);
-  return c.json({ success: true, excludedProviders: getExcludedProviders() });
+
+  // Also toggle connections on 9Router (excluded = disable connections, included = enable)
+  const active = !body.excluded;
+  const result = await toggleProviderConnections(body.provider, active);
+
+  return c.json({
+    success: true,
+    excludedProviders: getExcludedProviders(),
+    connectionsToggled: result.toggled,
+    connectionErrors: result.errors,
+  });
 });
 
 export default quotaGuard;
