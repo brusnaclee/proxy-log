@@ -20,10 +20,12 @@ import { dirname, resolve } from "path";
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
-const BASE_URL = (process.env.NINEROUTER_BASE_URL || "https://api3.tokito.xyz").replace(/\/$/, "");
-const PASSWORD = process.env.NINEROUTER_PASSWORD || "";
-const QUOTA_THRESHOLD = parseInt(process.env.NINEROUTER_QUOTA_THRESHOLD || "20", 10);
-const POLL_INTERVAL_MS = parseInt(process.env.NINEROUTER_POLL_INTERVAL_MS || "60000", 10);
+// NOTE: These are initialized as empty and re-read in initializeQuotaGuardScheduler()
+// because dotenv loads AFTER module imports in index.ts.
+let BASE_URL = (process.env.NINEROUTER_BASE_URL || "https://api3.tokito.xyz").replace(/\/$/, "");
+let PASSWORD = process.env.NINEROUTER_PASSWORD || "";
+let QUOTA_THRESHOLD = parseInt(process.env.NINEROUTER_QUOTA_THRESHOLD || "20", 10);
+let POLL_INTERVAL_MS = parseInt(process.env.NINEROUTER_POLL_INTERVAL_MS || "60000", 10);
 const COOLDOWN_MS = 10 * 60 * 1000;
 const RECHECK_MS = 5 * 60 * 1000;
 const LOCKOUT_MS = 60 * 60 * 1000;
@@ -742,10 +744,14 @@ export async function manualEnable(providerAlias: string, type: "model" | "conne
 let schedulerStarted = false;
 
 export async function initializeQuotaGuardScheduler() {
-  const baseUrl = process.env.NINEROUTER_BASE_URL;
-  const password = process.env.NINEROUTER_PASSWORD;
+  // Re-read env vars now that dotenv has loaded (module-level constants were
+  // captured before dotenv ran in index.ts, so they would be empty).
+  BASE_URL = (process.env.NINEROUTER_BASE_URL || BASE_URL).replace(/\/$/, "");
+  PASSWORD = process.env.NINEROUTER_PASSWORD || PASSWORD;
+  QUOTA_THRESHOLD = parseInt(process.env.NINEROUTER_QUOTA_THRESHOLD || String(QUOTA_THRESHOLD), 10);
+  POLL_INTERVAL_MS = parseInt(process.env.NINEROUTER_POLL_INTERVAL_MS || String(POLL_INTERVAL_MS), 10);
 
-  if (!baseUrl || !password) {
+  if (!BASE_URL || !PASSWORD) {
     console.log("[QuotaGuard] NINEROUTER_BASE_URL or NINEROUTER_PASSWORD not set, scheduler disabled");
     return;
   }
