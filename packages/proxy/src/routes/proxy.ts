@@ -1239,7 +1239,24 @@ proxy.all('/*', async (c) => {
 		if (requestBody.max_tokens !== undefined)
 			chatBody.max_tokens = requestBody.max_tokens;
 		if (requestBody.top_p !== undefined) chatBody.top_p = requestBody.top_p;
-		if (requestBody.tools) chatBody.tools = requestBody.tools;
+		if (Array.isArray(requestBody.tools)) {
+			// Responses API uses flat tools: {name, description, parameters, strict}
+			// Chat Completions needs nested: {type: "function", function: {...}}
+			// (mimo and other strict upstreams reject flat shape with "`function` is not set")
+			chatBody.tools = requestBody.tools.map((t: any) => {
+				if (!t) return t;
+				if (t.function && typeof t.function === "object") return t; // already nested
+				return {
+					type: "function",
+					function: {
+						name: t.name,
+						description: t.description,
+						parameters: t.parameters,
+						strict: t.strict,
+					},
+				};
+			});
+		}
 		if (requestBody.stop) chatBody.stop = requestBody.stop;
 
 		requestBody = chatBody;
@@ -3129,9 +3146,23 @@ proxy.all('/*', async (c) => {
 				completionTokens = Math.max(estimateTokens(responseBody), 1);
 			}
 		} catch {
-			// Body might not be JSON — capture raw error for non-2xx responses
+			// Body might not be JSON — try to recover from SSE-style error bodies
+			// (some upstreams return `data:{"error":...}\n\n` instead of plain JSON)
 			if (statusCode >= 400 && responseBody) {
-				errorMessage = responseBody.slice(0, 500);
+				const sseMatch = /^data:\s*(\{.*?\})\s*(?:\n\n|$)/s.exec(responseBody.trim());
+				if (sseMatch) {
+					try {
+						const parsed = JSON.parse(sseMatch[1]);
+						if (parsed?.error) {
+							const errMsg = parsed.error.message || JSON.stringify(parsed.error);
+							const errParam = parsed.error.param ? ` (param: ${parsed.error.param})` : "";
+							errorMessage = errMsg + errParam;
+						}
+					} catch {}
+				}
+				if (!errorMessage) {
+					errorMessage = responseBody.slice(0, 500);
+				}
 				console.warn(`[proxy] Upstream ${statusCode} for model "${model}": ${errorMessage.slice(0, 200)}`);
 			}
 		}
