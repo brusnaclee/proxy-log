@@ -7,8 +7,15 @@ export interface MessageAnalysis {
   messageContent: string | null;
   userMessageCount: number;
   assistantMessageCount: number;
+  toolMessageCount: number;
   isRawFormat?: boolean;
   turnKind?: "user_prompt" | "tool_followup" | "internal";
+  /**
+   * True when the last "user" message is a follow-up added to an ongoing
+   * tool-execution chain (e.g. OpenCode appends a new instruction at the end
+   * of `tool` role messages). This should NOT count as a new prompt.
+   */
+  isToolChainFollowup?: boolean;
 }
 
 /**
@@ -246,6 +253,54 @@ export function analyzeRequestMessages(requestBody: any): MessageAnalysis {
 
   const messageHash = content ? sha256(content) : null;
   const finalHasUserMessage = effectiveRole === "user";
+
+  // Detect "tool chain followup": OpenCode-style flow where the request
+  // contains a sequence of [assistant, tool, tool, ..., user] and the final
+  // "user" message is a new instruction appended to an ongoing tool chain.
+  // The existing `effectiveRole === "tool"` only fires when the *last* message
+  // is a tool result wrapper. This catches the case where the *last* message
+  // is a new user instruction but it follows a chain of tool messages.
+  let isToolChainFollowup = false;
+  if (
+    finalHasUserMessage &&
+    toolMessageCount > 0 &&
+    assistantMessageCount > 0 &&
+    Array.isArray(requestBody?.messages)
+  ) {
+    // Walk backwards from the last user message and check if we hit tool/assistant
+    // messages before another user message. If so, this user message is a
+    // follow-up added mid-chain, not a new prompt.
+    const msgs: any[] = requestBody.messages;
+    let foundUserAtIndex = -1;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (String(msgs[i]?.role || "").toLowerCase() === "user") {
+        foundUserAtIndex = i;
+        break;
+      }
+    }
+    if (foundUserAtIndex > 0) {
+      // Check what's immediately before the last user message
+      const prev = msgs[foundUserAtIndex - 1];
+      const prevRole = String(prev?.role || "").toLowerCase();
+      // If previous message is tool or assistant (with tool_calls), this is
+      // a follow-up appended to a tool chain.
+      if (prevRole === "tool") {
+        isToolChainFollowup = true;
+      } else if (prevRole === "assistant") {
+        // Check if assistant has tool_calls
+        const tc = prev?.tool_calls || prev?.toolCallCalls || prev?.function_call;
+        if (tc && Array.isArray(tc) && tc.length > 0) {
+          isToolChainFollowup = true;
+        } else {
+          // Check content for tool_call markers (OpenCode text format)
+          const assistantContent = typeof prev?.content === "string" ? prev.content : "";
+          if (/\[tool_call[s]?:/i.test(assistantContent) || /```tool_call/i.test(assistantContent)) {
+            isToolChainFollowup = true;
+          }
+        }
+      }
+    }
+  }
   
   let turnKind: MessageAnalysis["turnKind"] = "internal";
   if (finalHasUserMessage) turnKind = "user_prompt";
@@ -258,7 +313,9 @@ export function analyzeRequestMessages(requestBody: any): MessageAnalysis {
     messageContent: content.substring(0, 500),
     userMessageCount,
     assistantMessageCount,
+    toolMessageCount,
     turnKind,
+    isToolChainFollowup,
   };
 }
 
@@ -307,9 +364,37 @@ export function getLastTurnTextForTokenEstimate(requestBody: any): string {
 export function detectToolCallsInResponse(responseBody: any): boolean {
   if (responseBody?.choices?.[0]?.message?.tool_calls) return true;
   if (responseBody?.choices?.[0]?.message?.function_call) return true;
+  if (responseBody?.choices?.[0]?.delta?.tool_calls) return true;
+  if (responseBody?.choices?.[0]?.delta?.function_call) return true;
   if (responseBody?.content) {
     const content = Array.isArray(responseBody.content) ? responseBody.content : [responseBody.content];
-    return content.some((item: any) => item.type === "tool_use");
+    if (content.some((item: any) => item.type === "tool_use")) return true;
   }
+  // OpenCode text-format tool_call markers (used in Cline/OpenCode chat streams)
+  const text = extractTextContent(responseBody);
+  if (text && /\[tool_call[s]?:\d+/i.test(text)) return true;
+  if (text && /```tool_call\b/i.test(text)) return true;
   return false;
+
+  // helper: pull plain text from any response shape
+  function extractTextContent(rb: any): string {
+    if (!rb) return "";
+    if (typeof rb.content === "string") return rb.content;
+    if (Array.isArray(rb.content)) {
+      return rb.content
+        .map((c: any) => (typeof c === "string" ? c : c?.text || ""))
+        .join(" ");
+    }
+    if (rb.choices?.[0]?.message?.content) {
+      const c = rb.choices[0].message.content;
+      if (typeof c === "string") return c;
+      if (Array.isArray(c)) return c.map((x: any) => x?.text || "").join(" ");
+    }
+    if (rb.choices?.[0]?.delta?.content) {
+      const c = rb.choices[0].delta.content;
+      if (typeof c === "string") return c;
+      if (Array.isArray(c)) return c.map((x: any) => x?.text || "").join(" ");
+    }
+    return "";
+  }
 }

@@ -659,8 +659,13 @@ async function resolveChatSession(params: {
 	let isNewUserPrompt = false;
 	const toolCount = params.requestToolCount ?? 0;
 	const role = params.messageAnalysis.messageRole;
+	const isToolChainFollowup = params.messageAnalysis.isToolChainFollowup === true;
 
 	if (role && role !== 'user') {
+		isNewUserPrompt = false;
+	} else if (isToolChainFollowup) {
+		// OpenCode-style: the last "user" message is a follow-up appended
+		// to an ongoing tool-execution chain. This is NOT a new prompt.
 		isNewUserPrompt = false;
 	} else if (params.messageAnalysis.hasUserMessage && hashChanged) {
 		if (params.messageAnalysis.isRawFormat) {
