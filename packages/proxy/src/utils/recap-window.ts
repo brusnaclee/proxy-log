@@ -37,6 +37,8 @@ export function computeOpenDay(year: number, monthIndex0: number): number {
 
 export interface RecapWindow {
   isOpen: boolean;
+  /** Whether the panel button should be visible in the channel (from the 25th through the 5th). */
+  panelVisible: boolean;
   /** Target month being recapped, "YYYY-MM". */
   yearMonth: string;
   /** Human label e.g. "Mei 2026". */
@@ -113,6 +115,7 @@ export function getRecapWindow(now: Date = new Date()): RecapWindow {
 
   return {
     isOpen,
+    panelVisible: day >= 25 || day <= 5,
     yearMonth: ym(targetYear, targetMonth0),
     monthLabel,
     openDay: targetOpenDay,

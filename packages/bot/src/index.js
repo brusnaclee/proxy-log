@@ -92,7 +92,7 @@ const RECAP_PUBLIC_BASE_URL = (
 	process.env.RECAP_PUBLIC_BASE_URL || PROXY_PUBLIC_BASE_URL || 'https://api.tokito.xyz'
 ).replace(/\/$/, '');
 const RECAP_DEBUG_INTERVAL_MS = 24 * 60 * 60 * 1000; // daily
-let recapState = { panelMessageId: null };
+let recapState = { panelMessageId: null, debugPanelMessageId: null };
 
 async function proxyInternal(pathname, method = 'GET', body = null) {
 	const headers = {
@@ -2641,13 +2641,49 @@ function buildRecapRow() {
 	);
 }
 
+// Debug panel: anyone can generate their own OR view someone else's by user id.
+function buildRecapDebugEmbed(win) {
+	return new EmbedBuilder()
+		.setTitle('🛠️ Recap Debug Panel')
+		.setColor(0x22d3ee)
+		.setDescription(
+			'Panel debug recap (selalu aktif untuk testing).\n\n' +
+			'🎁 **Generate Recap-ku** — buat & lihat recap kamu sendiri.\n' +
+			'🔍 **Lihat Recap User** — masukkan User ID untuk lihat recap orang lain.\n\n' +
+			(win ? `Bulan target: **${win.monthLabel}** • Window: ${win.isOpen ? '🟢 OPEN' : '🔒 CLOSED'}` : ''),
+		)
+		.setFooter({ text: 'Debug only • data di-generate ulang tiap hari' });
+}
+
+function buildRecapDebugRow() {
+	return new ActionRowBuilder().addComponents(
+		new ButtonBuilder().setCustomId('recap_debug_self').setLabel('🎁 Generate Recap-ku').setStyle(ButtonStyle.Success),
+		new ButtonBuilder().setCustomId('recap_debug_other').setLabel('🔍 Lihat Recap User').setStyle(ButtonStyle.Primary),
+	);
+}
+
+// Panel in the AGVERIF channel — only present while the window panel is visible
+// (from the 25th through the 5th). Removed otherwise. Role-gated on click.
 async function ensureRecapMessage() {
-	if (!TOKITO_CHANNEL_ID) return;
-	const channel = await client.channels.fetch(TOKITO_CHANNEL_ID).catch(() => null);
+	if (!AGVERIF_CHANNEL_ID) return;
+	const channel = await client.channels.fetch(AGVERIF_CHANNEL_ID).catch(() => null);
 	if (!channel || !channel.isTextBased()) return;
 
 	let win = null;
 	try { win = await proxyInternal('/admin/internal/recap/window'); } catch { /* ignore */ }
+
+	const shouldShow = win ? !!win.panelVisible : false;
+
+	// If it should not be visible, remove any existing panel and stop.
+	if (!shouldShow) {
+		if (recapState.panelMessageId) {
+			const existing = await channel.messages.fetch(recapState.panelMessageId).catch(() => null);
+			if (existing) await existing.delete().catch(() => {});
+			recapState.panelMessageId = null;
+			await saveRecapState();
+		}
+		return;
+	}
 
 	// Reuse existing message if present.
 	if (recapState.panelMessageId) {
@@ -2668,6 +2704,33 @@ async function ensureRecapMessage() {
 	}
 }
 
+// Persistent panel in the DEBUG channel — always present (for testing).
+async function ensureRecapDebugMessage() {
+	if (!RECAP_DEBUG_CHANNEL_ID) return;
+	const channel = await client.channels.fetch(RECAP_DEBUG_CHANNEL_ID).catch(() => null);
+	if (!channel || !channel.isTextBased()) return;
+
+	let win = null;
+	try { win = await proxyInternal('/admin/internal/recap/window'); } catch { /* ignore */ }
+
+	if (recapState.debugPanelMessageId) {
+		const existing = await channel.messages.fetch(recapState.debugPanelMessageId).catch(() => null);
+		if (existing) {
+			await existing.edit({ embeds: [buildRecapDebugEmbed(win)], components: [buildRecapDebugRow()] }).catch(() => {});
+			return;
+		}
+	}
+
+	const sent = await channel.send({ embeds: [buildRecapDebugEmbed(win)], components: [buildRecapDebugRow()] }).catch((e) => {
+		console.error('[recap] Failed to send debug panel:', e.message);
+		return null;
+	});
+	if (sent) {
+		recapState.debugPanelMessageId = sent.id;
+		await saveRecapState();
+	}
+}
+
 function fmtRecapNum(n) {
 	n = Number(n) || 0;
 	if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
@@ -2684,29 +2747,48 @@ const RECAP_PROGRESS_STAGES = [
 ];
 
 async function handleMonthlyRecap(interaction) {
-	const userId = interaction.user.id;
-	await interaction.deferReply({ ephemeral: true });
-
-	// Window gate
+	// Role gate: only members with REQUIRED_ROLE can use the agverif panel button.
+	if (REQUIRED_ROLE_ID && interaction.member && !interaction.member.roles.cache.has(REQUIRED_ROLE_ID)) {
+		const role = interaction.guild?.roles.cache.get(REQUIRED_ROLE_ID);
+		await interaction.reply({
+			content: `Anda memerlukan role **${role ? role.name : 'Required Role'}** untuk membuka recap.`,
+			ephemeral: true,
+		});
+		return;
+	}
+	// Window gate first (cheap reply before defer when closed).
 	let win = null;
 	try { win = await proxyInternal('/admin/internal/recap/window'); } catch { /* ignore */ }
 	if (win && !win.isOpen) {
-		await interaction.editReply({ content: `🔒 ${win.message}` });
+		await interaction.reply({ content: `🔒 ${win.message}`, ephemeral: true });
 		return;
 	}
+	await interaction.deferReply({ ephemeral: true });
+	await generateAndReplyRecap(interaction, interaction.user, { self: true });
+}
 
-	// Live progress edits while generation runs.
+/**
+ * Core recap generation + ephemeral reply. Works for self or another user.
+ * Assumes interaction is already deferred (ephemeral).
+ * @param targetUser - a Discord User-like { id, username, displayAvatarURL } or { id, username } for others.
+ */
+async function generateAndReplyRecap(interaction, targetUser, opts = {}) {
+	const userId = targetUser.id;
+	const self = !!opts.self;
+
 	let stage = 0;
 	let done = false;
-	const avatarUrl = interaction.user.displayAvatarURL({ size: 256, extension: 'png' });
-	const username = interaction.user.username;
+	const avatarUrl = typeof targetUser.displayAvatarURL === 'function'
+		? targetUser.displayAvatarURL({ size: 256, extension: 'png' })
+		: undefined;
+	const username = targetUser.username;
 	const progress = async () => {
 		if (done) return;
 		const pct = Math.min(95, (stage + 1) * 19);
 		const bar = '█'.repeat(Math.round(pct / 10)) + '░'.repeat(10 - Math.round(pct / 10));
 		const embed = new EmbedBuilder()
 			.setColor(0x7c3aed)
-			.setTitle('🎁 Membuat Recap Kamu...')
+			.setTitle(self ? '🎁 Membuat Recap Kamu...' : `🔍 Mengambil Recap ${username || userId}...`)
 			.setDescription(`${RECAP_PROGRESS_STAGES[Math.min(stage, RECAP_PROGRESS_STAGES.length - 1)]}\n\`${bar}\` ${pct}%`);
 		await interaction.editReply({ embeds: [embed] }).catch(() => {});
 		stage++;
@@ -2722,7 +2804,7 @@ async function handleMonthlyRecap(interaction) {
 		const s = data.stats || {};
 		const totals = s.totals || {};
 		const persona = (data.narrative && data.narrative.persona) || {};
-		const recapUrl = `${RECAP_PUBLIC_BASE_URL}/recap/${encodeURIComponent(data.apiKeyName || username)}`;
+		const recapUrl = `${RECAP_PUBLIC_BASE_URL}/recap/${encodeURIComponent(data.apiKeyName || username || userId)}`;
 
 		const rankReq = (data.rank && data.rank.requests) || 0;
 		const rankTok = (data.rank && data.rank.tokens) || 0;
@@ -2731,8 +2813,7 @@ async function handleMonthlyRecap(interaction) {
 
 		const embed = new EmbedBuilder()
 			.setColor(0xec4899)
-			.setTitle(`🎁 Recap ${data.monthLabel || ''} — ${username}`)
-			.setThumbnail(avatarUrl)
+			.setTitle(`🎁 Recap ${data.monthLabel || ''} — ${username || userId}`)
 			.setDescription(
 				`**${persona.title || 'Coder'}** — ${persona.subtitle || ''}`,
 			)
@@ -2747,6 +2828,7 @@ async function handleMonthlyRecap(interaction) {
 				{ name: '🕐 Jam Sibuk', value: hr, inline: true },
 			)
 			.setFooter({ text: 'Klik tombol di bawah untuk lihat recap lengkap dengan animasi!' });
+		if (avatarUrl) embed.setThumbnail(avatarUrl);
 
 		const row = new ActionRowBuilder().addComponents(
 			new ButtonBuilder().setLabel('🎬 Buka Recap (Animasi)').setStyle(ButtonStyle.Link).setURL(recapUrl),
@@ -2757,10 +2839,46 @@ async function handleMonthlyRecap(interaction) {
 		done = true;
 		clearInterval(timer);
 		const msg = /not found/i.test(err.message)
-			? 'Kamu belum punya API key. Verifikasi dulu untuk dapat recap ya!'
+			? (self ? 'Kamu belum punya API key. Verifikasi dulu untuk dapat recap ya!' : 'User tersebut tidak punya API key / data recap.')
 			: `Gagal membuat recap: ${err.message}`;
 		await interaction.editReply({ content: `⚠️ ${msg}`, embeds: [] }).catch(() => {});
 	}
+}
+
+// Debug: generate own recap (no role/window gate — for testing).
+async function handleRecapDebugSelf(interaction) {
+	await interaction.deferReply({ ephemeral: true });
+	await generateAndReplyRecap(interaction, interaction.user, { self: true });
+}
+
+// Debug: open a modal to enter a user id to view someone else's recap.
+async function handleRecapDebugOtherButton(interaction) {
+	const modal = new ModalBuilder().setCustomId('recap_debug_other_modal').setTitle('🔍 Lihat Recap User');
+	const input = new TextInputBuilder()
+		.setCustomId('discord_user_id')
+		.setLabel('Discord User ID')
+		.setStyle(TextInputStyle.Short)
+		.setRequired(true)
+		.setMinLength(5)
+		.setMaxLength(25);
+	modal.addComponents(new ActionRowBuilder().addComponents(input));
+	await interaction.showModal(modal);
+}
+
+async function handleRecapDebugOtherModal(interaction) {
+	const rawId = (interaction.fields.getTextInputValue('discord_user_id') || '').trim().replace(/[^0-9]/g, '');
+	await interaction.deferReply({ ephemeral: true });
+	if (!rawId) {
+		await interaction.editReply({ content: '⚠️ User ID tidak valid.' });
+		return;
+	}
+	// Try to resolve username/avatar for nicer output (optional).
+	let targetUser = { id: rawId, username: rawId };
+	try {
+		const u = await client.users.fetch(rawId);
+		targetUser = u;
+	} catch { /* user not reachable; proceed with id only */ }
+	await generateAndReplyRecap(interaction, targetUser, { self: false });
 }
 
 // ─── Daily recap regeneration + debug post ──────────────────────────────────
@@ -2849,8 +2967,9 @@ async function runDailyRecapJob() {
 		console.error('[recap] debug post failed:', err.message);
 	}
 
-	// Refresh the public panel embed (window label may change).
+	// Refresh the public panel embed (window label/visibility may change).
 	await ensureRecapMessage().catch(() => {});
+	await ensureRecapDebugMessage().catch(() => {});
 	console.log(`[recap] Daily job done: ${ok} ok, ${fail} fail.`);
 }
 
@@ -3248,6 +3367,7 @@ client.once('clientReady', async () => {
 	// Monthly Recap: panel + daily regeneration/debug job
 	await loadRecapState();
 	await ensureRecapMessage().catch((err) => console.error('[recap] ensure panel error:', err.message));
+	await ensureRecapDebugMessage().catch((err) => console.error('[recap] ensure debug panel error:', err.message));
 	// Run shortly after startup, then every 24h.
 	setTimeout(() => { runDailyRecapJob().catch((err) => console.error('[recap] daily job error:', err.message)); }, 15000);
 	setInterval(() => {
@@ -3423,6 +3543,20 @@ client.on('interactionCreate', async (interaction) => {
 		// ─── Monthly Recap Button ────────────────────────────────────────────
 		if (interaction.isButton() && interaction.customId === 'monthly_recap') {
 			await handleMonthlyRecap(interaction);
+			return;
+		}
+
+		// ─── Recap Debug Panel (debug channel) ───────────────────────────────
+		if (interaction.isButton() && interaction.customId === 'recap_debug_self') {
+			await handleRecapDebugSelf(interaction);
+			return;
+		}
+		if (interaction.isButton() && interaction.customId === 'recap_debug_other') {
+			await handleRecapDebugOtherButton(interaction);
+			return;
+		}
+		if (interaction.isModalSubmit() && interaction.customId === 'recap_debug_other_modal') {
+			await handleRecapDebugOtherModal(interaction);
 			return;
 		}
 
