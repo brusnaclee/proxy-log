@@ -236,6 +236,31 @@ async function fetchPerDay(keyId: number, start: Date, end: Date): Promise<DaySt
   }));
 }
 
+/** Per-hour-of-day (WIB) request + output token buckets. */
+async function fetchPerHour(keyId: number, start: Date, end: Date): Promise<HourStat[]> {
+  const { output } = getTokenMultipliers();
+  const rows = (await db.execute(sql`
+    SELECT hour,
+      COUNT(DISTINCT turn_id) AS requests,
+      COALESCE(SUM(completion_tokens), 0) AS output_raw
+    FROM (
+      SELECT CAST(to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'HH24') AS INTEGER) AS hour,
+        turn_id, completion_tokens
+      FROM request_logs
+      WHERE api_key_id = ${keyId} AND created_at >= ${start} AND created_at < ${end}
+        AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+    ) h
+    GROUP BY hour
+    ORDER BY hour
+  `)).rows as any[];
+
+  return rows.map((r) => ({
+    hour: num(r.hour),
+    requests: num(r.requests),
+    outputTokens: Math.round(num(r.output_raw) * output),
+  }));
+}
+
 /** Aux per-request stats: sessions, ide, devices, tools, latency, errors, weekday split. */
 async function fetchAux(keyId: number, start: Date, end: Date) {
   const sessionRow = (await db.execute(sql`
