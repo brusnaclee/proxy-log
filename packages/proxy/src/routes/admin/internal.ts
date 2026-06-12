@@ -3,10 +3,12 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { adminConfig, allowedDevices, allowedIdes, apiKeys, devices, requestLogs, modelLimits, providers } from "../../db/schema.js";
 import { generateApiKey, getKeyPrefix, sha256 } from "../../utils/crypto.js";
+import { getModelRates } from "../../utils/cost-calculator.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
 import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindowResetMs } from "../../utils/rate-limit.js";
 import { isInternalRequest } from "../../middleware/session.js";
 import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, sanitizeRows } from "../../utils/counting.js";
+import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 
 const internal = new Hono();
 
@@ -387,6 +389,7 @@ internal.get("/internal/stats/overview", async (c) => {
 });
 
 internal.get("/internal/stats/ranking", async (c) => {
+  const { input: tmInput, output: tmOutput } = getTokenMultipliers();
   const now = new Date();
   const wibOffset = 7 * 60 * 60 * 1000;
   const wibNow = new Date(now.getTime() + wibOffset);
@@ -399,7 +402,7 @@ internal.get("/internal/stats/ranking", async (c) => {
 
   async function getTopModelsByRequests(since: Date) {
     const rows = sanitizeRows((await db.execute(sql`
-      SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta + sum_c), 0) as tokens
+      SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta * ${tmInput} + sum_c * ${tmOutput}), 0) as tokens
       FROM (
         SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
           turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
@@ -418,7 +421,7 @@ internal.get("/internal/stats/ranking", async (c) => {
 
   async function getTopModelsByTokens(since: Date) {
     const rows = (await db.execute(sql`
-      SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta + sum_c), 0) as tokens
+      SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta * ${tmInput} + sum_c * ${tmOutput}), 0) as tokens
       FROM (
         SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
           turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
@@ -437,7 +440,7 @@ internal.get("/internal/stats/ranking", async (c) => {
 
   async function getTopUsersByRequests(since: Date) {
     const rows = (await db.execute(sql`
-      SELECT api_key_id as "apiKeyId", COUNT(*) as requests, COALESCE(SUM(sum_delta + sum_c), 0) as tokens
+      SELECT api_key_id as "apiKeyId", COUNT(*) as requests, COALESCE(SUM(sum_delta * ${tmInput} + sum_c * ${tmOutput}), 0) as tokens
       FROM (SELECT api_key_id, turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
         FROM request_logs WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 AND is_counted_request = true
         GROUP BY api_key_id, turn_id)
@@ -466,9 +469,9 @@ internal.get("/internal/stats/ranking", async (c) => {
     async function getTopUsersByTokens(since: Date) {
     const rows = (await db.execute(sql`
       SELECT api_key_id as "apiKeyId", COUNT(*) as requests,
-        COALESCE(SUM(sum_delta + sum_c), 0) as tokens,
-        COALESCE(SUM(sum_delta), 0) as "promptTokens",
-        COALESCE(SUM(sum_c), 0) as "completionTokens"
+        COALESCE(SUM(sum_delta * ${tmInput} + sum_c * ${tmOutput}), 0) as tokens,
+        COALESCE(SUM(sum_delta) * ${tmInput}, 0) as "promptTokens",
+        COALESCE(SUM(sum_c) * ${tmOutput}, 0) as "completionTokens"
       FROM (SELECT api_key_id, turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
         FROM request_logs WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 AND is_billable_token = true
         GROUP BY api_key_id, turn_id)
@@ -536,6 +539,7 @@ internal.get("/internal/stats/ranking", async (c) => {
 });
 
 internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
+  const { input: umInput, output: umOutput } = getTokenMultipliers();
   const discordUserId = c.req.param("discordUserId");
   const key = await findKeyByDiscordUser(discordUserId);
   if (!key) return c.json({ error: "User not found" }, 404);
@@ -553,7 +557,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
 
   async function getTopModels(since: Date) {
     const rows = (await db.execute(sql`
-      SELECT model, COUNT(*) as requests, COALESCE(SUM(sum_delta + sum_c), 0) as tokens
+      SELECT model, COUNT(*) as requests, COALESCE(SUM(sum_delta * ${umInput} + sum_c * ${umOutput}), 0) as tokens
       FROM (
         SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
           turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
@@ -572,16 +576,38 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
 
   async function getPeriodStats(since: Date) {
     const whereClause = and(eq(requestLogs.apiKeyId, keyId), sql`created_at >= ${since}`, VALID_LOG_SQL);
-    return (await db.select({
+    const s = (await db.select({
       requests: turnCountSql(whereClause),
       tokens: turnTotalTokensSql(whereClause),
       promptTokens: turnPromptTokensSql(whereClause),
       completionTokens: turnCompletionTokensSql(whereClause),
       contextTokens: sql<number>`0`,
-      estimatedCost: sql<number>`COALESCE(SUM(estimated_cost), 0)`,
     })
     .from(requestLogs)
     .where(whereClause))[0];
+
+    // Cost derived from scaled per-model token split so it stays consistent.
+    const breakdown = sanitizeRows((await db.execute(sql`
+      SELECT model, COALESCE(SUM(sum_delta) * ${umInput}, 0) as "promptTokens", COALESCE(SUM(sum_c) * ${umOutput}, 0) as "completionTokens"
+      FROM (SELECT model, turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
+        FROM request_logs WHERE api_key_id = ${keyId} AND created_at >= ${since} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+        GROUP BY model, turn_id)
+      GROUP BY model
+    `)).rows as any[], ['promptTokens', 'completionTokens']);
+    let estimatedCost = 0;
+    for (const row of breakdown as any[]) {
+      const rates = getModelRates(row.model || "");
+      estimatedCost += row.promptTokens * rates.prompt + row.completionTokens * rates.completion;
+    }
+
+    return {
+      requests: s?.requests || 0,
+      tokens: s?.tokens || 0,
+      promptTokens: s?.promptTokens || 0,
+      completionTokens: s?.completionTokens || 0,
+      contextTokens: s?.contextTokens || 0,
+      estimatedCost: Math.round(estimatedCost),
+    };
   }
 
   const [todayStats, monthStats, todayModels, monthModels] = await Promise.all([

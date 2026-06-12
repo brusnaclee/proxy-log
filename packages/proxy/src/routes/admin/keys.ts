@@ -6,6 +6,7 @@ import { generateApiKey, getKeyPrefix, sha256, maskKey } from "../../utils/crypt
 import { normalizeIdeName } from "../../utils/detect-ide.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, sanitizeRows } from "../../utils/counting.js";
+import { applyTokenMultiplierRows, getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { apiKeyCache, statsCache } from "../../utils/cache.js";
 
 const keys = new Hono();
@@ -45,6 +46,15 @@ keys.get("/keys", async (c) => {
       cost: sql<number>`COALESCE(SUM(estimated_cost), 0)`,
     })
       .from(requestLogs).where(todayWhere))[0];
+    // Cost scaled from the token split so it stays consistent with multiplied tokens.
+    const todayBreakdown = applyTokenMultiplierRows(sanitizeRows((await db.execute(sql`
+      SELECT model, COALESCE(SUM(sum_delta), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
+      FROM (SELECT model, turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
+        FROM request_logs WHERE api_key_id = ${key.id} AND created_at >= ${todayUtcDate} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+        GROUP BY model, turn_id)
+      GROUP BY model
+    `)).rows as any[], ['promptTokens', 'completionTokens']));
+    const todayCost = calculateBreakdownCosts(todayBreakdown as any).totalCost;
     const deviceCount = (await db.select({ count: sql<number>`count(*)` }).from(devices).where(eq(devices.apiKeyId, key.id)))[0];
     const totalWhere = and(eq(requestLogs.apiKeyId, key.id), VALID_LOG_SQL)!;
     const totalStats = (await db.select({
@@ -65,7 +75,7 @@ keys.get("/keys", async (c) => {
       rateLimit: key.rateLimit || 0, rateLimitWindow: key.rateLimitWindow || config?.globalRateLimitWindow || "1h",
       promptLimit: key.promptLimit || 0, promptLimitWindow: key.promptLimitWindow || config?.globalPromptLimitWindow || "1d",
       deviceCount: deviceCount?.count || 0, requestsToday: todayStats?.count || 0,
-      tokensToday: todayStats?.tokens || 0, estimatedCostToday: todayStats?.cost || 0,
+      tokensToday: todayStats?.tokens || 0, estimatedCostToday: todayCost,
       totalRequests: totalStats?.count || 0,
       totalTokens: totalStats?.tokens || 0, createdAt: key.createdAt,
     });
@@ -127,7 +137,7 @@ keys.get("/keys/:id", async (c) => {
       estimatedCost:    sql<number>`COALESCE(SUM(estimated_cost), 0)`,
     }).from(requestLogs).where(whereClause))[0];
 
-    const breakdown = sanitizeRows((await db.execute(sql`
+    const breakdown = applyTokenMultiplierRows(sanitizeRows((await db.execute(sql`
       SELECT model, COALESCE(SUM(sum_delta), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
       FROM (
         SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
@@ -141,7 +151,7 @@ keys.get("/keys/:id", async (c) => {
         GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
       )
       GROUP BY model
-    `)).rows as any[], ['promptTokens', 'completionTokens']);
+    `)).rows as any[], ['promptTokens', 'completionTokens']));
     const costs = calculateBreakdownCosts(breakdown as any);
     return {
       requests:         s?.turns           || 0,
@@ -149,7 +159,7 @@ keys.get("/keys/:id", async (c) => {
       promptTokens:     s?.promptTokens    || 0,
       completionTokens: s?.completionTokens|| 0,
       contextTokens:    s?.contextTokens   || 0,
-      estimatedCost:    s?.estimatedCost   || 0,
+      estimatedCost:    costs.totalCost,
       promptCost:       costs.promptCost,
       completionCost:   costs.completionCost,
     };
@@ -164,8 +174,10 @@ keys.get("/keys/:id", async (c) => {
 
   const deviceCount = (await db.select({ count: sql<number>`count(*)` }).from(devices).where(eq(devices.apiKeyId, key.id)))[0];
 
+  const { input: tmInput, output: tmOutput } = getTokenMultipliers();
+
   const topModels = sanitizeRows((await db.execute(sql`
-    SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta + sum_c), 0) as tokens, 0 as "estimatedCost"
+    SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta * ${tmInput} + sum_c * ${tmOutput}), 0) as tokens, 0 as "estimatedCost"
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
         turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
@@ -181,7 +193,7 @@ keys.get("/keys/:id", async (c) => {
   `)).rows as any[], ['tokens']);
 
   const topModelsByTokens = sanitizeRows((await db.execute(sql`
-    SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta + sum_c), 0) as tokens, 0 as "estimatedCost"
+    SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta * ${tmInput} + sum_c * ${tmOutput}), 0) as tokens, 0 as "estimatedCost"
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
         turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
@@ -200,7 +212,7 @@ keys.get("/keys/:id", async (c) => {
     SELECT device_fingerprint as "deviceFingerprint", ip_address as "ipAddress",
       ide_detected as "ideDetected", os_detected as "osDetected", client_name as "clientName",
       COUNT(*) as requests, COUNT(DISTINCT session_id) as sessions,
-      COALESCE(SUM(sum_delta + sum_c), 0) as tokens, 0 as "estimatedCost",
+      COALESCE(SUM(sum_delta * ${tmInput} + sum_c * ${tmOutput}), 0) as tokens, 0 as "estimatedCost",
       MAX(last_seen) as "lastSeen"
     FROM (SELECT device_fingerprint, ip_address, ide_detected, os_detected, client_name, session_id, turn_id,
         SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c, MAX(created_at) as last_seen
