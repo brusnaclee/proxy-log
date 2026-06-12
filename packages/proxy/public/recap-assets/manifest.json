@@ -1,0 +1,339 @@
+[
+  {
+    "id": "personas_1",
+    "category": "personas",
+    "type": "img",
+    "file": "personas/personas_1.svg",
+    "tags": [
+      "pro",
+      "balanced"
+    ],
+    "caption": "Prompt efisien, output maksimal"
+  },
+  {
+    "id": "personas_2",
+    "category": "personas",
+    "type": "img",
+    "file": "personas/personas_2.svg",
+    "tags": [
+      "boros"
+    ],
+    "caption": "Input gede, output mini"
+  },
+  {
+    "id": "personas_3",
+    "category": "personas",
+    "type": "img",
+    "file": "personas/personas_3.svg",
+    "tags": [
+      "balanced"
+    ],
+    "caption": "Ngalir aja bro"
+  },
+  {
+    "id": "personas_4",
+    "category": "personas",
+    "type": "img",
+    "file": "personas/personas_4.svg",
+    "tags": [
+      "pro",
+      "heavy"
+    ],
+    "caption": "Bakar token tiada henti"
+  },
+  {
+    "id": "personas_5",
+    "category": "personas",
+    "type": "img",
+    "file": "personas/personas_5.svg",
+    "tags": [
+      "balanced"
+    ],
+    "caption": "Quality over quantity"
+  },
+  {
+    "id": "personas_6",
+    "category": "personas",
+    "type": "img",
+    "file": "personas/personas_6.svg",
+    "tags": [
+      "ghost",
+      "low"
+    ],
+    "caption": "Jarang nongol"
+  },
+  {
+    "id": "ranks_1",
+    "category": "ranks",
+    "type": "img",
+    "file": "ranks/ranks_1.svg",
+    "tags": [
+      "top1"
+    ],
+    "caption": "Raja mecut AI"
+  },
+  {
+    "id": "ranks_2",
+    "category": "ranks",
+    "type": "img",
+    "file": "ranks/ranks_2.svg",
+    "tags": [
+      "top3"
+    ],
+    "caption": "Nyaris puncak"
+  },
+  {
+    "id": "ranks_3",
+    "category": "ranks",
+    "type": "img",
+    "file": "ranks/ranks_3.svg",
+    "tags": [
+      "top3"
+    ],
+    "caption": "Tiga besar"
+  },
+  {
+    "id": "ranks_4",
+    "category": "ranks",
+    "type": "img",
+    "file": "ranks/ranks_4.svg",
+    "tags": [
+      "top10"
+    ],
+    "caption": "Langganan papan atas"
+  },
+  {
+    "id": "ranks_5",
+    "category": "ranks",
+    "type": "img",
+    "file": "ranks/ranks_5.svg",
+    "tags": [
+      "mid"
+    ],
+    "caption": "Terus naik"
+  },
+  {
+    "id": "ranks_6",
+    "category": "ranks",
+    "type": "img",
+    "file": "ranks/ranks_6.svg",
+    "tags": [
+      "low"
+    ],
+    "caption": "Baru mulai"
+  },
+  {
+    "id": "models_1",
+    "category": "models",
+    "type": "img",
+    "file": "models/models_1.svg",
+    "tags": [
+      "favorite"
+    ],
+    "caption": "Partner ngoding setia"
+  },
+  {
+    "id": "models_2",
+    "category": "models",
+    "type": "img",
+    "file": "models/models_2.svg",
+    "tags": [
+      "least",
+      "forgotten"
+    ],
+    "caption": "Model yang kamu tinggalin"
+  },
+  {
+    "id": "models_3",
+    "category": "models",
+    "type": "img",
+    "file": "models/models_3.svg",
+    "tags": [
+      "fast"
+    ],
+    "caption": "Model tercepat"
+  },
+  {
+    "id": "models_4",
+    "category": "models",
+    "type": "img",
+    "file": "models/models_4.svg",
+    "tags": [
+      "slow"
+    ],
+    "caption": "Sabar ya nunggu"
+  },
+  {
+    "id": "models_5",
+    "category": "models",
+    "type": "img",
+    "file": "models/models_5.svg",
+    "tags": [
+      "favorite"
+    ],
+    "caption": "Selera bagus"
+  },
+  {
+    "id": "time_1",
+    "category": "time",
+    "type": "img",
+    "file": "time/time_1.svg",
+    "tags": [
+      "night"
+    ],
+    "caption": "Begadang ngoding"
+  },
+  {
+    "id": "time_2",
+    "category": "time",
+    "type": "img",
+    "file": "time/time_2.svg",
+    "tags": [
+      "morning"
+    ],
+    "caption": "Early bird coder"
+  },
+  {
+    "id": "time_3",
+    "category": "time",
+    "type": "img",
+    "file": "time/time_3.svg",
+    "tags": [
+      "noon"
+    ],
+    "caption": "Produktif tengah hari"
+  },
+  {
+    "id": "time_4",
+    "category": "time",
+    "type": "img",
+    "file": "time/time_4.svg",
+    "tags": [
+      "night"
+    ],
+    "caption": "Inspirasi malam hari"
+  },
+  {
+    "id": "reactions_1",
+    "category": "reactions",
+    "type": "img",
+    "file": "reactions/reactions_1.svg",
+    "tags": [
+      "hype"
+    ],
+    "caption": "Request-nya banyak banget"
+  },
+  {
+    "id": "reactions_2",
+    "category": "reactions",
+    "type": "img",
+    "file": "reactions/reactions_2.svg",
+    "tags": [
+      "sweat",
+      "hype"
+    ],
+    "caption": "Kerja keras bagai kuda"
+  },
+  {
+    "id": "reactions_3",
+    "category": "reactions",
+    "type": "img",
+    "file": "reactions/reactions_3.svg",
+    "tags": [
+      "sad",
+      "low"
+    ],
+    "caption": "Bulan depan gas lagi"
+  },
+  {
+    "id": "reactions_4",
+    "category": "reactions",
+    "type": "img",
+    "file": "reactions/reactions_4.svg",
+    "tags": [
+      "hype"
+    ],
+    "caption": "Efisien parah"
+  },
+  {
+    "id": "reactions_5",
+    "category": "reactions",
+    "type": "img",
+    "file": "reactions/reactions_5.svg",
+    "tags": [
+      "hype"
+    ],
+    "caption": "Konsisten tiap hari"
+  },
+  {
+    "id": "confetti_1",
+    "category": "confetti",
+    "type": "img",
+    "file": "confetti/confetti_1.svg",
+    "tags": [
+      "celebrate"
+    ],
+    "caption": "Recap kamu lengkap"
+  },
+  {
+    "id": "confetti_2",
+    "category": "confetti",
+    "type": "img",
+    "file": "confetti/confetti_2.svg",
+    "tags": [
+      "celebrate"
+    ],
+    "caption": "Sampai jumpa bulan depan"
+  },
+  {
+    "id": "confetti_3",
+    "category": "confetti",
+    "type": "img",
+    "file": "confetti/confetti_3.svg",
+    "tags": [
+      "celebrate"
+    ],
+    "caption": "Terus ngoding ya"
+  },
+  {
+    "id": "misc_1",
+    "category": "misc",
+    "type": "img",
+    "file": "misc/misc_1.svg",
+    "tags": [
+      "intro"
+    ],
+    "caption": "Perjalanan ngoding kamu"
+  },
+  {
+    "id": "misc_2",
+    "category": "misc",
+    "type": "img",
+    "file": "misc/misc_2.svg",
+    "tags": [
+      "intro",
+      "ide"
+    ],
+    "caption": "AI jadi partner"
+  },
+  {
+    "id": "misc_3",
+    "category": "misc",
+    "type": "img",
+    "file": "misc/misc_3.svg",
+    "tags": [
+      "intro"
+    ],
+    "caption": "Makin produktif"
+  },
+  {
+    "id": "misc_4",
+    "category": "misc",
+    "type": "img",
+    "file": "misc/misc_4.svg",
+    "tags": [
+      "intro"
+    ],
+    "caption": "Progress kamu"
+  }
+]

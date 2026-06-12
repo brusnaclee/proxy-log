@@ -85,6 +85,15 @@ const SETUP_STATE_PATH = path.join(AGVERIF_DATA_DIR, 'setup_state.json');
 const RANKING_STATE_PATH = path.join(AGVERIF_DATA_DIR, 'ranking_state.json');
 const RANKING_REFRESH_INTERVAL_MS = 60 * 1000; // 1 menit
 
+// ─── Monthly Recap (Wrapped) ────────────────────────────────────────────────
+const RECAP_STATE_PATH = path.join(AGVERIF_DATA_DIR, 'recap_state.json');
+const RECAP_DEBUG_CHANNEL_ID = process.env.RECAP_DEBUG_CHANNEL_ID || '1507648716847190088';
+const RECAP_PUBLIC_BASE_URL = (
+	process.env.RECAP_PUBLIC_BASE_URL || PROXY_PUBLIC_BASE_URL || 'https://api.tokito.xyz'
+).replace(/\/$/, '');
+const RECAP_DEBUG_INTERVAL_MS = 24 * 60 * 60 * 1000; // daily
+let recapState = { panelMessageId: null };
+
 async function proxyInternal(pathname, method = 'GET', body = null) {
 	const headers = {
 		'Content-Type': 'application/json',
@@ -2485,6 +2494,25 @@ async function saveRankingState() {
 	}
 }
 
+async function loadRecapState() {
+	try {
+		const content = await fs.readFile(RECAP_STATE_PATH, 'utf8');
+		const data = JSON.parse(content);
+		if (data && typeof data === 'object') recapState = { ...recapState, ...data };
+	} catch (err) {
+		if (err.code !== 'ENOENT') console.error('[recap] Failed to load recap state:', err);
+	}
+}
+
+async function saveRecapState() {
+	try {
+		await fs.mkdir(AGVERIF_DATA_DIR, { recursive: true });
+		await fs.writeFile(RECAP_STATE_PATH, JSON.stringify(recapState, null, 2), 'utf8');
+	} catch (err) {
+		console.error('[recap] Failed to save recap state:', err);
+	}
+}
+
 // ─── Build Ranking Embeds ──────────────────────────────────────────────────────
 function buildRankingEmbed(title, color, todayItems, monthItems, formatItem) {
 	const todayLines = todayItems.length
@@ -2583,6 +2611,247 @@ function buildSearchRow() {
 			.setLabel('🔍 Cari Usage User')
 			.setStyle(ButtonStyle.Primary),
 	);
+}
+
+// ─── Monthly Recap panel ────────────────────────────────────────────────────
+function buildRecapPanelEmbed(win) {
+	const embed = new EmbedBuilder()
+		.setTitle('🎁 Monthly Recap — Wrapped')
+		.setColor(0xec4899)
+		.setDescription(
+			'Lihat **rekap bulanan** penggunaan AI kamu ala Spotify Wrapped!\n' +
+			'Persona kamu, model favorit, jam paling produktif, peringkat, dan banyak lagi — ' +
+			'lengkap dengan animasi keren di web.\n\n' +
+			(win && win.isOpen
+				? `🟢 **Lagi dibuka!** Recap **${win.monthLabel}** bisa diakses sampai tanggal 5 ${win.closeMonthLabel}.`
+				: win
+					? `🔒 Recap **${win.monthLabel}** dibuka tanggal **${win.openDay} ${win.openMonthLabel}** sampai **5 ${win.closeMonthLabel}**.`
+					: 'Klik tombol di bawah untuk membuka recap kamu.'),
+		)
+		.setFooter({ text: 'Recap di-generate ulang tiap hari • data bulan penuh' });
+	return embed;
+}
+
+function buildRecapRow() {
+	return new ActionRowBuilder().addComponents(
+		new ButtonBuilder()
+			.setCustomId('monthly_recap')
+			.setLabel('🎁 Buka Recap Bulananku')
+			.setStyle(ButtonStyle.Success),
+	);
+}
+
+async function ensureRecapMessage() {
+	if (!TOKITO_CHANNEL_ID) return;
+	const channel = await client.channels.fetch(TOKITO_CHANNEL_ID).catch(() => null);
+	if (!channel || !channel.isTextBased()) return;
+
+	let win = null;
+	try { win = await proxyInternal('/admin/internal/recap/window'); } catch { /* ignore */ }
+
+	// Reuse existing message if present.
+	if (recapState.panelMessageId) {
+		const existing = await channel.messages.fetch(recapState.panelMessageId).catch(() => null);
+		if (existing) {
+			await existing.edit({ embeds: [buildRecapPanelEmbed(win)], components: [buildRecapRow()] }).catch(() => {});
+			return;
+		}
+	}
+
+	const sent = await channel.send({ embeds: [buildRecapPanelEmbed(win)], components: [buildRecapRow()] }).catch((e) => {
+		console.error('[recap] Failed to send panel:', e.message);
+		return null;
+	});
+	if (sent) {
+		recapState.panelMessageId = sent.id;
+		await saveRecapState();
+	}
+}
+
+function fmtRecapNum(n) {
+	n = Number(n) || 0;
+	if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+	if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+	return String(Math.round(n));
+}
+
+const RECAP_PROGRESS_STAGES = [
+	'🔮 Mengumpulkan jejak ngoding kamu...',
+	'📊 Menghitung token & request...',
+	'🧠 Meramu persona kamu...',
+	'🎨 Memilih meme yang pas...',
+	'✨ Menyelesaikan recap...',
+];
+
+async function handleMonthlyRecap(interaction) {
+	const userId = interaction.user.id;
+	await interaction.deferReply({ ephemeral: true });
+
+	// Window gate
+	let win = null;
+	try { win = await proxyInternal('/admin/internal/recap/window'); } catch { /* ignore */ }
+	if (win && !win.isOpen) {
+		await interaction.editReply({ content: `🔒 ${win.message}` });
+		return;
+	}
+
+	// Live progress edits while generation runs.
+	let stage = 0;
+	let done = false;
+	const avatarUrl = interaction.user.displayAvatarURL({ size: 256, extension: 'png' });
+	const username = interaction.user.username;
+	const progress = async () => {
+		if (done) return;
+		const pct = Math.min(95, (stage + 1) * 19);
+		const bar = '█'.repeat(Math.round(pct / 10)) + '░'.repeat(10 - Math.round(pct / 10));
+		const embed = new EmbedBuilder()
+			.setColor(0x7c3aed)
+			.setTitle('🎁 Membuat Recap Kamu...')
+			.setDescription(`${RECAP_PROGRESS_STAGES[Math.min(stage, RECAP_PROGRESS_STAGES.length - 1)]}\n\`${bar}\` ${pct}%`);
+		await interaction.editReply({ embeds: [embed] }).catch(() => {});
+		stage++;
+	};
+	await progress();
+	const timer = setInterval(() => { progress().catch(() => {}); }, 1500);
+
+	try {
+		const data = await proxyInternal(`/admin/internal/recap/${userId}`, 'POST', { avatarUrl, username });
+		done = true;
+		clearInterval(timer);
+
+		const s = data.stats || {};
+		const totals = s.totals || {};
+		const persona = (data.narrative && data.narrative.persona) || {};
+		const recapUrl = `${RECAP_PUBLIC_BASE_URL}/recap/${encodeURIComponent(data.apiKeyName || username)}`;
+
+		const rankReq = (data.rank && data.rank.requests) || 0;
+		const rankTok = (data.rank && data.rank.tokens) || 0;
+		const fav = (s.models && s.models.favorite) || '-';
+		const hr = s.activity && s.activity.mostActiveHour ? `${s.activity.mostActiveHour.hour}:00 WIB` : '-';
+
+		const embed = new EmbedBuilder()
+			.setColor(0xec4899)
+			.setTitle(`🎁 Recap ${data.monthLabel || ''} — ${username}`)
+			.setThumbnail(avatarUrl)
+			.setDescription(
+				`**${persona.title || 'Coder'}** — ${persona.subtitle || ''}`,
+			)
+			.addFields(
+				{ name: '📨 Request', value: fmtRecapNum(totals.requests), inline: true },
+				{ name: '🪙 Total Token', value: fmtRecapNum(totals.totalTokens), inline: true },
+				{ name: '🏆 Peringkat Req', value: rankReq ? `#${rankReq}` : '-', inline: true },
+				{ name: '📥 Input', value: fmtRecapNum(totals.inputTokens), inline: true },
+				{ name: '📤 Output', value: fmtRecapNum(totals.outputTokens), inline: true },
+				{ name: '🥇 Peringkat Token', value: rankTok ? `#${rankTok}` : '-', inline: true },
+				{ name: '⭐ Model Favorit', value: String(fav), inline: true },
+				{ name: '🕐 Jam Sibuk', value: hr, inline: true },
+			)
+			.setFooter({ text: 'Klik tombol di bawah untuk lihat recap lengkap dengan animasi!' });
+
+		const row = new ActionRowBuilder().addComponents(
+			new ButtonBuilder().setLabel('🎬 Buka Recap (Animasi)').setStyle(ButtonStyle.Link).setURL(recapUrl),
+		);
+
+		await interaction.editReply({ embeds: [embed], components: [row] });
+	} catch (err) {
+		done = true;
+		clearInterval(timer);
+		const msg = /not found/i.test(err.message)
+			? 'Kamu belum punya API key. Verifikasi dulu untuk dapat recap ya!'
+			: `Gagal membuat recap: ${err.message}`;
+		await interaction.editReply({ content: `⚠️ ${msg}`, embeds: [] }).catch(() => {});
+	}
+}
+
+// ─── Daily recap regeneration + debug post ──────────────────────────────────
+async function resolveAvatarsForLeaderboard(yearMonth) {
+	let lb;
+	try {
+		lb = await proxyInternal(`/admin/internal/recap/leaderboard${yearMonth ? `?yearMonth=${yearMonth}` : ''}`);
+	} catch (err) {
+		console.error('[recap] leaderboard fetch failed:', err.message);
+		return null;
+	}
+	const ids = new Set();
+	for (const r of [...(lb.byRequests || []), ...(lb.byTokens || [])]) {
+		if (r.discordUserId) ids.add(r.discordUserId);
+	}
+	const avatars = [];
+	for (const id of ids) {
+		try {
+			const user = await client.users.fetch(id);
+			avatars.push({ discordUserId: id, avatarUrl: user.displayAvatarURL({ size: 128, extension: 'png' }), username: user.username });
+		} catch { /* user may be unreachable */ }
+	}
+	if (avatars.length) {
+		await proxyInternal('/admin/internal/recap/leaderboard-avatars', 'POST', { yearMonth: lb.yearMonth, avatars }).catch((e) =>
+			console.error('[recap] push avatars failed:', e.message),
+		);
+	}
+	return lb;
+}
+
+async function runDailyRecapJob() {
+	console.log('[recap] Running daily recap regeneration...');
+	let win = null;
+	try { win = await proxyInternal('/admin/internal/recap/window'); } catch { /* ignore */ }
+	const yearMonth = win ? win.yearMonth : undefined;
+
+	// Regenerate recap data for all users with a key (force = true).
+	let users = [];
+	try {
+		const res = await proxyInternal('/admin/internal/recap/users');
+		users = res.users || [];
+	} catch (err) {
+		console.error('[recap] users fetch failed:', err.message);
+	}
+
+	let ok = 0, fail = 0;
+	for (const u of users) {
+		if (!u.discordUserId) continue;
+		try {
+			let avatarUrl, username;
+			try {
+				const user = await client.users.fetch(u.discordUserId);
+				avatarUrl = user.displayAvatarURL({ size: 256, extension: 'png' });
+				username = user.username;
+			} catch { /* ignore */ }
+			await proxyInternal(`/admin/internal/recap/${u.discordUserId}`, 'POST', { avatarUrl, username, force: true, yearMonth });
+			ok++;
+		} catch { fail++; }
+	}
+
+	const lb = await resolveAvatarsForLeaderboard(yearMonth);
+
+	// Debug post to the debug channel.
+	try {
+		const channel = await client.channels.fetch(RECAP_DEBUG_CHANNEL_ID).catch(() => null);
+		if (channel && channel.isTextBased()) {
+			const topReq = (lb && lb.byRequests || []).slice(0, 5)
+				.map((r) => `**${r.rank}.** ${r.discordUsername || r.discordUserId || '?'} — ${fmtRecapNum(r.value)} req`).join('\n') || '_kosong_';
+			const sampleName = lb && lb.byRequests && lb.byRequests[0] ? (lb.byRequests[0].discordUsername || '') : '';
+			const embed = new EmbedBuilder()
+				.setColor(0x22d3ee)
+				.setTitle('🛠️ Recap Debug — Daily Regenerate')
+				.setDescription(
+					`Bulan target: **${win ? win.monthLabel : '-'}** (${yearMonth || '-'})\n` +
+					`Window: ${win ? (win.isOpen ? '🟢 OPEN' : '🔒 CLOSED') : '?'}\n` +
+					`Regenerate: ✅ ${ok} sukses, ❌ ${fail} gagal (dari ${users.length} user)`,
+				)
+				.addFields(
+					{ name: '🏆 Top 5 Request', value: topReq },
+					{ name: '🔗 Contoh Link', value: sampleName ? `${RECAP_PUBLIC_BASE_URL}/recap/${encodeURIComponent(sampleName)}` : '_tidak ada_' },
+				)
+				.setFooter({ text: `${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB` });
+			await channel.send({ embeds: [embed] });
+		}
+	} catch (err) {
+		console.error('[recap] debug post failed:', err.message);
+	}
+
+	// Refresh the public panel embed (window label may change).
+	await ensureRecapMessage().catch(() => {});
+	console.log(`[recap] Daily job done: ${ok} ok, ${fail} fail.`);
 }
 
 // ─── Refresh Ranking Embeds ────────────────────────────────────────────────────
@@ -2976,6 +3245,15 @@ client.once('clientReady', async () => {
 	startPhotoCheckInterval();
 	startRoleSyncInterval();
 
+	// Monthly Recap: panel + daily regeneration/debug job
+	await loadRecapState();
+	await ensureRecapMessage().catch((err) => console.error('[recap] ensure panel error:', err.message));
+	// Run shortly after startup, then every 24h.
+	setTimeout(() => { runDailyRecapJob().catch((err) => console.error('[recap] daily job error:', err.message)); }, 15000);
+	setInterval(() => {
+		runDailyRecapJob().catch((err) => console.error('[recap] daily job error:', err.message));
+	}, RECAP_DEBUG_INTERVAL_MS);
+
 	// Start 1-minute ranking refresh
 	setInterval(() => {
 		refreshRankingEmbeds().catch((err) =>
@@ -3139,6 +3417,12 @@ client.on('interactionCreate', async (interaction) => {
 		// ─── Ranking Search Modal Submit ─────────────────────────────────────
 		if (interaction.isModalSubmit() && interaction.customId === 'ranking_search_user_modal') {
 			await handleRankingSearchModal(interaction);
+			return;
+		}
+
+		// ─── Monthly Recap Button ────────────────────────────────────────────
+		if (interaction.isButton() && interaction.customId === 'monthly_recap') {
+			await handleMonthlyRecap(interaction);
 			return;
 		}
 

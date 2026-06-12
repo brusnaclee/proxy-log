@@ -334,6 +334,44 @@ export const modelMetadata = pgTable('model_metadata', {
 	updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
 
+// ─── Monthly Recap (Wrapped) ─────────────────────────────────────────────────
+// Per-user, per-month generated recap. statsJson = aggregate numeric/category
+// metrics only (NO conversation content). narrativeJson = AI-generated text +
+// chosen media asset ids. Cached per WIB day (generatedDate); regenerated daily.
+export const userRecaps = pgTable('user_recaps', {
+	id: serial('id').primaryKey(),
+	apiKeyId: integer('api_key_id'),
+	discordUserId: text('discord_user_id').notNull(),
+	discordUsername: text('discord_username'),
+	avatarUrl: text('avatar_url'),
+	apiKeyName: text('api_key_name'),
+	yearMonth: text('year_month').notNull(), // "YYYY-MM"
+	generatedDate: text('generated_date').notNull(), // WIB "YYYY-MM-DD"
+	statsJson: text('stats_json').notNull().default('{}'),
+	narrativeJson: text('narrative_json').notNull().default('{}'),
+	rankRequests: integer('rank_requests').default(0),
+	rankTokens: integer('rank_tokens').default(0),
+	createdAt: timestamp('created_at').notNull().defaultNow(),
+	updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => ({
+	userMonthIdx: uniqueIndex('idx_user_recaps_user_month').on(table.discordUserId, table.yearMonth),
+	nameIdx: index('idx_user_recaps_name').on(table.apiKeyName),
+}));
+
+export const recapLeaderboard = pgTable('recap_leaderboard', {
+	id: serial('id').primaryKey(),
+	yearMonth: text('year_month').notNull(), // "YYYY-MM"
+	category: text('category').notNull(), // 'requests' | 'tokens'
+	rank: integer('rank').notNull(),
+	discordUserId: text('discord_user_id'),
+	discordUsername: text('discord_username'),
+	avatarUrl: text('avatar_url'),
+	value: integer('value').notNull().default(0),
+	createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => ({
+	ymCatRankIdx: uniqueIndex('idx_recap_lb_ym_cat_rank').on(table.yearMonth, table.category, table.rank),
+}));
+
 // ─── Type exports ──────────────────────────────────────────────────────────────
 export type AdminConfig = typeof adminConfig.$inferSelect;
 export type ApiKey = typeof apiKeys.$inferSelect;

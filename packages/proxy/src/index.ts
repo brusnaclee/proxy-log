@@ -18,6 +18,9 @@ import internalRoutes from "./routes/admin/internal.js";
 import monitorRoutes from "./routes/admin/monitor.js";
 import buglogRoutes from "./routes/admin/buglog.js";
 import quotaGuardRoutes from "./routes/admin/quota-guard.js";
+import recapRoutes from "./routes/admin/recap.js";
+import recapWebRoutes from "./routes/recap-web.js";
+import { serveStatic } from "@hono/node-server/serve-static";
 import { initializeModelCatalogScheduler, initializeMetadataEnrichmentScheduler } from "./utils/model-catalog.js";
 import { initializeQuotaGuardScheduler } from "./utils/quota-guard.js";
 import { runTranscriptCleanup, run3MonthCleanup } from "./utils/cleanup.js";
@@ -70,9 +73,14 @@ app.route("/admin", internalRoutes);
 app.route("/admin", monitorRoutes);
 app.route("/admin", buglogRoutes);
 app.route("/admin", quotaGuardRoutes);
+app.route("/admin", recapRoutes);
 
 // ─── Proxy Routes (catch-all for /v1/*) ─────────────────────────────────────────
 app.route("/v1", proxyRoutes);
+
+// ─── Recap: public assets + animated web page (NO auth) ─────────────────────────
+app.use("/recap-assets/*", serveStatic({ root: "./public" }));
+app.route("/recap", recapWebRoutes);
 
 // ─── 404 Handler ────────────────────────────────────────────────────────────────
 app.notFound((c) => {
