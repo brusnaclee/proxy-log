@@ -30,6 +30,9 @@ export interface RecapHtmlData {
   base: string;
   pageUrl: string;
   viewerDiscordUserId: string | null;
+  submitToken?: string | null;
+  existingTestimonial?: { stars: number; body: string } | null;
+  cleanPath?: string;
 }
 
 export function escapeHtml(s: any): string {
@@ -123,6 +126,16 @@ pointer-events:none;animation:bob 1.6s ease-in-out infinite}
 background:#fff;color:#111;padding:12px 22px;border-radius:999px;font-weight:700;opacity:0;
 transition:transform .3s,opacity .3s;z-index:50}
 .toast.show{transform:translateX(-50%) translateY(0);opacity:1}
+.testi{margin-top:18px;max-width:520px;text-align:left}
+.testi-title{font-size:clamp(18px,5vw,24px);font-weight:900;margin-bottom:6px}
+.stars{display:flex;gap:6px;margin:14px 0;font-size:clamp(30px,9vw,44px);line-height:1;justify-content:center}
+.star{background:none;border:none;cursor:pointer;color:rgba(255,255,255,.25);transition:transform .15s,color .15s;padding:0}
+.star:hover{transform:scale(1.15)}
+.star.on{color:#f59e0b;text-shadow:0 0 18px rgba(245,158,11,.6)}
+.testi textarea{width:100%;border-radius:14px;border:1px solid var(--line);background:rgba(0,0,0,.25);
+color:#fff;padding:12px 14px;font-size:15px;font-family:inherit;resize:vertical;margin-bottom:12px}
+.testi-done{display:none;margin-top:10px;color:#34d399;font-weight:700}
+.testi-done.show{display:block}
 .delta-up{color:#34d399}.delta-down{color:#f87171}
 .confetti{position:fixed;inset:0;pointer-events:none;z-index:40;overflow:hidden}
 .confetti i{position:absolute;top:-20px;width:10px;height:14px;opacity:.9;animation:fall linear forwards}
@@ -318,9 +331,36 @@ function buildSections(d: RecapHtmlData): string {
       <button class="btn" id="shareBtn">📤 Share</button>
       <button class="btn ghost" id="copyBtn">🔗 Salin Link</button>
       <a class="btn ghost" href="https://discord.com/channels/@me" target="_blank" rel="noopener">💬 Discord</a>
-    </div>`));
+    </div>
+    ${buildTestimonialBlock(d)}`));
 
   return out.join("\n");
+}
+
+function buildTestimonialBlock(d: RecapHtmlData): string {
+  const canSubmit = !!d.submitToken;
+  const existing = d.existingTestimonial;
+  const prefillStars = existing?.stars || 0;
+  const prefillBody = existing ? escapeHtml(existing.body) : "";
+  if (!canSubmit) {
+    // Read-only note when opened without a valid one-time token.
+    const note = existing
+      ? `Kamu udah kasih testimoni ${"★".repeat(existing.stars)}${"☆".repeat(5 - existing.stars)} bulan ini. Makasih! 🙌`
+      : "Mau kasih testimoni? Buka recap ini lewat tombol di Discord ya.";
+    return `<div class="testi card reveal"><div class="testi-title">💬 Testimoni</div>
+      <div class="caption">${note}</div></div>`;
+  }
+  return `<div class="testi card reveal" id="testiBox">
+    <div class="testi-title">💬 Tinggalkan Testimoni</div>
+    <div class="caption">Gimana pengalaman ngoding kamu bulan ini? Kasih bintang & cerita singkat.</div>
+    <div class="stars" id="starPick" role="radiogroup" aria-label="Rating bintang">
+      ${[1, 2, 3, 4, 5].map((i) => `<button type="button" class="star" data-v="${i}" aria-label="${i} bintang">★</button>`).join("")}
+    </div>
+    <textarea id="testiText" maxlength="500" rows="3" placeholder="Tulis testimoni kamu di sini...">${prefillBody}</textarea>
+    <button class="btn" id="testiSubmit">Kirim Testimoni</button>
+    <div class="testi-done" id="testiDone">Makasih! Testimoni kamu tersimpan 🙌</div>
+    <script>window.__RECAP_SUBMIT_TOKEN=${JSON.stringify(d.submitToken)};window.__RECAP_PREFILL_STARS=${prefillStars};</script>
+  </div>`;
 }
 
 function n2(stats: any, path: string): string {
@@ -403,6 +443,37 @@ const RECAP_JS = `
       .catch(function(){fallbackCopy();});} else fallbackCopy();});
   function fallbackCopy(){var i=document.createElement('input');i.value=url;document.body.appendChild(i);
     i.select();try{document.execCommand('copy');toast('Tersalin!');}catch(e){toast('Gagal menyalin');}i.remove();}
+
+  // Strip ?t= single-use token from the URL so shared/copied links are clean.
+  try{ if(location.search.indexOf('t=')!==-1 && window.__RECAP_CLEAN_PATH){
+    history.replaceState(null,'',window.__RECAP_CLEAN_PATH); } }catch(e){}
+
+  // Testimonial form
+  var starWrap=document.getElementById('starPick');
+  if(starWrap){
+    var picked=window.__RECAP_PREFILL_STARS||0;
+    var stars=[].slice.call(starWrap.querySelectorAll('.star'));
+    function paint(v){stars.forEach(function(s){s.classList.toggle('on',parseInt(s.dataset.v)<=v);});}
+    paint(picked);
+    stars.forEach(function(s){
+      s.addEventListener('mouseenter',function(){paint(parseInt(s.dataset.v));});
+      s.addEventListener('mouseleave',function(){paint(picked);});
+      s.addEventListener('click',function(){picked=parseInt(s.dataset.v);paint(picked);});
+    });
+    var sub=document.getElementById('testiSubmit');
+    sub.addEventListener('click',function(){
+      if(!picked){toast('Pilih bintang dulu ya');return;}
+      sub.disabled=true;sub.textContent='Mengirim...';
+      fetch('/recap/testimonial',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({token:window.__RECAP_SUBMIT_TOKEN,stars:picked,body:(document.getElementById('testiText').value||'')})})
+        .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
+        .then(function(res){ if(res.ok&&res.j.success){
+            document.getElementById('testiDone').classList.add('show');
+            sub.textContent='Terkirim ✓';toast('Makasih atas testimoninya!');
+          } else { sub.disabled=false;sub.textContent='Kirim Testimoni';toast(res.j.error||'Gagal mengirim'); }
+        }).catch(function(){sub.disabled=false;sub.textContent='Kirim Testimoni';toast('Gagal mengirim');});
+    });
+  }
 })();`;
 
 /** Build OpenGraph/Twitter description without leaking content. */
@@ -438,6 +509,7 @@ export function renderRecapHtml(d: RecapHtmlData): string {
 <style>${RECAP_CSS}</style>
 </head>
 <body data-url="${escapeHtml(d.pageUrl)}" data-title="${escapeHtml(title)}">
+<script>window.__RECAP_CLEAN_PATH=${JSON.stringify(d.cleanPath || "")};</script>
 <div class="deck">${sections}</div>
 <div class="toast" id="toast"></div>
 <script>${RECAP_JS}</script>

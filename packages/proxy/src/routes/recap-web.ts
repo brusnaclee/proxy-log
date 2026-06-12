@@ -9,11 +9,12 @@
 
 import { Hono } from "hono";
 import { db } from "../db/index.js";
-import { userRecaps, recapLeaderboard, apiKeys } from "../db/schema.js";
+import { userRecaps, recapLeaderboard, apiKeys, recapTestimonials } from "../db/schema.js";
 import { eq, and, desc } from "drizzle-orm";
 import { getRecapWindow, monthLabelFromYearMonth } from "../utils/recap-window.js";
 import { getAsset, fallbackForCategory, assetUrl } from "../utils/recap-assets.js";
 import { renderRecapHtml, renderMessagePage } from "../utils/recap-html.js";
+import { mintSubmitToken, verifySubmitToken } from "./admin/recap.js";
 
 const recapWeb = new Hono();
 
@@ -56,6 +57,20 @@ recapWeb.get("/:apiKeyName", async (c) => {
   const yearMonth = row.yearMonth;
   const monthLabel = monthLabelFromYearMonth(yearMonth);
 
+  // Single-use share token: if ?t= matches and unused, mark used and mint a
+  // short-lived submit token so the user can leave a testimonial. The client
+  // then strips ?t= from the URL so shared/copied links are clean.
+  const token = c.req.query("t");
+  let submitToken: string | null = null;
+  if (token && row.shareToken && token === row.shareToken && !row.shareTokenUsed) {
+    await db.update(userRecaps).set({ shareTokenUsed: true, updatedAt: new Date() }).where(eq(userRecaps.id, row.id));
+    submitToken = mintSubmitToken(row.discordUserId, yearMonth);
+  }
+
+  // Existing testimonial (to prefill / show already-submitted state).
+  const existingTesti = (await db.select().from(recapTestimonials)
+    .where(and(eq(recapTestimonials.discordUserId, row.discordUserId), eq(recapTestimonials.yearMonth, yearMonth))))[0];
+
   // Load leaderboard for the same month.
   const lbRows = await db.select().from(recapLeaderboard)
     .where(eq(recapLeaderboard.yearMonth, yearMonth))
@@ -92,9 +107,57 @@ recapWeb.get("/:apiKeyName", async (c) => {
     base,
     pageUrl: `${base}/recap/${encodeURIComponent(apiKeyName)}`,
     viewerDiscordUserId: row.discordUserId,
+    submitToken,
+    existingTestimonial: existingTesti ? { stars: existingTesti.stars, body: existingTesti.body } : null,
+    cleanPath: `/recap/${encodeURIComponent(apiKeyName)}`,
   });
 
   return c.html(html);
+});
+
+/**
+ * Public testimonial submission. Requires a valid HMAC submit-token that the
+ * page minted after a valid single-use share token. Upserts per user/month.
+ */
+recapWeb.post("/testimonial", async (c) => {
+  const body = await c.req.json<{ token?: string; stars?: number; body?: string }>().catch(() => null);
+  if (!body || !body.token) return c.json({ error: "token required" }, 400);
+
+  const verified = verifySubmitToken(body.token);
+  if (!verified) return c.json({ error: "Token tidak valid atau kadaluarsa." }, 403);
+
+  const stars = Math.max(1, Math.min(5, Math.round(Number(body.stars) || 0)));
+  const text = String(body.body || "").slice(0, 500).trim();
+  if (!stars) return c.json({ error: "Beri bintang dulu ya." }, 400);
+
+  const { discordUserId, yearMonth } = verified;
+
+  // Pull identity + rank from the user's recap row to display alongside.
+  const recapRow = (await db.select().from(userRecaps)
+    .where(and(eq(userRecaps.discordUserId, discordUserId), eq(userRecaps.yearMonth, yearMonth))))[0];
+
+  const existing = (await db.select().from(recapTestimonials)
+    .where(and(eq(recapTestimonials.discordUserId, discordUserId), eq(recapTestimonials.yearMonth, yearMonth))))[0];
+
+  const now = new Date();
+  const fields = {
+    discordUsername: recapRow?.discordUsername || null,
+    avatarUrl: recapRow?.avatarUrl || null,
+    apiKeyName: recapRow?.apiKeyName || null,
+    stars,
+    body: text,
+    rankRequests: recapRow?.rankRequests || 0,
+    rankTokens: recapRow?.rankTokens || 0,
+    updatedAt: now,
+  };
+
+  if (existing) {
+    await db.update(recapTestimonials).set(fields).where(eq(recapTestimonials.id, existing.id));
+  } else {
+    await db.insert(recapTestimonials).values({ discordUserId, yearMonth, ...fields });
+  }
+
+  return c.json({ success: true });
 });
 
 export default recapWeb;

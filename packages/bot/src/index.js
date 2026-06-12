@@ -2615,20 +2615,21 @@ function buildSearchRow() {
 
 // ─── Monthly Recap panel ────────────────────────────────────────────────────
 function buildRecapPanelEmbed(win) {
+	const monthLabel = win ? win.monthLabel : 'bulan ini';
 	const embed = new EmbedBuilder()
-		.setTitle('🎁 Monthly Recap — Wrapped')
+		.setTitle(`🎁 Wrapped — ${monthLabel}`)
 		.setColor(0xec4899)
 		.setDescription(
-			'Lihat **rekap bulanan** penggunaan AI kamu ala Spotify Wrapped!\n' +
-			'Persona kamu, model favorit, jam paling produktif, peringkat, dan banyak lagi — ' +
-			'lengkap dengan animasi keren di web.\n\n' +
-			(win && win.isOpen
-				? `🟢 **Lagi dibuka!** Recap **${win.monthLabel}** bisa diakses sampai tanggal 5 ${win.closeMonthLabel}.`
-				: win
-					? `🔒 Recap **${win.monthLabel}** dibuka tanggal **${win.openDay} ${win.openMonthLabel}** sampai **5 ${win.closeMonthLabel}**.`
-					: 'Klik tombol di bawah untuk membuka recap kamu.'),
+			'Jejak ngodingmu bulan ini udah kami rangkum jadi sesuatu yang... menarik. 👀\n' +
+			'Berani buka?',
 		)
-		.setFooter({ text: 'Recap di-generate ulang tiap hari • data bulan penuh' });
+		.setFooter({
+			text: win && !win.isOpen
+				? `⏳ Dibuka ${win.openDay} ${win.openMonthLabel} – 5 ${win.closeMonthLabel}`
+				: win
+					? `🟢 Sedang dibuka • sampai 5 ${win.closeMonthLabel}`
+					: 'Recap bulanan',
+		});
 	return embed;
 }
 
@@ -2636,8 +2637,12 @@ function buildRecapRow() {
 	return new ActionRowBuilder().addComponents(
 		new ButtonBuilder()
 			.setCustomId('monthly_recap')
-			.setLabel('🎁 Buka Recap Bulananku')
+			.setLabel('🎁 Lihat Recap Saya')
 			.setStyle(ButtonStyle.Success),
+		new ButtonBuilder()
+			.setCustomId('recap_testi_view')
+			.setLabel('💬 Lihat Testimoni')
+			.setStyle(ButtonStyle.Secondary),
 	);
 }
 
@@ -2649,7 +2654,8 @@ function buildRecapDebugEmbed(win) {
 		.setDescription(
 			'Panel debug recap (selalu aktif untuk testing).\n\n' +
 			'🎁 **Generate Recap-ku** — buat & lihat recap kamu sendiri.\n' +
-			'🔍 **Lihat Recap User** — masukkan User ID untuk lihat recap orang lain.\n\n' +
+			'🔍 **Lihat Recap User** — masukkan User ID untuk lihat recap orang lain.\n' +
+			'💬 **Lihat Testimoni** — testimoni bulan ini, bergilir.\n\n' +
 			(win ? `Bulan target: **${win.monthLabel}** • Window: ${win.isOpen ? '🟢 OPEN' : '🔒 CLOSED'}` : ''),
 		)
 		.setFooter({ text: 'Debug only • data di-generate ulang tiap hari' });
@@ -2659,6 +2665,7 @@ function buildRecapDebugRow() {
 	return new ActionRowBuilder().addComponents(
 		new ButtonBuilder().setCustomId('recap_debug_self').setLabel('🎁 Generate Recap-ku').setStyle(ButtonStyle.Success),
 		new ButtonBuilder().setCustomId('recap_debug_other').setLabel('🔍 Lihat Recap User').setStyle(ButtonStyle.Primary),
+		new ButtonBuilder().setCustomId('recap_testi_view_debug').setLabel('💬 Lihat Testimoni').setStyle(ButtonStyle.Secondary),
 	);
 }
 
@@ -2797,14 +2804,15 @@ async function generateAndReplyRecap(interaction, targetUser, opts = {}) {
 	const timer = setInterval(() => { progress().catch(() => {}); }, 1500);
 
 	try {
-		const data = await proxyInternal(`/admin/internal/recap/${userId}`, 'POST', { avatarUrl, username });
+		const data = await proxyInternal(`/admin/internal/recap/${userId}`, 'POST', { avatarUrl, username, interactive: true });
 		done = true;
 		clearInterval(timer);
 
 		const s = data.stats || {};
 		const totals = s.totals || {};
 		const persona = (data.narrative && data.narrative.persona) || {};
-		const recapUrl = `${RECAP_PUBLIC_BASE_URL}/recap/${encodeURIComponent(data.apiKeyName || username || userId)}`;
+		const tokenQuery = data.shareToken ? `?t=${encodeURIComponent(data.shareToken)}` : '';
+		const recapUrl = `${RECAP_PUBLIC_BASE_URL}/recap/${encodeURIComponent(data.apiKeyName || username || userId)}${tokenQuery}`;
 
 		const rankReq = (data.rank && data.rank.requests) || 0;
 		const rankTok = (data.rank && data.rank.tokens) || 0;
@@ -2827,7 +2835,7 @@ async function generateAndReplyRecap(interaction, targetUser, opts = {}) {
 				{ name: '⭐ Model Favorit', value: String(fav), inline: true },
 				{ name: '🕐 Jam Sibuk', value: hr, inline: true },
 			)
-			.setFooter({ text: 'Klik tombol di bawah untuk lihat recap lengkap dengan animasi!' });
+			.setFooter({ text: self ? 'Buka recap web buat kasih testimoni • pesan ini hilang dalam 60 detik' : 'Pesan ini hilang dalam 60 detik' });
 		if (avatarUrl) embed.setThumbnail(avatarUrl);
 
 		const row = new ActionRowBuilder().addComponents(
@@ -2835,13 +2843,20 @@ async function generateAndReplyRecap(interaction, targetUser, opts = {}) {
 		);
 
 		await interaction.editReply({ embeds: [embed], components: [row] });
+		// Auto-delete the ephemeral after 60s.
+		setTimeout(() => { interaction.deleteReply().catch(() => {}); }, 60000);
 	} catch (err) {
 		done = true;
 		clearInterval(timer);
-		const msg = /not found/i.test(err.message)
-			? (self ? 'Kamu belum punya API key. Verifikasi dulu untuk dapat recap ya!' : 'User tersebut tidak punya API key / data recap.')
-			: `Gagal membuat recap: ${err.message}`;
-		await interaction.editReply({ content: `⚠️ ${msg}`, embeds: [] }).catch(() => {});
+		let msg;
+		if (/AI busy|busy|sibuk/i.test(err.message)) {
+			msg = 'Server lagi sibuk, coba lagi nanti ya 🙏';
+		} else if (/not found/i.test(err.message)) {
+			msg = self ? 'Kamu belum punya API key. Verifikasi dulu untuk dapat recap ya!' : 'User tersebut tidak punya API key / data recap.';
+		} else {
+			msg = `Gagal membuat recap: ${err.message}`;
+		}
+		await interaction.editReply({ content: `⚠️ ${msg}`, embeds: [], components: [] }).catch(() => {});
 	}
 }
 
@@ -2879,6 +2894,54 @@ async function handleRecapDebugOtherModal(interaction) {
 		targetUser = u;
 	} catch { /* user not reachable; proceed with id only */ }
 	await generateAndReplyRecap(interaction, targetUser, { self: false });
+}
+
+// ─── Testimonial viewer: rotating ephemeral, 5s cycle, 60s auto-expire ───────
+function buildTestimonialEmbed(t) {
+	const stars = '★'.repeat(Math.max(0, Math.min(5, t.stars || 0))) + '☆'.repeat(5 - Math.max(0, Math.min(5, t.stars || 0)));
+	const rankReq = t.rankRequests || 0;
+	const rankTok = t.rankTokens || 0;
+	const rankStr = [rankReq ? `🏆 #${rankReq} req` : null, rankTok ? `🪙 #${rankTok} tok` : null].filter(Boolean).join(' • ') || 'peserta aktif';
+	const embed = new EmbedBuilder()
+		.setColor(0xf59e0b)
+		.setAuthor({ name: t.discordUsername || 'Anonim', iconURL: t.avatarUrl || undefined })
+		.setTitle(`${stars}`)
+		.setDescription(t.body ? `“${String(t.body).slice(0, 500)}”` : '_(tanpa teks)_')
+		.addFields({ name: 'Peringkat', value: rankStr, inline: true })
+		.setFooter({ text: 'Testimoni bergilir tiap 5 detik • hilang dalam 60 detik' });
+	return embed;
+}
+
+async function handleTestimonialViewer(interaction) {
+	await interaction.deferReply({ ephemeral: true });
+	let data;
+	try {
+		data = await proxyInternal('/admin/internal/recap/testimonials');
+	} catch (err) {
+		await interaction.editReply({ content: `⚠️ Gagal ambil testimoni: ${err.message}` }).catch(() => {});
+		return;
+	}
+	const list = (data && data.testimonials) || [];
+	if (!list.length) {
+		await interaction.editReply({ content: '💬 Belum ada testimoni bulan ini. Jadilah yang pertama!' }).catch(() => {});
+		setTimeout(() => { interaction.deleteReply().catch(() => {}); }, 60000);
+		return;
+	}
+
+	// Shuffle once, then rotate through the list (random-ish order).
+	const order = [...list].sort(() => Math.random() - 0.5);
+	let idx = 0;
+	await interaction.editReply({ embeds: [buildTestimonialEmbed(order[idx])] }).catch(() => {});
+
+	const rotate = setInterval(() => {
+		idx = (idx + 1) % order.length;
+		interaction.editReply({ embeds: [buildTestimonialEmbed(order[idx])] }).catch(() => {});
+	}, 5000);
+
+	setTimeout(() => {
+		clearInterval(rotate);
+		interaction.deleteReply().catch(() => {});
+	}, 60000);
 }
 
 // ─── Daily recap regeneration + debug post ──────────────────────────────────
@@ -3557,6 +3620,21 @@ client.on('interactionCreate', async (interaction) => {
 		}
 		if (interaction.isModalSubmit() && interaction.customId === 'recap_debug_other_modal') {
 			await handleRecapDebugOtherModal(interaction);
+			return;
+		}
+
+		// ─── Testimonial viewer (agverif: role-gated, debug: open) ───────────
+		if (interaction.isButton() && interaction.customId === 'recap_testi_view') {
+			if (REQUIRED_ROLE_ID && interaction.member && !interaction.member.roles.cache.has(REQUIRED_ROLE_ID)) {
+				const role = interaction.guild?.roles.cache.get(REQUIRED_ROLE_ID);
+				await interaction.reply({ content: `Anda memerlukan role **${role ? role.name : 'Required Role'}** untuk melihat testimoni.`, ephemeral: true });
+				return;
+			}
+			await handleTestimonialViewer(interaction);
+			return;
+		}
+		if (interaction.isButton() && interaction.customId === 'recap_testi_view_debug') {
+			await handleTestimonialViewer(interaction);
 			return;
 		}
 

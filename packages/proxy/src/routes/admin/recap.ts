@@ -11,9 +11,10 @@
  */
 
 import { Hono } from "hono";
+import { randomBytes, createHmac } from "node:crypto";
 import { db } from "../../db/index.js";
-import { apiKeys, userRecaps, recapLeaderboard } from "../../db/schema.js";
-import { eq, and, sql } from "drizzle-orm";
+import { apiKeys, userRecaps, recapLeaderboard, recapTestimonials } from "../../db/schema.js";
+import { eq, and, sql, desc } from "drizzle-orm";
 import {
   getRecapWindow,
   wibTodayDateStr,
@@ -46,7 +47,7 @@ recap.get("/internal/recap/window", (c) => {
  */
 recap.post("/internal/recap/:discordUserId", async (c) => {
   const discordUserId = c.req.param("discordUserId");
-  const body = await c.req.json<{ avatarUrl?: string; username?: string; force?: boolean; yearMonth?: string }>().catch(() => ({} as any));
+  const body = await c.req.json<{ avatarUrl?: string; username?: string; force?: boolean; yearMonth?: string; interactive?: boolean }>().catch(() => ({} as any));
 
   const key = await findKeyByDiscordUser(discordUserId);
   if (!key) return c.json({ error: "User not found", found: false }, 404);
@@ -61,6 +62,12 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
     .where(and(eq(userRecaps.discordUserId, discordUserId), eq(userRecaps.yearMonth, yearMonth))))[0];
 
   if (existing && existing.generatedDate === today && !body.force) {
+    // For interactive opens, mint a fresh single-use share token each time.
+    let shareToken = existing.shareToken;
+    if (body.interactive) {
+      shareToken = randomBytes(16).toString("hex");
+      await db.update(userRecaps).set({ shareToken, shareTokenUsed: false, updatedAt: new Date() }).where(eq(userRecaps.id, existing.id));
+    }
     return c.json({
       cached: true,
       apiKeyName: existing.apiKeyName || key.name,
@@ -70,6 +77,7 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
       stats: safeParse(existing.statsJson),
       narrative: safeParse(existing.narrativeJson),
       rank: { requests: existing.rankRequests || 0, tokens: existing.rankTokens || 0 },
+      shareToken: body.interactive ? shareToken : undefined,
     });
   }
 
@@ -79,7 +87,14 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
   await enrichRankAndComparison(stats, key.id, leaderboard, previousYearMonth(yearMonth));
 
   const assets = loadAssets();
-  const narrative = await generateNarrative(stats, monthLabel, assets);
+  // Interactive: fewer retries to stay responsive; background: more retries.
+  const { ok, narrative } = await generateNarrative(stats, monthLabel, assets, { retries: body.interactive ? 10 : 3 });
+
+  // Interactive request that couldn't get AI output -> tell the bot we're busy
+  // (do NOT cache a fallback so a later attempt can still produce a real recap).
+  if (body.interactive && !ok && !existing) {
+    return c.json({ busy: true, error: "AI busy" }, 503);
+  }
 
   // Persist leaderboard snapshot (top 10 each) so the web page + bot can read it.
   await persistLeaderboard(yearMonth, leaderboard);
@@ -87,6 +102,7 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
   // Upsert recap
   const avatarUrl = body.avatarUrl || existing?.avatarUrl || null;
   const username = body.username || key.discordUsername || existing?.discordUsername || null;
+  const shareToken = body.interactive ? randomBytes(16).toString("hex") : (existing?.shareToken || null);
   const now = new Date();
   if (existing) {
     await db.update(userRecaps).set({
@@ -95,6 +111,7 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
       statsJson: JSON.stringify(stats),
       narrativeJson: JSON.stringify(narrative),
       rankRequests: stats.rank.requests, rankTokens: stats.rank.tokens,
+      ...(body.interactive ? { shareToken, shareTokenUsed: false } : {}),
       updatedAt: now,
     }).where(eq(userRecaps.id, existing.id));
   } else {
@@ -103,6 +120,7 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
       apiKeyName: key.name, yearMonth, generatedDate: today,
       statsJson: JSON.stringify(stats), narrativeJson: JSON.stringify(narrative),
       rankRequests: stats.rank.requests, rankTokens: stats.rank.tokens,
+      shareToken, shareTokenUsed: false,
     });
   }
 
@@ -115,6 +133,7 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
     stats,
     narrative,
     rank: { requests: stats.rank.requests, tokens: stats.rank.tokens },
+    shareToken: body.interactive ? shareToken : undefined,
   });
 });
 
@@ -201,4 +220,46 @@ recap.get("/internal/recap/users", async (c) => {
   return c.json({ users: rows });
 });
 
+// ─── Testimonials ────────────────────────────────────────────────────────────
+// HMAC submit-token: signs "discordUserId:yearMonth:exp" with SESSION_SECRET.
+// Minted by the web page only after a valid single-use share token, so only a
+// user who opened their own recap from Discord can submit a testimonial.
+
+function submitSecret(): string {
+  return process.env.SESSION_SECRET || process.env.INTERNAL_API_SECRET || "recap-fallback-secret";
+}
+
+export function mintSubmitToken(discordUserId: string, yearMonth: string, ttlMs = 30 * 60 * 1000): string {
+  const exp = Date.now() + ttlMs;
+  const payload = `${discordUserId}:${yearMonth}:${exp}`;
+  const sig = createHmac("sha256", submitSecret()).update(payload).digest("hex").slice(0, 32);
+  return `${Buffer.from(payload).toString("base64url")}.${sig}`;
+}
+
+function verifySubmitToken(token: string): { discordUserId: string; yearMonth: string } | null {
+  try {
+    const [b64, sig] = String(token).split(".");
+    if (!b64 || !sig) return null;
+    const payload = Buffer.from(b64, "base64url").toString("utf8");
+    const expect = createHmac("sha256", submitSecret()).update(payload).digest("hex").slice(0, 32);
+    if (sig !== expect) return null;
+    const [discordUserId, yearMonth, expStr] = payload.split(":");
+    if (!discordUserId || !yearMonth || !expStr) return null;
+    if (Date.now() > Number(expStr)) return null;
+    return { discordUserId, yearMonth };
+  } catch {
+    return null;
+  }
+}
+
+// List testimonials for a month (for the Discord viewer).
+recap.get("/internal/recap/testimonials", async (c) => {
+  const yearMonth = c.req.query("yearMonth") || getRecapWindow().yearMonth;
+  const rows = await db.select().from(recapTestimonials)
+    .where(eq(recapTestimonials.yearMonth, yearMonth))
+    .orderBy(desc(recapTestimonials.updatedAt));
+  return c.json({ yearMonth, testimonials: rows });
+});
+
 export default recap;
+export { verifySubmitToken };

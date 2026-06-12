@@ -117,6 +117,16 @@ export interface RecapStats {
     requestsDeltaPercent: number;
     tokensDeltaPercent: number;
   };
+  population?: {
+    participants: number;
+    medianRatio: number;
+    ratioP25: number;
+    ratioP75: number;
+    requestsP75: number;
+    requestsP90: number;
+    tokensP75: number;
+    tokensP90: number;
+  };
 }
 
 const WEEKDAY_ID = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
@@ -453,6 +463,8 @@ export interface LeaderboardEntry {
   apiKeyName: string | null;
   requests: number;
   tokens: number;
+  inputTokens: number;
+  outputTokens: number;
 }
 
 /**
@@ -472,7 +484,9 @@ export async function getMonthLeaderboard(yearMonth: string): Promise<{
       k.discord_username AS discord_username,
       k.name AS api_key_name,
       COALESCE(SUM(t.turn_present), 0) AS requests,
-      COALESCE(SUM(t.sum_delta) * ${input} + SUM(t.sum_c) * ${output}, 0) AS tokens
+      COALESCE(SUM(t.sum_delta) * ${input} + SUM(t.sum_c) * ${output}, 0) AS tokens,
+      COALESCE(SUM(t.sum_delta) * ${input}, 0) AS input_tokens,
+      COALESCE(SUM(t.sum_c) * ${output}, 0) AS output_tokens
     FROM (
       SELECT api_key_id, turn_id,
         1 AS turn_present,
@@ -494,6 +508,8 @@ export async function getMonthLeaderboard(yearMonth: string): Promise<{
     apiKeyName: r.api_key_name || null,
     requests: num(r.requests),
     tokens: Math.round(num(r.tokens)),
+    inputTokens: Math.round(num(r.input_tokens)),
+    outputTokens: Math.round(num(r.output_tokens)),
   }));
 
   const byRequests = [...entries].sort((a, b) => b.requests - a.requests);
@@ -507,6 +523,45 @@ export function findRank(list: LeaderboardEntry[], keyId: number): number {
   return idx >= 0 ? idx + 1 : 0;
 }
 
+/** Percentile (0..1) of a numeric array (linear interpolation). */
+function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  if (sorted.length === 1) return sorted[0];
+  const idx = p * (sorted.length - 1);
+  const lo = Math.floor(idx), hi = Math.ceil(idx);
+  if (lo === hi) return sorted[lo];
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+}
+
+export interface PopulationContext {
+  participants: number;
+  medianRatio: number;
+  ratioP25: number;
+  ratioP75: number;
+  requestsP75: number;
+  requestsP90: number;
+  tokensP75: number;
+  tokensP90: number;
+}
+
+/** Derive population percentiles from a month leaderboard (active users only). */
+export function computePopulation(leaderboard: { byRequests: LeaderboardEntry[] }): PopulationContext {
+  const active = leaderboard.byRequests.filter((e) => e.requests > 0);
+  const ratios = active.map((e) => e.outputTokens / Math.max(e.inputTokens, 1)).sort((a, b) => a - b);
+  const reqs = active.map((e) => e.requests).sort((a, b) => a - b);
+  const toks = active.map((e) => e.tokens).sort((a, b) => a - b);
+  return {
+    participants: active.length,
+    medianRatio: percentile(ratios, 0.5),
+    ratioP25: percentile(ratios, 0.25),
+    ratioP75: percentile(ratios, 0.75),
+    requestsP75: percentile(reqs, 0.75),
+    requestsP90: percentile(reqs, 0.90),
+    tokensP75: percentile(toks, 0.75),
+    tokensP90: percentile(toks, 0.90),
+  };
+}
+
 /** Attach rank + previous-month comparison to a stats object (mutates + returns). */
 export async function enrichRankAndComparison(
   stats: RecapStats,
@@ -517,6 +572,7 @@ export async function enrichRankAndComparison(
   stats.rank.requests = findRank(leaderboard.byRequests, keyId);
   stats.rank.tokens = findRank(leaderboard.byTokens, keyId);
   stats.rank.totalParticipants = leaderboard.byRequests.filter((e) => e.requests > 0).length;
+  stats.population = computePopulation(leaderboard);
 
   try {
     const prev = await fetchTotals(keyId, getMonthRangeUtc(prevYearMonth).start, getMonthRangeUtc(prevYearMonth).end);

@@ -351,6 +351,8 @@ export const userRecaps = pgTable('user_recaps', {
 	narrativeJson: text('narrative_json').notNull().default('{}'),
 	rankRequests: integer('rank_requests').default(0),
 	rankTokens: integer('rank_tokens').default(0),
+	shareToken: text('share_token'),
+	shareTokenUsed: boolean('share_token_used').default(false),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
 	updatedAt: timestamp('updated_at').notNull().defaultNow(),
 }, (table) => ({
@@ -370,6 +372,24 @@ export const recapLeaderboard = pgTable('recap_leaderboard', {
 	createdAt: timestamp('created_at').notNull().defaultNow(),
 }, (table) => ({
 	ymCatRankIdx: uniqueIndex('idx_recap_lb_ym_cat_rank').on(table.yearMonth, table.category, table.rank),
+}));
+
+export const recapTestimonials = pgTable('recap_testimonials', {
+	id: serial('id').primaryKey(),
+	discordUserId: text('discord_user_id').notNull(),
+	discordUsername: text('discord_username'),
+	avatarUrl: text('avatar_url'),
+	apiKeyName: text('api_key_name'),
+	yearMonth: text('year_month').notNull(), // "YYYY-MM"
+	stars: integer('stars').notNull().default(5),
+	body: text('body').notNull().default(''),
+	rankRequests: integer('rank_requests').default(0),
+	rankTokens: integer('rank_tokens').default(0),
+	createdAt: timestamp('created_at').notNull().defaultNow(),
+	updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => ({
+	userMonthIdx: uniqueIndex('idx_recap_testi_user_month').on(table.discordUserId, table.yearMonth),
+	ymIdx: index('idx_recap_testi_ym').on(table.yearMonth),
 }));
 
 // ─── Type exports ──────────────────────────────────────────────────────────────
