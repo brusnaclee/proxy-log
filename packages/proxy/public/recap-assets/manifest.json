@@ -1,5 +1,224 @@
 [
   {
+    "id": "m_intro_1",
+    "category": "misc",
+    "type": "gif",
+    "file": "memes/misc/m_intro_1.gif",
+    "tags": [
+      "intro"
+    ],
+    "mood": "hype"
+  },
+  {
+    "id": "m_intro_2",
+    "category": "misc",
+    "type": "gif",
+    "file": "memes/misc/m_intro_2.gif",
+    "tags": [
+      "intro"
+    ],
+    "mood": "hype"
+  },
+  {
+    "id": "m_hype_1",
+    "category": "reactions",
+    "type": "gif",
+    "file": "memes/reactions/m_hype_1.gif",
+    "tags": [
+      "hype",
+      "many"
+    ],
+    "mood": "hype"
+  },
+  {
+    "id": "m_hype_2",
+    "category": "reactions",
+    "type": "gif",
+    "file": "memes/reactions/m_hype_2.gif",
+    "tags": [
+      "hype"
+    ],
+    "mood": "hype"
+  },
+  {
+    "id": "m_typing_1",
+    "category": "reactions",
+    "type": "gif",
+    "file": "memes/reactions/m_typing_1.gif",
+    "tags": [
+      "hype",
+      "typing",
+      "fast"
+    ],
+    "mood": "fast"
+  },
+  {
+    "id": "m_sad_1",
+    "category": "reactions",
+    "type": "gif",
+    "file": "memes/reactions/m_sad_1.gif",
+    "tags": [
+      "sad",
+      "low"
+    ],
+    "mood": "sad"
+  },
+  {
+    "id": "m_sad_2",
+    "category": "reactions",
+    "type": "gif",
+    "file": "memes/reactions/m_sad_2.gif",
+    "tags": [
+      "sad",
+      "forgotten"
+    ],
+    "mood": "sad"
+  },
+  {
+    "id": "m_proud_1",
+    "category": "personas",
+    "type": "gif",
+    "file": "memes/personas/m_proud_1.gif",
+    "tags": [
+      "pro",
+      "proud",
+      "smart"
+    ],
+    "mood": "proud"
+  },
+  {
+    "id": "m_boros_1",
+    "category": "personas",
+    "type": "gif",
+    "file": "memes/personas/m_boros_1.gif",
+    "tags": [
+      "boros",
+      "money"
+    ],
+    "mood": "boros"
+  },
+  {
+    "id": "m_boros_2",
+    "category": "personas",
+    "type": "gif",
+    "file": "memes/personas/m_boros_2.gif",
+    "tags": [
+      "boros",
+      "burn"
+    ],
+    "mood": "boros"
+  },
+  {
+    "id": "m_night_1",
+    "category": "time",
+    "type": "gif",
+    "file": "memes/time/m_night_1.gif",
+    "tags": [
+      "night",
+      "tired"
+    ],
+    "mood": "night"
+  },
+  {
+    "id": "m_night_2",
+    "category": "time",
+    "type": "gif",
+    "file": "memes/time/m_night_2.gif",
+    "tags": [
+      "night",
+      "coffee"
+    ],
+    "mood": "night"
+  },
+  {
+    "id": "m_morning_1",
+    "category": "time",
+    "type": "gif",
+    "file": "memes/time/m_morning_1.gif",
+    "tags": [
+      "morning"
+    ],
+    "mood": "morning"
+  },
+  {
+    "id": "m_slow_1",
+    "category": "models",
+    "type": "gif",
+    "file": "memes/models/m_slow_1.gif",
+    "tags": [
+      "slow",
+      "waiting"
+    ],
+    "mood": "slow"
+  },
+  {
+    "id": "m_fav_1",
+    "category": "models",
+    "type": "gif",
+    "file": "memes/models/m_fav_1.gif",
+    "tags": [
+      "favorite",
+      "love"
+    ],
+    "mood": "proud"
+  },
+  {
+    "id": "m_forgotten_1",
+    "category": "models",
+    "type": "gif",
+    "file": "memes/models/m_forgotten_1.gif",
+    "tags": [
+      "forgotten",
+      "least",
+      "sad"
+    ],
+    "mood": "sad"
+  },
+  {
+    "id": "m_king_1",
+    "category": "ranks",
+    "type": "gif",
+    "file": "memes/ranks/m_king_1.gif",
+    "tags": [
+      "top1",
+      "king",
+      "win"
+    ],
+    "mood": "proud"
+  },
+  {
+    "id": "m_celebrate_1",
+    "category": "confetti",
+    "type": "gif",
+    "file": "memes/confetti/m_celebrate_1.gif",
+    "tags": [
+      "celebrate",
+      "win"
+    ],
+    "mood": "celebrate"
+  },
+  {
+    "id": "m_celebrate_2",
+    "category": "confetti",
+    "type": "gif",
+    "file": "memes/confetti/m_celebrate_2.gif",
+    "tags": [
+      "celebrate"
+    ],
+    "mood": "celebrate"
+  },
+  {
+    "id": "m_clap_1",
+    "category": "ranks",
+    "type": "gif",
+    "file": "memes/ranks/m_clap_1.gif",
+    "tags": [
+      "mid",
+      "clap"
+    ],
+    "mood": "proud"
+  },
+  {
     "id": "personas_1",
     "category": "personas",
     "type": "img",

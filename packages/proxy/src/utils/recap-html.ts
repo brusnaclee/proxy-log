@@ -81,8 +81,8 @@ background-clip:text;color:transparent;background-size:200% 200%;animation:flow 
 backdrop-filter:blur(14px);width:100%;box-shadow:0 20px 60px rgba(0,0,0,.35)}
 .avatar{width:clamp(96px,28vw,160px);height:clamp(96px,28vw,160px);border-radius:50%;object-fit:cover;
 border:4px solid rgba(255,255,255,.25);box-shadow:0 12px 40px rgba(124,58,237,.5)}
-.media{max-width:min(80%,360px);max-height:38dvh;border-radius:18px;object-fit:contain;
-border:1px solid var(--line);box-shadow:0 12px 40px rgba(0,0,0,.4)}
+.media{width:auto;max-width:min(86%,420px);max-height:42dvh;border-radius:22px;object-fit:cover;
+border:1px solid var(--line);box-shadow:0 18px 50px rgba(0,0,0,.45)}
 .reveal{opacity:0;transform:translateY(34px) scale(.96);transition:opacity .7s cubic-bezier(.2,.7,.2,1),transform .7s cubic-bezier(.2,.7,.2,1)}
 .reveal.in{opacity:1;transform:none}
 .pop{opacity:0;transform:scale(.5)}
@@ -136,15 +136,21 @@ transition:transform .3s,opacity .3s;z-index:50}
 .testi textarea{width:100%;border-radius:14px;border:1px solid var(--line);background:rgba(0,0,0,.25);
 color:#fff;padding:12px 14px;font-size:15px;font-family:inherit;resize:vertical;margin-bottom:12px}
 .testi-done{display:none;margin-top:10px;color:#34d399;font-weight:700}
-.race{margin-top:8px;display:flex;flex-direction:column;gap:16px;position:relative}
-.race-lane{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px}
-.race-tag{font-size:13px;font-weight:700;color:var(--muted);white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis}
-.race-track{position:relative;height:30px;border-radius:15px;background:rgba(255,255,255,.08);
-border:1px dashed rgba(255,255,255,.18)}
-.race-car{position:absolute;top:50%;left:0;transform:transl(-50%,-50%);font-size:24px;
-transition:left 1.6s cubic-bezier(.3,.7,.3,1)}
-.race-val{font-weight:800;font-size:14px;color:var(--g3);min-width:48px;text-align:right}
-.race-flag{position:absolute;right:54px;top:0;bottom:30px;font-size:22px;opacity:.5}
+.bcr{margin-top:8px;position:relative}
+.bcr-day{font-weight:900;font-size:clamp(16px,5vw,22px);color:var(--g3);text-align:center;margin-bottom:14px;letter-spacing:.04em}
+.bcr-rows{position:relative}
+.bcr-row{position:absolute;left:0;right:0;height:38px;display:grid;grid-template-columns:26px 1fr;
+align-items:center;gap:8px;transition:transform .55s cubic-bezier(.3,.7,.3,1)}
+.bcr-rank{font-weight:800;font-size:12px;color:var(--muted);text-align:right}
+.bcr-bar{position:relative;height:32px;border-radius:10px;background:rgba(255,255,255,.08);overflow:hidden}
+.bcr-fill{position:absolute;inset:0;width:0;border-radius:10px;background:linear-gradient(90deg,var(--g1),var(--g2));
+transition:width .55s cubic-bezier(.3,.7,.3,1)}
+.bcr-row.me .bcr-fill{background:linear-gradient(90deg,var(--g3),#ffd56b)}
+.bcr-row.me .bcr-name{color:#fff;font-weight:900}
+.bcr-meta{position:absolute;inset:0;display:flex;align-items:center;gap:8px;padding:0 10px;z-index:1}
+.bcr-av{width:22px;height:22px;border-radius:50%;object-fit:cover;flex:0 0 auto;background:rgba(255,255,255,.2)}
+.bcr-name{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:rgba(255,255,255,.92)}
+.bcr-val{margin-left:auto;font-weight:800;font-size:13px;flex:0 0 auto}
 .testi-done.show{display:block}
 .delta-up{color:#34d399}.delta-down{color:#f87171}
 .confetti{position:fixed;inset:0;pointer-events:none;z-index:40;overflow:hidden}
@@ -170,8 +176,9 @@ function mediaTag(asset: { url: string; type: string } | null | undefined, base:
     return `<video class="media reveal" autoplay muted loop playsinline preload="metadata"
       onerror="this.style.display='none'"><source src="${escapeHtml(asset.url)}"></video>`;
   }
+  // Real meme/gif as the centerpiece; on error swap to the default SVG (keep visible).
   return `<img class="media reveal" loading="lazy" alt="" src="${escapeHtml(asset.url)}"
-    onerror="this.onerror=null;this.src='${escapeHtml(fallback)}';this.style.display='none'">`;
+    onerror="this.onerror=null;this.src='${escapeHtml(fallback)}'">`;
 }
 
 function renderLeaderboardList(rows: LeaderboardRow[], viewerId: string | null, unit: string): string {
@@ -320,32 +327,19 @@ function buildSections(d: RecapHtmlData): string {
     <div class="caption reveal">${rankT.caption || (rankReq && rankReq <= 5 ? "Sultan AI! Mecut terus 🔥" : "Terus semangat ngoding!")}</div>
     ${mediaTag(A.rank, d.base)}`));
 
-  // 9b. Ranking race (user vs champion across the month)
+  // 9b. Leaderboard timelapse (bar-chart-race, day 1 -> today, windowed around user)
   const race = s.race;
-  if (race && Array.isArray(race.days) && race.days.length >= 2) {
-    const champLabel = race.isUserChampion ? `runner-up${race.championName ? " @" + race.championName : ""}` : (race.championName ? "@" + race.championName : "sang juara");
-    const meLabel = race.isUserChampion ? "kamu 👑" : "kamu";
-    const verdict = race.isUserChampion
-      ? "Kamu di puncak sebulan penuh. Yang lain cuma bisa lihat buntut. 🏁"
-      : race.userFinal >= race.championFinal
-        ? "Kamu nyaris nyalip! Bulan depan rebut takhtanya."
-        : `Si juara unggul ${fmtNum(race.championFinal - race.userFinal)} request. Latihan lagi! 🏎️`;
+  if (race && Array.isArray(race.days) && race.days.length >= 2 && Array.isArray(race.users) && race.users.length >= 2) {
     out.push(section("race", `
-      <div class="kicker reveal">Balapan Sebulan</div>
-      <div class="headline reveal">Kamu vs ${escapeHtml(champLabel)}</div>
-      <div class="race card reveal" id="raceBox"
+      <div class="kicker reveal">Perjalanan Peringkat</div>
+      <div class="headline reveal">Dari Tanggal 1 Sampai Sekarang</div>
+      <div class="bcr card reveal" id="bcrBox"
         data-days='${escapeHtml(JSON.stringify(race.days))}'
-        data-user='${escapeHtml(JSON.stringify(race.user))}'
-        data-champ='${escapeHtml(JSON.stringify(race.champion))}'>
-        <div class="race-lane"><span class="race-tag">🏎️ ${escapeHtml(meLabel)}</span>
-          <div class="race-track"><span class="race-car" id="raceCarUser">🏎️</span></div>
-          <span class="race-val" id="raceValUser">0</span></div>
-        <div class="race-lane"><span class="race-tag">🚗 ${escapeHtml(champLabel)}</span>
-          <div class="race-track"><span class="race-car" id="raceCarChamp">🚗</span></div>
-          <span class="race-val" id="raceValChamp">0</span></div>
-        <div class="race-flag">🏁</div>
+        data-users='${escapeHtml(JSON.stringify(race.users))}'>
+        <div class="bcr-day" id="bcrDay">&nbsp;</div>
+        <div class="bcr-rows" id="bcrRows"></div>
       </div>
-      <div class="caption reveal">${escapeHtml(verdict)}</div>`));
+      <div class="caption reveal">${escapeHtml(race.myRank <= 3 ? `Kamu finish di #${race.myRank} dari ${race.totalParticipants}. Gokil! 🏆` : `Kamu naik ke #${race.myRank} dari ${race.totalParticipants} developer. Lihat perjuangannya!`)}</div>`));
   }
 
   // 10. Leaderboard
@@ -467,33 +461,59 @@ const RECAP_JS = `
   document.querySelectorAll('.slide').forEach(function(s){io2.observe(s);});
 
   // Ranking race: animate cars to final position when the section enters view.
-  var raceBox=document.getElementById('raceBox');
-  if(raceBox){
-    var rdone=false;
-    function num(v){return parseInt(v)||0;}
-    function animateRace(){
-      if(rdone) return; rdone=true;
-      var user=[],champ=[];
-      try{user=JSON.parse(raceBox.getAttribute('data-user'))||[];}catch(e){}
-      try{champ=JSON.parse(raceBox.getAttribute('data-champ'))||[];}catch(e){}
-      var uFinal=user.length?user[user.length-1]:0;
-      var cFinal=champ.length?champ[champ.length-1]:0;
-      var max=Math.max(uFinal,cFinal,1);
-      var carU=document.getElementById('raceCarUser');
-      var carC=document.getElementById('raceCarChamp');
-      var valU=document.getElementById('raceValUser');
-      var valC=document.getElementById('raceValChamp');
-      var uPct=Math.round((uFinal/max)*88), cPct=Math.round((cFinal/max)*88);
-      setTimeout(function(){ if(carU)carU.style.left=uPct+'%'; if(carC)carC.style.left=cPct+'%'; },200);
-      // count-up the values
-      function cu(el,target){ if(!el)return; if(rm){el.textContent=format(target);return;}
-        var st=performance.now(),dur=1600;
-        function tk(t){var p=Math.min(1,(t-st)/dur);el.textContent=format(Math.round(target*(1-Math.pow(1-p,3))));if(p<1)requestAnimationFrame(tk);}
-        requestAnimationFrame(tk);}
-      cu(valU,uFinal); cu(valC,cFinal);
+  var bcrBox=document.getElementById('bcrBox');
+  if(bcrBox){
+    var bdone=false;
+    function runBcr(){
+      if(bdone) return; bdone=true;
+      var days=[],users=[];
+      try{days=JSON.parse(bcrBox.getAttribute('data-days'))||[];}catch(e){}
+      try{users=JSON.parse(bcrBox.getAttribute('data-users'))||[];}catch(e){}
+      if(!days.length||!users.length) return;
+      var rowsEl=document.getElementById('bcrRows');
+      var dayEl=document.getElementById('bcrDay');
+      var ROWH=44;
+      rowsEl.style.height=(users.length*ROWH)+'px';
+      // build a row per user
+      var rowEls={};
+      users.forEach(function(u,i){
+        var row=document.createElement('div');
+        row.className='bcr-row'+(u.isMe?' me':'');
+        var av=u.avatar?('<img class="bcr-av" loading="lazy" src="'+u.avatar+'" onerror="this.style.visibility=\\'hidden\\'">'):'<span class="bcr-av"></span>';
+        row.innerHTML='<span class="bcr-rank"></span><div class="bcr-bar"><div class="bcr-fill"></div>'+
+          '<div class="bcr-meta">'+av+'<span class="bcr-name">'+(u.name?String(u.name):'Anonim')+(u.isMe?' (kamu)':'')+'</span>'+
+          '<span class="bcr-val">0</span></div></div>';
+        rowsEl.appendChild(row);
+        rowEls[i]=row;
+      });
+      function monthName(ds){var p=ds.split('-');var mn=['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];return parseInt(p[2])+' '+mn[parseInt(p[1])-1];}
+      var frame=0;
+      function render(f){
+        dayEl.textContent=monthName(days[f]);
+        // values at this day
+        var vals=users.map(function(u,i){return {i:i,v:(u.cumulative[f]||0),isMe:u.isMe,name:u.name};});
+        var max=Math.max.apply(null,vals.map(function(x){return x.v;}).concat([1]));
+        // order by value desc for positions
+        var order=vals.slice().sort(function(a,b){return b.v-a.v;});
+        order.forEach(function(x,pos){
+          var row=rowEls[x.i];
+          row.style.transform='translateY('+(pos*ROWH)+'px)';
+          row.querySelector('.bcr-rank').textContent='#'+(pos+1);
+          row.querySelector('.bcr-fill').style.width=Math.max(2,Math.round((x.v/max)*100))+'%';
+          row.querySelector('.bcr-val').textContent=format(x.v);
+        });
+      }
+      render(0);
+      if(rm){ render(days.length-1); return; }
+      var stepMs=Math.max(140,Math.min(420,Math.round(3200/days.length)));
+      var tm=setInterval(function(){
+        frame++;
+        if(frame>=days.length){ clearInterval(tm); return; }
+        render(frame);
+      },stepMs);
     }
-    var io3=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting)animateRace();});},{threshold:0.4});
-    io3.observe(raceBox);
+    var io3=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting)runBcr();});},{threshold:0.35});
+    io3.observe(bcrBox);
   }
 
   // Share + copy

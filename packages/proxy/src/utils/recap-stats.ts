@@ -129,12 +129,9 @@ export interface RecapStats {
   };
   race?: {
     days: string[];
-    user: number[];
-    champion: number[];
-    championName: string | null;
-    userFinal: number;
-    championFinal: number;
-    isUserChampion: boolean;
+    users: Array<{ name: string | null; avatar: string | null; rank: number; isMe: boolean; cumulative: number[] }>;
+    myRank: number;
+    totalParticipants: number;
   } | null;
 }
 
@@ -532,14 +529,19 @@ export function findRank(list: LeaderboardEntry[], keyId: number): number {
   return idx >= 0 ? idx + 1 : 0;
 }
 
-export interface RaceData {
-  days: string[]; // YYYY-MM-DD (WIB) across the month, only days with any activity
-  user: number[]; // cumulative requests for the user
-  champion: number[]; // cumulative requests for the #1 (or #2 if user is #1)
-  championName: string | null;
-  userFinal: number;
-  championFinal: number;
-  isUserChampion: boolean;
+export interface TimelapseUser {
+  name: string | null;
+  avatar: string | null;
+  rank: number; // final rank within the window's global ranking
+  isMe: boolean;
+  cumulative: number[]; // cumulative requests aligned to days[]
+}
+
+export interface RaceTimelapse {
+  days: string[]; // YYYY-MM-DD (WIB), day 1 .. today
+  users: TimelapseUser[]; // windowed around the user's rank
+  myRank: number;
+  totalParticipants: number;
 }
 
 /** Per-day cumulative request counts for a single key across the month (WIB). */
@@ -559,50 +561,66 @@ async function fetchPerDayRequests(keyId: number, start: Date, end: Date): Promi
 }
 
 /**
- * Build the "ranking race" dataset: user vs the champion (#1, or #2 if the
- * user themselves is #1), as cumulative request counts per day. Counts only.
+ * Build the leaderboard timelapse: a window of users around the viewer's final
+ * rank, each with cumulative request counts per day (day 1 .. today). Used for
+ * the bar-chart-race on the web. Counts only (privacy-safe).
  */
-export async function getRaceData(
+export async function getRaceTimelapse(
   keyId: number,
   yearMonth: string,
   leaderboard: { byRequests: LeaderboardEntry[] },
-): Promise<RaceData | null> {
-  const active = leaderboard.byRequests.filter((e) => e.requests > 0);
-  if (active.length < 2) return null; // not enough to race
+): Promise<RaceTimelapse | null> {
+  const active = leaderboard.byRequests.filter((e) => e.requests > 0 && e.apiKeyId != null);
+  if (active.length < 2) return null;
 
-  const isUserChampion = active[0]?.apiKeyId === keyId;
-  const champ = isUserChampion ? active[1] : active[0];
-  if (!champ || champ.apiKeyId == null) return null;
+  const myIdx = active.findIndex((e) => e.apiKeyId === keyId);
+  if (myIdx < 0) return null;
+
+  // Window of ranks around the user: up to 5 above and 5 below.
+  const lo = Math.max(0, myIdx - 5);
+  const hi = Math.min(active.length, myIdx + 6); // exclusive
+  const windowed = active.slice(lo, hi);
 
   const { start, end } = getMonthRangeUtc(yearMonth);
-  const [userDays, champDays] = await Promise.all([
-    fetchPerDayRequests(keyId, start, end),
-    fetchPerDayRequests(champ.apiKeyId, start, end),
-  ]);
 
-  // Union of active days, sorted.
-  const daySet = new Set<string>([...userDays.keys(), ...champDays.keys()]);
-  const days = [...daySet].sort();
+  // Day axis: day 1 of month .. min(today, month end), WIB.
+  const WIB = 7 * 60 * 60 * 1000;
+  const todayWib = new Date(Date.now() + WIB);
+  const days: string[] = [];
+  const cursor = new Date(start.getTime() + WIB); // WIB wall-clock of month start
+  while (cursor < end) {
+    const ds = cursor.toISOString().slice(0, 10);
+    days.push(ds);
+    if (ds === todayWib.toISOString().slice(0, 10)) break;
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    if (days.length >= 31) break;
+  }
   if (days.length === 0) return null;
 
-  const user: number[] = [];
-  const champion: number[] = [];
-  let uc = 0, cc = 0;
-  for (const d of days) {
-    uc += userDays.get(d) || 0;
-    cc += champDays.get(d) || 0;
-    user.push(uc);
-    champion.push(cc);
+  // Per-user cumulative aligned to the day axis.
+  const users: TimelapseUser[] = [];
+  for (const e of windowed) {
+    const perDay = await fetchPerDayRequests(e.apiKeyId!, start, end);
+    const cumulative: number[] = [];
+    let c = 0;
+    for (const d of days) {
+      c += perDay.get(d) || 0;
+      cumulative.push(c);
+    }
+    users.push({
+      name: e.discordUsername || null,
+      avatar: null, // filled in by the bot's avatar push if available
+      rank: active.indexOf(e) + 1,
+      isMe: e.apiKeyId === keyId,
+      cumulative,
+    });
   }
 
   return {
     days,
-    user,
-    champion,
-    championName: champ.discordUsername || null,
-    userFinal: uc,
-    championFinal: cc,
-    isUserChampion,
+    users,
+    myRank: myIdx + 1,
+    totalParticipants: active.length,
   };
 }
 

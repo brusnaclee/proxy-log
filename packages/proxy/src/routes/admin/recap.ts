@@ -25,7 +25,7 @@ import {
   getRecapStats,
   getMonthLeaderboard,
   enrichRankAndComparison,
-  getRaceData,
+  getRaceTimelapse,
   type LeaderboardEntry,
 } from "../../utils/recap-stats.js";
 import { generateNarrative } from "../../utils/recap-generator.js";
@@ -87,7 +87,7 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
   const leaderboard = await getMonthLeaderboard(yearMonth);
   await enrichRankAndComparison(stats, key.id, leaderboard, previousYearMonth(yearMonth));
   try {
-    stats.race = await getRaceData(key.id, yearMonth, leaderboard);
+    stats.race = await getRaceTimelapse(key.id, yearMonth, leaderboard);
   } catch { stats.race = null; }
 
   const assets = loadAssets();
