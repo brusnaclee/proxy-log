@@ -2826,6 +2826,16 @@ proxy.all('/*', async (c) => {
 						headers['x-api-key'] = apiKey;
 						headers['anthropic-version'] = '2023-06-01';
 						delete headers['Authorization'];
+					} else if (isYouComProvider) {
+						// you.com's gateway rejects a duplicated/conflicting
+						// Content-Type (the client's lowercase "content-type" plus
+						// our capitalized one merge into "application/json,
+						// application/json"), which makes it treat the JSON body as
+						// a raw string. Send a clean, minimal header set.
+						delete headers['content-type'];
+						delete headers['accept'];
+						headers['Content-Type'] = 'application/json';
+						headers['Authorization'] = `Bearer ${apiKey}`;
 					} else {
 						headers['Authorization'] = `Bearer ${apiKey}`;
 					}
