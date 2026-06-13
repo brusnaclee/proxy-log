@@ -12,7 +12,7 @@ import { db } from "../db/index.js";
 import { userRecaps, recapLeaderboard, apiKeys, recapTestimonials } from "../db/schema.js";
 import { eq, and, desc } from "drizzle-orm";
 import { getRecapWindow, monthLabelFromYearMonth, wibTodayDateStr } from "../utils/recap-window.js";
-import { getAsset, fallbackForCategory, assetUrl } from "../utils/recap-assets.js";
+import { getAsset, fallbackForCategory, memeForCategory, assetUrl } from "../utils/recap-assets.js";
 import { renderRecapHtml, renderMessagePage } from "../utils/recap-html.js";
 import { dayToken } from "./admin/recap.js";
 
@@ -102,13 +102,18 @@ recapWeb.get("/:apiKeyName", async (c) => {
     persona: "personas", rank: "ranks", ide: "misc", closing: "confetti",
   };
   const resolvedAssets: Record<string, { url: string; type: string } | null> = {};
-  if (narrative?.assetChoices) {
-    for (const [section, id] of Object.entries(narrative.assetChoices as Record<string, string>)) {
-      let asset = getAsset(id);
-      if (!asset) asset = fallbackForCategory(sectionCategory[section] || "misc");
-      resolvedAssets[section] = asset ? { url: assetUrl(base, asset.file), type: asset.type } : null;
-    }
-  }
+  // Always prefer a real meme GIF for the section's category; only if none
+  // exists do we fall back to the AI-picked id (which may be an emoji SVG).
+  const seedBase = (stats?.totals?.requests || 0) + (stats?.totals?.totalTokens || 0);
+  const choices = (narrative?.assetChoices || {}) as Record<string, string>;
+  const sectionKeys = ["intro","requests","tokens","favoriteModel","leastModel","activeTime","persona","rank","ide","closing"];
+  sectionKeys.forEach((section, i) => {
+    const cat = sectionCategory[section] || "misc";
+    let asset = memeForCategory(cat, [], seedBase + i);
+    if (!asset && choices[section]) asset = getAsset(choices[section]);
+    if (!asset) asset = fallbackForCategory(cat);
+    resolvedAssets[section] = asset ? { url: assetUrl(base, asset.file), type: asset.type } : null;
+  });
 
   const html = renderRecapHtml({
     apiKeyName,

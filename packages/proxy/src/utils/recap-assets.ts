@@ -63,7 +63,30 @@ export function getAsset(id: string): RecapAsset | undefined {
 
 /** First asset matching a category (deterministic fallback). */
 export function fallbackForCategory(category: string): RecapAsset | undefined {
-  return loadAssets().find((a) => a.category === category);
+  const all = loadAssets();
+  // Prefer a real meme (gif/img file under memes/) over the emoji SVG fallback.
+  return all.find((a) => a.category === category && isMeme(a)) || all.find((a) => a.category === category);
+}
+
+/** True if the asset is a real meme file (not the emoji-SVG fallback set). */
+export function isMeme(a: RecapAsset): boolean {
+  return a.type === "gif" || (typeof a.file === "string" && a.file.startsWith("memes/"));
+}
+
+/**
+ * Pick a real meme for a category, optionally biased by tags, with a stable
+ * seed so the same user gets a stable-but-varied choice. Falls back to any
+ * meme in the category, then any asset in the category, then undefined.
+ */
+export function memeForCategory(category: string, tags: string[] = [], seed = 0): RecapAsset | undefined {
+  const all = loadAssets();
+  const memes = all.filter((a) => a.category === category && isMeme(a));
+  if (memes.length === 0) return fallbackForCategory(category);
+  if (tags.length) {
+    const tagged = memes.filter((a) => (a.tags || []).some((t) => tags.includes(t)));
+    if (tagged.length) return tagged[seed % tagged.length];
+  }
+  return memes[seed % memes.length];
 }
 
 /** Build the public URL for an asset file. */
