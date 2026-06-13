@@ -135,6 +135,15 @@ transition:transform .3s,opacity .3s;z-index:50}
 .testi textarea{width:100%;border-radius:14px;border:1px solid var(--line);background:rgba(0,0,0,.25);
 color:#fff;padding:12px 14px;font-size:15px;font-family:inherit;resize:vertical;margin-bottom:12px}
 .testi-done{display:none;margin-top:10px;color:#34d399;font-weight:700}
+.race{margin-top:8px;display:flex;flex-direction:column;gap:16px;position:relative}
+.race-lane{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px}
+.race-tag{font-size:13px;font-weight:700;color:var(--muted);white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis}
+.race-track{position:relative;height:30px;border-radius:15px;background:rgba(255,255,255,.08);
+border:1px dashed rgba(255,255,255,.18)}
+.race-car{position:absolute;top:50%;left:0;transform:transl(-50%,-50%);font-size:24px;
+transition:left 1.6s cubic-bezier(.3,.7,.3,1)}
+.race-val{font-weight:800;font-size:14px;color:var(--g3);min-width:48px;text-align:right}
+.race-flag{position:absolute;right:54px;top:0;bottom:30px;font-size:22px;opacity:.5}
 .testi-done.show{display:block}
 .delta-up{color:#34d399}.delta-down{color:#f87171}
 .confetti{position:fixed;inset:0;pointer-events:none;z-index:40;overflow:hidden}
@@ -310,6 +319,34 @@ function buildSections(d: RecapHtmlData): string {
     <div class="caption reveal">${rankT.caption || (rankReq && rankReq <= 5 ? "Sultan AI! Mecut terus 🔥" : "Terus semangat ngoding!")}</div>
     ${mediaTag(A.rank, d.base)}`));
 
+  // 9b. Ranking race (user vs champion across the month)
+  const race = s.race;
+  if (race && Array.isArray(race.days) && race.days.length >= 2) {
+    const champLabel = race.isUserChampion ? `runner-up${race.championName ? " @" + race.championName : ""}` : (race.championName ? "@" + race.championName : "sang juara");
+    const meLabel = race.isUserChampion ? "kamu 👑" : "kamu";
+    const verdict = race.isUserChampion
+      ? "Kamu di puncak sebulan penuh. Yang lain cuma bisa lihat buntut. 🏁"
+      : race.userFinal >= race.championFinal
+        ? "Kamu nyaris nyalip! Bulan depan rebut takhtanya."
+        : `Si juara unggul ${fmtNum(race.championFinal - race.userFinal)} request. Latihan lagi! 🏎️`;
+    out.push(section("race", `
+      <div class="kicker reveal">Balapan Sebulan</div>
+      <div class="headline reveal">Kamu vs ${escapeHtml(champLabel)}</div>
+      <div class="race card reveal" id="raceBox"
+        data-days='${escapeHtml(JSON.stringify(race.days))}'
+        data-user='${escapeHtml(JSON.stringify(race.user))}'
+        data-champ='${escapeHtml(JSON.stringify(race.champion))}'>
+        <div class="race-lane"><span class="race-tag">🏎️ ${escapeHtml(meLabel)}</span>
+          <div class="race-track"><span class="race-car" id="raceCarUser">🏎️</span></div>
+          <span class="race-val" id="raceValUser">0</span></div>
+        <div class="race-lane"><span class="race-tag">🚗 ${escapeHtml(champLabel)}</span>
+          <div class="race-track"><span class="race-car" id="raceCarChamp">🚗</span></div>
+          <span class="race-val" id="raceValChamp">0</span></div>
+        <div class="race-flag">🏁</div>
+      </div>
+      <div class="caption reveal">${escapeHtml(verdict)}</div>`));
+  }
+
   // 10. Leaderboard
   out.push(section("leaderboard", `
     <div class="kicker reveal">Papan Peringkat ${escapeHtml(d.monthLabel)}</div>
@@ -426,6 +463,36 @@ const RECAP_JS = `
     if(e.isIntersecting){var id=e.target.getAttribute('data-slide');
       if((id==='closing'||id==='rank')&&!fired[id]){fired[id]=1;confetti();}}});},{threshold:0.5});
   document.querySelectorAll('.slide').forEach(function(s){io2.observe(s);});
+
+  // Ranking race: animate cars to final position when the section enters view.
+  var raceBox=document.getElementById('raceBox');
+  if(raceBox){
+    var rdone=false;
+    function num(v){return parseInt(v)||0;}
+    function animateRace(){
+      if(rdone) return; rdone=true;
+      var user=[],champ=[];
+      try{user=JSON.parse(raceBox.getAttribute('data-user'))||[];}catch(e){}
+      try{champ=JSON.parse(raceBox.getAttribute('data-champ'))||[];}catch(e){}
+      var uFinal=user.length?user[user.length-1]:0;
+      var cFinal=champ.length?champ[champ.length-1]:0;
+      var max=Math.max(uFinal,cFinal,1);
+      var carU=document.getElementById('raceCarUser');
+      var carC=document.getElementById('raceCarChamp');
+      var valU=document.getElementById('raceValUser');
+      var valC=document.getElementById('raceValChamp');
+      var uPct=Math.round((uFinal/max)*88), cPct=Math.round((cFinal/max)*88);
+      setTimeout(function(){ if(carU)carU.style.left=uPct+'%'; if(carC)carC.style.left=cPct+'%'; },200);
+      // count-up the values
+      function cu(el,target){ if(!el)return; if(rm){el.textContent=format(target);return;}
+        var st=performance.now(),dur=1600;
+        function tk(t){var p=Math.min(1,(t-st)/dur);el.textContent=format(Math.round(target*(1-Math.pow(1-p,3))));if(p<1)requestAnimationFrame(tk);}
+        requestAnimationFrame(tk);}
+      cu(valU,uFinal); cu(valC,cFinal);
+    }
+    var io3=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting)animateRace();});},{threshold:0.4});
+    io3.observe(raceBox);
+  }
 
   // Share + copy
   var url=document.body.getAttribute('data-url')||location.href;

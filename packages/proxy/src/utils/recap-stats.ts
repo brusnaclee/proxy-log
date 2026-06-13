@@ -127,6 +127,15 @@ export interface RecapStats {
     tokensP75: number;
     tokensP90: number;
   };
+  race?: {
+    days: string[];
+    user: number[];
+    champion: number[];
+    championName: string | null;
+    userFinal: number;
+    championFinal: number;
+    isUserChampion: boolean;
+  } | null;
 }
 
 const WEEKDAY_ID = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
@@ -521,6 +530,80 @@ export async function getMonthLeaderboard(yearMonth: string): Promise<{
 export function findRank(list: LeaderboardEntry[], keyId: number): number {
   const idx = list.findIndex((e) => e.apiKeyId === keyId && (e.requests > 0 || e.tokens > 0));
   return idx >= 0 ? idx + 1 : 0;
+}
+
+export interface RaceData {
+  days: string[]; // YYYY-MM-DD (WIB) across the month, only days with any activity
+  user: number[]; // cumulative requests for the user
+  champion: number[]; // cumulative requests for the #1 (or #2 if user is #1)
+  championName: string | null;
+  userFinal: number;
+  championFinal: number;
+  isUserChampion: boolean;
+}
+
+/** Per-day cumulative request counts for a single key across the month (WIB). */
+async function fetchPerDayRequests(keyId: number, start: Date, end: Date): Promise<Map<string, number>> {
+  const rows = (await db.execute(sql`
+    SELECT day, COUNT(DISTINCT turn_id) AS requests
+    FROM (
+      SELECT to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') AS day, turn_id
+      FROM request_logs
+      WHERE api_key_id = ${keyId} AND created_at >= ${start} AND created_at < ${end}
+        AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+    ) d GROUP BY day
+  `)).rows as any[];
+  const m = new Map<string, number>();
+  for (const r of rows) m.set(r.day, num(r.requests));
+  return m;
+}
+
+/**
+ * Build the "ranking race" dataset: user vs the champion (#1, or #2 if the
+ * user themselves is #1), as cumulative request counts per day. Counts only.
+ */
+export async function getRaceData(
+  keyId: number,
+  yearMonth: string,
+  leaderboard: { byRequests: LeaderboardEntry[] },
+): Promise<RaceData | null> {
+  const active = leaderboard.byRequests.filter((e) => e.requests > 0);
+  if (active.length < 2) return null; // not enough to race
+
+  const isUserChampion = active[0]?.apiKeyId === keyId;
+  const champ = isUserChampion ? active[1] : active[0];
+  if (!champ || champ.apiKeyId == null) return null;
+
+  const { start, end } = getMonthRangeUtc(yearMonth);
+  const [userDays, champDays] = await Promise.all([
+    fetchPerDayRequests(keyId, start, end),
+    fetchPerDayRequests(champ.apiKeyId, start, end),
+  ]);
+
+  // Union of active days, sorted.
+  const daySet = new Set<string>([...userDays.keys(), ...champDays.keys()]);
+  const days = [...daySet].sort();
+  if (days.length === 0) return null;
+
+  const user: number[] = [];
+  const champion: number[] = [];
+  let uc = 0, cc = 0;
+  for (const d of days) {
+    uc += userDays.get(d) || 0;
+    cc += champDays.get(d) || 0;
+    user.push(uc);
+    champion.push(cc);
+  }
+
+  return {
+    days,
+    user,
+    champion,
+    championName: champ.discordUsername || null,
+    userFinal: uc,
+    championFinal: cc,
+    isUserChampion,
+  };
 }
 
 /** Percentile (0..1) of a numeric array (linear interpolation). */

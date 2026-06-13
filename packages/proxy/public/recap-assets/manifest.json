@@ -8,7 +8,8 @@
       "pro",
       "balanced"
     ],
-    "caption": "Prompt efisien, output maksimal"
+    "mood": "pulse",
+    "caption": "Output efisien, otak encer"
   },
   {
     "id": "personas_2",
@@ -18,7 +19,8 @@
     "tags": [
       "boros"
     ],
-    "caption": "Input gede, output mini"
+    "mood": "shake",
+    "caption": "Suapin konteks segunung"
   },
   {
     "id": "personas_3",
@@ -28,7 +30,8 @@
     "tags": [
       "balanced"
     ],
-    "caption": "Ngalir aja bro"
+    "mood": "bounce",
+    "caption": "Ngalir aja, gak ngoyo"
   },
   {
     "id": "personas_4",
@@ -39,6 +42,7 @@
       "pro",
       "heavy"
     ],
+    "mood": "pulse",
     "caption": "Bakar token tiada henti"
   },
   {
@@ -49,7 +53,8 @@
     "tags": [
       "balanced"
     ],
-    "caption": "Quality over quantity"
+    "mood": "bounce",
+    "caption": "Kualitas di atas kuantitas"
   },
   {
     "id": "personas_6",
@@ -60,7 +65,30 @@
       "ghost",
       "low"
     ],
-    "caption": "Jarang nongol"
+    "mood": "bounce",
+    "caption": "Jarang nongol, misterius"
+  },
+  {
+    "id": "personas_7",
+    "category": "personas",
+    "type": "img",
+    "file": "personas/personas_7.svg",
+    "tags": [
+      "night"
+    ],
+    "mood": "spin",
+    "caption": "Hidup pas orang tidur"
+  },
+  {
+    "id": "personas_8",
+    "category": "personas",
+    "type": "img",
+    "file": "personas/personas_8.svg",
+    "tags": [
+      "vibe"
+    ],
+    "mood": "pulse",
+    "caption": "Tool call tiada akhir"
   },
   {
     "id": "ranks_1",
@@ -70,6 +98,7 @@
     "tags": [
       "top1"
     ],
+    "mood": "pulse",
     "caption": "Raja mecut AI"
   },
   {
@@ -80,6 +109,7 @@
     "tags": [
       "top3"
     ],
+    "mood": "bounce",
     "caption": "Nyaris puncak"
   },
   {
@@ -90,6 +120,7 @@
     "tags": [
       "top3"
     ],
+    "mood": "bounce",
     "caption": "Tiga besar"
   },
   {
@@ -100,6 +131,7 @@
     "tags": [
       "top10"
     ],
+    "mood": "pulse",
     "caption": "Langganan papan atas"
   },
   {
@@ -108,9 +140,11 @@
     "type": "img",
     "file": "ranks/ranks_5.svg",
     "tags": [
-      "mid"
+      "mid",
+      "race"
     ],
-    "caption": "Terus naik"
+    "mood": "race",
+    "caption": "Salip-salipan rank"
   },
   {
     "id": "ranks_6",
@@ -118,9 +152,21 @@
     "type": "img",
     "file": "ranks/ranks_6.svg",
     "tags": [
+      "mid"
+    ],
+    "mood": "shake",
+    "caption": "Terus merangkak naik"
+  },
+  {
+    "id": "ranks_7",
+    "category": "ranks",
+    "type": "img",
+    "file": "ranks/ranks_7.svg",
+    "tags": [
       "low"
     ],
-    "caption": "Baru mulai"
+    "mood": "bounce",
+    "caption": "Baru mulai, semangat"
   },
   {
     "id": "models_1",
@@ -130,7 +176,8 @@
     "tags": [
       "favorite"
     ],
-    "caption": "Partner ngoding setia"
+    "mood": "bounce",
+    "caption": "Partner setia ngoding"
   },
   {
     "id": "models_2",
@@ -141,7 +188,8 @@
       "least",
       "forgotten"
     ],
-    "caption": "Model yang kamu tinggalin"
+    "mood": "shake",
+    "caption": "Model yang ditinggalin"
   },
   {
     "id": "models_3",
@@ -151,7 +199,8 @@
     "tags": [
       "fast"
     ],
-    "caption": "Model tercepat"
+    "mood": "pulse",
+    "caption": "Model paling ngebut"
   },
   {
     "id": "models_4",
@@ -161,7 +210,8 @@
     "tags": [
       "slow"
     ],
-    "caption": "Sabar ya nunggu"
+    "mood": "shake",
+    "caption": "Sabar nungguin loading"
   },
   {
     "id": "models_5",
@@ -171,7 +221,8 @@
     "tags": [
       "favorite"
     ],
-    "caption": "Selera bagus"
+    "mood": "spin",
+    "caption": "Pilihan model oke"
   },
   {
     "id": "time_1",
@@ -181,7 +232,8 @@
     "tags": [
       "night"
     ],
-    "caption": "Begadang ngoding"
+    "mood": "spin",
+    "caption": "Begadang ngoding terus"
   },
   {
     "id": "time_2",
@@ -191,7 +243,8 @@
     "tags": [
       "morning"
     ],
-    "caption": "Early bird coder"
+    "mood": "bounce",
+    "caption": "Ngoding pas ayam belum bangun"
   },
   {
     "id": "time_3",
@@ -201,6 +254,7 @@
     "tags": [
       "noon"
     ],
+    "mood": "pulse",
     "caption": "Produktif tengah hari"
   },
   {
@@ -211,7 +265,8 @@
     "tags": [
       "night"
     ],
-    "caption": "Inspirasi malam hari"
+    "mood": "bounce",
+    "caption": "Inspirasi muncul malam"
   },
   {
     "id": "reactions_1",
@@ -221,7 +276,8 @@
     "tags": [
       "hype"
     ],
-    "caption": "Request-nya banyak banget"
+    "mood": "shake",
+    "caption": "Request-nya kebangetan"
   },
   {
     "id": "reactions_2",
@@ -232,6 +288,7 @@
       "sweat",
       "hype"
     ],
+    "mood": "shake",
     "caption": "Kerja keras bagai kuda"
   },
   {
@@ -243,7 +300,8 @@
       "sad",
       "low"
     ],
-    "caption": "Bulan depan gas lagi"
+    "mood": "bounce",
+    "caption": "Bulan depan gas lagi ya"
   },
   {
     "id": "reactions_4",
@@ -253,7 +311,8 @@
     "tags": [
       "hype"
     ],
-    "caption": "Efisien parah"
+    "mood": "pulse",
+    "caption": "Efisien gak ketulungan"
   },
   {
     "id": "reactions_5",
@@ -263,7 +322,19 @@
     "tags": [
       "hype"
     ],
-    "caption": "Konsisten tiap hari"
+    "mood": "pulse",
+    "caption": "Rajin tiap hari, salut"
+  },
+  {
+    "id": "reactions_6",
+    "category": "reactions",
+    "type": "img",
+    "file": "reactions/reactions_6.svg",
+    "tags": [
+      "hype"
+    ],
+    "mood": "pulse",
+    "caption": "Kecepatan ngoding ngeri"
   },
   {
     "id": "confetti_1",
@@ -273,7 +344,8 @@
     "tags": [
       "celebrate"
     ],
-    "caption": "Recap kamu lengkap"
+    "mood": "pulse",
+    "caption": "Recap lo lengkap"
   },
   {
     "id": "confetti_2",
@@ -283,6 +355,7 @@
     "tags": [
       "celebrate"
     ],
+    "mood": "bounce",
     "caption": "Sampai jumpa bulan depan"
   },
   {
@@ -293,7 +366,8 @@
     "tags": [
       "celebrate"
     ],
-    "caption": "Terus ngoding ya"
+    "mood": "spin",
+    "caption": "Lanjut ngoding ya"
   },
   {
     "id": "misc_1",
@@ -303,7 +377,8 @@
     "tags": [
       "intro"
     ],
-    "caption": "Perjalanan ngoding kamu"
+    "mood": "bounce",
+    "caption": "Rekap sebulan penuh"
   },
   {
     "id": "misc_2",
@@ -314,7 +389,8 @@
       "intro",
       "ide"
     ],
-    "caption": "AI jadi partner"
+    "mood": "pulse",
+    "caption": "AI jadi partner sejati"
   },
   {
     "id": "misc_3",
@@ -324,7 +400,8 @@
     "tags": [
       "intro"
     ],
-    "caption": "Makin produktif"
+    "mood": "pulse",
+    "caption": "Makin produktif tiap hari"
   },
   {
     "id": "misc_4",
@@ -334,6 +411,7 @@
     "tags": [
       "intro"
     ],
-    "caption": "Progress kamu"
+    "mood": "bounce",
+    "caption": "Progress lo kelihatan"
   }
 ]

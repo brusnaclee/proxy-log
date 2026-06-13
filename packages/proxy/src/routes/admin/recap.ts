@@ -25,6 +25,7 @@ import {
   getRecapStats,
   getMonthLeaderboard,
   enrichRankAndComparison,
+  getRaceData,
   type LeaderboardEntry,
 } from "../../utils/recap-stats.js";
 import { generateNarrative } from "../../utils/recap-generator.js";
@@ -85,6 +86,9 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
   const stats = await getRecapStats(key.id, yearMonth);
   const leaderboard = await getMonthLeaderboard(yearMonth);
   await enrichRankAndComparison(stats, key.id, leaderboard, previousYearMonth(yearMonth));
+  try {
+    stats.race = await getRaceData(key.id, yearMonth, leaderboard);
+  } catch { stats.race = null; }
 
   const assets = loadAssets();
   // Interactive: fewer retries to stay responsive; background: more retries.
@@ -229,27 +233,21 @@ function submitSecret(): string {
   return process.env.SESSION_SECRET || process.env.INTERNAL_API_SECRET || "recap-fallback-secret";
 }
 
-export function mintSubmitToken(discordUserId: string, yearMonth: string, ttlMs = 30 * 60 * 1000): string {
-  const exp = Date.now() + ttlMs;
-  const payload = `${discordUserId}:${yearMonth}:${exp}`;
-  const sig = createHmac("sha256", submitSecret()).update(payload).digest("hex").slice(0, 32);
-  return `${Buffer.from(payload).toString("base64url")}.${sig}`;
+/**
+ * Deterministic per-day token for testimonials.
+ * Same value all day (so pressing the button again returns the same token),
+ * changes the next WIB day. Validated by recomputation, no DB state needed.
+ */
+export function dayToken(discordUserId: string, yearMonth: string, wibDate?: string): string {
+  const day = wibDate || wibTodayDateStr();
+  const payload = `${discordUserId}:${yearMonth}:${day}`;
+  return createHmac("sha256", submitSecret()).update(payload).digest("hex").slice(0, 24);
 }
 
-function verifySubmitToken(token: string): { discordUserId: string; yearMonth: string } | null {
-  try {
-    const [b64, sig] = String(token).split(".");
-    if (!b64 || !sig) return null;
-    const payload = Buffer.from(b64, "base64url").toString("utf8");
-    const expect = createHmac("sha256", submitSecret()).update(payload).digest("hex").slice(0, 32);
-    if (sig !== expect) return null;
-    const [discordUserId, yearMonth, expStr] = payload.split(":");
-    if (!discordUserId || !yearMonth || !expStr) return null;
-    if (Date.now() > Number(expStr)) return null;
-    return { discordUserId, yearMonth };
-  } catch {
-    return null;
-  }
+/** Verify a day token by recomputation against today's WIB date. */
+function verifyDayToken(discordUserId: string, yearMonth: string, token: string): boolean {
+  if (!token) return false;
+  return token === dayToken(discordUserId, yearMonth);
 }
 
 // List testimonials for a month (for the Discord viewer).
@@ -262,4 +260,3 @@ recap.get("/internal/recap/testimonials", async (c) => {
 });
 
 export default recap;
-export { verifySubmitToken };

@@ -171,17 +171,77 @@ export function templateNarrative(stats: RecapStats, monthLabel: string, assets:
     const a = assets.find((x) => x.category === category);
     return a?.id;
   };
+  // Seed from numbers so the same user gets stable (but varied vs others) lines.
+  const seed = (stats.totals.requests * 31 + stats.totals.totalTokens + (stats.rank.requests || 0) * 7) >>> 0;
+  const ch = <T,>(arr: T[]): T => arr[seed % arr.length];
+  const req = stats.totals.requests;
+  const tok = stats.totals.totalTokens;
+  const inTok = stats.totals.inputTokens;
+  const outTok = stats.totals.outputTokens;
+  const fav = stats.models.favorite ?? "-";
+  const least = stats.models.leastUsed[0]?.model;
+  const hr = stats.activity.mostActiveHour?.hour ?? null;
+  const rankR = stats.rank.requests;
+
   const sections: RecapNarrative["sections"] = {
-    intro: { headline: `Recap ${monthLabel}`, caption: "Yuk lihat perjalanan ngoding kamu bulan ini!", assetId: pick("misc") },
-    requests: { headline: `${fmtNum(stats.totals.requests)} request`, caption: `Kamu mecut AI sebanyak ${stats.totals.requests} kali.`, assetId: pick("reactions") },
-    tokens: { headline: `${fmtNum(stats.totals.totalTokens)} token`, caption: `Input ${fmtNum(stats.totals.inputTokens)} - Output ${fmtNum(stats.totals.outputTokens)}.`, assetId: pick("personas") },
-    favoriteModel: { headline: stats.models.favorite ?? "-", caption: "Model andalan kamu bulan ini.", assetId: pick("models") },
-    leastModel: { headline: stats.models.leastUsed[0]?.model ?? "-", caption: "Model yang jarang kamu sentuh. Kita kan teman?", assetId: pick("models") },
-    activeTime: { headline: stats.activity.mostActiveHour ? `${stats.activity.mostActiveHour.hour}:00 WIB` : "-", caption: `Waktu paling produktif kamu: ${timePersona(stats.activity.mostActiveHour?.hour ?? null)}.`, assetId: pick("time") },
+    intro: {
+      headline: ch([`Wrapped ${monthLabel}`, `Rekap ${monthLabel}`, `${monthLabel}, Dirangkum`]),
+      caption: ch([
+        "Sebulan penuh drama lo sama AI, kerangkum di sini.",
+        "Jejak ngoding lo bulan ini, no skip.",
+        "Mari kita buka rapor bulanan lo.",
+      ]),
+      assetId: pick("misc"),
+    },
+    requests: {
+      headline: `${fmtNum(req)} request`,
+      caption: req >= 1000
+        ? ch([`${req.toLocaleString("id-ID")} kali mencet enter. AI lo butuh libur.`, `${fmtNum(req)} request — lo bukan ngoding, lo nyiksa AI.`])
+        : ch([`${req} request bulan ini. Kalem tapi jalan.`, `${req} kali manggil AI. Secukupnya, gaya hemat.`]),
+      assetId: pick("reactions"),
+    },
+    tokens: {
+      headline: `${fmtNum(tok)} token`,
+      caption: ch([
+        `Input ${fmtNum(inTok)}, output ${fmtNum(outTok)}. ${inTok > outTok * 8 ? "Lo suapin konteks segunung." : "Lumayan imbang sih."}`,
+        `${fmtNum(tok)} token kebakar. Dompet provider nangis.`,
+      ]),
+      assetId: pick("personas"),
+    },
+    favoriteModel: {
+      headline: String(fav),
+      caption: ch([`${fav} jadi tmeng-andalan lo. Setia banget.`, `Kemana-mana ${fav}. Udah kayak pacar.`]),
+      assetId: pick("models"),
+    },
+    leastModel: {
+      headline: least ?? "-",
+      caption: least ? ch([`${least} cuma lo colek sekali. Kasian.`, `${least} dianaktirikan. Kita kan temen?`]) : "Lo cuma pakai satu model. Loyal abis.",
+      assetId: pick("models"),
+    },
+    activeTime: {
+      headline: hr !== null ? `${hr}:00 WIB` : "-",
+      caption: hr === null ? "Jam ngoding lo random, susah ditebak." : ch([
+        `Paling sering ngoding jam ${hr}. ${hr < 5 ? "Tidur itu opsional ya." : hr < 9 ? "Tim subuh sejati." : "Jam produktif klasik."}`,
+        `Jam ${hr} jadi prime time lo.`,
+      ]),
+      assetId: pick("time"),
+    },
     persona: { headline: persona.title, caption: persona.hint, assetId: pick("personas") },
-    rank: { headline: stats.rank.requests ? `Peringkat #${stats.rank.requests}` : "Belum berperingkat", caption: rankTier(stats.rank.requests), assetId: pick("ranks") },
-    ide: { headline: stats.ide.favorite ?? "-", caption: `IDE favorit kamu, dari ${stats.ide.uniqueCount} IDE.`, assetId: pick("misc") },
-    closing: { headline: "Sampai jumpa bulan depan!", caption: "Terus ngoding bareng AI ya.", assetId: pick("confetti") },
+    rank: {
+      headline: rankR ? `Peringkat #${rankR}` : "Belum berperingkat",
+      caption: rankTier(rankR),
+      assetId: pick("ranks"),
+    },
+    ide: {
+      headline: stats.ide.favorite ?? "-",
+      caption: stats.ide.uniqueCount > 1 ? `${stats.ide.favorite} juara, dari ${stats.ide.uniqueCount} IDE yang lo cobain.` : `Setia di ${stats.ide.favorite ?? "satu IDE"}.`,
+      assetId: pick("misc"),
+    },
+    closing: {
+      headline: ch(["Sampai jumpa bulan depan!", "Lanjut bulan depan ya!", "Gas terus!"]),
+      caption: ch(["Jangan lupa istirahat, AI-nya udah capek.", "Bulan depan kita ngebut lagi."]),
+      assetId: pick("confetti"),
+    },
   };
   const assetChoices: Record<string, string> = {};
   for (const k of SECTION_KEYS) {
@@ -191,7 +251,7 @@ export function templateNarrative(stats: RecapStats, monthLabel: string, assets:
   return {
     persona: { title: persona.title, subtitle: persona.hint },
     sections,
-    closing: "Sampai jumpa bulan depan!",
+    closing: sections.closing.headline,
     assetChoices,
   };
 }
@@ -215,19 +275,33 @@ function validateAssetChoices(
   return out;
 }
 
-const SYSTEM_PROMPT = `Kamu adalah penulis "recap bulanan" gaya Spotify Wrapped untuk developer yang pakai AI coding.
-Gaya: Bahasa Indonesia gaul, lucu, meme, hangat, sedikit nyindir tapi tetap positif.
-Kamu HANYA menerima statistik angka & kategori. JANGAN mengarang isi percakapan/topik.
-Output WAJIB JSON valid sesuai skema. Tiap user harus terasa beda tergantung angka & rankingnya.
-Pilih assetId dari daftar yang diberikan (pakai field "id"), cocokkan dengan vibe tiap section.`;
+const SYSTEM_PROMPT = `Lo penulis "Wrapped" bulanan buat developer yang ngoding pake AI. Bayangin lo temen sebticket yang iseng nge-roast tapi sayang.
+
+SUARA & GAYA:
+- Bahasa Indonesia gaul sehari-hari (lo/gue/kamu boleh, santai), nyeleneh, meme, relatable anak tech.
+- Spesifik ke ANGKA user. Sebut angkanya, bandingin, sindir halus. Contoh bagus: "3.208 request? lo nggak ngoding, lo nyiksa AI." 
+- Roast yang lucu tapi tetep bikin bangga. Boleh absurd/hiperbola.
+- VARIASIKAN tiap user — jangan pernah pola kalimat yang sama.
+
+DILARANG KERAS (kedengeran AI/template):
+- "Yuk lihat perjalanan ngoding kamu", "Mari kita intip", "Berikut adalah", "Di bulan ini kamu telah".
+- Kalimat motivasi generik tanpa angka.
+- Emoji bertabur di tiap kalimat (maksimal 1 emoji per caption, sering malah 0).
+
+ATURAN:
+- HANYA terima statistik angka/kategori. JANGAN ngarang isi percakapan/topik kerjaan.
+- Output WAJIB JSON valid sesuai skema. Pilih assetId dari daftar (pakai field "id"), cocokin sama vibe section.
+- headline: super singkat & punchy (<= 38 char). caption: 1-2 kalimat, spesifik nyebut angka, lucu, layak di-screenshot.`;
 
 function buildUserPrompt(summary: string, assets: RecapAsset[]): string {
   const assetList = assets.map((a) => `${a.id} [${a.category}] tags:${(a.tags || []).join("/")}`).join("\n");
   return `STATISTIK USER (aggregate, tanpa konten):
 ${summary}
 
-DAFTAR ASSET (pilih id yang cocok per section):
+DAFTAR ASSET (pilih id yang paling nyambung sama vibe tiap section):
 ${assetList}
+
+Tulis recap yang terasa DITULIS MANUSIA, bukan AI. Nyebut angka spesifik di atas, roast halus, beda dari user lain.
 
 Buat JSON dengan struktur PERSIS:
 {
@@ -246,7 +320,7 @@ Buat JSON dengan struktur PERSIS:
   },
   "closing": "..."
 }
-headline singkat (max ~40 char), caption 1-2 kalimat lucu. HANYA JSON, tanpa teks lain.`;
+HANYA JSON, tanpa teks lain, tanpa code fence.`;
 }
 
 /** Extract a JSON object from a model response that may contain code fences. */
@@ -281,7 +355,7 @@ export async function generateNarrative(
   if (!apiKey) return { ok: false, narrative: fallback };
 
   const summary = buildStatsSummary(stats, monthLabel);
-  const maxAttempts = Math.max(1, opts.retries ?? 10);
+  const maxAttempts = Math.max(1, opts.retries ?? 30);
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
