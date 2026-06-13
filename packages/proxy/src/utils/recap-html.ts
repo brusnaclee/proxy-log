@@ -617,7 +617,7 @@ const RECAP_JS = `
         .then(function(res){ if(res.ok&&res.j.success){
             document.getElementById('testiDone').classList.add('show');
             sub.textContent='Terkirim ✓';toast('Makasih atas testimoninya!');
-          } else { sub.disabled=false;sub.textContent='Kirim Testimoni';toast(res.j.error||'Gagal mengirim'); }
+          } else { sub.disabled=false;sub.textContent='Kirim Testimoni';var em=res.j&&res.j.error;toast(typeof em==='string'?em:(em&&em.message)||'Gagal mengirim'); }
         }).catch(function(){sub.disabled=false;sub.textContent='Kirim Testimoni';toast('Gagal mengirim');});
     });
   }

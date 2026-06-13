@@ -154,7 +154,7 @@ recapWeb.post("/testimonial", async (c) => {
 
   const yearMonth = body.yearMonth || getRecapWindow().yearMonth;
   const discordUserId = String(body.userId);
-  if (!verifyDayToken(discordUserId, yearMonth, body.token)) {
+  if (!verifyDayTokenWeb(discordUserId, yearMonth, body.token)) {
     return c.json({ error: "Token tidak valid. Buka recap dari Discord ya." }, 403);
   }
 

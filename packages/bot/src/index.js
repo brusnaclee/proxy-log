@@ -92,7 +92,7 @@ const RECAP_PUBLIC_BASE_URL = (
 	process.env.RECAP_PUBLIC_BASE_URL || PROXY_PUBLIC_BASE_URL || 'https://api.tokito.xyz'
 ).replace(/\/$/, '');
 const RECAP_DEBUG_INTERVAL_MS = 24 * 60 * 60 * 1000; // daily
-let recapState = { panelMessageId: null, debugPanelMessageId: null };
+let recapState = { panelMessageId: null, debugPanelMessageId: null, debugLogMessageId: null };
 
 async function proxyInternal(pathname, method = 'GET', body = null) {
 	const headers = {
@@ -2739,33 +2739,17 @@ async function ensureRecapDebugMessage() {
 	let win = null;
 	try { win = await proxyInternal('/admin/internal/recap/window'); } catch { /* ignore */ }
 
-	// Dedupe: delete any extra bot-authored recap-debug panels, keep only one.
+	// Delete ALL existing bot recap-debug panels so the button is unique, then
+	// always re-send a fresh one so it stays the LAST message in the channel.
 	try {
 		const recent = await channel.messages.fetch({ limit: 50 }).catch(() => null);
 		if (recent) {
 			const mine = recent.filter((m) =>
 				m.author.id === client.user.id &&
 				m.components?.some((row) => row.components?.some((cmp) => cmp.customId === 'recap_debug_self')));
-			const sorted = [...mine.values()].sort((a, b) => a.createdTimestamp - b.createdTimestamp);
-			// Keep the first (oldest) as the canonical panel; delete the rest.
-			const keep = sorted[0];
-			for (let i = 1; i < sorted.length; i++) await sorted[i].delete().catch(() => {});
-			if (keep) {
-				recapState.debugPanelMessageId = keep.id;
-				await saveRecapState();
-				await keep.edit({ embeds: [buildRecapDebugEmbed(win)], components: [buildRecapDebugRow()] }).catch(() => {});
-				return;
-			}
+			for (const m of mine.values()) await m.delete().catch(() => {});
 		}
-	} catch { /* fall through to reuse/create */ }
-
-	if (recapState.debugPanelMessageId) {
-		const existing = await channel.messages.fetch(recapState.debugPanelMessageId).catch(() => null);
-		if (existing) {
-			await existing.edit({ embeds: [buildRecapDebugEmbed(win)], components: [buildRecapDebugRow()] }).catch(() => {});
-			return;
-		}
-	}
+	} catch { /* ignore */ }
 
 	const sent = await channel.send({ embeds: [buildRecapDebugEmbed(win)], components: [buildRecapDebugRow()] }).catch((e) => {
 		console.error('[recap] Failed to send debug panel:', e.message);
@@ -3048,7 +3032,7 @@ async function runDailyRecapJob() {
 
 	const lb = await resolveAvatarsForLeaderboard(yearMonth);
 
-	// Debug post to the debug channel.
+	// Debug LOG post: keep exactly ONE log message (edit in place, never pile up).
 	try {
 		const channel = await client.channels.fetch(RECAP_DEBUG_CHANNEL_ID).catch(() => null);
 		if (channel && channel.isTextBased()) {
@@ -3068,13 +3052,23 @@ async function runDailyRecapJob() {
 					{ name: '🔗 Contoh Link', value: sampleName ? `${RECAP_PUBLIC_BASE_URL}/recap/${encodeURIComponent(sampleName)}` : '_tidak ada_' },
 				)
 				.setFooter({ text: `${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB` });
-			await channel.send({ embeds: [embed] });
+
+			// Edit existing log message if present, else create one.
+			let logMsg = recapState.debugLogMessageId
+				? await channel.messages.fetch(recapState.debugLogMessageId).catch(() => null)
+				: null;
+			if (logMsg) {
+				await logMsg.edit({ embeds: [embed] }).catch(() => {});
+			} else {
+				const sent = await channel.send({ embeds: [embed] }).catch(() => null);
+				if (sent) { recapState.debugLogMessageId = sent.id; await saveRecapState(); }
+			}
 		}
 	} catch (err) {
 		console.error('[recap] debug post failed:', err.message);
 	}
 
-	// Refresh the public panel embed (window label/visibility may change).
+	// Refresh the public panel + ensure the debug button stays the LAST message.
 	await ensureRecapMessage().catch(() => {});
 	await ensureRecapDebugMessage().catch(() => {});
 	console.log(`[recap] Daily job done: ${ok} ok, ${fail} fail.`);
