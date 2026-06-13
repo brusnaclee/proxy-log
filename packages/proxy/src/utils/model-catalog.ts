@@ -10,6 +10,9 @@ const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 8000;
 const CACHE_FILE_PATH = process.env.MODEL_CATALOG_CACHE_PATH || "./data/model_catalog_cache.json";
 
+/** Synthetic model ids exposed for you.com (endpointType "youcom") providers. */
+export const YOUCOM_MODEL_IDS = ["express", "advanced"];
+
 export interface ModelRecord {
   id: string;
   object: "model";
@@ -179,6 +182,24 @@ export async function refreshModelCatalog(): Promise<void> {
     let lastError = "";
 
     for (const provider of activeProviders) {
+      // you.com has no /models endpoint; inject synthetic agent models.
+      if (provider.endpointType === "youcom") {
+        for (const agentId of YOUCOM_MODEL_IDS) {
+          const existing = allModels.find((x) => x.id === agentId && x.provider_id === provider.id);
+          if (!existing) {
+            allModels.push({
+              id: agentId,
+              object: "model",
+              created: Math.floor(Date.now() / 1000),
+              owned_by: "you.com",
+              provider_id: provider.id,
+            });
+          }
+          appendProviderToMap(modelProviderMap, agentId, provider.id);
+        }
+        continue;
+      }
+
       const candidates = buildCandidateUrls(provider.endpoint);
       let success = false;
       for (const url of candidates) {
@@ -628,6 +649,8 @@ const AUTO_MODEL_EXCLUDE_PATTERNS = [
   /-realtime/i,        // Realtime streaming models (audio/video)
   /^glm/i,             // GLM vendor models (glm-5.1, glm-z1, etc.)
   /-character$/i,      // Character/roleplay models
+  /^express$/i,        // you.com Express agent (route explicitly, not via auto)
+  /^advanced$/i,       // you.com Advanced agent (route explicitly, not via auto)
 ];
 
 export function isAutoCompatible(modelId: string): boolean {

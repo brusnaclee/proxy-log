@@ -280,7 +280,7 @@ export function ProvidersManager() {
                 </div>
                 <div className="col-span-2 truncate">{p.endpoint}</div>
                 <div className="col-span-1 text-xs">
-                  <span className={`px-1.5 py-0.5 rounded text-xs ${p.endpointType === "anthropic" ? "bg-orange-500/20 text-orange-400" : "bg-blue-500/20 text-blue-400"}`}>
+                  <span className={`px-1.5 py-0.5 rounded text-xs ${p.endpointType === "anthropic" ? "bg-orange-500/20 text-orange-400" : p.endpointType === "youcom" ? "bg-green-500/20 text-green-400" : "bg-blue-500/20 text-blue-400"}`}>
                     {p.endpointType || "openai"}
                   </span>
                 </div>
@@ -621,6 +621,7 @@ export function ProvidersManager() {
               >
                 <option value="openai">OpenAI</option>
                 <option value="anthropic">Anthropic</option>
+                <option value="youcom">You.com</option>
               </select>
             </div>
             <div className="col-span-1">

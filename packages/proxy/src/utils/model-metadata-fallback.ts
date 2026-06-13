@@ -28,6 +28,12 @@ function usd(dollars: number): number {
 
 export const FALLBACK_METADATA: FallbackMetadata[] = [
   // ═══════════════════════════════════════════════════════════════════════════
+  // you.com — Agents API (express / advanced). Synthetic models, no /models API.
+  // ═══════════════════════════════════════════════════════════════════════════
+  { modelId: "express", displayName: "You.com Express Agent", description: "you.com Express agent — fast LLM answers with optional single web search grounding", contextLength: 32_000, maxOutputTokens: 4_096, inputPricePerMtok: usd(0), outputPricePerMtok: usd(0), inputModalities: ["text"], outputModalities: ["text"], supportedFeatures: ["tools"] },
+  { modelId: "advanced", displayName: "You.com Advanced Agent", description: "you.com Advanced agent — multi-turn reasoning, planning, web research and compute tools", contextLength: 32_000, maxOutputTokens: 8_192, inputPricePerMtok: usd(0), outputPricePerMtok: usd(0), inputModalities: ["text"], outputModalities: ["text"], supportedFeatures: ["tools", "reasoning"] },
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // ag/ — Antigravity custom wrappers (upstream pricing passthrough)
   // ═══════════════════════════════════════════════════════════════════════════
   { modelId: "ag/claude-opus-4-6-thinking", displayName: "Claude Opus 4.6 (Thinking)", description: "Anthropic Claude Opus 4.6 with extended thinking", contextLength: 1_000_000, maxOutputTokens: 128_000, inputPricePerMtok: usd(5.00), outputPricePerMtok: usd(25.00), inputModalities: ["text", "image"], outputModalities: ["text"], supportedFeatures: ["tools", "reasoning", "structured_outputs", "vision"] },

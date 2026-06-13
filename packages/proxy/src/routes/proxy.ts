@@ -20,6 +20,11 @@ import {
 	convertStreamEvent,
 	createStreamState,
 } from '../utils/anthropic-adapter.js';
+import {
+	buildYouComStreamChunks,
+	convertRequestToYouCom,
+	convertResponseToYouComOpenAI,
+} from '../utils/youcom-adapter.js';
 import { apiKeyCache, configCache } from '../utils/cache.js';
 import { calculateEstimatedCost } from '../utils/cost-calculator.js';
 import {
@@ -2779,7 +2784,10 @@ proxy.all('/*', async (c) => {
 
 	// Detect Anthropic provider
 	const isAnthropicProvider = targetProvider.endpointType === 'anthropic';
+	// Detect You.com provider (agents API)
+	const isYouComProvider = targetProvider.endpointType === 'youcom';
 	let anthropicRequestBody: string | null = null;
+	let youcomRequestBody: string | null = null;
 	let actualUpstreamUrl = upstreamUrl;
 	let actualUpstreamPath = upstreamPath;
 
@@ -2793,13 +2801,25 @@ proxy.all('/*', async (c) => {
 		actualUpstreamPath = '/v1/messages';
 		const upstreamBase = targetProvider.endpoint.replace(/\/$/, '');
 		actualUpstreamUrl = `${upstreamBase}${actualUpstreamPath}`;
+	} else if (isYouComProvider) {
+		// Convert OpenAI request to you.com Agents format.
+		// `upstreamModel` is the bare id after prefix strip (e.g. "express").
+		const youcomBody = convertRequestToYouCom(requestBody, upstreamModel);
+		youcomRequestBody = JSON.stringify(youcomBody);
+
+		// Redirect path to /v1/agents/runs for you.com
+		actualUpstreamPath = '/v1/agents/runs';
+		const upstreamBase = targetProvider.endpoint.replace(/\/$/, '');
+		actualUpstreamUrl = `${upstreamBase}${actualUpstreamPath}`;
 	}
 
 	try {
 		const { response: upstreamResponse, keyId: usedKeyId } =
 			await fetchWithKeyRotation(
 				targetProvider.id,
-				isAnthropicProvider ? actualUpstreamUrl : upstreamUrl,
+				isAnthropicProvider || isYouComProvider
+					? actualUpstreamUrl
+					: upstreamUrl,
 				(apiKey) => {
 					const headers = { ...upstreamHeaders };
 					if (isAnthropicProvider) {
@@ -2814,10 +2834,13 @@ proxy.all('/*', async (c) => {
 						headers,
 						body: isAnthropicProvider
 							? anthropicRequestBody!
-							: (requestBodyBytes as any),
+							: isYouComProvider
+								? youcomRequestBody!
+								: (requestBodyBytes as any),
 					};
 				},
-				isStreaming,
+				// you.com agents API is non-streaming; we fake-stream client-side.
+				isYouComProvider ? false : isStreaming,
 				c.req.raw.signal,
 			);
 
@@ -2852,7 +2875,9 @@ proxy.all('/*', async (c) => {
 		}
 
 		// ΓöÇΓöÇΓöÇ 12. Handle Streaming Response ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-		if (isStreaming && upstreamResponse.body && statusCode < 400) {
+		// Note: you.com agents are non-streaming upstream; fake-streaming is
+		// handled in the non-streaming path below.
+		if (isStreaming && !isYouComProvider && upstreamResponse.body && statusCode < 400) {
 			const acc = makeAccumulator();
 			let hasActualToolCalls = false;
 			const decoder = new TextDecoder();
@@ -3070,6 +3095,23 @@ proxy.all('/*', async (c) => {
 			}
 		}
 
+		// Convert you.com Agents response to OpenAI format
+		if (isYouComProvider && statusCode >= 200 && statusCode < 300) {
+			try {
+				const youParsed = JSON.parse(responseBody);
+				const openaiResponse = convertResponseToYouComOpenAI(
+					youParsed,
+					model,
+				);
+				responseBody = JSON.stringify(openaiResponse);
+			} catch (convErr) {
+				console.error(
+					'[youcom-adapter] Failed to convert response:',
+					convErr,
+				);
+			}
+		}
+
 		// Convert Chat Completions response to Responses API format if needed
 		if (isResponsesApi && statusCode >= 200 && statusCode < 300) {
 			try {
@@ -3243,6 +3285,35 @@ proxy.all('/*', async (c) => {
 			responseHeaders['x-ratelimit-limit-requests'] = rateLimitLimit;
 		if (rateLimitRemaining)
 			responseHeaders['x-ratelimit-remaining-requests'] = rateLimitRemaining;
+
+		// you.com fake-streaming: client asked for stream:true but the agents API
+		// is non-streaming. Emit the converted answer as a short SSE sequence.
+		if (
+			isYouComProvider &&
+			isStreaming &&
+			statusCode >= 200 &&
+			statusCode < 300
+		) {
+			try {
+				const openaiParsed = JSON.parse(responseBody);
+				const sseLines = buildYouComStreamChunks(openaiParsed);
+				const sseBody = sseLines.map((l) => l + '\n\n').join('');
+				return new Response(sseBody, {
+					status: statusCode,
+					headers: {
+						...responseHeaders,
+						'Content-Type': 'text/event-stream; charset=utf-8',
+						'Cache-Control': 'no-cache',
+						Connection: 'keep-alive',
+					},
+				});
+			} catch (streamErr) {
+				console.error(
+					'[youcom-adapter] Failed to build stream chunks:',
+					streamErr,
+				);
+			}
+		}
 
 		return new Response(responseBody, {
 			status: statusCode,
