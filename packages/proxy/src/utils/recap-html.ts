@@ -948,28 +948,31 @@ const RECAP_JS = `
       var a=document.createElement('a');a.href=base.toDataURL('image/png');a.download='recap-card.png';a.click();return resolve();
     }
     var W=base.width,H=base.height;
-    var gif=new window.GIF({workers:2,quality:10,width:W,height:H,workerScript:'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js'});
-    var FRAMES=18, c=document.createElement('canvas'); c.width=W;c.height=H; var ctx=c.getContext('2d');
-    var t1=THEMES[curTheme][0],t2=THEMES[curTheme][1];
-    for(var f=0;f<FRAMES;f++){
-      var p=f/FRAMES;
-      // animated diagonal gradient background
-      var ang=p*Math.PI*2;
-      var gx=W*(0.5+0.5*Math.cos(ang)), gy=H*(0.5+0.5*Math.sin(ang));
-      var g=ctx.createLinearGradient(0,0,gx,gy); g.addColorStop(0,t1); g.addColorStop(1,t2);
-      ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
-      // sparkle dots
-      ctx.globalAlpha=0.25; for(var k=0;k<14;k++){var sx=(k*97+f*9)%W,sy=(k*53+f*5)%H;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(sx,sy,2,0,7);ctx.fill();}
-      ctx.globalAlpha=1;
-      // foreground card capture on top
-      ctx.drawImage(base,0,0);
-      gif.addFrame(ctx,{copy:true,delay:90});
-    }
-    gif.on('progress',function(pr){setStatus('Merender GIF... '+Math.round(pr*100)+'%');});
-    gif.on('finished',function(blob){var u=URL.createObjectURL(blob);var a=document.createElement('a');a.href=u;a.download='recap-card.gif';a.click();setTimeout(function(){URL.revokeObjectURL(u);},4000);setStatus('Tersimpan sebagai GIF ✓');resolve();});
-    var to=setTimeout(function(){reject(new Error('timeout'));},20000);
-    gif.on('finished',function(){clearTimeout(to);});
-    gif.render();
+    // gif.js workers must be same-origin; fetch the worker script and wrap in a blob URL.
+    fetch('https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js')
+      .then(function(r){ if(!r.ok) throw new Error('worker '+r.status); return r.text(); })
+      .then(function(code){
+        var workerUrl=URL.createObjectURL(new Blob([code],{type:'application/javascript'}));
+        var gif=new window.GIF({workers:2,quality:10,width:W,height:H,workerScript:workerUrl});
+        var FRAMES=18, c=document.createElement('canvas'); c.width=W;c.height=H; var ctx=c.getContext('2d');
+        var t1=THEMES[curTheme][0],t2=THEMES[curTheme][1];
+        for(var f=0;f<FRAMES;f++){
+          var p=f/FRAMES;
+          var ang=p*Math.PI*2;
+          var gx=W*(0.5+0.5*Math.cos(ang)), gy=H*(0.5+0.5*Math.sin(ang));
+          var g=ctx.createLinearGradient(0,0,gx,gy); g.addColorStop(0,t1); g.addColorStop(1,t2);
+          ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+          ctx.globalAlpha=0.25; for(var k=0;k<14;k++){var sx=(k*97+f*9)%W,sy=(k*53+f*5)%H;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(sx,sy,2,0,7);ctx.fill();}
+          ctx.globalAlpha=1;
+          ctx.drawImage(base,0,0);
+          gif.addFrame(ctx,{copy:true,delay:90});
+        }
+        var to=setTimeout(function(){reject(new Error('timeout'));},25000);
+        gif.on('progress',function(pr){setStatus('Merender GIF... '+Math.round(pr*100)+'%');});
+        gif.on('finished',function(blob){clearTimeout(to);URL.revokeObjectURL(workerUrl);var u=URL.createObjectURL(blob);var a=document.createElement('a');a.href=u;a.download='recap-card.gif';a.click();setTimeout(function(){URL.revokeObjectURL(u);},4000);setStatus('Tersimpan sebagai GIF ✓');resolve();});
+        gif.render();
+      })
+      .catch(reject);
   });}
 
   // Strip ?t= single-use token from the URL so shared/copied links are clean.
