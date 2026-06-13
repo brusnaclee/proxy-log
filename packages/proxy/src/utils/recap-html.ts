@@ -115,17 +115,25 @@ border:1px solid var(--line);box-shadow:0 18px 50px rgba(0,0,0,.45)}
 .stat{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:18px}
 .bento{display:grid;grid-template-columns:1fr 1fr;gap:12px;width:100%}
 @media(max-width:520px){.bento{grid-template-columns:1fr 1fr}}
-.bstat{position:relative;background:var(--card);border:1px solid var(--line);border-radius:20px;
-padding:16px 14px;overflow:hidden;text-align:left}
-.bstat:nth-child(4n+1){background:linear-gradient(135deg,rgba(124,58,237,.18),var(--card))}
-.bstat:nth-child(4n+2){background:linear-gradient(135deg,rgba(34,211,238,.16),var(--card))}
-.bstat:nth-child(4n+3){background:linear-gradient(135deg,rgba(245,158,11,.16),var(--card))}
-.bstat:nth-child(4n){background:linear-gradient(135deg,rgba(236,72,153,.16),var(--card))}
-.bstat-ic{font-size:30px;line-height:1}
-.bstat-num{font-size:clamp(26px,7vw,38px);font-weight:900;display:inline-block}
-.bstat-suf{font-size:18px;font-weight:900;color:var(--muted)}
-.bstat-lbl{font-size:13px;font-weight:700;color:#fff;margin-top:2px}
-.bstat-quip{font-size:11px;color:var(--muted);margin-top:3px;line-height:1.3}
+.bento2{display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:74px;gap:10px;width:100%;max-width:560px}
+.b2{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:18px;background:var(--card);
+display:flex;flex-direction:column;justify-content:center;padding:12px 14px;text-align:left;
+transition:transform .2s,box-shadow .2s}
+.b2:hover{transform:translateY(-4px);box-shadow:0 12px 28px rgba(0,0,0,.35)}
+.b2-anchor{grid-column:span 2;grid-row:span 2;background:linear-gradient(140deg,rgba(124,58,237,.32),rgba(236,72,153,.18),var(--card))}
+.b2-wide{grid-column:span 2;flex-direction:row;align-items:center;gap:12px;background:linear-gradient(140deg,rgba(34,211,238,.2),var(--card))}
+.b2-sm{background:linear-gradient(140deg,rgba(255,255,255,.06),var(--card))}
+.b2-sm:nth-of-type(3n){background:linear-gradient(140deg,rgba(245,158,11,.16),var(--card))}
+.b2-ic{font-size:38px;line-height:1}
+.b2-ic-sm{font-size:24px;line-height:1}
+.b2-num{font-size:clamp(34px,9vw,52px);font-weight:900;line-height:1;margin-top:6px}
+.b2-num-sm{font-size:clamp(20px,5.5vw,28px);font-weight:900;line-height:1;margin-top:3px}
+.b2-lbl{font-size:14px;font-weight:700;margin-top:4px}
+.b2-lbl-sm{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.b2-quip{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.35}
+.b2-wide-tx{display:flex;flex-direction:column}
+.bento-chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:14px}
+@media(max-width:520px){.bento2{grid-auto-rows:64px;gap:8px}.b2-anchor{grid-row:span 2}}
 .stat .num{font-size:clamp(26px,7vw,40px);font-weight:900}
 .stat .lbl{font-size:clamp(12px,3.4vw,14px);color:var(--muted);margin-top:4px}
 .bars{width:100%;display:flex;flex-direction:column;gap:14px;margin-top:8px}
@@ -233,23 +241,34 @@ background:var(--card);border:1px solid var(--line);border-radius:18px;padding:1
 .heat-legend i{width:12px;height:12px;border-radius:2px;background:var(--g4);display:inline-block}
 .heat-peak-lbl{font-size:12px;font-weight:700;color:var(--g3);text-align:center}
 .heat-axis{display:flex;justify-content:space-between;margin-top:6px;font-size:10px;color:var(--muted);padding-left:17px}
-.wrapcard{position:relative;width:100%;max-width:360px;border-radius:24px;text-align:center;overflow:hidden;
-border:1px solid rgba(255,255,255,.25);box-shadow:0 20px 60px rgba(0,0,0,.45)}
-.wc-bg{position:absolute;inset:0;z-index:0;background:linear-gradient(160deg,var(--g1),var(--g2));background-size:200% 200%;animation:wcflow 6s ease infinite}
+.wrapcard{position:relative;width:100%;max-width:380px;aspect-ratio:1/1.25;border-radius:26px;overflow:hidden;
+border:1px solid rgba(255,255,255,.22);box-shadow:0 24px 70px rgba(0,0,0,.5)}
+.wc-bg{position:absolute;inset:0;z-index:0;background:linear-gradient(160deg,var(--g1),var(--g2));background-size:220% 220%;animation:wcflow 7s ease infinite}
 @keyframes wcflow{0%,100%{background-position:0 50%}50%{background-position:100% 50%}}
-.wc-inner{position:relative;z-index:1;padding:24px}
-.wc-av{width:84px;height:84px;border-radius:50%;object-fit:cover;border:3px solid rgba(255,255,255,.5);margin-bottom:10px}
-.wc-name{font-size:22px;font-weight:900;color:#fff}
-.wc-persona{font-size:15px;font-weight:700;color:rgba(255,255,255,.9);margin-bottom:16px}
-.wc-grid{display:flex;justify-content:space-around;gap:8px;margin-bottom:16px}
-.wc-grid>div{display:flex;flex-direction:column}
-.wc-grid b{font-size:22px;font-weight:900;color:#fff}
-.wc-grid span{font-size:11px;color:rgba(255,255,255,.85);text-transform:uppercase;letter-spacing:.05em}
-.wc-foot{font-size:12px;color:rgba(255,255,255,.8);font-weight:700}
-.wc-themes{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;max-width:360px;margin-top:14px}
+.wc-aurora{position:absolute;inset:-30%;z-index:0;pointer-events:none;
+background:radial-gradient(40% 35% at 25% 20%,rgba(255,255,255,.35),transparent 70%),radial-gradient(45% 40% at 80% 80%,rgba(255,255,255,.22),transparent 70%);
+mix-blend-mode:overlay;filter:blur(6px);animation:auroraMove 9s ease-in-out infinite}
+@keyframes auroraMove{0%,100%{transform:translate(0,0) rotate(0deg)}50%{transform:translate(6%,-5%) rotate(8deg)}}
+.wc-stars{position:absolute;inset:0;z-index:0;pointer-events:none;opacity:.5;
+background-image:radial-gradient(1.5px 1.5px at 20% 30%,#fff,transparent),radial-gradient(1.5px 1.5px at 70% 20%,#fff,transparent),radial-gradient(1.5px 1.5px at 40% 70%,#fff,transparent),radial-gradient(1.5px 1.5px at 85% 60%,#fff,transparent),radial-gradient(1.5px 1.5px at 55% 45%,#fff,transparent);
+animation:twinkle 4s ease-in-out infinite}
+@keyframes twinkle{0%,100%{opacity:.25}50%{opacity:.6}}
+.wc-inner{position:relative;z-index:1;height:100%;display:flex;flex-direction:column;justify-content:space-between;padding:22px}
+.wc-hero{display:flex;align-items:center;gap:14px;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.18);border-radius:18px;padding:14px;backdrop-filter:blur(4px)}
+.wc-hero-tx{text-align:left;min-width:0}
+.wc-av{width:64px;height:64px;border-radius:50%;object-fit:cover;border:3px solid rgba(255,255,255,.6);flex:0 0 auto}
+.wc-name{font-size:22px;font-weight:900;color:#fff;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wc-persona{font-size:14px;font-weight:700;color:rgba(255,255,255,.92)}
+.wc-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.wc-stat{background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.16);border-radius:14px;padding:12px 6px;display:flex;flex-direction:column;align-items:center}
+.wc-stat b{font-size:clamp(18px,5vw,24px);font-weight:900;color:#fff}
+.wc-stat span{font-size:10px;color:rgba(255,255,255,.85);text-transform:uppercase;letter-spacing:.05em;margin-top:2px}
+.wc-foot{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:rgba(255,255,255,.92);font-weight:800}
+.wc-brand{opacity:.9}
+.wc-themes{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;max-width:380px;margin-top:14px}
 .wc-sw{width:26px;height:26px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:transform .15s,border-color .15s}
 .wc-sw.on{border-color:#fff;transform:scale(1.18)}
-@media(prefers-reduced-motion:reduce){.wc-bg{animation:none}}
+@media(prefers-reduced-motion:reduce){.wc-bg,.wc-aurora,.wc-stars{animation:none}}
 .confetti{position:fixed;inset:0;pointer-events:none;z-index:40;overflow:hidden}
 .confetti i{position:absolute;top:-20px;width:10px;height:14px;opacity:.9;animation:fall linear forwards}
 @keyframes fall{to{transform:translateY(110dvh) rotate(720deg)}}
@@ -451,17 +470,19 @@ function buildSections(d: RecapHtmlData): string {
   // 8. Stats grid
   out.push(section("grid", `
     <div class="kicker reveal">Angka Lain</div>
-    <div class="bento reveal">
-      ${bentoStat("📆", n(s, "activity.activeDays"), "Hari aktif", "Konsisten itu mahal.")}
-      ${bentoStat("🔥", n(s, "activity.longestStreak"), "Streak terpanjang", "Nggak putus-putus.")}
-      ${bentoStat("💬", n(s, "sessions.count"), "Sesi chat", "Ngobrol mulu sama AI.")}
-      ${bentoStat("🛠️", n(s, "tools.totalToolCalls"), "Tool calls", "Agentic sejati.")}
-      ${bentoStat("⏱️", n(s, "latency.avgMs"), "Latency rata² (ms)", "Sabar nungguin.")}
-      ${bentoStat("💻", n(s, "devices.uniqueCount"), "Device dipakai", "Ngoding di mana aja.")}
-      ${bentoStat("🤖", n(s, "tools.toolTurnPercent"), "% turn pakai tool", "Tukang suruh AI.", "%")}
+    <div class="bento2 reveal">
+      ${bentoBig("🛠️", fmtNum(n(s, "tools.totalToolCalls")), "Tool calls", "Agentic sejati — nyuruh AI mulu.")}
+      ${bentoSm("📆", n(s, "activity.activeDays"), "Hari aktif")}
+      ${bentoSm("🔥", n(s, "activity.longestStreak"), "Streak")}
+      ${bentoSm("💬", n(s, "sessions.count"), "Sesi chat")}
+      ${bentoSm("⏱️", fmtNum(n(s, "latency.avgMs")), "Latency (ms)")}
+      ${bentoWide("🤖", n(s, "tools.toolTurnPercent") + "%", "turn pakai tool", "Tukang suruh AI.")}
+      ${bentoSm("💻", n(s, "devices.uniqueCount"), "Device")}
     </div>
-    ${s.ide?.favorite ? `<div class="chip reveal">💻 IDE favorit: ${escapeHtml(s.ide.favorite)}</div>` : ""}
-    ${s.comparison?.hasPrev ? `<div class="chip reveal">${deltaChip(s.comparison)}</div>` : ""}`));
+    <div class="bento-chips reveal">
+      ${s.ide?.favorite ? `<div class="chip">💻 IDE favorit: ${escapeHtml(s.ide.favorite)}</div>` : ""}
+      ${s.comparison?.hasPrev ? `<div class="chip">${deltaChip(s.comparison)}</div>` : ""}
+    </div>`));
 
   // 8b. Achievements / badges (AI-generated preferred, deterministic fallback)
   const ach = ((nv.badges && nv.badges.length ? nv.badges : s.extras?.achievements) || []) as Array<{ icon: string; title: string; desc: string }>;
@@ -609,18 +630,24 @@ function buildSections(d: RecapHtmlData): string {
   const persona = nv.persona || {};
   out.push(section("card", `
     <div class="kicker reveal">Kartu Recap Kamu</div>
-    <div class="wrapcard reveal theme-card-0" id="wrapCard">
+    <div class="wrapcard reveal" id="wrapCard">
       <div class="wc-bg" id="wcBg"></div>
+      <div class="wc-aurora"></div>
+      <div class="wc-stars"></div>
       <div class="wc-inner">
-        ${d.avatarUrl ? `<img class="wc-av" crossorigin="anonymous" src="${escapeHtml(d.avatarUrl)}" alt="" onerror="this.style.display='none'">` : ""}
-        <div class="wc-name">${escapeHtml(d.displayName)}</div>
-        <div class="wc-persona">${escapeHtml(persona.title || "Coder")}</div>
-        <div class="wc-grid">
-          <div><b>${fmtNum(n(s, "totals.requests"))}</b><span>request</span></div>
-          <div><b>${fmtNum(n(s, "totals.totalTokens"))}</b><span>token</span></div>
-          <div><b>${d.rank.requests ? "#" + d.rank.requests : "-"}</b><span>peringkat</span></div>
+        <div class="wc-hero">
+          ${d.avatarUrl ? `<img class="wc-av" crossorigin="anonymous" src="${escapeHtml(d.avatarUrl)}" alt="" onerror="this.style.display='none'">` : ""}
+          <div class="wc-hero-tx">
+            <div class="wc-name">${escapeHtml(d.displayName)}</div>
+            <div class="wc-persona">${escapeHtml(persona.title || "Coder")}</div>
+          </div>
         </div>
-        <div class="wc-foot">Wrapped ${escapeHtml(d.monthLabel)} · Groupy</div>
+        <div class="wc-grid">
+          <div class="wc-stat"><b>${fmtNum(n(s, "totals.requests"))}</b><span>request</span></div>
+          <div class="wc-stat"><b>${fmtNum(n(s, "totals.totalTokens"))}</b><span>token</span></div>
+          <div class="wc-stat"><b>${d.rank.requests ? "#" + d.rank.requests : "-"}</b><span>peringkat</span></div>
+        </div>
+        <div class="wc-foot"><span>Wrapped ${escapeHtml(d.monthLabel)}</span><span class="wc-brand">✦ Groupy</span></div>
       </div>
     </div>
     <div class="wc-themes reveal" id="wcThemes"></div>
@@ -677,14 +704,24 @@ function n2(stats: any, path: string): string {
   } catch { return ""; }
 }
 
-/** Bento-style stat card with big emoji, count-up number, label, and meme one-liner. */
-function bentoStat(icon: string, value: number, label: string, quip: string, suffix = ""): string {
-  return `<div class="bstat">
-    <div class="bstat-ic">${icon}</div>
-    <div class="bstat-num" data-count="${value}">0</div>${suffix ? `<span class="bstat-suf">${suffix}</span>` : ""}
-    <div class="bstat-lbl">${escapeHtml(label)}</div>
-    <div class="bstat-quip">${escapeHtml(quip)}</div>
-  </div>`;
+/** Bento anchor (2x2) tile: big emoji, big number, label, meme quip. */
+function bentoBig(icon: string, value: string | number, label: string, quip: string): string {
+  return `<div class="b2 b2-anchor"><div class="b2-ic">${icon}</div>
+    <div class="b2-num">${escapeHtml(String(value))}</div>
+    <div class="b2-lbl">${escapeHtml(label)}</div>
+    <div class="b2-quip">${escapeHtml(quip)}</div></div>`;
+}
+/** Bento small (1x1) tile. */
+function bentoSm(icon: string, value: string | number, label: string): string {
+  return `<div class="b2 b2-sm"><div class="b2-ic-sm">${icon}</div>
+    <div class="b2-num-sm">${escapeHtml(String(value))}</div>
+    <div class="b2-lbl-sm">${escapeHtml(label)}</div></div>`;
+}
+/** Bento wide (2x1) tile with quip. */
+function bentoWide(icon: string, value: string | number, label: string, quip: string): string {
+  return `<div class="b2 b2-wide"><div class="b2-ic-sm">${icon}</div>
+    <div class="b2-wide-tx"><div class="b2-num-sm">${escapeHtml(String(value))} <span class="b2-lbl-sm">${escapeHtml(label)}</span></div>
+    <div class="b2-quip">${escapeHtml(quip)}</div></div></div>`;
 }
 
 function deltaChip(cmp: any): string {
