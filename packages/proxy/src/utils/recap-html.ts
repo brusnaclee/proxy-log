@@ -31,6 +31,7 @@ export interface RecapHtmlData {
   pageUrl: string;
   viewerDiscordUserId: string | null;
   submitToken?: string | null;
+  alreadySubmittedToday?: boolean;
   existingTestimonial?: { stars: number; body: string } | null;
   cleanPath?: string;
 }
@@ -376,16 +377,17 @@ function buildSections(d: RecapHtmlData): string {
 
 function buildTestimonialBlock(d: RecapHtmlData): string {
   const canSubmit = !!d.submitToken;
+  // No valid day-token (e.g. shared/copied clean link) -> render NOTHING.
+  if (!canSubmit) return "";
+
   const existing = d.existingTestimonial;
   const prefillStars = existing?.stars || 0;
   const prefillBody = existing ? escapeHtml(existing.body) : "";
-  if (!canSubmit) {
-    // Read-only note when opened without a valid one-time token.
-    const note = existing
-      ? `Kamu udah kasih testimoni ${"★".repeat(existing.stars)}${"☆".repeat(5 - existing.stars)} bulan ini. Makasih! 🙌`
-      : "Mau kasih testimoni? Buka recap ini lewat tombol di Discord ya.";
+
+  // Valid token but already submitted today -> show a thank-you note (no form).
+  if (d.alreadySubmittedToday && existing) {
     return `<div class="testi card reveal"><div class="testi-title">💬 Testimoni</div>
-      <div class="caption">${note}</div></div>`;
+      <div class="caption">Kamu udah kasih testimoni ${"★".repeat(existing.stars)}${"☆".repeat(5 - existing.stars)} hari ini. Makasih! Balik lagi besok ya 🙌</div></div>`;
   }
   return `<div class="testi card reveal" id="testiBox">
     <div class="testi-title">💬 Tinggalkan Testimoni</div>
@@ -396,7 +398,7 @@ function buildTestimonialBlock(d: RecapHtmlData): string {
     <textarea id="testiText" maxlength="500" rows="3" placeholder="Tulis testimoni kamu di sini...">${prefillBody}</textarea>
     <button class="btn" id="testiSubmit">Kirim Testimoni</button>
     <div class="testi-done" id="testiDone">Makasih! Testimoni kamu tersimpan 🙌</div>
-    <script>window.__RECAP_SUBMIT_TOKEN=${JSON.stringify(d.submitToken)};window.__RECAP_PREFILL_STARS=${prefillStars};</script>
+    <script>window.__RECAP_SUBMIT_TOKEN=${JSON.stringify(d.submitToken)};window.__RECAP_USER_ID=${JSON.stringify(d.viewerDiscordUserId || "")};window.__RECAP_YM=${JSON.stringify(d.yearMonth)};window.__RECAP_PREFILL_STARS=${prefillStars};</script>
   </div>`;
 }
 
@@ -532,7 +534,7 @@ const RECAP_JS = `
       if(!picked){toast('Pilih bintang dulu ya');return;}
       sub.disabled=true;sub.textContent='Mengirim...';
       fetch('/recap/testimonial',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({token:window.__RECAP_SUBMIT_TOKEN,stars:picked,body:(document.getElementById('testiText').value||'')})})
+        body:JSON.stringify({token:window.__RECAP_SUBMIT_TOKEN,userId:window.__RECAP_USER_ID,yearMonth:window.__RECAP_YM,stars:picked,body:(document.getElementById('testiText').value||'')})})
         .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
         .then(function(res){ if(res.ok&&res.j.success){
             document.getElementById('testiDone').classList.add('show');

@@ -256,6 +256,15 @@ export function templateNarrative(stats: RecapStats, monthLabel: string, assets:
   };
 }
 
+/** Strip non-Latin garbage (CJK/mojibake) the model sometimes injects; keep Indonesian/emoji. */
+function sanitizeText(s: string): string {
+  return String(s)
+    // remove CJK / Hangul / Hiragana / Katakana blocks
+    .replace(/[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef\uac00-\ud7af]/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 /** Validate AI-chosen asset ids against the manifest; fallback by section's category. */
 function validateAssetChoices(
   raw: Record<string, any>,
@@ -387,7 +396,7 @@ export async function generateNarrative(
       for (const k of SECTION_KEYS) {
         const s = parsed.sections?.[k];
         if (s && typeof s.headline === "string" && typeof s.caption === "string") {
-          sections[k] = { headline: String(s.headline).slice(0, 80), caption: String(s.caption).slice(0, 280), assetId: typeof s.assetId === "string" ? s.assetId : undefined };
+          sections[k] = { headline: sanitizeText(String(s.headline)).slice(0, 80), caption: sanitizeText(String(s.caption)).slice(0, 280), assetId: typeof s.assetId === "string" ? s.assetId : undefined };
         }
       }
 
@@ -402,11 +411,11 @@ export async function generateNarrative(
         ok: true,
         narrative: {
           persona: {
-            title: typeof parsed.persona?.title === "string" ? String(parsed.persona.title).slice(0, 60) : fallback.persona.title,
-            subtitle: typeof parsed.persona?.subtitle === "string" ? String(parsed.persona.subtitle).slice(0, 120) : fallback.persona.subtitle,
+            title: typeof parsed.persona?.title === "string" ? sanitizeText(String(parsed.persona.title)).slice(0, 60) : fallback.persona.title,
+            subtitle: typeof parsed.persona?.subtitle === "string" ? sanitizeText(String(parsed.persona.subtitle)).slice(0, 120) : fallback.persona.subtitle,
           },
           sections,
-          closing: typeof parsed.closing === "string" ? String(parsed.closing).slice(0, 200) : fallback.closing,
+          closing: typeof parsed.closing === "string" ? sanitizeText(String(parsed.closing)).slice(0, 200) : fallback.closing,
           assetChoices,
         },
       };
