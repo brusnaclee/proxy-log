@@ -108,25 +108,27 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
   const username = body.username || key.discordUsername || existing?.discordUsername || null;
   const shareToken = body.interactive ? randomBytes(16).toString("hex") : (existing?.shareToken || null);
   const now = new Date();
-  if (existing) {
-    await db.update(userRecaps).set({
-      avatarUrl, discordUsername: username, apiKeyName: key.name,
-      generatedDate: today,
-      statsJson: JSON.stringify(stats),
-      narrativeJson: JSON.stringify(narrative),
-      rankRequests: stats.rank.requests, rankTokens: stats.rank.tokens,
-      ...(body.interactive ? { shareToken, shareTokenUsed: false } : {}),
-      updatedAt: now,
-    }).where(eq(userRecaps.id, existing.id));
-  } else {
-    await db.insert(userRecaps).values({
-      apiKeyId: key.id, discordUserId, discordUsername: username, avatarUrl,
-      apiKeyName: key.name, yearMonth, generatedDate: today,
-      statsJson: JSON.stringify(stats), narrativeJson: JSON.stringify(narrative),
-      rankRequests: stats.rank.requests, rankTokens: stats.rank.tokens,
-      shareToken, shareTokenUsed: false,
-    });
-  }
+  // Atomic upsert on the (discord_user_id, year_month) unique index to avoid
+  // duplicate-key races when the daily job and an interactive open overlap.
+  const updateSet: Record<string, any> = {
+    avatarUrl, discordUsername: username, apiKeyName: key.name,
+    generatedDate: today,
+    statsJson: JSON.stringify(stats),
+    narrativeJson: JSON.stringify(narrative),
+    rankRequests: stats.rank.requests, rankTokens: stats.rank.tokens,
+    updatedAt: now,
+  };
+  if (body.interactive) { updateSet.shareToken = shareToken; updateSet.shareTokenUsed = false; }
+  await db.insert(userRecaps).values({
+    apiKeyId: key.id, discordUserId, discordUsername: username, avatarUrl,
+    apiKeyName: key.name, yearMonth, generatedDate: today,
+    statsJson: JSON.stringify(stats), narrativeJson: JSON.stringify(narrative),
+    rankRequests: stats.rank.requests, rankTokens: stats.rank.tokens,
+    shareToken, shareTokenUsed: false,
+  }).onConflictDoUpdate({
+    target: [userRecaps.discordUserId, userRecaps.yearMonth],
+    set: updateSet,
+  });
 
   return c.json({
     cached: false,
