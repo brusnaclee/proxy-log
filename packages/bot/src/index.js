@@ -2777,15 +2777,7 @@ const RECAP_PROGRESS_STAGES = [
 ];
 
 async function handleMonthlyRecap(interaction) {
-	// Role gate: only members with REQUIRED_ROLE can use the agverif panel button.
-	if (REQUIRED_ROLE_ID && interaction.member && !interaction.member.roles.cache.has(REQUIRED_ROLE_ID)) {
-		const role = interaction.guild?.roles.cache.get(REQUIRED_ROLE_ID);
-		await interaction.reply({
-			content: `Anda memerlukan role **${role ? role.name : 'Required Role'}** untuk membuka recap.`,
-			ephemeral: true,
-		});
-		return;
-	}
+	// No role gate: anyone can open their recap (if data exists for the month).
 	// Window gate first (cheap reply before defer when closed).
 	let win = null;
 	try { win = await proxyInternal('/admin/internal/recap/window'); } catch { /* ignore */ }
@@ -3475,6 +3467,12 @@ client.once('clientReady', async () => {
 		runDailyRecapJob().catch((err) => console.error('[recap] daily job error:', err.message));
 	}, RECAP_DEBUG_INTERVAL_MS);
 
+	// Hourly: re-ensure the agverif panel so it appears/disappears promptly
+	// when the visibility window (25th-5th) opens or closes.
+	setInterval(() => {
+		ensureRecapMessage().catch((err) => console.error('[recap] hourly panel refresh error:', err.message));
+	}, 60 * 60 * 1000);
+
 	// Start 1-minute ranking refresh
 	setInterval(() => {
 		refreshRankingEmbeds().catch((err) =>
@@ -3663,11 +3661,6 @@ client.on('interactionCreate', async (interaction) => {
 
 		// ─── Testimonial viewer (agverif: role-gated, debug: open) ───────────
 		if (interaction.isButton() && interaction.customId === 'recap_testi_view') {
-			if (REQUIRED_ROLE_ID && interaction.member && !interaction.member.roles.cache.has(REQUIRED_ROLE_ID)) {
-				const role = interaction.guild?.roles.cache.get(REQUIRED_ROLE_ID);
-				await interaction.reply({ content: `Anda memerlukan role **${role ? role.name : 'Required Role'}** untuk melihat testimoni.`, ephemeral: true });
-				return;
-			}
 			await handleTestimonialViewer(interaction);
 			return;
 		}

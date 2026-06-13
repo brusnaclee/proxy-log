@@ -12,6 +12,7 @@ import { db } from "../db/index.js";
 import { sql } from "drizzle-orm";
 import { getTokenMultipliers } from "./token-multiplier.js";
 import { getMonthRangeUtc } from "./recap-window.js";
+import { getModelRates } from "./cost-calculator.js";
 
 function num(v: any): number {
   if (v === null || v === undefined) return 0;
@@ -103,6 +104,15 @@ export interface RecapStats {
     avgMs: number;
     fastestMs: number;
     slowestMs: number;
+  };
+  cost: {
+    totalMicro: number; // micro-dollars total
+    inputMicro: number;
+    outputMicro: number;
+    mostExpensiveModel: { model: string; micro: number } | null;
+    cheapestModel: { model: string; micro: number } | null;
+    mostExpensiveDay: { day: string; micro: number } | null;
+    mostExpensiveHour: { hour: number; micro: number } | null;
   };
   errors: {
     errorPercent: number; // % of requests with non-2xx status
@@ -223,6 +233,59 @@ async function fetchModels(keyId: number, start: Date, end: Date): Promise<Model
     outputTokens: Math.round(num(r.output_raw) * output),
     avgLatencyMs: Math.round(num(r.avg_lat)),
   }));
+}
+
+/** Per-day and per-hour estimated_cost (micro-dollars) buckets (WIB). */
+async function fetchCostBuckets(keyId: number, start: Date, end: Date): Promise<{ day: { day: string; micro: number } | null; hour: { hour: number; micro: number } | null }> {
+  const dayRows = (await db.execute(sql`
+    SELECT to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') AS day,
+      COALESCE(SUM(estimated_cost), 0) AS micro
+    FROM request_logs
+    WHERE api_key_id = ${keyId} AND created_at >= ${start} AND created_at < ${end}
+      AND status_code BETWEEN 200 AND 299
+    GROUP BY day ORDER BY micro DESC LIMIT 1
+  `)).rows as any[];
+  const hourRows = (await db.execute(sql`
+    SELECT CAST(to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'HH24') AS INTEGER) AS hour,
+      COALESCE(SUM(estimated_cost), 0) AS micro
+    FROM request_logs
+    WHERE api_key_id = ${keyId} AND created_at >= ${start} AND created_at < ${end}
+      AND status_code BETWEEN 200 AND 299
+    GROUP BY hour ORDER BY micro DESC LIMIT 1
+  `)).rows as any[];
+  const d = dayRows[0];
+  const h = hourRows[0];
+  return {
+    day: d && num(d.micro) > 0 ? { day: d.day, micro: Math.round(num(d.micro)) } : null,
+    hour: h && num(h.micro) > 0 ? { hour: num(h.hour), micro: Math.round(num(h.micro)) } : null,
+  };
+}
+
+/** Build the cost breakdown from per-model token splits + rates + cost buckets. */
+function buildCost(models: ModelStat[], buckets: { day: any; hour: any }): RecapStats["cost"] {
+  let inputMicro = 0, outputMicro = 0;
+  const perModel: Array<{ model: string; micro: number }> = [];
+  for (const m of models) {
+    const rates = getModelRates(m.model || "");
+    // rates are $ per token (micro = tokens * rate). cost-calculator returns
+    // $/token-scaled values used as (tokens * rate) -> micro-dollars.
+    const inMicro = Math.round(m.inputTokens * rates.prompt);
+    const outMicro = Math.round(m.outputTokens * rates.completion);
+    inputMicro += inMicro;
+    outputMicro += outMicro;
+    perModel.push({ model: m.model, micro: inMicro + outMicro });
+  }
+  const used = perModel.filter((p) => p.micro > 0);
+  const sorted = [...used].sort((a, b) => b.micro - a.micro);
+  return {
+    totalMicro: inputMicro + outputMicro,
+    inputMicro,
+    outputMicro,
+    mostExpensiveModel: sorted.length ? sorted[0] : null,
+    cheapestModel: sorted.length ? sorted[sorted.length - 1] : null,
+    mostExpensiveDay: buckets.day,
+    mostExpensiveHour: buckets.hour,
+  };
 }
 
 /** Per-day (WIB) request + token buckets. */
@@ -411,12 +474,13 @@ function deriveActivity(perDay: DayStat[], perHour: HourStat[], aux: Awaited<Ret
 export async function getRecapStats(keyId: number, yearMonth: string): Promise<RecapStats> {
   const { start, end } = getMonthRangeUtc(yearMonth);
 
-  const [totals, models, perDay, perHour, aux] = await Promise.all([
+  const [totals, models, perDay, perHour, aux, costBuckets] = await Promise.all([
     fetchTotals(keyId, start, end),
     fetchModels(keyId, start, end),
     fetchPerDay(keyId, start, end),
     fetchPerHour(keyId, start, end),
     fetchAux(keyId, start, end),
+    fetchCostBuckets(keyId, start, end),
   ]);
 
   const hasData = totals.requests > 0;
@@ -455,6 +519,7 @@ export async function getRecapStats(keyId: number, yearMonth: string): Promise<R
     devices: { uniqueCount: aux.deviceCount },
     tools: aux.tools,
     latency: aux.latency,
+    cost: buildCost(models, costBuckets),
     errors: aux.errors,
     rank: { requests: 0, tokens: 0, totalParticipants: 0 },
     comparison: { hasPrev: false, requestsDeltaPercent: 0, tokensDeltaPercent: 0 },

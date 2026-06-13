@@ -57,16 +57,33 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
   const body = await c.req.json<{ avatarUrl?: string; username?: string; force?: boolean; yearMonth?: string; interactive?: boolean }>().catch(() => ({} as any));
 
   const key = await findKeyByDiscordUser(discordUserId);
-  if (!key) return c.json({ error: "User not found", found: false }, 404);
 
   const win = getRecapWindow();
   const yearMonth = body.yearMonth || win.yearMonth;
   const monthLabel = monthLabelFromYearMonth(yearMonth);
   const today = wibTodayDateStr();
 
-  // Cache check
+  // Cache check (does not require an active/existing key).
   const existing = (await db.select().from(userRecaps)
     .where(and(eq(userRecaps.discordUserId, discordUserId), eq(userRecaps.yearMonth, yearMonth))))[0];
+
+  // No API key (disabled/deleted): still allow viewing if a recap row exists.
+  if (!key) {
+    if (existing) {
+      return c.json({
+        cached: true,
+        apiKeyName: existing.apiKeyName || null,
+        yearMonth,
+        monthLabel,
+        window: win,
+        stats: safeParse(existing.statsJson),
+        narrative: safeParse(existing.narrativeJson),
+        rank: { requests: existing.rankRequests || 0, tokens: existing.rankTokens || 0 },
+        shareToken: body.interactive ? dayToken(discordUserId, yearMonth) : undefined,
+      });
+    }
+    return c.json({ error: "User not found", found: false }, 404);
+  }
 
   if (existing && existing.generatedDate === today && !body.force) {
     // For interactive opens, mint a fresh single-use share token each time.

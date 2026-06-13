@@ -52,6 +52,14 @@ function fmtNum(n: number): string {
   return String(Math.round(n));
 }
 
+/** Micro-dollars -> human dollar string (e.g. 1234567 -> "$1.23"). */
+function fmtMoney(micro: number): string {
+  const usd = (Number(micro) || 0) / 1_000_000;
+  if (usd > 0 && usd < 0.01) return "$" + usd.toFixed(4);
+  if (usd < 100) return "$" + usd.toFixed(2);
+  return "$" + usd.toLocaleString("en-US", { maximumFractionDigits: 0 });
+}
+
 function safeJsonForScript(obj: any): string {
   return JSON.stringify(obj).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 }
@@ -265,6 +273,31 @@ function buildSections(d: RecapHtmlData): string {
     <div class="caption reveal">${tokT.caption}</div>
     ${mediaTag(A.tokens, d.base)}`));
 
+  // 3b. Cost — what Groupy spends on your AI usage
+  const cost = s.cost;
+  if (cost && (cost.totalMicro > 0)) {
+    const maxC = Math.max(cost.inputMicro || 0, cost.outputMicro || 0, 1);
+    const inCPct = Math.round(((cost.inputMicro || 0) / maxC) * 100);
+    const outCPct = Math.round(((cost.outputMicro || 0) / maxC) * 100);
+    out.push(section("cost", `
+      <div class="kicker reveal">Biaya Groupy buat Kamu</div>
+      <div class="big reveal">${fmtMoney(cost.totalMicro)}</div>
+      <div class="card reveal">
+        <div class="bars">
+          <div><div class="barlbl"><span>📥 Input</span><span>${fmtMoney(cost.inputMicro)}</span></div>
+            <div class="bar" style="--w:${inCPct}%"><span class="b-in"></span></div></div>
+          <div><div class="barlbl"><span>📤 Output</span><span>${fmtMoney(cost.outputMicro)}</span></div>
+            <div class="bar" style="--w:${outCPct}%"><span class="b-out"></span></div></div>
+        </div>
+      </div>
+      ${cost.mostExpensiveModel ? `<div class="chip reveal">💸 Termahal: ${escapeHtml(cost.mostExpensiveModel.model)} (${fmtMoney(cost.mostExpensiveModel.micro)})</div>` : ""}
+      ${cost.cheapestModel ? `<div class="chip reveal">🪙 Termurah: ${escapeHtml(cost.cheapestModel.model)} (${fmtMoney(cost.cheapestModel.micro)})</div>` : ""}
+      ${cost.mostExpensiveDay ? `<div class="chip reveal">📅 Hari paling boros: ${escapeHtml(cost.mostExpensiveDay.day)} (${fmtMoney(cost.mostExpensiveDay.micro)})</div>` : ""}
+      ${cost.mostExpensiveHour !== null && cost.mostExpensiveHour ? `<div class="chip reveal">⏰ Jam paling boros: ${cost.mostExpensiveHour.hour}:00 WIB (${fmtMoney(cost.mostExpensiveHour.micro)})</div>` : ""}
+      <div class="caption reveal">Segini yang Groupy keluarin biar kamu bisa ngoding bareng AI. 🙏</div>
+      ${mediaTag(A.tokens, d.base)}`));
+  }
+
   // 4. Favorite model
   const favT = txt("favoriteModel", escapeHtml(n2(s, "models.favorite") || "-"), "Model andalan kamu.");
   out.push(section("favoriteModel", `
@@ -316,6 +349,9 @@ function buildSections(d: RecapHtmlData): string {
     <div class="big reveal">${hr >= 0 ? hr + ":00" : "-"}</div>
     <div class="caption reveal">${actT.caption}</div>
     ${s.activity?.favoriteWeekday ? `<div class="chip reveal">📅 Paling rajin hari ${escapeHtml(s.activity.favoriteWeekday)}</div>` : ""}
+    ${s.activity?.mostProductiveHour ? `<div class="chip reveal">⚡ Jam paling produktif: ${n(s, "activity.mostProductiveHour.hour")}:00 WIB</div>` : ""}
+    ${s.activity?.mostActiveDay ? `<div class="chip reveal">🔥 Hari paling aktif: ${escapeHtml(s.activity.mostActiveDay.day)} (${fmtNum(n(s, "activity.mostActiveDay.requests"))} req)</div>` : ""}
+    ${(n(s, "activity.weekendRequests") + n(s, "activity.weekdayRequests")) > 0 ? `<div class="chip reveal">🗓️ Weekday ${fmtNum(n(s, "activity.weekdayRequests"))} vs Weekend ${fmtNum(n(s, "activity.weekendRequests"))}</div>` : ""}
     ${mediaTag(A.activeTime, d.base)}`));
 
   // 7. Persona
@@ -337,6 +373,7 @@ function buildSections(d: RecapHtmlData): string {
       <div class="stat"><div class="num" data-count="${n(s, "tools.totalToolCalls")}">0</div><div class="lbl">Tool calls</div></div>
       <div class="stat"><div class="num" data-count="${n(s, "latency.avgMs")}">0</div><div class="lbl">Latency rata² (ms)</div></div>
       <div class="stat"><div class="num" data-count="${n(s, "devices.uniqueCount")}">0</div><div class="lbl">Device dipakai</div></div>
+      <div class="stat"><div class="num" data-count="${n(s, "tools.toolTurnPercent")}">0</div><div class="lbl">% turn pakai tool</div></div>
     </div>
     ${s.ide?.favorite ? `<div class="chip reveal">💻 IDE favorit: ${escapeHtml(s.ide.favorite)}</div>` : ""}
     ${s.comparison?.hasPrev ? `<div class="chip reveal">${deltaChip(s.comparison)}</div>` : ""}`));
