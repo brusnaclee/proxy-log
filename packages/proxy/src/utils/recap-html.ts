@@ -67,6 +67,16 @@ function safeJsonForScript(obj: any): string {
 const RECAP_CSS = `
 :root{color-scheme:dark;--bg:#0b0b14;--fg:#fff;--muted:rgba(255,255,255,.7);
 --g1:#7c3aed;--g2:#ec4899;--g3:#f59e0b;--g4:#22d3ee;--card:rgba(255,255,255,.07);--line:rgba(255,255,255,.14)}
+body.theme-gold{--g1:#f59e0b;--g2:#f43f5e;--g4:#fbbf24}
+body.theme-night{--g1:#4c1d95;--g2:#7c3aed;--g4:#6366f1;--bg:#070710}
+body.theme-cyan{--g1:#06b6d4;--g2:#3b82f6;--g4:#22d3ee}
+body.theme-ember{--g1:#ef4444;--g2:#f59e0b;--g4:#fb923c}
+body.theme-royal{--g1:#7c3aed;--g2:#f59e0b;--g4:#a855f7}
+body.theme-dawn{--g1:#f59e0b;--g2:#ec4899;--g4:#fcd34d}
+.navdots{position:fixed;right:10px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:7px;z-index:30}
+.navdots i{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.25);transition:background .3s,transform .3s;cursor:pointer}
+.navdots i.on{background:var(--g4);transform:scale(1.5)}
+@media(max-width:520px){.navdots{right:6px;gap:6px}.navdots i{width:6px;height:6px}}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html{scroll-behavior:smooth}
 body{background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
@@ -165,6 +175,31 @@ transition:width .55s cubic-bezier(.3,.7,.3,1)}
 .bcr-val{margin-left:auto;font-weight:800;font-size:13px;flex:0 0 auto}
 .testi-done.show{display:block}
 .delta-up{color:#34d399}.delta-down{color:#f87171}
+.badges{display:flex;flex-direction:column;gap:10px;width:100%;max-width:520px}
+.badge{display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px 14px;text-align:left}
+.badge-ic{font-size:30px;flex:0 0 auto}
+.badge-tx{display:flex;flex-direction:column}
+.badge-tx b{font-size:15px}
+.badge-tx span{font-size:13px;color:var(--muted)}
+.facts{display:flex;flex-direction:column;gap:10px;width:100%;max-width:520px;text-align:left}
+.fact{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;font-size:15px;line-height:1.4}
+.heat{width:100%;max-width:520px}
+.heat-grid{display:flex;flex-direction:column;gap:3px}
+.heat-row{display:flex;align-items:center;gap:3px}
+.heat-lbl{font-size:10px;color:var(--muted);width:14px;flex:0 0 auto}
+.heat-row i{flex:1;aspect-ratio:1;border-radius:2px;background:var(--g4);min-width:0}
+.heat-axis{display:flex;justify-content:space-between;margin-top:6px;font-size:10px;color:var(--muted);padding-left:17px}
+.wrapcard{width:100%;max-width:360px;border-radius:24px;padding:24px;text-align:center;
+background:linear-gradient(160deg,var(--g1),var(--g2));border:1px solid rgba(255,255,255,.25);
+box-shadow:0 20px 60px rgba(0,0,0,.45)}
+.wc-av{width:84px;height:84px;border-radius:50%;object-fit:cover;border:3px solid rgba(255,255,255,.5);margin-bottom:10px}
+.wc-name{font-size:22px;font-weight:900;color:#fff}
+.wc-persona{font-size:15px;font-weight:700;color:rgba(255,255,255,.9);margin-bottom:16px}
+.wc-grid{display:flex;justify-content:space-around;gap:8px;margin-bottom:16px}
+.wc-grid>div{display:flex;flex-direction:column}
+.wc-grid b{font-size:22px;font-weight:900;color:#fff}
+.wc-grid span{font-size:11px;color:rgba(255,255,255,.85);text-transform:uppercase;letter-spacing:.05em}
+.wc-foot{font-size:12px;color:rgba(255,255,255,.8);font-weight:700}
 .confetti{position:fixed;inset:0;pointer-events:none;z-index:40;overflow:hidden}
 .confetti i{position:absolute;top:-20px;width:10px;height:14px;opacity:.9;animation:fall linear forwards}
 @keyframes fall{to{transform:translateY(110dvh) rotate(720deg)}}
@@ -378,6 +413,61 @@ function buildSections(d: RecapHtmlData): string {
     ${s.ide?.favorite ? `<div class="chip reveal">💻 IDE favorit: ${escapeHtml(s.ide.favorite)}</div>` : ""}
     ${s.comparison?.hasPrev ? `<div class="chip reveal">${deltaChip(s.comparison)}</div>` : ""}`));
 
+  // 8b. Achievements / badges
+  const ach = (s.extras?.achievements || []) as Array<{ icon: string; title: string; desc: string }>;
+  if (ach.length) {
+    out.push(section("ach", `
+      <div class="kicker reveal">Lencana Kamu</div>
+      <div class="headline reveal">${ach.length} Badge Kekunci 🏅</div>
+      <div class="badges reveal">
+        ${ach.slice(0, 6).map((b) => `<div class="badge"><div class="badge-ic">${b.icon}</div><div class="badge-tx"><b>${escapeHtml(b.title)}</b><span>${escapeHtml(b.desc)}</span></div></div>`).join("")}
+      </div>
+      ${mediaTag(A.persona, d.base)}`));
+  }
+
+  // 8c. Fun facts
+  const facts = (s.extras?.funFacts || []) as string[];
+  if (facts.length) {
+    out.push(section("facts", `
+      <div class="kicker reveal">Fakta Iseng</div>
+      <div class="headline reveal">Tau Gak? 🤔</div>
+      <div class="facts reveal">${facts.slice(0, 4).map((f) => `<div class="fact">• ${escapeHtml(f)}</div>`).join("")}</div>
+      ${mediaTag(A.requests, d.base)}`));
+  }
+
+  // 8d. Heatmap jam x hari
+  const heat = buildHeatmap(s);
+  if (heat) {
+    out.push(section("heatmap", `
+      <div class="kicker reveal">Kapan Kamu Ngoding</div>
+      <div class="headline reveal">Pola Jam x Hari</div>
+      <div class="heat card reveal">${heat}</div>
+      <div class="caption reveal">Makin terang, makin sering kamu nyiksa AI di jam itu. 🔥</div>`));
+  }
+
+  // 8e. Hari sepi / libur
+  const rest = s.extras?.restWeekday;
+  const quiet = s.activity?.quietestActiveDay;
+  if (rest || quiet) {
+    out.push(section("rest", `
+      <div class="kicker reveal">Hari Santai</div>
+      <div class="headline reveal">${rest ? `Kamu Libur Tiap ${escapeHtml(rest)}` : "Hari Tersepi"}</div>
+      ${quiet ? `<div class="chip reveal">😴 Paling sepi: ${escapeHtml(quiet.day)} (${fmtNum(n(s, "activity.quietestActiveDay.requests"))} req)</div>` : ""}
+      ${s.activity?.firstActiveDay ? `<div class="chip reveal">🚀 Mulai aktif: ${escapeHtml(s.activity.firstActiveDay)}</div>` : ""}
+      <div class="caption reveal">Semua orang butuh rebahan. 🛌</div>
+      ${mediaTag(A.activeTime, d.base)}`));
+  }
+
+  // 8f. Banding komunitas
+  const comm = s.extras?.community;
+  if (comm && (comm.requestPercentile > 0 || comm.tokenPercentile > 0)) {
+    out.push(section("community", `
+      <div class="kicker reveal">Kamu vs Komunitas</div>
+      <div class="big reveal">Top ${Math.max(1, 100 - comm.requestPercentile)}%</div>
+      <div class="caption reveal">Kamu lebih rajin dari <b>${comm.requestPercentile}%</b> developer Groupy${comm.tokenPercentile ? `, dan lebih boros token dari <b>${comm.tokenPercentile}%</b>` : ""}. 📊</div>
+      ${mediaTag(A.rank, d.base)}`));
+  }
+
   // 9. Rank
   const rankReq = d.rank.requests;
   const rankTok = d.rank.tokens;
@@ -391,6 +481,35 @@ function buildSections(d: RecapHtmlData): string {
     </div>
     <div class="caption reveal">${rankT.caption || (rankReq && rankReq <= 5 ? "Sultan AI! Mecut terus 🔥" : "Terus semangat ngoding!")}</div>
     ${mediaTag(A.rank, d.base)}`));
+
+  // 9a. Request tercepat & terlama
+  const fastMs = n(s, "latency.fastestMs");
+  const slowMs = n(s, "latency.slowestMs");
+  if (fastMs > 0 || slowMs > 0) {
+    out.push(section("latency", `
+      <div class="kicker reveal">Kecepatan Respon</div>
+      <div class="headline reveal">Tercepat vs Terlama</div>
+      <div class="row2 reveal">
+        <div class="stat"><div class="num">${fastMs > 0 ? fmtNum(fastMs) : "-"}</div><div class="lbl">Tercepat (ms)</div></div>
+        <div class="stat"><div class="num">${slowMs > 0 ? fmtNum(slowMs) : "-"}</div><div class="lbl">Terlama (ms)</div></div>
+      </div>
+      <div class="caption reveal">Yang cepet bikin senyum, yang lama bikin sabar. ⏳</div>`));
+  }
+
+  // 9c. Prediksi bulan depan
+  const proj = s.extras?.projection;
+  if (proj && proj.requests > 0) {
+    out.push(section("projection", `
+      <div class="kicker reveal">Ramalan Bulan Depan</div>
+      <div class="headline reveal">Kalau Lanjut Segini...</div>
+      <div class="row2 reveal">
+        <div class="stat"><div class="num">${fmtNum(proj.requests)}</div><div class="lbl">Estimasi request</div></div>
+        <div class="stat"><div class="num">${fmtNum(proj.tokens)}</div><div class="lbl">Estimasi token</div></div>
+      </div>
+      ${proj.costMicro > 0 ? `<div class="chip reveal">💸 Estimasi biaya: ${fmtMoney(proj.costMicro)}</div>` : ""}
+      <div class="caption reveal">Bukan ramalan dukun, ini matematika. 🔮</div>
+      ${mediaTag(A.requests, d.base)}`));
+  }
 
   // 9b. Leaderboard timelapse (bar-chart-race, day 1 -> today). Toggle Request/Token.
   const race = s.race;
@@ -436,6 +555,23 @@ function buildSections(d: RecapHtmlData): string {
 
   // 11. Closing + share
   const closeT = nv.closing || "Sampai jumpa bulan depan!";
+  // 10b. Wrapped Persona Card (screenshot-friendly summary)
+  const persona = nv.persona || {};
+  out.push(section("card", `
+    <div class="kicker reveal">Kartu Recap Kamu</div>
+    <div class="wrapcard reveal" id="wrapCard">
+      ${d.avatarUrl ? `<img class="wc-av" src="${escapeHtml(d.avatarUrl)}" alt="" onerror="this.style.display='none'">` : ""}
+      <div class="wc-name">${escapeHtml(d.displayName)}</div>
+      <div class="wc-persona">${escapeHtml(persona.title || "Coder")}</div>
+      <div class="wc-grid">
+        <div><b>${fmtNum(n(s, "totals.requests"))}</b><span>request</span></div>
+        <div><b>${fmtNum(n(s, "totals.totalTokens"))}</b><span>token</span></div>
+        <div><b>${d.rank.requests ? "#" + d.rank.requests : "-"}</b><span>peringkat</span></div>
+      </div>
+      <div class="wc-foot">Wrapped ${escapeHtml(d.monthLabel)} · Groupy</div>
+    </div>
+    <div class="caption reveal">Screenshot kartu ini buat dipamerin! 📸</div>`));
+
   out.push(section("closing", `
     <div class="big reveal">🎉</div>
     <div class="headline reveal">${escapeHtml(closeT)}</div>
@@ -488,7 +624,40 @@ function deltaChip(cmp: any): string {
   const r = cmp.requestsDeltaPercent || 0;
   const cls = r >= 0 ? "delta-up" : "delta-down";
   const arrow = r >= 0 ? "▲" : "▼";
-  return `📈 vs bulan lalu: <span class="${cls}">${arrow} ${Math.abs(r)}% request</span>`;
+  const tok = cmp.tokensDeltaPercent || 0;
+  const tcls = tok >= 0 ? "delta-up" : "delta-down";
+  const tarrow = tok >= 0 ? "▲" : "▼";
+  return `📈 vs bulan lalu: <span class="${cls}">${arrow} ${Math.abs(r)}% req</span> · <span class="${tcls}">${tarrow} ${Math.abs(tok)}% token</span>`;
+}
+
+/** Build a 7x24 heatmap (weekday rows x hour cols) from perDay/perHour data. */
+function buildHeatmap(s: any): string | null {
+  const perDay = (s?.activity?.perDay || []) as Array<{ day: string; requests: number }>;
+  const perHour = (s?.activity?.perHour || []) as Array<{ hour: number; requests: number }>;
+  if (!perDay.length && !perHour.length) return null;
+  // Weekday totals (0=Min..6=Sab) and hour totals (0..23) -> outer product proxy.
+  const wd = [0, 0, 0, 0, 0, 0, 0];
+  for (const d of perDay) {
+    const dt = new Date(d.day + "T00:00:00Z");
+    if (!isNaN(dt.getTime())) wd[dt.getUTCDay()] += d.requests || 0;
+  }
+  const hr = new Array(24).fill(0);
+  for (const h of perHour) hr[h.hour] = h.requests || 0;
+  const wdMax = Math.max(...wd, 1);
+  const hrMax = Math.max(...hr, 1);
+  const WD = ["M", "S", "S", "R", "K", "J", "S"];
+  // Cell intensity = normalized weekday * normalized hour.
+  let cells = "";
+  for (let d = 0; d < 7; d++) {
+    cells += `<div class="heat-row"><span class="heat-lbl">${WD[d]}</span>`;
+    for (let h = 0; h < 24; h++) {
+      const intensity = (wd[d] / wdMax) * (hr[h] / hrMax);
+      const op = intensity > 0 ? (0.15 + intensity * 0.85).toFixed(2) : "0.04";
+      cells += `<i style="opacity:${op}"></i>`;
+    }
+    cells += `</div>`;
+  }
+  return `<div class="heat-grid">${cells}</div><div class="heat-axis"><span>0</span><span>6</span><span>12</span><span>18</span><span>23</span></div>`;
 }
 
 const RECAP_JS = `
@@ -632,6 +801,32 @@ const RECAP_JS = `
   try{ if(location.search.indexOf('t=')!==-1 && window.__RECAP_CLEAN_PATH){
     history.replaceState(null,'',window.__RECAP_CLEAN_PATH); } }catch(e){}
 
+  // Nav dots (one per slide) + tap-to-continue.
+  try{
+    var deckEl=document.querySelector('.deck');
+    var slides=[].slice.call(document.querySelectorAll('.slide'));
+    var dotsWrap=document.getElementById('navDots');
+    if(deckEl&&slides.length&&dotsWrap){
+      slides.forEach(function(sl,i){
+        var dot=document.createElement('i');
+        dot.addEventListener('click',function(){slides[i].scrollIntoView({behavior:'smooth'});});
+        dotsWrap.appendChild(dot);
+      });
+      var dots=[].slice.call(dotsWrap.children);
+      var dio=new IntersectionObserver(function(es){es.forEach(function(e){
+        if(e.isIntersecting){var idx=slides.indexOf(e.target);dots.forEach(function(dd,j){dd.classList.toggle('on',j===idx);});}
+      });},{threshold:0.6});
+      slides.forEach(function(sl){dio.observe(sl);});
+      // Tap-to-continue: tap right 70% of screen -> next slide (ignore taps on buttons/inputs/links).
+      deckEl.addEventListener('click',function(ev){
+        if(ev.target.closest('button,a,input,textarea,.star,.lb-tab,.bcr-tab,.navdots')) return;
+        if(ev.clientX < window.innerWidth*0.3) return;
+        var cur=-1;for(var k=0;k<slides.length;k++){var r=slides[k].getBoundingClientRect();if(r.top>=-5&&r.top<window.innerHeight*0.5){cur=k;break;}}
+        if(cur>=0&&cur<slides.length-1) slides[cur+1].scrollIntoView({behavior:'smooth'});
+      });
+    }
+  }catch(e){}
+
   // Testimonial form
   var starWrap=document.getElementById('starPick');
   if(starWrap){
@@ -661,12 +856,25 @@ const RECAP_JS = `
 })();`;
 
 /** Build OpenGraph/Twitter description without leaking content. */
+/** Map persona to a body theme class (drives accent gradient). */
+function personaThemeKey(d: RecapHtmlData): string {
+  const t = String(d.narrative?.persona?.title || "").toLowerCase();
+  if (/sultan|token/.test(t)) return "gold";
+  if (/kalong|malam|night/.test(t)) return "night";
+  if (/master|pro|prompt|genius/.test(t)) return "cyan";
+  if (/boros|konteks/.test(t)) return "ember";
+  if (/raja|juara|podium/.test(t)) return "royal";
+  if (/subuh|pagi|morning/.test(t)) return "dawn";
+  return "default";
+}
+
 function ogDescription(d: RecapHtmlData): string {
   const s = d.stats || {};
   const req = fmtNum(n(s, "totals.requests"));
   const tok = fmtNum(n(s, "totals.totalTokens"));
-  const rank = d.rank.requests ? `Peringkat #${d.rank.requests}` : "";
-  return `${req} request, ${tok} token bulan ${d.monthLabel}. ${rank}`.trim();
+  const persona = (d.narrative?.persona?.title) ? `${d.narrative.persona.title} · ` : "";
+  const rank = d.rank.requests ? `Peringkat #${d.rank.requests} · ` : "";
+  return `${persona}${rank}${req} request, ${tok} token bulan ${d.monthLabel}.`.trim();
 }
 
 /** Main entry: full responsive animated recap page. */
@@ -692,9 +900,10 @@ export function renderRecapHtml(d: RecapHtmlData): string {
 <meta name="twitter:image" content="${escapeHtml(ogImg)}">
 <style>${RECAP_CSS}</style>
 </head>
-<body data-url="${escapeHtml(d.pageUrl)}" data-title="${escapeHtml(title)}">
+<body class="theme-${escapeHtml(personaThemeKey(d))}" data-url="${escapeHtml(d.pageUrl)}" data-title="${escapeHtml(title)}">
 <script>window.__RECAP_CLEAN_PATH=${JSON.stringify(d.cleanPath || "")};</script>
 <div class="deck">${sections}</div>
+<div class="navdots" id="navDots"></div>
 <div class="toast" id="toast"></div>
 <script>${RECAP_JS}</script>
 </body></html>`;

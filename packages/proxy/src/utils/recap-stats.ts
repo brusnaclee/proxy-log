@@ -137,6 +137,14 @@ export interface RecapStats {
     tokensP75: number;
     tokensP90: number;
   };
+  extras?: {
+    restWeekday: string | null; // weekday paling jarang aktif
+    achievements: Array<{ icon: string; title: string; desc: string }>;
+    funFacts: string[];
+    community: { tokenPercentile: number; requestPercentile: number } | null;
+    projection: { requests: number; tokens: number; costMicro: number } | null;
+    rankUpVsPrev: number | null; // +naik / -turun rank vs bulan lalu (req)
+  };
   race?: {
     days: string[];
     byRequests: { users: Array<{ name: string | null; avatar: string | null; rank: number; isMe: boolean; cumulative: number[] }>; myRank: number; baseRank: number; totalParticipants: number } | null;
@@ -754,6 +762,79 @@ export function computePopulation(leaderboard: { byRequests: LeaderboardEntry[] 
   };
 }
 
+/** Build the playful "extras": rest weekday, achievements, fun facts, community, projection. */
+function buildExtras(stats: RecapStats, leaderboard: { byRequests: LeaderboardEntry[]; byTokens: LeaderboardEntry[] }): RecapStats["extras"] {
+  const a = stats.activity;
+  const t = stats.totals;
+  const WEEKDAY_FULL = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+
+  // Rest weekday: weekday with the fewest active requests (from perDay -> weekday tally).
+  const wdCount = [0, 0, 0, 0, 0, 0, 0];
+  for (const d of a.perDay || []) {
+    const dt = new Date(d.day + "T00:00:00Z");
+    if (!isNaN(dt.getTime())) wdCount[dt.getUTCDay()] += d.requests;
+  }
+  let restIdx = -1, restVal = Infinity;
+  wdCount.forEach((v, i) => { if (v < restVal) { restVal = v; restIdx = i; } });
+  const restWeekday = (a.perDay && a.perDay.length) ? WEEKDAY_FULL[restIdx] : null;
+
+  // Achievements (deterministic from stats).
+  const ach: Array<{ icon: string; title: string; desc: string }> = [];
+  const nightShare = (a.perHour || []).filter((h) => h.hour >= 0 && h.hour < 5).reduce((s, h) => s + h.requests, 0) / Math.max(t.requests, 1);
+  if (nightShare >= 0.35) ach.push({ icon: "🦉", title: "Kalong Malam", desc: "Lebih dari sepertiga ngoding jam 0-5 pagi." });
+  if (stats.rank.tokens && stats.rank.tokens <= 3) ach.push({ icon: "🤑", title: "Sultan Token", desc: `Top ${stats.rank.tokens} konsumsi token.` });
+  if (t.ioRatio < 0.15 && t.requests >= 50) ach.push({ icon: "🗑️", title: "Tukang Suapin Konteks", desc: "Input segunung, output secuil." });
+  const topShare = stats.models.top[0] ? stats.models.top[0].requests / Math.max(t.requests, 1) : 0;
+  if (topShare >= 0.8) ach.push({ icon: "💍", title: "Setia Satu Model", desc: `${Math.round(topShare * 100)}% pakai satu model.` });
+  if (a.longestStreak >= 7) ach.push({ icon: "🔥", title: "Maraton", desc: `Streak ${a.longestStreak} hari beruntun.` });
+  if ((stats.tools.toolTurnPercent || 0) <= 10 && t.requests >= 30) ach.push({ icon: "🎯", title: "One-Shot King", desc: "Jarang pakai tool, sekali tembak jadi." });
+  if (stats.rank.requests === 1) ach.push({ icon: "👑", title: "Raja Mecut AI", desc: "Peringkat 1 request bulan ini." });
+  if (a.activeDays >= 20) ach.push({ icon: "📅", title: "Anak Rajin", desc: `Aktif ${a.activeDays} hari.` });
+
+  // Fun facts.
+  const facts: string[] = [];
+  if (t.avgTokensPerRequest > 0) facts.push(`Tiap nanya, kamu rata-rata ngabisin ~${t.avgTokensPerRequest.toLocaleString("id-ID")} token.`);
+  if (a.mostActiveDay) facts.push(`Rekor sehari: ${a.mostActiveDay.requests} request tanggal ${a.mostActiveDay.day}.`);
+  if (a.mostActiveHour) facts.push(`Jam ${a.mostActiveHour.hour}:00 WIB adalah "prime time" ngoding kamu.`);
+  if (stats.models.uniqueCount > 1) facts.push(`Kamu nyobain ${stats.models.uniqueCount} model berbeda.`);
+
+  // Community percentiles (how the user ranks among active participants).
+  let community: { tokenPercentile: number; requestPercentile: number } | null = null;
+  const actReq = leaderboard.byRequests.filter((e) => e.requests > 0).length;
+  const actTok = leaderboard.byTokens.filter((e) => e.tokens > 0).length;
+  if (actReq > 1 && stats.rank.requests > 0) {
+    community = {
+      requestPercentile: Math.round(((actReq - stats.rank.requests) / actReq) * 100),
+      tokenPercentile: actTok > 1 && stats.rank.tokens > 0 ? Math.round(((actTok - stats.rank.tokens) / actTok) * 100) : 0,
+    };
+  }
+
+  // Projection: extrapolate month total from pace so far.
+  let projection: { requests: number; tokens: number; costMicro: number } | null = null;
+  const daysActive = a.firstActiveDay ? Math.max(1, daysBetween(a.firstActiveDay, todayWibStr())) : 0;
+  const daysInMonth = (a.activeDays + a.inactiveDays) || 30;
+  if (daysActive > 0 && t.requests > 0 && daysActive < daysInMonth) {
+    const factor = daysInMonth / daysActive;
+    projection = {
+      requests: Math.round(t.requests * factor),
+      tokens: Math.round(t.totalTokens * factor),
+      costMicro: Math.round((stats.cost?.totalMicro || 0) * factor),
+    };
+  }
+
+  return { restWeekday, achievements: ach, funFacts: facts, community, projection, rankUpVsPrev: null };
+}
+
+function todayWibStr(): string {
+  const w = new Date(Date.now() + 7 * 60 * 60 * 1000);
+  return w.toISOString().slice(0, 10);
+}
+function daysBetween(a: string, b: string): number {
+  const da = new Date(a + "T00:00:00Z").getTime();
+  const db = new Date(b + "T00:00:00Z").getTime();
+  return Math.max(0, Math.round((db - da) / 86400000)) + 1;
+}
+
 /** Attach rank + previous-month comparison to a stats object (mutates + returns). */
 export async function enrichRankAndComparison(
   stats: RecapStats,
@@ -778,6 +859,9 @@ export async function enrichRankAndComparison(
   } catch {
     // prev month may be archived/cleaned; skip comparison
   }
+
+  // Playful extras (achievements, fun facts, community, projection, rest weekday).
+  try { stats.extras = buildExtras(stats, leaderboard); } catch { stats.extras = undefined; }
   return stats;
 }
 
