@@ -20,6 +20,8 @@ export interface RecapNarrative {
   assetChoices: Record<string, string>;
   /** resolved GIF URLs per section (realtime search at generate time). */
   gifs?: Record<string, string>;
+  /** AI-generated badges (creative, max 10), validated; falls back to deterministic. */
+  badges?: Array<{ icon: string; title: string; desc: string }>;
 }
 
 const SECTION_KEYS = [
@@ -330,9 +332,28 @@ Buat JSON dengan struktur PERSIS:
     "ide": { "headline": "...", "caption": "...", "assetId": "..." },
     "closing": { "headline": "...", "caption": "...", "assetId": "..." }
   },
+  "badges": [ { "icon": "<1 emoji>", "title": "<max 24 char, kreatif & relevan ke angka>", "desc": "<max 60 char, lucu>" } ],
   "closing": "..."
 }
+ATURAN BADGE: 3-10 badge, tiap badge HARUS punya 1 emoji unik + judul kreatif yang nyambung ke statistik user (jangan generik), desc singkat lucu. Variasikan tiap user.
 HANYA JSON, tanpa teks lain, tanpa code fence.`;
+}
+
+/** Validate AI badges: need emoji + title + desc, cap length, max 10, fallback if empty. */
+function validateBadges(raw: any, fallback: Array<{ icon: string; title: string; desc: string }> | undefined): Array<{ icon: string; title: string; desc: string }> {
+  const out: Array<{ icon: string; title: string; desc: string }> = [];
+  if (Array.isArray(raw)) {
+    for (const b of raw) {
+      if (!b || typeof b !== "object") continue;
+      const icon = sanitizeText(String(b.icon || "")).slice(0, 4).trim();
+      const title = sanitizeText(String(b.title || "")).slice(0, 28).trim();
+      const desc = sanitizeText(String(b.desc || "")).slice(0, 70).trim();
+      if (!icon || !title) continue;
+      out.push({ icon, title, desc });
+      if (out.length >= 10) break;
+    }
+  }
+  return out.length ? out : (fallback || []);
 }
 
 /** Extract a JSON object from a model response that may contain code fences. */
@@ -420,6 +441,7 @@ export async function generateNarrative(
           sections,
           closing: typeof parsed.closing === "string" ? sanitizeText(String(parsed.closing)).slice(0, 200) : fallback.closing,
           assetChoices,
+          badges: validateBadges(parsed.badges, fallback.badges),
         },
       };
     } catch {

@@ -103,11 +103,29 @@ border:4px solid rgba(255,255,255,.25);box-shadow:0 12px 40px rgba(124,58,237,.5
 border:1px solid var(--line);box-shadow:0 18px 50px rgba(0,0,0,.45)}
 .reveal{opacity:0;transform:translateY(34px) scale(.96);transition:opacity .7s cubic-bezier(.2,.7,.2,1),transform .7s cubic-bezier(.2,.7,.2,1)}
 .reveal.in{opacity:1;transform:none}
+.rv-left{opacity:0;transform:translateX(-60px);transition:opacity .7s cubic-bezier(.2,.7,.2,1),transform .7s cubic-bezier(.2,.7,.2,1)}
+.rv-right{opacity:0;transform:translateX(60px);transition:opacity .7s cubic-bezier(.2,.7,.2,1),transform .7s cubic-bezier(.2,.7,.2,1)}
+.rv-zoom{opacity:0;transform:scale(.6);transition:opacity .7s cubic-bezier(.2,1.4,.4,1),transform .7s cubic-bezier(.2,1.4,.4,1)}
+.rv-tilt{opacity:0;transform:rotate(-6deg) translateY(40px) scale(.92);transition:opacity .7s cubic-bezier(.2,.7,.2,1),transform .7s cubic-bezier(.2,.7,.2,1)}
+.rv-left.in,.rv-right.in,.rv-zoom.in,.rv-tilt.in{opacity:1;transform:none}
 .pop{opacity:0;transform:scale(.5)}
 .pop.in{opacity:1;transform:scale(1);transition:opacity .6s,transform .6s cubic-bezier(.2,1.4,.4,1)}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:14px;width:100%}
 @media(max-width:520px){.row2{grid-template-columns:1fr}}
 .stat{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:18px}
+.bento{display:grid;grid-template-columns:1fr 1fr;gap:12px;width:100%}
+@media(max-width:520px){.bento{grid-template-columns:1fr 1fr}}
+.bstat{position:relative;background:var(--card);border:1px solid var(--line);border-radius:20px;
+padding:16px 14px;overflow:hidden;text-align:left}
+.bstat:nth-child(4n+1){background:linear-gradient(135deg,rgba(124,58,237,.18),var(--card))}
+.bstat:nth-child(4n+2){background:linear-gradient(135deg,rgba(34,211,238,.16),var(--card))}
+.bstat:nth-child(4n+3){background:linear-gradient(135deg,rgba(245,158,11,.16),var(--card))}
+.bstat:nth-child(4n){background:linear-gradient(135deg,rgba(236,72,153,.16),var(--card))}
+.bstat-ic{font-size:30px;line-height:1}
+.bstat-num{font-size:clamp(26px,7vw,38px);font-weight:900;display:inline-block}
+.bstat-suf{font-size:18px;font-weight:900;color:var(--muted)}
+.bstat-lbl{font-size:13px;font-weight:700;color:#fff;margin-top:2px}
+.bstat-quip{font-size:11px;color:var(--muted);margin-top:3px;line-height:1.3}
 .stat .num{font-size:clamp(26px,7vw,40px);font-weight:900}
 .stat .lbl{font-size:clamp(12px,3.4vw,14px);color:var(--muted);margin-top:4px}
 .bars{width:100%;display:flex;flex-direction:column;gap:14px;margin-top:8px}
@@ -177,21 +195,49 @@ transition:width .55s cubic-bezier(.3,.7,.3,1)}
 .delta-up{color:#34d399}.delta-down{color:#f87171}
 .badges{display:flex;flex-direction:column;gap:10px;width:100%;max-width:520px}
 .badge{display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px 14px;text-align:left}
+.trophy{display:grid;grid-template-columns:1fr 1fr;gap:12px;width:100%;max-width:540px}
+@media(max-width:520px){.trophy{grid-template-columns:1fr 1fr}}
+.trophy-badge{position:relative;overflow:hidden;background:linear-gradient(150deg,rgba(245,158,11,.18),var(--card));
+border:1px solid var(--line);border-radius:18px;padding:14px 12px;text-align:center}
+.tb-ic{font-size:34px;line-height:1;filter:drop-shadow(0 3px 8px rgba(0,0,0,.4))}
+.tb-title{font-size:13px;font-weight:900;margin-top:6px}
+.tb-desc{font-size:11px;color:var(--muted);margin-top:3px;line-height:1.3}
+.tb-shine{position:absolute;top:0;left:-60%;width:40%;height:100%;
+background:linear-gradient(100deg,transparent,rgba(255,255,255,.35),transparent);
+transform:skewX(-20deg);animation:shine 3.5s ease-in-out infinite}
+@keyframes shine{0%,60%{left:-60%}100%{left:140%}}
+@media(prefers-reduced-motion:reduce){.tb-shine{animation:none;display:none}}
 .badge-ic{font-size:30px;flex:0 0 auto}
 .badge-tx{display:flex;flex-direction:column}
 .badge-tx b{font-size:15px}
 .badge-tx span{font-size:13px;color:var(--muted)}
 .facts{display:flex;flex-direction:column;gap:10px;width:100%;max-width:520px;text-align:left}
 .fact{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;font-size:15px;line-height:1.4}
+.bubbles{display:flex;flex-direction:column;gap:14px;width:100%;max-width:540px}
+.bubble{position:relative;display:flex;align-items:flex-start;gap:10px;max-width:88%;
+background:var(--card);border:1px solid var(--line);border-radius:18px;padding:12px 16px;font-size:15px;line-height:1.45}
+.bb-left{align-self:flex-start;border-bottom-left-radius:4px;background:linear-gradient(135deg,rgba(124,58,237,.2),var(--card))}
+.bb-right{align-self:flex-end;border-bottom-right-radius:4px;background:linear-gradient(135deg,rgba(236,72,153,.2),var(--card))}
+.bb-left::after{content:"";position:absolute;left:-6px;bottom:8px;width:14px;height:14px;background:inherit;border-left:1px solid var(--line);border-bottom:1px solid var(--line);transform:rotate(45deg)}
+.bb-right::after{content:"";position:absolute;right:-6px;bottom:8px;width:14px;height:14px;background:inherit;border-right:1px solid var(--line);border-bottom:1px solid var(--line);transform:rotate(-45deg)}
+.bubble-ic{font-size:22px;flex:0 0 auto}
+.bubble-tx{flex:1}
 .heat{width:100%;max-width:520px}
 .heat-grid{display:flex;flex-direction:column;gap:3px}
 .heat-row{display:flex;align-items:center;gap:3px}
 .heat-lbl{font-size:10px;color:var(--muted);width:14px;flex:0 0 auto}
 .heat-row i{flex:1;aspect-ratio:1;border-radius:2px;background:var(--g4);min-width:0}
+.heat-peak{outline:2px solid #fff;outline-offset:1px;border-radius:3px!important}
+.heat-foot{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.heat-legend{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted);justify-content:center}
+.heat-legend i{width:12px;height:12px;border-radius:2px;background:var(--g4);display:inline-block}
+.heat-peak-lbl{font-size:12px;font-weight:700;color:var(--g3);text-align:center}
 .heat-axis{display:flex;justify-content:space-between;margin-top:6px;font-size:10px;color:var(--muted);padding-left:17px}
-.wrapcard{width:100%;max-width:360px;border-radius:24px;padding:24px;text-align:center;
-background:linear-gradient(160deg,var(--g1),var(--g2));border:1px solid rgba(255,255,255,.25);
-box-shadow:0 20px 60px rgba(0,0,0,.45)}
+.wrapcard{position:relative;width:100%;max-width:360px;border-radius:24px;text-align:center;overflow:hidden;
+border:1px solid rgba(255,255,255,.25);box-shadow:0 20px 60px rgba(0,0,0,.45)}
+.wc-bg{position:absolute;inset:0;z-index:0;background:linear-gradient(160deg,var(--g1),var(--g2));background-size:200% 200%;animation:wcflow 6s ease infinite}
+@keyframes wcflow{0%,100%{background-position:0 50%}50%{background-position:100% 50%}}
+.wc-inner{position:relative;z-index:1;padding:24px}
 .wc-av{width:84px;height:84px;border-radius:50%;object-fit:cover;border:3px solid rgba(255,255,255,.5);margin-bottom:10px}
 .wc-name{font-size:22px;font-weight:900;color:#fff}
 .wc-persona{font-size:15px;font-weight:700;color:rgba(255,255,255,.9);margin-bottom:16px}
@@ -200,6 +246,10 @@ box-shadow:0 20px 60px rgba(0,0,0,.45)}
 .wc-grid b{font-size:22px;font-weight:900;color:#fff}
 .wc-grid span{font-size:11px;color:rgba(255,255,255,.85);text-transform:uppercase;letter-spacing:.05em}
 .wc-foot{font-size:12px;color:rgba(255,255,255,.8);font-weight:700}
+.wc-themes{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;max-width:360px;margin-top:14px}
+.wc-sw{width:26px;height:26px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:transform .15s,border-color .15s}
+.wc-sw.on{border-color:#fff;transform:scale(1.18)}
+@media(prefers-reduced-motion:reduce){.wc-bg{animation:none}}
 .confetti{position:fixed;inset:0;pointer-events:none;z-index:40;overflow:hidden}
 .confetti i{position:absolute;top:-20px;width:10px;height:14px;opacity:.9;animation:fall linear forwards}
 @keyframes fall{to{transform:translateY(110dvh) rotate(720deg)}}
@@ -401,26 +451,26 @@ function buildSections(d: RecapHtmlData): string {
   // 8. Stats grid
   out.push(section("grid", `
     <div class="kicker reveal">Angka Lain</div>
-    <div class="row2 reveal">
-      <div class="stat"><div class="num" data-count="${n(s, "activity.activeDays")}">0</div><div class="lbl">Hari aktif</div></div>
-      <div class="stat"><div class="num" data-count="${n(s, "activity.longestStreak")}">0</div><div class="lbl">Streak terpanjang</div></div>
-      <div class="stat"><div class="num" data-count="${n(s, "sessions.count")}">0</div><div class="lbl">Sesi chat</div></div>
-      <div class="stat"><div class="num" data-count="${n(s, "tools.totalToolCalls")}">0</div><div class="lbl">Tool calls</div></div>
-      <div class="stat"><div class="num" data-count="${n(s, "latency.avgMs")}">0</div><div class="lbl">Latency rata² (ms)</div></div>
-      <div class="stat"><div class="num" data-count="${n(s, "devices.uniqueCount")}">0</div><div class="lbl">Device dipakai</div></div>
-      <div class="stat"><div class="num" data-count="${n(s, "tools.toolTurnPercent")}">0</div><div class="lbl">% turn pakai tool</div></div>
+    <div class="bento reveal">
+      ${bentoStat("📆", n(s, "activity.activeDays"), "Hari aktif", "Konsisten itu mahal.")}
+      ${bentoStat("🔥", n(s, "activity.longestStreak"), "Streak terpanjang", "Nggak putus-putus.")}
+      ${bentoStat("💬", n(s, "sessions.count"), "Sesi chat", "Ngobrol mulu sama AI.")}
+      ${bentoStat("🛠️", n(s, "tools.totalToolCalls"), "Tool calls", "Agentic sejati.")}
+      ${bentoStat("⏱️", n(s, "latency.avgMs"), "Latency rata² (ms)", "Sabar nungguin.")}
+      ${bentoStat("💻", n(s, "devices.uniqueCount"), "Device dipakai", "Ngoding di mana aja.")}
+      ${bentoStat("🤖", n(s, "tools.toolTurnPercent"), "% turn pakai tool", "Tukang suruh AI.", "%")}
     </div>
     ${s.ide?.favorite ? `<div class="chip reveal">💻 IDE favorit: ${escapeHtml(s.ide.favorite)}</div>` : ""}
     ${s.comparison?.hasPrev ? `<div class="chip reveal">${deltaChip(s.comparison)}</div>` : ""}`));
 
-  // 8b. Achievements / badges
-  const ach = (s.extras?.achievements || []) as Array<{ icon: string; title: string; desc: string }>;
+  // 8b. Achievements / badges (AI-generated preferred, deterministic fallback)
+  const ach = ((nv.badges && nv.badges.length ? nv.badges : s.extras?.achievements) || []) as Array<{ icon: string; title: string; desc: string }>;
   if (ach.length) {
     out.push(section("ach", `
       <div class="kicker reveal">Lencana Kamu</div>
       <div class="headline reveal">${ach.length} Badge Kekunci 🏅</div>
-      <div class="badges reveal">
-        ${ach.slice(0, 6).map((b) => `<div class="badge"><div class="badge-ic">${b.icon}</div><div class="badge-tx"><b>${escapeHtml(b.title)}</b><span>${escapeHtml(b.desc)}</span></div></div>`).join("")}
+      <div class="trophy reveal">
+        ${ach.slice(0, 10).map((b) => `<div class="trophy-badge"><div class="tb-shine"></div><div class="tb-ic">${b.icon}</div><div class="tb-title">${escapeHtml(b.title)}</div><div class="tb-desc">${escapeHtml(b.desc)}</div></div>`).join("")}
       </div>
       ${mediaTag(A.persona, d.base)}`));
   }
@@ -431,7 +481,7 @@ function buildSections(d: RecapHtmlData): string {
     out.push(section("facts", `
       <div class="kicker reveal">Fakta Iseng</div>
       <div class="headline reveal">Tau Gak? 🤔</div>
-      <div class="facts reveal">${facts.slice(0, 4).map((f) => `<div class="fact">• ${escapeHtml(f)}</div>`).join("")}</div>
+      <div class="bubbles">${facts.slice(0, 4).map((f, i) => `<div class="bubble ${i % 2 === 0 ? "bb-left" : "bb-right"} reveal"><span class="bubble-ic">${["🤯", "👀", "🔥", "💡"][i % 4]}</span><span class="bubble-tx">${escapeHtml(f)}</span></div>`).join("")}</div>
       ${mediaTag(A.requests, d.base)}`));
   }
 
@@ -559,18 +609,25 @@ function buildSections(d: RecapHtmlData): string {
   const persona = nv.persona || {};
   out.push(section("card", `
     <div class="kicker reveal">Kartu Recap Kamu</div>
-    <div class="wrapcard reveal" id="wrapCard">
-      ${d.avatarUrl ? `<img class="wc-av" src="${escapeHtml(d.avatarUrl)}" alt="" onerror="this.style.display='none'">` : ""}
-      <div class="wc-name">${escapeHtml(d.displayName)}</div>
-      <div class="wc-persona">${escapeHtml(persona.title || "Coder")}</div>
-      <div class="wc-grid">
-        <div><b>${fmtNum(n(s, "totals.requests"))}</b><span>request</span></div>
-        <div><b>${fmtNum(n(s, "totals.totalTokens"))}</b><span>token</span></div>
-        <div><b>${d.rank.requests ? "#" + d.rank.requests : "-"}</b><span>peringkat</span></div>
+    <div class="wrapcard reveal theme-card-0" id="wrapCard">
+      <div class="wc-bg" id="wcBg"></div>
+      <div class="wc-inner">
+        ${d.avatarUrl ? `<img class="wc-av" crossorigin="anonymous" src="${escapeHtml(d.avatarUrl)}" alt="" onerror="this.style.display='none'">` : ""}
+        <div class="wc-name">${escapeHtml(d.displayName)}</div>
+        <div class="wc-persona">${escapeHtml(persona.title || "Coder")}</div>
+        <div class="wc-grid">
+          <div><b>${fmtNum(n(s, "totals.requests"))}</b><span>request</span></div>
+          <div><b>${fmtNum(n(s, "totals.totalTokens"))}</b><span>token</span></div>
+          <div><b>${d.rank.requests ? "#" + d.rank.requests : "-"}</b><span>peringkat</span></div>
+        </div>
+        <div class="wc-foot">Wrapped ${escapeHtml(d.monthLabel)} · Groupy</div>
       </div>
-      <div class="wc-foot">Wrapped ${escapeHtml(d.monthLabel)} · Groupy</div>
     </div>
-    <div class="caption reveal">Screenshot kartu ini buat dipamerin! 📸</div>`));
+    <div class="wc-themes reveal" id="wcThemes"></div>
+    <div class="btns reveal">
+      <button class="btn" id="dlBtn">⬇️ Download Kartu</button>
+    </div>
+    <div class="caption reveal" id="dlStatus">Ganti tema lalu download jadi GIF! 📸</div>`));
 
   out.push(section("closing", `
     <div class="big reveal">🎉</div>
@@ -620,6 +677,16 @@ function n2(stats: any, path: string): string {
   } catch { return ""; }
 }
 
+/** Bento-style stat card with big emoji, count-up number, label, and meme one-liner. */
+function bentoStat(icon: string, value: number, label: string, quip: string, suffix = ""): string {
+  return `<div class="bstat">
+    <div class="bstat-ic">${icon}</div>
+    <div class="bstat-num" data-count="${value}">0</div>${suffix ? `<span class="bstat-suf">${suffix}</span>` : ""}
+    <div class="bstat-lbl">${escapeHtml(label)}</div>
+    <div class="bstat-quip">${escapeHtml(quip)}</div>
+  </div>`;
+}
+
 function deltaChip(cmp: any): string {
   const r = cmp.requestsDeltaPercent || 0;
   const cls = r >= 0 ? "delta-up" : "delta-down";
@@ -635,7 +702,6 @@ function buildHeatmap(s: any): string | null {
   const perDay = (s?.activity?.perDay || []) as Array<{ day: string; requests: number }>;
   const perHour = (s?.activity?.perHour || []) as Array<{ hour: number; requests: number }>;
   if (!perDay.length && !perHour.length) return null;
-  // Weekday totals (0=Min..6=Sab) and hour totals (0..23) -> outer product proxy.
   const wd = [0, 0, 0, 0, 0, 0, 0];
   for (const d of perDay) {
     const dt = new Date(d.day + "T00:00:00Z");
@@ -645,19 +711,32 @@ function buildHeatmap(s: any): string | null {
   for (const h of perHour) hr[h.hour] = h.requests || 0;
   const wdMax = Math.max(...wd, 1);
   const hrMax = Math.max(...hr, 1);
-  const WD = ["M", "S", "S", "R", "K", "J", "S"];
-  // Cell intensity = normalized weekday * normalized hour.
+  const WD = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+  const WD_FULL = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+  // Find peak cell.
+  let peakD = 0, peakH = 0, peakV = -1;
+  for (let d = 0; d < 7; d++) for (let h = 0; h < 24; h++) {
+    const v = (wd[d] / wdMax) * (hr[h] / hrMax);
+    if (v > peakV) { peakV = v; peakD = d; peakH = h; }
+  }
   let cells = "";
   for (let d = 0; d < 7; d++) {
     cells += `<div class="heat-row"><span class="heat-lbl">${WD[d]}</span>`;
     for (let h = 0; h < 24; h++) {
       const intensity = (wd[d] / wdMax) * (hr[h] / hrMax);
-      const op = intensity > 0 ? (0.15 + intensity * 0.85).toFixed(2) : "0.04";
-      cells += `<i style="opacity:${op}"></i>`;
+      const op = intensity > 0 ? (0.15 + intensity * 0.85).toFixed(2) : "0.05";
+      const isPeak = d === peakD && h === peakH && peakV > 0;
+      cells += `<i class="${isPeak ? "heat-peak" : ""}" style="opacity:${op}" title="${WD_FULL[d]} jam ${h}:00"></i>`;
     }
     cells += `</div>`;
   }
-  return `<div class="heat-grid">${cells}</div><div class="heat-axis"><span>0</span><span>6</span><span>12</span><span>18</span><span>23</span></div>`;
+  const grid = `<div class="heat-grid">${cells}</div>
+    <div class="heat-axis"><span>00</span><span>06</span><span>12</span><span>18</span><span>23</span></div>
+    <div class="heat-foot">
+      <div class="heat-legend">Sedikit <i style="opacity:.12"></i><i style="opacity:.35"></i><i style="opacity:.6"></i><i style="opacity:.85"></i><i style="opacity:1"></i> Banyak</div>
+      ${peakV > 0 ? `<div class="heat-peak-lbl">🔥 Puncak: ${WD_FULL[peakD]} jam ${peakH}:00</div>` : ""}
+    </div>`;
+  return grid;
 }
 
 const RECAP_JS = `
@@ -670,6 +749,21 @@ const RECAP_JS = `
       countUp(e.target); io.unobserve(e.target);} });
   }, {threshold:0.25});
   document.querySelectorAll('.reveal,.pop,.bar').forEach(function(el){ io.observe(el); });
+
+  // Assign varied entrance directions per slide so it's not all centered fade.
+  (function(){
+    var variants=['rv-left','rv-right','rv-zoom','rv-tilt'];
+    document.querySelectorAll('.slide').forEach(function(sl,si){
+      if(si===0) return; // keep intro as default
+      var v=variants[si % variants.length];
+      sl.querySelectorAll('.reveal').forEach(function(el,ei){
+        // alternate left/right within the slide for chips/cards
+        var vv=v;
+        if((v==='rv-left'||v==='rv-right')&&ei%2===1) vv=(v==='rv-left'?'rv-right':'rv-left');
+        el.classList.remove('reveal'); el.classList.add(vv); io.observe(el);
+      });
+    });
+  })();
 
   function countUp(scope){
     var nodes = scope.querySelectorAll ? scope.querySelectorAll('[data-count]') : [];
@@ -796,6 +890,87 @@ const RECAP_JS = `
       .catch(function(){fallbackCopy();});} else fallbackCopy();});
   function fallbackCopy(){var i=document.createElement('input');i.value=url;document.body.appendChild(i);
     i.select();try{document.execCommand('copy');toast('Tersalin!');}catch(e){toast('Gagal menyalin');}i.remove();}
+
+  // ── Recap card themes + download ──────────────────────────────────────────
+  var THEMES=[
+    ['#7c3aed','#ec4899'],['#f59e0b','#f43f5e'],['#06b6d4','#3b82f6'],['#10b981','#22d3ee'],
+    ['#ef4444','#f59e0b'],['#6366f1','#a855f7'],['#ec4899','#f59e0b'],['#14b8a6','#6366f1'],
+    ['#f43f5e','#8b5cf6'],['#0ea5e9','#22d3ee'],['#84cc16','#10b981'],['#fb7185','#fbbf24'],
+    ['#8b5cf6','#06b6d4'],['#f97316','#ef4444'],['#22c55e','#84cc16'],['#3b82f6','#8b5cf6'],
+    ['#d946ef','#6366f1'],['#fbbf24','#f97316'],['#2dd4bf','#0ea5e9'],['#e11d48','#7c3aed'],
+    ['#a855f7','#ec4899'],['#0891b2','#14b8a6'],['#facc15','#f43f5e'],['#4f46e5','#22d3ee']
+  ];
+  var card=document.getElementById('wrapCard');
+  var cardBg=document.getElementById('wcBg');
+  var themesWrap=document.getElementById('wcThemes');
+  var curTheme=0;
+  function applyTheme(i){curTheme=i;if(cardBg)cardBg.style.background='linear-gradient(160deg,'+THEMES[i][0]+','+THEMES[i][1]+')';if(cardBg)cardBg.style.backgroundSize='200% 200%';
+    [].slice.call(themesWrap?themesWrap.children:[]).forEach(function(sw,j){sw.classList.toggle('on',j===i);});}
+  if(themesWrap){
+    THEMES.forEach(function(t,i){var sw=document.createElement('div');sw.className='wc-sw'+(i===0?' on':'');
+      sw.style.background='linear-gradient(135deg,'+t[0]+','+t[1]+')';sw.addEventListener('click',function(){applyTheme(i);});themesWrap.appendChild(sw);});
+    applyTheme(0);
+  }
+
+  // Lazy-load a script once.
+  var _scripts={};
+  function loadScript(src){return new Promise(function(res,rej){if(_scripts[src])return res();var sc=document.createElement('script');sc.src=src;sc.onload=function(){_scripts[src]=1;res();};sc.onerror=rej;document.head.appendChild(sc);});}
+
+  var dlBtn=document.getElementById('dlBtn');
+  var dlStatus=document.getElementById('dlStatus');
+  function setStatus(m){if(dlStatus)dlStatus.textContent=m;}
+  if(dlBtn) dlBtn.addEventListener('click',function(){ doDownload(); });
+
+  async function doDownload(){
+    dlBtn.disabled=true;
+    try{
+      setStatus('Menyiapkan render... 0%');
+      await loadScript('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js');
+      // Capture the card at 2x for crispness.
+      var base=await window.html2canvas(card,{backgroundColor:null,scale:2,useCORS:true,logging:false});
+      // Try animated GIF; fall back to PNG.
+      var gifOk=false;
+      try{
+        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js');
+        await renderGif(base);
+        gifOk=true;
+      }catch(e){ gifOk=false; }
+      if(!gifOk){
+        var a=document.createElement('a');a.href=base.toDataURL('image/png');a.download='recap-card.png';a.click();
+        setStatus('Tersimpan sebagai PNG ✓');
+      }
+    }catch(e){ setStatus('Gagal render: '+(e&&e.message||'error')); }
+    finally{ dlBtn.disabled=false; }
+  }
+
+  function renderGif(base){return new Promise(function(resolve,reject){
+    if(rm){ // reduced motion -> static png
+      var a=document.createElement('a');a.href=base.toDataURL('image/png');a.download='recap-card.png';a.click();return resolve();
+    }
+    var W=base.width,H=base.height;
+    var gif=new window.GIF({workers:2,quality:10,width:W,height:H,workerScript:'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js'});
+    var FRAMES=18, c=document.createElement('canvas'); c.width=W;c.height=H; var ctx=c.getContext('2d');
+    var t1=THEMES[curTheme][0],t2=THEMES[curTheme][1];
+    for(var f=0;f<FRAMES;f++){
+      var p=f/FRAMES;
+      // animated diagonal gradient background
+      var ang=p*Math.PI*2;
+      var gx=W*(0.5+0.5*Math.cos(ang)), gy=H*(0.5+0.5*Math.sin(ang));
+      var g=ctx.createLinearGradient(0,0,gx,gy); g.addColorStop(0,t1); g.addColorStop(1,t2);
+      ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+      // sparkle dots
+      ctx.globalAlpha=0.25; for(var k=0;k<14;k++){var sx=(k*97+f*9)%W,sy=(k*53+f*5)%H;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(sx,sy,2,0,7);ctx.fill();}
+      ctx.globalAlpha=1;
+      // foreground card capture on top
+      ctx.drawImage(base,0,0);
+      gif.addFrame(ctx,{copy:true,delay:90});
+    }
+    gif.on('progress',function(pr){setStatus('Merender GIF... '+Math.round(pr*100)+'%');});
+    gif.on('finished',function(blob){var u=URL.createObjectURL(blob);var a=document.createElement('a');a.href=u;a.download='recap-card.gif';a.click();setTimeout(function(){URL.revokeObjectURL(u);},4000);setStatus('Tersimpan sebagai GIF ✓');resolve();});
+    var to=setTimeout(function(){reject(new Error('timeout'));},20000);
+    gif.on('finished',function(){clearTimeout(to);});
+    gif.render();
+  });}
 
   // Strip ?t= single-use token from the URL so shared/copied links are clean.
   try{ if(location.search.indexOf('t=')!==-1 && window.__RECAP_CLEAN_PATH){
