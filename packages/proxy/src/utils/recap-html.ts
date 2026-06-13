@@ -137,6 +137,10 @@ transition:transform .3s,opacity .3s;z-index:50}
 color:#fff;padding:12px 14px;font-size:15px;font-family:inherit;resize:vertical;margin-bottom:12px}
 .testi-done{display:none;margin-top:10px;color:#34d399;font-weight:700}
 .bcr{margin-top:8px;position:relative}
+.bcr-tabs{display:flex;gap:8px;justify-content:center;margin-bottom:12px}
+.bcr-tab{background:var(--card);border:1px solid var(--line);color:var(--fg);border-radius:999px;
+padding:9px 18px;font-weight:700;cursor:pointer;font-size:14px}
+.bcr-tab.active{background:linear-gradient(120deg,var(--g1),var(--g2));border-color:transparent}
 .bcr-day{font-weight:900;font-size:clamp(16px,5vw,22px);color:var(--g3);text-align:center;margin-bottom:14px;letter-spacing:.04em}
 .bcr-rows{position:relative}
 .bcr-row{position:absolute;left:0;right:0;height:38px;display:grid;grid-template-columns:26px 1fr;
@@ -351,20 +355,36 @@ function buildSections(d: RecapHtmlData): string {
     <div class="caption reveal">${rankT.caption || (rankReq && rankReq <= 5 ? "Sultan AI! Mecut terus 🔥" : "Terus semangat ngoding!")}</div>
     ${mediaTag(A.rank, d.base)}`));
 
-  // 9b. Leaderboard timelapse (bar-chart-race, day 1 -> today, windowed around user)
+  // 9b. Leaderboard timelapse (bar-chart-race, day 1 -> today). Toggle Request/Token.
   const race = s.race;
-  if (race && Array.isArray(race.days) && race.days.length >= 2 && Array.isArray(race.users) && race.users.length >= 2) {
+  const trackReq = race?.byRequests;
+  const trackTok = race?.byTokens;
+  const hasReq = !!(trackReq && Array.isArray(trackReq.users) && trackReq.users.length >= 2);
+  const hasTok = !!(trackTok && Array.isArray(trackTok.users) && trackTok.users.length >= 2);
+  if (race && Array.isArray(race.days) && race.days.length >= 2 && (hasReq || hasTok)) {
+    const defMode = hasReq ? "requests" : "tokens";
+    const myReqRank = trackReq?.myRank;
+    const tabs = `
+      <div class="bcr-tabs reveal">
+        ${hasReq ? `<button class="bcr-tab${defMode === "requests" ? " active" : ""}" data-mode="requests">🏆 By Request</button>` : ""}
+        ${hasTok ? `<button class="bcr-tab${defMode === "tokens" ? " active" : ""}" data-mode="tokens">🪙 By Token</button>` : ""}
+      </div>`;
+    const cap = myReqRank
+      ? (myReqRank <= 3 ? `Kamu finish di #${myReqRank}. Gokil! 🏆` : `Kamu naik ke #${myReqRank}. Lihat perjuangannya!`)
+      : "Lihat perjalanan peringkat kamu sepanjang bulan.";
     out.push(section("race", `
       <div class="kicker reveal">Perjalanan Peringkat</div>
       <div class="headline reveal">Dari Tanggal 1 Sampai Sekarang</div>
+      ${tabs}
       <div class="bcr card reveal" id="bcrBox"
         data-days='${escapeHtml(JSON.stringify(race.days))}'
-        data-users='${escapeHtml(JSON.stringify(race.users))}'
-        data-base='${race.baseRank || 1}'>
+        data-req='${escapeHtml(JSON.stringify(trackReq || null))}'
+        data-tok='${escapeHtml(JSON.stringify(trackTok || null))}'
+        data-mode='${defMode}'>
         <div class="bcr-day" id="bcrDay">&nbsp;</div>
         <div class="bcr-rows" id="bcrRows"></div>
       </div>
-      <div class="caption reveal">${escapeHtml(race.myRank <= 3 ? `Kamu finish di #${race.myRank} dari ${race.totalParticipants}. Gokil! 🏆` : `Kamu naik ke #${race.myRank} dari ${race.totalParticipants} developer. Lihat perjuangannya!`)}</div>`));
+      <div class="caption reveal">${escapeHtml(cap)}</div>`));
   }
 
   // 10. Leaderboard
@@ -488,19 +508,23 @@ const RECAP_JS = `
   // Ranking race: animate cars to final position when the section enters view.
   var bcrBox=document.getElementById('bcrBox');
   if(bcrBox){
-    var bdone=false;
-    function runBcr(){
-      if(bdone) return; bdone=true;
-      var days=[],users=[];
-      try{days=JSON.parse(bcrBox.getAttribute('data-days'))||[];}catch(e){}
-      try{users=JSON.parse(bcrBox.getAttribute('data-users'))||[];}catch(e){}
-      if(!days.length||!users.length) return;
-      var rowsEl=document.getElementById('bcrRows');
-      var dayEl=document.getElementById('bcrDay');
-      var baseRank=parseInt(bcrBox.getAttribute('data-base'))||1;
-      var ROWH=44;
+    var bcrDays=[];
+    try{bcrDays=JSON.parse(bcrBox.getAttribute('data-days'))||[];}catch(e){}
+    var trackReq=null, trackTok=null;
+    try{trackReq=JSON.parse(bcrBox.getAttribute('data-req'));}catch(e){}
+    try{trackTok=JSON.parse(bcrBox.getAttribute('data-tok'));}catch(e){}
+    var rowsEl=document.getElementById('bcrRows');
+    var dayEl=document.getElementById('bcrDay');
+    var ROWH=44;
+    var curTimer=null;
+    function monthName(ds){var p=ds.split('-');var mn=['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];return parseInt(p[2])+' '+mn[parseInt(p[1])-1];}
+    function runBcr(mode){
+      if(curTimer){clearInterval(curTimer);curTimer=null;}
+      rowsEl.innerHTML='';
+      var track=(mode==='tokens')?trackTok:trackReq;
+      if(!track||!track.users||!track.users.length||!bcrDays.length) return;
+      var users=track.users, baseRank=track.baseRank||1;
       rowsEl.style.height=(users.length*ROWH)+'px';
-      // build a row per user
       var rowEls={};
       users.forEach(function(u,i){
         var row=document.createElement('div');
@@ -512,14 +536,10 @@ const RECAP_JS = `
         rowsEl.appendChild(row);
         rowEls[i]=row;
       });
-      function monthName(ds){var p=ds.split('-');var mn=['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];return parseInt(p[2])+' '+mn[parseInt(p[1])-1];}
-      var frame=0;
       function render(f){
-        dayEl.textContent=monthName(days[f]);
-        // values at this day
-        var vals=users.map(function(u,i){return {i:i,v:(u.cumulative[f]||0),isMe:u.isMe,name:u.name};});
+        dayEl.textContent=monthName(bcrDays[f]);
+        var vals=users.map(function(u,i){return {i:i,v:(u.cumulative[f]||0)};});
         var max=Math.max.apply(null,vals.map(function(x){return x.v;}).concat([1]));
-        // order by value desc for positions
         var order=vals.slice().sort(function(a,b){return b.v-a.v;});
         order.forEach(function(x,pos){
           var row=rowEls[x.i];
@@ -530,16 +550,27 @@ const RECAP_JS = `
         });
       }
       render(0);
-      if(rm){ render(days.length-1); return; }
-      // Slower, smoother: ~7.5s total spread across days, min 450ms/day.
-      var stepMs=Math.max(450,Math.min(900,Math.round(7500/Math.max(days.length,1))));
-      var tm=setInterval(function(){
+      if(rm){ render(bcrDays.length-1); return; }
+      var frame=0;
+      var stepMs=Math.max(450,Math.min(900,Math.round(7500/Math.max(bcrDays.length,1))));
+      curTimer=setInterval(function(){
         frame++;
-        if(frame>=days.length){ clearInterval(tm); return; }
+        if(frame>=bcrDays.length){ clearInterval(curTimer); curTimer=null; return; }
         render(frame);
       },stepMs);
     }
-    var io3=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting)runBcr();});},{threshold:0.35});
+    // Tab switching -> re-animate from day 1.
+    document.querySelectorAll('.bcr-tab').forEach(function(tab){
+      tab.addEventListener('click',function(){
+        document.querySelectorAll('.bcr-tab').forEach(function(t){t.classList.remove('active');});
+        tab.classList.add('active');
+        runBcr(tab.getAttribute('data-mode'));
+      });
+    });
+    var bcrStarted=false;
+    var io3=new IntersectionObserver(function(es){es.forEach(function(e){
+      if(e.isIntersecting&&!bcrStarted){bcrStarted=true;runBcr(bcrBox.getAttribute('data-mode')||'requests');}
+    });},{threshold:0.35});
     io3.observe(bcrBox);
   }
 

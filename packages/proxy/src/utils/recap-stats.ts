@@ -129,9 +129,8 @@ export interface RecapStats {
   };
   race?: {
     days: string[];
-    users: Array<{ name: string | null; avatar: string | null; rank: number; isMe: boolean; cumulative: number[] }>;
-    myRank: number;
-    totalParticipants: number;
+    byRequests: { users: Array<{ name: string | null; avatar: string | null; rank: number; isMe: boolean; cumulative: number[] }>; myRank: number; baseRank: number; totalParticipants: number } | null;
+    byTokens: { users: Array<{ name: string | null; avatar: string | null; rank: number; isMe: boolean; cumulative: number[] }>; myRank: number; baseRank: number; totalParticipants: number } | null;
   } | null;
 }
 
@@ -537,12 +536,17 @@ export interface TimelapseUser {
   cumulative: number[]; // cumulative requests aligned to days[]
 }
 
-export interface RaceTimelapse {
-  days: string[]; // YYYY-MM-DD (WIB), day 1 .. today
-  users: TimelapseUser[]; // windowed around the user's rank
+export interface TimelapseTrack {
+  users: TimelapseUser[]; // windowed around the user's rank for this metric
   myRank: number;
   baseRank: number; // global rank of the top user in this window (for per-day labels)
   totalParticipants: number;
+}
+
+export interface RaceTimelapse {
+  days: string[]; // YYYY-MM-DD (WIB), day 1 .. today
+  byRequests: TimelapseTrack | null;
+  byTokens: TimelapseTrack | null;
 }
 
 /** Per-day cumulative request counts for a single key across the month (WIB). */
@@ -561,6 +565,26 @@ async function fetchPerDayRequests(keyId: number, start: Date, end: Date): Promi
   return m;
 }
 
+/** Per-day total token counts (multiplier-aware) for one key (WIB). */
+async function fetchPerDayTokens(keyId: number, start: Date, end: Date): Promise<Map<string, number>> {
+  const { input, output } = getTokenMultipliers();
+  const rows = (await db.execute(sql`
+    SELECT day,
+      COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) * ${input}
+        + SUM(completion_tokens) * ${output}, 0) AS tokens
+    FROM (
+      SELECT to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') AS day,
+        context_delta_tokens, completion_tokens
+      FROM request_logs
+      WHERE api_key_id = ${keyId} AND created_at >= ${start} AND created_at < ${end}
+        AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+    ) d GROUP BY day
+  `)).rows as any[];
+  const m = new Map<string, number>();
+  for (const r of rows) m.set(r.day, Math.round(num(r.tokens)));
+  return m;
+}
+
 /**
  * Build the leaderboard timelapse: a window of users around the viewer's final
  * rank, each with cumulative request counts per day (day 1 .. today). Used for
@@ -569,26 +593,15 @@ async function fetchPerDayRequests(keyId: number, start: Date, end: Date): Promi
 export async function getRaceTimelapse(
   keyId: number,
   yearMonth: string,
-  leaderboard: { byRequests: LeaderboardEntry[] },
+  leaderboard: { byRequests: LeaderboardEntry[]; byTokens: LeaderboardEntry[] },
 ): Promise<RaceTimelapse | null> {
-  const active = leaderboard.byRequests.filter((e) => e.requests > 0 && e.apiKeyId != null);
-  if (active.length < 2) return null;
-
-  const myIdx = active.findIndex((e) => e.apiKeyId === keyId);
-  if (myIdx < 0) return null;
-
-  // Window of ranks around the user: up to 5 above and 5 below.
-  const lo = Math.max(0, myIdx - 5);
-  const hi = Math.min(active.length, myIdx + 6); // exclusive
-  const windowed = active.slice(lo, hi);
-
   const { start, end } = getMonthRangeUtc(yearMonth);
 
-  // Day axis: day 1 of month .. min(today, month end), WIB.
+  // Shared day axis: day 1 of month .. min(today, month end), WIB.
   const WIB = 7 * 60 * 60 * 1000;
   const todayWib = new Date(Date.now() + WIB);
   const days: string[] = [];
-  const cursor = new Date(start.getTime() + WIB); // WIB wall-clock of month start
+  const cursor = new Date(start.getTime() + WIB);
   while (cursor < end) {
     const ds = cursor.toISOString().slice(0, 10);
     days.push(ds);
@@ -598,32 +611,43 @@ export async function getRaceTimelapse(
   }
   if (days.length === 0) return null;
 
-  // Per-user cumulative aligned to the day axis.
-  const users: TimelapseUser[] = [];
-  for (const e of windowed) {
-    const perDay = await fetchPerDayRequests(e.apiKeyId!, start, end);
-    const cumulative: number[] = [];
-    let c = 0;
-    for (const d of days) {
-      c += perDay.get(d) || 0;
-      cumulative.push(c);
-    }
-    users.push({
-      name: e.discordUsername || null,
-      avatar: null, // filled in by the bot's avatar push if available
-      rank: active.indexOf(e) + 1,
-      isMe: e.apiKeyId === keyId,
-      cumulative,
-    });
-  }
+  // Build one windowed metric track (requests or tokens).
+  const buildTrack = async (
+    list: LeaderboardEntry[],
+    metric: "requests" | "tokens",
+  ): Promise<TimelapseTrack | null> => {
+    const active = list.filter((e) => (metric === "requests" ? e.requests > 0 : e.tokens > 0) && e.apiKeyId != null);
+    if (active.length < 2) return null;
+    const myIdx = active.findIndex((e) => e.apiKeyId === keyId);
+    if (myIdx < 0) return null;
+    const lo = Math.max(0, myIdx - 5);
+    const hi = Math.min(active.length, myIdx + 6);
+    const windowed = active.slice(lo, hi);
 
-  return {
-    days,
-    users,
-    myRank: myIdx + 1,
-    baseRank: lo + 1,
-    totalParticipants: active.length,
+    const users: TimelapseUser[] = [];
+    for (const e of windowed) {
+      const perDay = metric === "requests"
+        ? await fetchPerDayRequests(e.apiKeyId!, start, end)
+        : await fetchPerDayTokens(e.apiKeyId!, start, end);
+      const cumulative: number[] = [];
+      let c = 0;
+      for (const d of days) { c += perDay.get(d) || 0; cumulative.push(c); }
+      users.push({
+        name: e.discordUsername || null,
+        avatar: null,
+        rank: active.indexOf(e) + 1,
+        isMe: e.apiKeyId === keyId,
+        cumulative,
+      });
+    }
+    return { users, myRank: myIdx + 1, baseRank: lo + 1, totalParticipants: active.length };
   };
+
+  const byRequests = await buildTrack(leaderboard.byRequests, "requests");
+  const byTokens = await buildTrack(leaderboard.byTokens, "tokens");
+  if (!byRequests && !byTokens) return null;
+
+  return { days, byRequests, byTokens };
 }
 
 /** Percentile (0..1) of a numeric array (linear interpolation). */

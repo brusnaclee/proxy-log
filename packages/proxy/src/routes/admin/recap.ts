@@ -29,14 +29,18 @@ import {
   type LeaderboardEntry,
 } from "../../utils/recap-stats.js";
 import { generateNarrative } from "../../utils/recap-generator.js";
-import { loadAssets } from "../../utils/recap-assets.js";
-import { searchOneGif } from "../../utils/recap-gif-search.js";
-import { pickGif, type GifCategory } from "../../utils/recap-gifs.js";
+import { loadAssets, memeForCategory, assetUrl } from "../../utils/recap-assets.js";
+import { findLiveGif } from "../../utils/recap-gif-search.js";
+import { type GifCategory } from "../../utils/recap-gifs.js";
 
 const recap = new Hono();
 
 async function findKeyByDiscordUser(discordUserId: string) {
   return (await db.select().from(apiKeys).where(eq(apiKeys.discordUserId, discordUserId)))[0];
+}
+
+function publicBase(): string {
+  return (process.env.RECAP_PUBLIC_BASE_URL || process.env.PROXY_PUBLIC_BASE_URL || "https://api.tokito.xyz").replace(/\/$/, "");
 }
 
 recap.get("/internal/recap/window", (c) => {
@@ -102,9 +106,9 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
     return c.json({ busy: true, error: "AI busy" }, 503);
   }
 
-  // Resolve a varied GIF per section: realtime search first, catalog fallback.
+  // Resolve a varied, live GIF per section: realtime search + local fallback.
   try {
-    narrative.gifs = await resolveRecapGifs(discordUserId, stats);
+    narrative.gifs = await resolveRecapGifs(discordUserId, stats, publicBase());
   } catch { narrative.gifs = {}; }
 
   // Persist leaderboard snapshot (top 10 each) so the web page + bot can read it.
@@ -160,39 +164,43 @@ function safeParse(s: string | null | undefined): any {
  * mood-appropriate query first, then falls back to the curated catalog. Returns
  * a map of section -> url; the web has further onerror fallbacks (local meme/SVG).
  */
-async function resolveRecapGifs(seedId: string, stats: any): Promise<Record<string, string>> {
+async function resolveRecapGifs(seedId: string, stats: any, base: string): Promise<Record<string, string>> {
   const ratio = stats?.totals?.ioRatio ?? 0.3;
   const rank = stats?.rank?.requests || 0;
   const hr = stats?.activity?.mostActiveHour?.hour ?? 12;
-  const timeMood = hr < 5 ? "night owl tired" : hr < 11 ? "good morning energetic" : hr < 18 ? "working hard" : "late night coding";
-  const rankMood = rank === 1 ? "champion winner king" : rank <= 3 ? "celebrate podium" : rank <= 10 ? "proud clap" : rank <= 30 ? "keep going fight" : "try harder sad";
-  const personaMood = ratio < 0.15 ? "money burning waste" : ratio >= 0.45 ? "genius smart proud" : "coding chill";
+  const timeQ = hr < 5 ? ["night owl coding", "tired sleepy late night"] : hr < 11 ? ["good morning coffee", "morning energetic"] : hr < 18 ? ["working hard typing", "busy office"] : ["late night coding", "evening relax"];
+  const rankQ = rank === 1 ? ["champion winner king", "number one celebrate"] : rank <= 3 ? ["podium celebrate trophy", "winner proud"] : rank <= 10 ? ["proud clapping nice", "good job thumbs up"] : rank <= 30 ? ["keep going fight", "determined work harder"] : ["try harder sad", "crying funny"];
+  const personaQ = ratio < 0.15 ? ["money burning cash", "spending money funny"] : ratio >= 0.45 ? ["genius smart galaxy brain", "big brain proud"] : ["coding chill relax", "developer typing"];
 
-  // section -> { query, catalog fallback category }
-  const plan: Record<string, { q: string; cat: GifCategory }> = {
-    intro: { q: "lets go excited coding", cat: "intro" },
-    requests: { q: rank <= 10 ? "typing fast keyboard hacker" : "working typing computer", cat: "many" },
-    tokens: { q: personaMood, cat: ratio < 0.15 ? "money" : "proud" },
-    favoriteModel: { q: "best friend love favorite", cat: "favorite" },
-    leastModel: { q: "forgotten sad lonely ignored", cat: "forgotten" },
-    fastestModel: { q: "fast speed zoom flash", cat: "fast" },
-    slowestModel: { q: "slow waiting loading tired", cat: "slow" },
-    activeTime: { q: timeMood, cat: hr < 5 ? "night" : hr < 11 ? "morning" : "noon" },
-    persona: { q: personaMood, cat: ratio < 0.15 ? "boros" : ratio >= 0.45 ? "proud" : "coding" },
-    rank: { q: rankMood, cat: rank === 1 ? "king" : rank <= 3 ? "podium" : rank <= 30 ? "midrank" : "lowrank" },
-    race: { q: "race climbing leaderboard", cat: "race" },
-    closing: { q: "celebrate party congratulations", cat: "celebrate" },
+  // section -> { queries[], catalog fallback category }
+  const plan: Record<string, { q: string[]; cat: GifCategory }> = {
+    intro: { q: ["lets go excited", "hello hype start"], cat: "intro" },
+    requests: { q: rank <= 10 ? ["fast typing keyboard hacker", "frantic typing"] : ["typing computer work", "developer coding"], cat: "many" },
+    tokens: { q: personaQ, cat: ratio < 0.15 ? "money" : "proud" },
+    favoriteModel: { q: ["best friend love", "favorite hug love"], cat: "favorite" },
+    leastModel: { q: ["forgotten lonely ignored", "sad alone left out"], cat: "forgotten" },
+    fastestModel: { q: ["fast speed zoom flash", "super fast race"], cat: "fast" },
+    slowestModel: { q: ["slow waiting loading", "snail slow tired"], cat: "slow" },
+    activeTime: { q: timeQ, cat: hr < 5 ? "night" : hr < 11 ? "morning" : "noon" },
+    persona: { q: personaQ, cat: ratio < 0.15 ? "boros" : ratio >= 0.45 ? "proud" : "coding" },
+    rank: { q: rankQ, cat: rank === 1 ? "king" : rank <= 3 ? "podium" : rank <= 30 ? "midrank" : "lowrank" },
+    race: { q: ["race climbing finish line", "competition running"], cat: "race" },
+    closing: { q: ["celebrate party congrats", "happy dance celebrate"], cat: "celebrate" },
   };
 
   const out: Record<string, string> = {};
-  let salt = 0;
   const sections = Object.entries(plan);
-  // Run searches with a small concurrency to keep generation snappy.
+  let salt = 0;
+  // Run searches with bounded concurrency; live-validate, else local meme gif.
   await Promise.all(sections.map(async ([section, { q, cat }]) => {
-    const s = salt++;
+    const s = seedFromStr(seedId) + (salt++);
     let url: string | null = null;
-    try { url = await searchOneGif(q, seedFromStr(seedId) + s); } catch { url = null; }
-    if (!url) url = pickGif(cat, seedId, s);
+    try { url = await findLiveGif(q, s); } catch { url = null; }
+    if (!url) {
+      // Guaranteed-live local self-hosted meme gif (absolute URL).
+      const local = memeForCategory(cat as any, [], s);
+      if (local) url = assetUrl(base, local.file);
+    }
     if (url) out[section] = url;
   }));
   return out;
