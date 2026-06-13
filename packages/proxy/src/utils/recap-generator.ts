@@ -18,6 +18,8 @@ export interface RecapNarrative {
   closing: string;
   /** asset ids chosen by the AI, validated against the manifest before use. */
   assetChoices: Record<string, string>;
+  /** resolved GIF URLs per section (realtime search at generate time). */
+  gifs?: Record<string, string>;
 }
 
 const SECTION_KEYS = [

@@ -140,7 +140,7 @@ color:#fff;padding:12px 14px;font-size:15px;font-family:inherit;resize:vertical;
 .bcr-day{font-weight:900;font-size:clamp(16px,5vw,22px);color:var(--g3);text-align:center;margin-bottom:14px;letter-spacing:.04em}
 .bcr-rows{position:relative}
 .bcr-row{position:absolute;left:0;right:0;height:38px;display:grid;grid-template-columns:26px 1fr;
-align-items:center;gap:8px;transition:transform .55s cubic-bezier(.3,.7,.3,1)}
+align-items:center;gap:8px;transition:transform .7s cubic-bezier(.45,.05,.3,1)}
 .bcr-rank{font-weight:800;font-size:12px;color:var(--muted);text-align:right}
 .bcr-bar{position:relative;height:32px;border-radius:10px;background:rgba(255,255,255,.08);overflow:hidden}
 .bcr-fill{position:absolute;inset:0;width:0;border-radius:10px;background:linear-gradient(90deg,var(--g1),var(--g2));
@@ -176,8 +176,9 @@ function mediaTag(asset: { url: string; type: string } | null | undefined, base:
     return `<video class="media reveal" autoplay muted loop playsinline preload="metadata"
       onerror="this.style.display='none'"><source src="${escapeHtml(asset.url)}"></video>`;
   }
-  // Real meme/gif as the centerpiece; on error swap to the default SVG (keep visible).
-  return `<img class="media reveal" loading="lazy" alt="" src="${escapeHtml(asset.url)}"
+  // GIF/meme as centerpiece. For external (searched) GIFs, on error swap to the
+  // local default meme SVG so a dead link never shows a broken image.
+  return `<img class="media reveal" loading="lazy" referrerpolicy="no-referrer" alt="" src="${escapeHtml(asset.url)}"
     onerror="this.onerror=null;this.src='${escapeHtml(fallback)}'">`;
 }
 
@@ -269,15 +270,38 @@ function buildSections(d: RecapHtmlData): string {
     <div class="caption reveal">${favT.caption}</div>
     ${mediaTag(A.favoriteModel, d.base)}`));
 
-  // 5. Least used model (only if exists)
+  // 5. Least used model (paling sedikit request)
   const least = (s.models?.leastUsed || [])[0];
   if (least) {
-    const leastT = txt("leastModel", escapeHtml(least.model), "Model yang jarang kamu sentuh. Kita kan teman? 🥲");
+    const leastT = txt("leastModel", escapeHtml(least.model), `Cuma ${least.requests || 0}x dipanggil. Kita kan teman? 🥲`);
     out.push(section("leastModel", `
       <div class="kicker reveal">Yang Terlupakan</div>
       <div class="headline reveal">${leastT.headline}</div>
+      <div class="chip reveal">😶 ${escapeHtml(least.model)} — ${fmtNum(least.requests || 0)}x</div>
       <div class="caption reveal">${leastT.caption}</div>
       ${mediaTag(A.leastModel, d.base)}`));
+  }
+
+  // 5b. Fastest model (lowest avg latency)
+  const fastest = s.models?.fastest;
+  if (fastest && fastest.model) {
+    out.push(section("fastestModel", `
+      <div class="kicker reveal">Model Tercepat</div>
+      <div class="headline reveal">${escapeHtml(fastest.model)}</div>
+      <div class="chip reveal">⚡ rata-rata ${fmtNum(fastest.avgLatencyMs || 0)}ms</div>
+      <div class="caption reveal">Ngebut, jawab kilat tanpa drama.</div>
+      ${mediaTag(A.fastestModel, d.base)}`));
+  }
+
+  // 5c. Slowest model (highest avg latency)
+  const slowest = s.models?.slowest;
+  if (slowest && slowest.model && (!fastest || slowest.model !== fastest.model)) {
+    out.push(section("slowestModel", `
+      <div class="kicker reveal">Model Terlemot</div>
+      <div class="headline reveal">${escapeHtml(slowest.model)}</div>
+      <div class="chip reveal">🐌 rata-rata ${fmtNum(slowest.avgLatencyMs || 0)}ms</div>
+      <div class="caption reveal">Sabar ya, dia mikir keras dulu.</div>
+      ${mediaTag(A.slowestModel, d.base)}`));
   }
 
   // 6. Active time
@@ -335,7 +359,8 @@ function buildSections(d: RecapHtmlData): string {
       <div class="headline reveal">Dari Tanggal 1 Sampai Sekarang</div>
       <div class="bcr card reveal" id="bcrBox"
         data-days='${escapeHtml(JSON.stringify(race.days))}'
-        data-users='${escapeHtml(JSON.stringify(race.users))}'>
+        data-users='${escapeHtml(JSON.stringify(race.users))}'
+        data-base='${race.baseRank || 1}'>
         <div class="bcr-day" id="bcrDay">&nbsp;</div>
         <div class="bcr-rows" id="bcrRows"></div>
       </div>
@@ -472,6 +497,7 @@ const RECAP_JS = `
       if(!days.length||!users.length) return;
       var rowsEl=document.getElementById('bcrRows');
       var dayEl=document.getElementById('bcrDay');
+      var baseRank=parseInt(bcrBox.getAttribute('data-base'))||1;
       var ROWH=44;
       rowsEl.style.height=(users.length*ROWH)+'px';
       // build a row per user
@@ -498,14 +524,15 @@ const RECAP_JS = `
         order.forEach(function(x,pos){
           var row=rowEls[x.i];
           row.style.transform='translateY('+(pos*ROWH)+'px)';
-          row.querySelector('.bcr-rank').textContent='#'+(pos+1);
+          row.querySelector('.bcr-rank').textContent='#'+(baseRank+pos);
           row.querySelector('.bcr-fill').style.width=Math.max(2,Math.round((x.v/max)*100))+'%';
           row.querySelector('.bcr-val').textContent=format(x.v);
         });
       }
       render(0);
       if(rm){ render(days.length-1); return; }
-      var stepMs=Math.max(140,Math.min(420,Math.round(3200/days.length)));
+      // Slower, smoother: ~7.5s total spread across days, min 450ms/day.
+      var stepMs=Math.max(450,Math.min(900,Math.round(7500/Math.max(days.length,1))));
       var tm=setInterval(function(){
         frame++;
         if(frame>=days.length){ clearInterval(tm); return; }

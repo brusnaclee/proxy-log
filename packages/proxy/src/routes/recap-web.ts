@@ -98,16 +98,22 @@ recapWeb.get("/:apiKeyName", async (c) => {
   // Resolve asset urls for each section choice (with category fallback).
   const sectionCategory: Record<string, string> = {
     intro: "misc", requests: "reactions", tokens: "personas",
-    favoriteModel: "models", leastModel: "models", activeTime: "time",
-    persona: "personas", rank: "ranks", ide: "misc", closing: "confetti",
+    favoriteModel: "models", leastModel: "models", fastestModel: "models", slowestModel: "models",
+    activeTime: "time", persona: "personas", rank: "ranks", race: "ranks", ide: "misc", closing: "confetti",
   };
   const resolvedAssets: Record<string, { url: string; type: string } | null> = {};
-  // Always prefer a real meme GIF for the section's category; only if none
-  // exists do we fall back to the AI-picked id (which may be an emoji SVG).
+  // Priority per section: (1) realtime-searched GIF url stored in narrative.gifs,
+  // (2) a local real meme GIF for the category, (3) AI-picked asset, (4) SVG.
   const seedBase = (stats?.totals?.requests || 0) + (stats?.totals?.totalTokens || 0);
   const choices = (narrative?.assetChoices || {}) as Record<string, string>;
-  const sectionKeys = ["intro","requests","tokens","favoriteModel","leastModel","activeTime","persona","rank","ide","closing"];
+  const gifs = (narrative?.gifs || {}) as Record<string, string>;
+  const sectionKeys = ["intro","requests","tokens","favoriteModel","leastModel","fastestModel","slowestModel","activeTime","persona","rank","race","ide","closing"];
   sectionKeys.forEach((section, i) => {
+    const searched = gifs[section];
+    if (searched && /^https?:\/\//.test(searched)) {
+      resolvedAssets[section] = { url: searched, type: "gif" };
+      return;
+    }
     const cat = sectionCategory[section] || "misc";
     let asset = memeForCategory(cat, [], seedBase + i);
     if (!asset && choices[section]) asset = getAsset(choices[section]);

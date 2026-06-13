@@ -541,6 +541,7 @@ export interface RaceTimelapse {
   days: string[]; // YYYY-MM-DD (WIB), day 1 .. today
   users: TimelapseUser[]; // windowed around the user's rank
   myRank: number;
+  baseRank: number; // global rank of the top user in this window (for per-day labels)
   totalParticipants: number;
 }
 
@@ -620,6 +621,7 @@ export async function getRaceTimelapse(
     days,
     users,
     myRank: myIdx + 1,
+    baseRank: lo + 1,
     totalParticipants: active.length,
   };
 }

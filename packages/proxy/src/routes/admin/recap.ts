@@ -30,6 +30,8 @@ import {
 } from "../../utils/recap-stats.js";
 import { generateNarrative } from "../../utils/recap-generator.js";
 import { loadAssets } from "../../utils/recap-assets.js";
+import { searchOneGif } from "../../utils/recap-gif-search.js";
+import { pickGif, type GifCategory } from "../../utils/recap-gifs.js";
 
 const recap = new Hono();
 
@@ -78,7 +80,7 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
       stats: safeParse(existing.statsJson),
       narrative: safeParse(existing.narrativeJson),
       rank: { requests: existing.rankRequests || 0, tokens: existing.rankTokens || 0 },
-      shareToken: body.interactive ? shareToken : undefined,
+      shareToken: body.interactive ? dayToken(discordUserId, yearMonth) : undefined,
     });
   }
 
@@ -99,6 +101,11 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
   if (body.interactive && !ok && !existing) {
     return c.json({ busy: true, error: "AI busy" }, 503);
   }
+
+  // Resolve a varied GIF per section: realtime search first, catalog fallback.
+  try {
+    narrative.gifs = await resolveRecapGifs(discordUserId, stats);
+  } catch { narrative.gifs = {}; }
 
   // Persist leaderboard snapshot (top 10 each) so the web page + bot can read it.
   await persistLeaderboard(yearMonth, leaderboard);
@@ -139,13 +146,62 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
     stats,
     narrative,
     rank: { requests: stats.rank.requests, tokens: stats.rank.tokens },
-    shareToken: body.interactive ? shareToken : undefined,
+    shareToken: body.interactive ? dayToken(discordUserId, yearMonth) : undefined,
   });
 });
 
 function safeParse(s: string | null | undefined): any {
   if (!s) return null;
   try { return JSON.parse(s); } catch { return null; }
+}
+
+/**
+ * Resolve a varied GIF URL per recap section. Tries realtime GIF search with a
+ * mood-appropriate query first, then falls back to the curated catalog. Returns
+ * a map of section -> url; the web has further onerror fallbacks (local meme/SVG).
+ */
+async function resolveRecapGifs(seedId: string, stats: any): Promise<Record<string, string>> {
+  const ratio = stats?.totals?.ioRatio ?? 0.3;
+  const rank = stats?.rank?.requests || 0;
+  const hr = stats?.activity?.mostActiveHour?.hour ?? 12;
+  const timeMood = hr < 5 ? "night owl tired" : hr < 11 ? "good morning energetic" : hr < 18 ? "working hard" : "late night coding";
+  const rankMood = rank === 1 ? "champion winner king" : rank <= 3 ? "celebrate podium" : rank <= 10 ? "proud clap" : rank <= 30 ? "keep going fight" : "try harder sad";
+  const personaMood = ratio < 0.15 ? "money burning waste" : ratio >= 0.45 ? "genius smart proud" : "coding chill";
+
+  // section -> { query, catalog fallback category }
+  const plan: Record<string, { q: string; cat: GifCategory }> = {
+    intro: { q: "lets go excited coding", cat: "intro" },
+    requests: { q: rank <= 10 ? "typing fast keyboard hacker" : "working typing computer", cat: "many" },
+    tokens: { q: personaMood, cat: ratio < 0.15 ? "money" : "proud" },
+    favoriteModel: { q: "best friend love favorite", cat: "favorite" },
+    leastModel: { q: "forgotten sad lonely ignored", cat: "forgotten" },
+    fastestModel: { q: "fast speed zoom flash", cat: "fast" },
+    slowestModel: { q: "slow waiting loading tired", cat: "slow" },
+    activeTime: { q: timeMood, cat: hr < 5 ? "night" : hr < 11 ? "morning" : "noon" },
+    persona: { q: personaMood, cat: ratio < 0.15 ? "boros" : ratio >= 0.45 ? "proud" : "coding" },
+    rank: { q: rankMood, cat: rank === 1 ? "king" : rank <= 3 ? "podium" : rank <= 30 ? "midrank" : "lowrank" },
+    race: { q: "race climbing leaderboard", cat: "race" },
+    closing: { q: "celebrate party congratulations", cat: "celebrate" },
+  };
+
+  const out: Record<string, string> = {};
+  let salt = 0;
+  const sections = Object.entries(plan);
+  // Run searches with a small concurrency to keep generation snappy.
+  await Promise.all(sections.map(async ([section, { q, cat }]) => {
+    const s = salt++;
+    let url: string | null = null;
+    try { url = await searchOneGif(q, seedFromStr(seedId) + s); } catch { url = null; }
+    if (!url) url = pickGif(cat, seedId, s);
+    if (url) out[section] = url;
+  }));
+  return out;
+}
+
+function seedFromStr(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h % 997;
 }
 
 /** Store top-10 (by requests and tokens) into recap_leaderboard, preserving any avatars. */

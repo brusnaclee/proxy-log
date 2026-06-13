@@ -2692,6 +2692,25 @@ async function ensureRecapMessage() {
 		return;
 	}
 
+	// Dedupe: delete any extra bot-authored recap panels in agverif, keep one.
+	try {
+		const recent = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+		if (recent) {
+			const mine = recent.filter((m) =>
+				m.author.id === client.user.id &&
+				m.components?.some((row) => row.components?.some((cmp) => cmp.customId === 'monthly_recap')));
+			const sorted = [...mine.values()].sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+			const keep = sorted[0];
+			for (let i = 1; i < sorted.length; i++) await sorted[i].delete().catch(() => {});
+			if (keep) {
+				recapState.panelMessageId = keep.id;
+				await saveRecapState();
+				await keep.edit({ embeds: [buildRecapPanelEmbed(win)], components: [buildRecapRow()] }).catch(() => {});
+				return;
+			}
+		}
+	} catch { /* fall through */ }
+
 	// Reuse existing message if present.
 	if (recapState.panelMessageId) {
 		const existing = await channel.messages.fetch(recapState.panelMessageId).catch(() => null);
@@ -2719,6 +2738,26 @@ async function ensureRecapDebugMessage() {
 
 	let win = null;
 	try { win = await proxyInternal('/admin/internal/recap/window'); } catch { /* ignore */ }
+
+	// Dedupe: delete any extra bot-authored recap-debug panels, keep only one.
+	try {
+		const recent = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+		if (recent) {
+			const mine = recent.filter((m) =>
+				m.author.id === client.user.id &&
+				m.components?.some((row) => row.components?.some((cmp) => cmp.customId === 'recap_debug_self')));
+			const sorted = [...mine.values()].sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+			// Keep the first (oldest) as the canonical panel; delete the rest.
+			const keep = sorted[0];
+			for (let i = 1; i < sorted.length; i++) await sorted[i].delete().catch(() => {});
+			if (keep) {
+				recapState.debugPanelMessageId = keep.id;
+				await saveRecapState();
+				await keep.edit({ embeds: [buildRecapDebugEmbed(win)], components: [buildRecapDebugRow()] }).catch(() => {});
+				return;
+			}
+		}
+	} catch { /* fall through to reuse/create */ }
 
 	if (recapState.debugPanelMessageId) {
 		const existing = await channel.messages.fetch(recapState.debugPanelMessageId).catch(() => null);
@@ -2988,6 +3027,7 @@ async function runDailyRecapJob() {
 	}
 
 	let ok = 0, fail = 0;
+	const errors = [];
 	for (const u of users) {
 		if (!u.discordUserId) continue;
 		try {
@@ -2996,11 +3036,15 @@ async function runDailyRecapJob() {
 				const user = await client.users.fetch(u.discordUserId);
 				avatarUrl = user.displayAvatarURL({ size: 256, extension: 'png' });
 				username = user.username;
-			} catch { /* ignore */ }
+			} catch { /* ignore avatar fetch */ }
 			await proxyInternal(`/admin/internal/recap/${u.discordUserId}`, 'POST', { avatarUrl, username, force: true, yearMonth });
 			ok++;
-		} catch { fail++; }
+		} catch (err) {
+			fail++;
+			if (errors.length < 5) errors.push(`${u.discordUserId}: ${err.message}`);
+		}
 	}
+	if (errors.length) console.error('[recap] daily regenerate errors:', errors.join(' | '));
 
 	const lb = await resolveAvatarsForLeaderboard(yearMonth);
 
