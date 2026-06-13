@@ -8,17 +8,17 @@ import { RefreshCw, Trash2, AlertTriangle, Clock, Filter, Users } from "lucide-r
 import { cn } from "@/lib/utils";
 
 export default function BugLogPage() {
-  const [data, setData] = useState([]);
+  const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(7);
   const [statusFilter, setStatusFilter] = useState("all");
-  const [expandedRow, setExpandedRow] = useState(null);
-  const [deletingId, setDeletingId] = useState(null);
+  const [expandedRow, setExpandedRow] = useState<any>(null);
+  const [deletingId, setDeletingId] = useState<any>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const params = { days };
+      const params: { days: number; status?: number } = { days };
       if (statusFilter !== "all") params.status = parseInt(statusFilter);
       const res = await buglog.list(params);
       setData(res.data.slice(0, 500));
@@ -28,7 +28,7 @@ export default function BugLogPage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const handleDelete = async (entry) => {
+  const handleDelete = async (entry: any) => {
     if (!confirm("Delete " + entry.count + " occurrences?")) return;
     setDeletingId(entry.id);
     try {
