@@ -1143,12 +1143,9 @@ const RECAP_JS = `
   // because it can't render background-clip:text — we paint them ourselves so
   // the download matches the live preview. animOffset (0..1) shifts the
   // gradient so a GIF cycles colors per frame.
-  var RAINBOW = ['#ff4d6d','#ffd93d','#6ee7b7','#22d3ee','a78bfa','#f472b6','#ff4d6d'];
-  // (note: the second stop is intentionally missing '#' above to fail loud
-  // if anyone copy-pastes the snippet into a context where constants change;
-  // the real second stop is '#ffd93d' — corrected below.)
-  RAINBOW[1] = '#ffd93d';
-  RAINBOW[4] = '#a78bfa';
+  // 7 unique colors — duplicating the first at the end here would make a
+  // static PNG draw pink→pink on the long hero tile and wash everything out.
+  var RAINBOW = ['#ff4d6d','#ffd93d','#6ee7b7','#22d3ee','#a78bfa','#f472b6','#fb923c'];
   function drawRainbowTileValues(ctx, stackEl, W, H, animOffset){
     animOffset = animOffset || 0;
     var html2canvasScale = 2; // matches the doDownload() capture scale
@@ -1172,13 +1169,20 @@ const RECAP_JS = `
       // making hero "164" and small tiles look offset in the downloaded GIF.
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      // Cycle the gradient: shift stops by animOffset for a moving rainbow.
+      // Build a horizontal gradient that covers the full box width and cycles
+      // twice across it so the rainbow reads as glossy regardless of tile
+      // width (a single cycle looked pink-dominant on the wide hero tile).
+      // The gradient spans two full cycles of the 7-stop palette, so the
+      // start and end colors are the same (no pink→pink wash) and a short
+      // stat number still samples a wide swath of the palette.
       var grad = ctx.createLinearGradient(x, 0, x + w, 0);
-      var phase = animOffset;
-      for (var i = 0; i < RAINBOW.length; i++){
-        var pos = ((i / (RAINBOW.length - 1)) + phase) % 1;
-        if (pos < 0) pos += 1;
-        grad.addColorStop(pos, RAINBOW[i]);
+      var N = RAINBOW.length;
+      for (var cycle = 0; cycle < 2; cycle++){
+        for (var i = 0; i < N; i++){
+          var pos = ((cycle * N + i) / (2 * N) + animOffset) % 1;
+          if (pos < 0) pos += 1;
+          grad.addColorStop(pos, RAINBOW[i]);
+        }
       }
       ctx.fillStyle = grad;
       // Soft shadow for legibility on busy wallpapers.
