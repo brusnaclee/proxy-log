@@ -139,6 +139,7 @@ recapWeb.get("/:apiKeyName", async (c) => {
     alreadySubmittedToday,
     existingTestimonial: existingTesti ? { stars: existingTesti.stars, body: existingTesti.body } : null,
     cleanPath: `/recap/${encodeURIComponent(apiKeyName)}`,
+    cardMeta: (narrative && narrative.card) || null,
   });
 
   return c.html(html);

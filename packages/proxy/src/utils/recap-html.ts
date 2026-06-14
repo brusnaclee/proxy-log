@@ -34,6 +34,15 @@ export interface RecapHtmlData {
   alreadySubmittedToday?: boolean;
   existingTestimonial?: { stars: number; body: string } | null;
   cleanPath?: string;
+  /** Card meta from narrative.card (live anime wallpapers + nested tile plan). */
+  cardMeta?: {
+    wallpaper: string | null;
+    wallpapers: string[];
+    defaultThemeId: number;
+    tiles: Array<{ key: string; icon: string; label: string; value: string; sub?: string; size: "hero" | "sm" | "wide" | "quote" }>;
+    quote: string;
+    badge: { icon: string; title: string } | null;
+  } | null;
 }
 
 export function escapeHtml(s: any): string {
@@ -241,34 +250,63 @@ background:var(--card);border:1px solid var(--line);border-radius:18px;padding:1
 .heat-legend i{width:12px;height:12px;border-radius:2px;background:var(--g4);display:inline-block}
 .heat-peak-lbl{font-size:12px;font-weight:700;color:var(--g3);text-align:center}
 .heat-axis{display:flex;justify-content:space-between;margin-top:6px;font-size:10px;color:var(--muted);padding-left:17px}
-.wrapcard{position:relative;width:100%;max-width:380px;aspect-ratio:1/1.25;border-radius:26px;overflow:hidden;
-border:1px solid rgba(255,255,255,.22);box-shadow:0 24px 70px rgba(0,0,0,.5)}
-.wc-bg{position:absolute;inset:0;z-index:0;background:linear-gradient(160deg,var(--g1),var(--g2));background-size:220% 220%;animation:wcflow 7s ease infinite}
+
+/* === V2 shareable recap card: live wallpaper + nested glass cards ======= */
+.wrapcard{position:relative;width:100%;max-width:380px;aspect-ratio:1/1.5;border-radius:28px;overflow:hidden;
+border:1px solid rgba(255,255,255,.28);box-shadow:0 30px 80px rgba(0,0,0,.55),inset 0 0 0 1px rgba(255,255,255,.06);isolation:isolate;background:#0b0b14}
+.wc-wall{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;
+transform:scale(1.06);animation:wcPan 18s ease-in-out infinite alternate;will-change:transform}
+@keyframes wcPan{0%{transform:scale(1.06) translate(0,0)}100%{transform:scale(1.12) translate(-2%,-2%)}}
+.wc-fallback{position:absolute;inset:0;z-index:0;background:linear-gradient(160deg,var(--wc-a,#7c3aed),var(--wc-b,#ec4899));background-size:220% 220%;animation:wcflow 7s ease infinite}
 @keyframes wcflow{0%,100%{background-position:0 50%}50%{background-position:100% 50%}}
-.wc-aurora{position:absolute;inset:-30%;z-index:0;pointer-events:none;
-background:radial-gradient(40% 35% at 25% 20%,rgba(255,255,255,.35),transparent 70%),radial-gradient(45% 40% at 80% 80%,rgba(255,255,255,.22),transparent 70%);
-mix-blend-mode:overlay;filter:blur(6px);animation:auroraMove 9s ease-in-out infinite}
-@keyframes auroraMove{0%,100%{transform:translate(0,0) rotate(0deg)}50%{transform:translate(6%,-5%) rotate(8deg)}}
-.wc-stars{position:absolute;inset:0;z-index:0;pointer-events:none;opacity:.5;
-background-image:radial-gradient(1.5px 1.5px at 20% 30%,#fff,transparent),radial-gradient(1.5px 1.5px at 70% 20%,#fff,transparent),radial-gradient(1.5px 1.5px at 40% 70%,#fff,transparent),radial-gradient(1.5px 1.5px at 85% 60%,#fff,transparent),radial-gradient(1.5px 1.5px at 55% 45%,#fff,transparent);
-animation:twinkle 4s ease-in-out infinite}
-@keyframes twinkle{0%,100%{opacity:.25}50%{opacity:.6}}
-.wc-inner{position:relative;z-index:1;height:100%;display:flex;flex-direction:column;justify-content:space-between;padding:22px}
-.wc-hero{display:flex;align-items:center;gap:14px;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.18);border-radius:18px;padding:14px;backdrop-filter:blur(4px)}
-.wc-hero-tx{text-align:left;min-width:0}
-.wc-av{width:64px;height:64px;border-radius:50%;object-fit:cover;border:3px solid rgba(255,255,255,.6);flex:0 0 auto}
-.wc-name{font-size:22px;font-weight:900;color:#fff;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wc-persona{font-size:14px;font-weight:700;color:rgba(255,255,255,.92)}
-.wc-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
-.wc-stat{background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.16);border-radius:14px;padding:12px 6px;display:flex;flex-direction:column;align-items:center}
-.wc-stat b{font-size:clamp(18px,5vw,24px);font-weight:900;color:#fff}
-.wc-stat span{font-size:10px;color:rgba(255,255,255,.85);text-transform:uppercase;letter-spacing:.05em;margin-top:2px}
-.wc-foot{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:rgba(255,255,255,.92);font-weight:800}
-.wc-brand{opacity:.9}
-.wc-themes{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;max-width:380px;margin-top:14px}
-.wc-sw{width:26px;height:26px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:transform .15s,border-color .15s}
-.wc-sw.on{border-color:#fff;transform:scale(1.18)}
-@media(prefers-reduced-motion:reduce){.wc-bg,.wc-aurora,.wc-stars{animation:none}}
+.wc-scrim{position:absolute;inset:0;z-index:1;pointer-events:none;
+background:linear-gradient(180deg,var(--wc-scrim,rgba(10,0,30,0.2)) 0%,var(--wc-scrim,rgba(10,0,30,0.2)) 30%,var(--wc-scrimEnd,rgba(10,0,30,0.85)) 100%)}
+.wc-stack{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;gap:8px;padding:14px 14px 12px;color:var(--wc-text,#fff)}
+.wc-glass{position:relative;background:rgba(255,255,255,var(--wc-glass,.14));border:1px solid var(--wc-border,rgba(255,255,255,.28));
+border-radius:18px;backdrop-filter:blur(18px) saturate(140%);-webkit-backdrop-filter:blur(18px) saturate(140%);
+box-shadow:0 8px 28px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.18);padding:10px 12px}
+.wc-id{display:flex;align-items:center;gap:12px;padding:10px 12px}
+.wc-id .av{width:54px;height:54px;border-radius:50%;object-fit:cover;border:2.5px solid rgba(255,255,255,.7);flex:0 0 auto;box-shadow:0 6px 18px rgba(0,0,0,.4)}
+.wc-id .name{font-size:19px;font-weight:900;line-height:1.05;letter-spacing:-.01em;color:var(--wc-text,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.wc-id .persona{font-size:12px;font-weight:800;color:var(--wc-muted,rgba(255,255,255,.85));text-transform:uppercase;letter-spacing:.08em;margin-top:2px}
+.wc-mosaic{display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:78px;gap:8px}
+.wc-tile{position:relative;display:flex;flex-direction:column;justify-content:center;overflow:hidden;padding:10px 12px}
+.wc-tile.hero{grid-column:span 2;grid-row:span 2;padding:14px 14px}
+.wc-tile.wide{grid-column:span 2;flex-direction:row;align-items:center;gap:10px}
+.wc-tile .ti{font-size:22px;line-height:1;flex:0 0 auto}
+.wc-tile.hero .ti{font-size:30px}
+.wc-tile.wide .ti{font-size:24px}
+.wc-tile .tv{font-weight:900;line-height:1;font-size:clamp(22px,5.8vw,30px);
+background:linear-gradient(120deg,var(--wc-a,#fff),var(--wc-b,#fff));-webkit-background-clip:text;background-clip:text;color:transparent;letter-spacing:-.02em}
+.wc-tile.hero .tv{font-size:clamp(34px,9vw,52px)}
+.wc-tile .tl{font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--wc-muted,rgba(255,255,255,.75));margin-top:4px}
+.wc-tile.hero .tl{font-size:12px;margin-top:6px}
+.wc-tile .ts{font-size:10px;color:var(--wc-muted,rgba(255,255,255,.65));margin-top:2px;line-height:1.25;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wc-tile.wide .tx{display:flex;flex-direction:column;min-width:0}
+.wc-tile.wide .tv{font-size:clamp(15px,3.8vw,19px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wc-tile.wide .tl{margin-top:0}
+.wc-tile .tglow{position:absolute;right:-30%;bottom:-30%;width:120px;height:120px;border-radius:50%;
+background:radial-gradient(closest-side,var(--wc-a,#fff),transparent 70%);opacity:.18;pointer-events:none}
+.wc-quote{display:flex;align-items:flex-start;gap:10px;padding:11px 13px;min-height:54px}
+.wc-quote .qi{font-size:20px;line-height:1;flex:0 0 auto}
+.wc-quote .qx{font-size:12.5px;font-weight:600;line-height:1.35;color:var(--wc-text,#fff);font-style:italic}
+.wc-badge{display:inline-flex;align-items:center;gap:8px;align-self:flex-start;padding:7px 12px;border-radius:999px}
+.wc-badge .bi{font-size:18px;line-height:1}
+.wc-badge .bt{font-size:12px;font-weight:800;letter-spacing:.02em;text-transform:uppercase}
+.wc-foot{display:flex;justify-content:space-between;align-items:center;padding:6px 4px 0;font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--wc-muted,rgba(255,255,255,.85))}
+.wc-foot .brand{opacity:.95}
+.wc-themes-wrap{width:100%;max-width:380px;margin-top:14px;display:flex;flex-direction:column;gap:8px;align-items:center}
+.wc-themes{position:relative;width:100%;max-height:96px;overflow-y:auto;overflow-x:hidden;padding:4px;
+display:grid;grid-template-columns:repeat(10,1fr);gap:6px;
+background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:16px;
+scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.3) transparent}
+.wc-themes::-webkit-scrollbar{width:6px}
+.wc-themes::-webkit-scrollbar-thumb{background:rgba(255,255,255,.3);border-radius:3px}
+.wc-sw{width:100%;aspect-ratio:1;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:transform .15s,border-color .15s;position:relative;flex:0 0 auto}
+.wc-sw.on{border-color:#fff;transform:scale(1.18);box-shadow:0 0 0 2px rgba(0,0,0,.4)}
+.wc-themes-hint{font-size:11px;color:var(--muted);text-align:center}
+@media(max-width:420px){.wc-mosaic{grid-auto-rows:70px;gap:6px}.wc-stack{padding:12px 12px 10px;gap:7px}}
+@media(prefers-reduced-motion:reduce){.wc-wall,.wc-fallback{animation:none}}
 .confetti{position:fixed;inset:0;pointer-events:none;z-index:40;overflow:hidden}
 .confetti i{position:absolute;top:-20px;width:10px;height:14px;opacity:.9;animation:fall linear forwards}
 @keyframes fall{to{transform:translateY(110dvh) rotate(720deg)}}
@@ -626,35 +664,67 @@ function buildSections(d: RecapHtmlData): string {
 
   // 11. Closing + share
   const closeT = nv.closing || "Sampai jumpa bulan depan!";
-  // 10b. Wrapped Persona Card (screenshot-friendly summary)
+  // 10b. V2 Wrapped Card (live anime wallpaper + nested glass tiles)
   const persona = nv.persona || {};
+  const cardMeta = d.cardMeta || {
+    wallpaper: null,
+    wallpapers: [],
+    defaultThemeId: 0,
+    tiles: [
+      { key: "requests", icon: "🚀", label: "Request", value: fmtNum(n(s, "totals.requests")), sub: "Bulan ini", size: "hero" },
+      { key: "rank", icon: "🏆", label: "Peringkat", value: d.rank.requests ? "#" + d.rank.requests : "—", sub: "dari semua developer", size: "sm" },
+      { key: "tokens", icon: "🪙", label: "Token", value: fmtNum(n(s, "totals.totalTokens")), sub: "Input + output", size: "sm" },
+    ],
+    quote: persona.subtitle || "Bulan yang produktif! Terus gas ya.",
+    badge: (nv.badges && nv.badges[0]) ? { icon: nv.badges[0].icon, title: nv.badges[0].title } : null,
+  };
+  const initialWallpaper = cardMeta.wallpapers[0] || cardMeta.wallpaper || "";
+  // Wide tiles need a different inner structure; render with tx wrapper when present
+  const tilesFinal = cardMeta.tiles.map((t) => {
+    const sub = t.sub ? `<div class="ts">${escapeHtml(t.sub)}</div>` : "";
+    if (t.size === "wide") {
+      return `<div class="wc-tile wide"><div class="tglow"></div><div class="ti">${t.icon}</div><div class="tx"><div class="tv">${escapeHtml(t.value)}</div><div class="tl">${escapeHtml(t.label)}</div>${sub}</div></div>`;
+    }
+    return `<div class="wc-tile ${escapeHtml(t.size)}"><div class="tglow"></div><div class="ti">${t.icon}</div><div class="tv">${escapeHtml(t.value)}</div><div class="tl">${escapeHtml(t.label)}</div>${sub}</div>`;
+  }).join("");
   out.push(section("card", `
     <div class="kicker reveal">Kartu Recap Kamu</div>
-    <div class="wrapcard reveal" id="wrapCard">
-      <div class="wc-bg" id="wcBg"></div>
-      <div class="wc-aurora"></div>
-      <div class="wc-stars"></div>
-      <div class="wc-inner">
-        <div class="wc-hero">
-          ${d.avatarUrl ? `<img class="wc-av" crossorigin="anonymous" src="${escapeHtml(d.avatarUrl)}" alt="" onerror="this.style.display='none'">` : ""}
-          <div class="wc-hero-tx">
-            <div class="wc-name">${escapeHtml(d.displayName)}</div>
-            <div class="wc-persona">${escapeHtml(persona.title || "Coder")}</div>
+    <div class="wrapcard reveal" id="wrapCard"
+      data-walls='${escapeHtml(JSON.stringify(cardMeta.wallpapers))}'
+      data-theme='${cardMeta.defaultThemeId || 0}'>
+      <div class="wc-fallback" id="wcFallback"></div>
+      <img class="wc-wall" id="wcWall" crossorigin="anonymous" alt=""
+        src="${escapeHtml(initialWallpaper)}"
+        onerror="this.style.display='none';document.getElementById('wcFallback').style.display='block';" />
+      <div class="wc-scrim"></div>
+      <div class="wc-stack">
+        <div class="wc-glass wc-id">
+          ${d.avatarUrl ? `<img class="av" crossorigin="anonymous" src="${escapeHtml(d.avatarUrl)}" alt="" onerror="this.style.display='none'">` : "<div class=\"av\" style=\"background:rgba(255,255,255,.2)\"></div>"}
+          <div style="min-width:0;flex:1">
+            <div class="name">${escapeHtml(d.displayName)}</div>
+            <div class="persona">${escapeHtml(persona.title || "Coder")}</div>
           </div>
         </div>
-        <div class="wc-grid">
-          <div class="wc-stat"><b>${fmtNum(n(s, "totals.requests"))}</b><span>request</span></div>
-          <div class="wc-stat"><b>${fmtNum(n(s, "totals.totalTokens"))}</b><span>token</span></div>
-          <div class="wc-stat"><b>${d.rank.requests ? "#" + d.rank.requests : "-"}</b><span>peringkat</span></div>
+        <div class="wc-mosaic">${tilesFinal}</div>
+        <div class="wc-glass wc-quote">
+          <div class="qi">💬</div>
+          <div class="qx">"${escapeHtml(cardMeta.quote)}"</div>
         </div>
-        <div class="wc-foot"><span>Wrapped ${escapeHtml(d.monthLabel)}</span><span class="wc-brand">✦ Groupy</span></div>
+        ${cardMeta.badge ? `<div class="wc-glass wc-badge"><div class="bi">${cardMeta.badge.icon}</div><div class="bt">${escapeHtml(cardMeta.badge.title)}</div></div>` : ""}
+        <div class="wc-foot">
+          <span>Wrapped ${escapeHtml(d.monthLabel)}</span>
+          <span class="brand">✦ Groupy</span>
+        </div>
       </div>
     </div>
-    <div class="wc-themes reveal" id="wcThemes"></div>
-    <div class="btns reveal">
-      <button class="btn" id="dlBtn">⬇️ Download Kartu</button>
+    <div class="wc-themes-wrap reveal">
+      <div class="wc-themes" id="wcThemes"></div>
+      <div class="wc-themes-hint">100 tema • klik buat ganti wallpaper + accent</div>
     </div>
-    <div class="caption reveal" id="dlStatus">Ganti tema lalu download jadi GIF! 📸</div>`));
+    <div class="btns reveal">
+      <button class="btn" id="dlBtn">⬇️ Download Kartu (GIF)</button>
+    </div>
+    <div class="caption reveal" id="dlStatus">Ganti tema, klik download — nanti di-render ke GIF 📸</div>`));
 
   out.push(section("closing", `
     <div class="big reveal">🎉</div>
@@ -928,25 +998,68 @@ const RECAP_JS = `
   function fallbackCopy(){var i=document.createElement('input');i.value=url;document.body.appendChild(i);
     i.select();try{document.execCommand('copy');toast('Tersalin!');}catch(e){toast('Gagal menyalin');}i.remove();}
 
-  // ── Recap card themes + download ──────────────────────────────────────────
-  var THEMES=[
-    ['#7c3aed','#ec4899'],['#f59e0b','#f43f5e'],['#06b6d4','#3b82f6'],['#10b981','#22d3ee'],
-    ['#ef4444','#f59e0b'],['#6366f1','#a855f7'],['#ec4899','#f59e0b'],['#14b8a6','#6366f1'],
-    ['#f43f5e','#8b5cf6'],['#0ea5e9','#22d3ee'],['#84cc16','#10b981'],['#fb7185','#fbbf24'],
-    ['#8b5cf6','#06b6d4'],['#f97316','#ef4444'],['#22c55e','#84cc16'],['#3b82f6','#8b5cf6'],
-    ['#d946ef','#6366f1'],['#fbbf24','#f97316'],['#2dd4bf','#0ea5e9'],['#e11d48','#7c3aed'],
-    ['#a855f7','#ec4899'],['#0891b2','#14b8a6'],['#facc15','#f43f5e'],['#4f46e5','#22d3ee']
-  ];
+  // ── V2 Recap card: 100 hybrid themes + live wallpaper + GIF composite ────
+  var THEMES=[];
+  (function(){
+    var families=[
+      ['#fda4af','#f472b6'],['#fbcfe8','#ec4899'],['#fecdd3','#fb7185'],['#ffd6e0','#db2777'],['#f9a8d4','#be185d'],
+      ['#22d3ee','#a855f7'],['#06b6d4','#7c3aed'],['#3b82f6','#ec4899'],['#0ea5e9','#8b5cf6'],['#22d3ee','#f472b6'],
+      ['#a78bfa','#22d3ee'],['#fb923c','#ef4444'],['#f59e0b','#f43f5e'],['#fbbf24','#dc2626'],['#fdba74','#db2777'],
+      ['#fcd34d','#c026d3'],['#22c55e','#0ea5e9'],['#10b981','#14b8a6'],['#84cc16','#22c55e'],['#34d399','#06b6d4'],
+    ];
+    var fams=[];
+    for(var fi=0;fi<20;fi++) fams.push(families[fi%families.length]);
+    for(var ti=0;ti<100;ti++){
+      var p=fams[ti%20];
+      THEMES.push({a:p[0],b:p[1],wall:ti%5,sat:1.05,bright:.95,
+        scrim:'rgba(10,0,30,0.18)',scrimEnd:'rgba(10,0,30,0.88)',
+        glass:.14,border:'rgba(255,255,255,.28)'});
+    }
+  })();
   var card=document.getElementById('wrapCard');
-  var cardBg=document.getElementById('wcBg');
+  var cardWall=document.getElementById('wcWall');
+  var cardFallback=document.getElementById('wcFallback');
   var themesWrap=document.getElementById('wcThemes');
-  var curTheme=0;
-  function applyTheme(i){curTheme=i;if(cardBg)cardBg.style.background='linear-gradient(160deg,'+THEMES[i][0]+','+THEMES[i][1]+')';if(cardBg)cardBg.style.backgroundSize='200% 200%';
-    [].slice.call(themesWrap?themesWrap.children:[]).forEach(function(sw,j){sw.classList.toggle('on',j===i);});}
+  var wallsData=[];
+  try{ wallsData=JSON.parse((card&&card.getAttribute('data-walls'))||'[]')||[]; }catch(e){}
+  var curTheme=Math.max(0,Math.min(99,parseInt((card&&card.getAttribute('data-theme'))||'0',10)));
+  function applyTheme(i,swapWall){
+    curTheme=((i%100)+100)%100;
+    var t=THEMES[curTheme];
+    if(card){
+      card.style.setProperty('--wc-a',t.a);
+      card.style.setProperty('--wc-b',t.b);
+      card.style.setProperty('--wc-scrim',t.scrim);
+      card.style.setProperty('--wc-scrimEnd',t.scrimEnd);
+      card.style.setProperty('--wc-glass',String(t.glass));
+      card.style.setProperty('--wc-border',t.border);
+    }
+    if(cardWall){
+      cardWall.style.filter='saturate('+t.sat+') brightness('+t.bright+')';
+      if(swapWall!==false){
+        var w=wallsData[t.wall]||wallsData[0];
+        if(w) cardWall.src=w;
+      }
+    }
+    if(cardFallback){
+      cardFallback.style.background='linear-gradient(160deg,'+t.a+','+t.b+')';
+      cardFallback.style.backgroundSize='220% 220%';
+    }
+    [].slice.call(themesWrap?themesWrap.children:[]).forEach(function(sw,j){sw.classList.toggle('on',j===curTheme);});
+  }
   if(themesWrap){
-    THEMES.forEach(function(t,i){var sw=document.createElement('div');sw.className='wc-sw'+(i===0?' on':'');
-      sw.style.background='linear-gradient(135deg,'+t[0]+','+t[1]+')';sw.addEventListener('click',function(){applyTheme(i);});themesWrap.appendChild(sw);});
-    applyTheme(0);
+    for(var k=0;k<THEMES.length;k++){
+      (function(idx){
+        var t=THEMES[idx];
+        var sw=document.createElement('div');
+        sw.className='wc-sw'+(idx===curTheme?' on':'');
+        sw.style.background='linear-gradient(135deg,'+t.a+','+t.b+')';
+        sw.title=idx+': '+t.a+' → '+t.b;
+        sw.addEventListener('click',function(){applyTheme(idx);});
+        themesWrap.appendChild(sw);
+      })(k);
+    }
+    applyTheme(curTheme,false);
   }
 
   // Lazy-load a script once.
@@ -963,9 +1076,11 @@ const RECAP_JS = `
     try{
       setStatus('Menyiapkan render... 0%');
       await loadScript('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js');
-      // Capture the card at 2x for crispness.
-      var base=await window.html2canvas(card,{backgroundColor:null,scale:2,useCORS:true,logging:false});
-      // Try animated GIF; fall back to PNG.
+      // Capture the glass stack (transparent). The wallpaper + scrim are
+      // composited manually per-frame inside the GIF so the final file is
+      // truly animated.
+      var stackEl=card.querySelector('.wc-stack');
+      var base=await window.html2canvas(stackEl,{backgroundColor:null,scale:2,useCORS:true,logging:false});
       var gifOk=false;
       try{
         await loadScript('https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js');
@@ -973,41 +1088,83 @@ const RECAP_JS = `
         gifOk=true;
       }catch(e){ gifOk=false; }
       if(!gifOk){
-        var a=document.createElement('a');a.href=base.toDataURL('image/png');a.download='recap-card.png';a.click();
-        setStatus('Tersimpan sebagai PNG ✓');
+        // Fallback: composite wallpaper + glass as a single static PNG.
+        try{
+          var t=THEMES[curTheme];
+          var w=wallsData[t.wall]||wallsData[0]||null;
+          var W=base.width,H=base.height;
+          var c=document.createElement('canvas');c.width=W;c.height=H;var ctx=c.getContext('2d');
+          if(w){
+            var img=new Image();img.crossOrigin='anonymous';
+            await new Promise(function(res){img.onload=res;img.onerror=res;img.src=w;});
+            if(img.naturalWidth) ctx.drawImage(img,0,0,W,H);
+            else { var g=ctx.createLinearGradient(0,0,W,H);g.addColorStop(0,t.a);g.addColorStop(1,t.b);ctx.fillStyle=g;ctx.fillRect(0,0,W,H); }
+            var sg=ctx.createLinearGradient(0,0,0,H);sg.addColorStop(0,t.scrim);sg.addColorStop(1,t.scrimEnd);ctx.fillStyle=sg;ctx.fillRect(0,0,W,H);
+          }
+          ctx.drawImage(base,0,0);
+          var a=document.createElement('a');a.href=c.toDataURL('image/png');a.download='recap-card.png';a.click();
+          setStatus('Tersimpan sebagai PNG ✓');
+        }catch(_){
+          var a2=document.createElement('a');a2.href=base.toDataURL('image/png');a2.download='recap-card.png';a2.click();
+          setStatus('Tersimpan sebagai PNG ✓');
+        }
       }
     }catch(e){ setStatus('Gagal render: '+(e&&e.message||'error')); }
     finally{ dlBtn.disabled=false; }
   }
 
   function renderGif(base){return new Promise(function(resolve,reject){
-    if(rm){ // reduced motion -> static png
+    if(rm){
       var a=document.createElement('a');a.href=base.toDataURL('image/png');a.download='recap-card.png';a.click();return resolve();
     }
     var W=base.width,H=base.height;
-    // gif.js workers must be same-origin; fetch the worker script and wrap in a blob URL.
     fetch('https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js')
       .then(function(r){ if(!r.ok) throw new Error('worker '+r.status); return r.text(); })
       .then(function(code){
         var workerUrl=URL.createObjectURL(new Blob([code],{type:'application/javascript'}));
         var gif=new window.GIF({workers:2,quality:10,width:W,height:H,workerScript:workerUrl});
+        var t=THEMES[curTheme];
         var FRAMES=18, c=document.createElement('canvas'); c.width=W;c.height=H; var ctx=c.getContext('2d');
-        var t1=THEMES[curTheme][0],t2=THEMES[curTheme][1];
-        for(var f=0;f<FRAMES;f++){
-          var p=f/FRAMES;
-          var ang=p*Math.PI*2;
-          var gx=W*(0.5+0.5*Math.cos(ang)), gy=H*(0.5+0.5*Math.sin(ang));
-          var g=ctx.createLinearGradient(0,0,gx,gy); g.addColorStop(0,t1); g.addColorStop(1,t2);
-          ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
-          ctx.globalAlpha=0.25; for(var k=0;k<14;k++){var sx=(k*97+f*9)%W,sy=(k*53+f*5)%H;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(sx,sy,2,0,7);ctx.fill();}
-          ctx.globalAlpha=1;
-          ctx.drawImage(base,0,0);
-          gif.addFrame(ctx,{copy:true,delay:90});
-        }
-        var to=setTimeout(function(){reject(new Error('timeout'));},25000);
-        gif.on('progress',function(pr){setStatus('Merender GIF... '+Math.round(pr*100)+'%');});
-        gif.on('finished',function(blob){clearTimeout(to);URL.revokeObjectURL(workerUrl);var u=URL.createObjectURL(blob);var a=document.createElement('a');a.href=u;a.download='recap-card.gif';a.click();setTimeout(function(){URL.revokeObjectURL(u);},4000);setStatus('Tersimpan sebagai GIF ✓');resolve();});
-        gif.render();
+        var wallUrl=wallsData[t.wall]||wallsData[0]||null;
+        var wallImg=wallUrl?new Image():null;
+        if(wallImg) wallImg.crossOrigin='anonymous';
+        var compose=function(){
+          for(var f=0;f<FRAMES;f++){
+            var p=f/FRAMES;
+            var ang=p*Math.PI*2;
+            // Wallpaper layer (with subtle Ken Burns pan).
+            if(wallImg && wallImg.complete && wallImg.naturalWidth){
+              var ratio=wallImg.naturalWidth/wallImg.naturalHeight;
+              var drawH=H;
+              var drawW=drawH*ratio;
+              if(drawW<W){ drawW=W; drawH=drawW/ratio; }
+              var scale=1.06+0.04*Math.sin(ang);
+              var w=drawW*scale, h=drawH*scale;
+              var ox=Math.sin(ang)*(W*0.02), oy=Math.cos(ang)*(H*0.02);
+              ctx.drawImage(wallImg,(W-w)/2+ox,(H-h)/2+oy,w,h);
+            } else {
+              var g=ctx.createLinearGradient(0,0,W,H);
+              g.addColorStop(0,t.a); g.addColorStop(1,t.b);
+              ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+            }
+            // Bottom-heavy scrim.
+            var sg=ctx.createLinearGradient(0,0,0,H);
+            sg.addColorStop(0,t.scrim); sg.addColorStop(1,t.scrimEnd);
+            ctx.fillStyle=sg; ctx.fillRect(0,0,W,H);
+            // Glass overlay (captured transparent by html2canvas).
+            ctx.drawImage(base,0,0);
+            gif.addFrame(ctx,{copy:true,delay:90});
+          }
+          var to=setTimeout(function(){reject(new Error('timeout'));},30000);
+          gif.on('progress',function(pr){setStatus('Merender GIF... '+Math.round(pr*100)+'%');});
+          gif.on('finished',function(blob){clearTimeout(to);URL.revokeObjectURL(workerUrl);var u=URL.createObjectURL(blob);var a=document.createElement('a');a.href=u;a.download='recap-card.gif';a.click();setTimeout(function(){URL.revokeObjectURL(u);},4000);setStatus('Tersimpan sebagai GIF ✓');resolve();});
+          gif.render();
+        };
+        if(wallImg){
+          wallImg.onload=compose;
+          wallImg.onerror=function(){ wallImg=null; compose(); };
+          wallImg.src=wallUrl;
+        } else { compose(); }
       })
       .catch(reject);
   });}

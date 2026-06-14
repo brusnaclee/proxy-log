@@ -32,6 +32,7 @@ import { generateNarrative } from "../../utils/recap-generator.js";
 import { loadAssets, memeForCategory, assetUrl } from "../../utils/recap-assets.js";
 import { findLiveGif } from "../../utils/recap-gif-search.js";
 import { type GifCategory } from "../../utils/recap-gifs.js";
+import { resolveCardMeta } from "../../utils/recap-card-meta.js";
 
 const recap = new Hono();
 
@@ -127,6 +128,11 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
   try {
     narrative.gifs = await resolveRecapGifs(discordUserId, stats, publicBase());
   } catch { narrative.gifs = {}; }
+
+  // Resolve the live anime wallpaper + nested tile plan for the shareable card.
+  try {
+    narrative.card = await resolveCardMeta(discordUserId, stats, narrative, publicBase());
+  } catch { narrative.card = null; }
 
   // Persist leaderboard snapshot (top 10 each) so the web page + bot can read it.
   await persistLeaderboard(yearMonth, leaderboard);

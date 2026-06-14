@@ -22,6 +22,8 @@ export interface RecapNarrative {
   gifs?: Record<string, string>;
   /** AI-generated badges (creative, max 10), validated; falls back to deterministic. */
   badges?: Array<{ icon: string; title: string; desc: string }>;
+  /** Card meta: live anime wallpaper + nested glass tile plan. */
+  card?: import("./recap-card-meta.js").CardMeta | null;
 }
 
 const SECTION_KEYS = [
