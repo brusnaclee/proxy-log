@@ -1079,6 +1079,34 @@ async function pollModelStatus() {
 				console.error(`[tokito-monitor] failed to fetch keys for ${prov.name}:`, err.message || JSON.stringify(err));
 			}
 
+			// you.com providers do not expose a /v1/models endpoint. Synthesize the
+			// two known agents (express, advanced) and probe them via the proxy's
+			// OpenAI-compatible /v1/chat/completions, which the proxy routes to
+			// the you.com adapter.
+			if (prov.endpointType === 'youcom') {
+				const provKeys = runtime.providerKeys.get(prov.name) || [];
+				const provApiKey = provKeys[0] || prov.apiKey || '';
+				const proxyV1Base = PROXY_PUBLIC_BASE_URL.replace(/\/+$/, '') + '/v1';
+				for (const modelId of ['express', 'advanced']) {
+					const catalogId = `you/${modelId}`;
+					const entry = {
+						modelId: catalogId,
+						provider: prov.name,
+						baseUrl: proxyV1Base,
+						apiKey: provApiKey,
+					};
+					allModels.push(catalogId);
+					runtime.modelEntries.push(entry);
+					runtime.modelProviderMap.set(catalogId, {
+						provider: prov.name,
+						baseUrl: proxyV1Base,
+						apiKey: provApiKey,
+					});
+				}
+				console.log(`[tokito-monitor] added 2 synthetic you.com models for provider: ${prov.name}`);
+				continue;
+			}
+
 			const result = await fetchProviderModelList(prov);
 			if (!result) {
 				console.error(`[tokito-monitor] failed to fetch models from ${prov.name}`);

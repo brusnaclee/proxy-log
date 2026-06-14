@@ -21,6 +21,7 @@ import {
 	createStreamState,
 } from '../utils/anthropic-adapter.js';
 import {
+	buildCachedRoundTripResponse,
 	buildYouComStreamChunks,
 	convertRequestToYouCom,
 	convertResponseToYouComOpenAI,
@@ -2788,6 +2789,11 @@ proxy.all('/*', async (c) => {
 	const isYouComProvider = targetProvider.endpointType === 'youcom';
 	let anthropicRequestBody: string | null = null;
 	let youcomRequestBody: string | null = null;
+	let youcomContext: {
+		clientSentTools: boolean;
+		matchedToolName: string | null;
+		lastUserText: string;
+	} = { clientSentTools: false, matchedToolName: null, lastUserText: '' };
 	let actualUpstreamUrl = upstreamUrl;
 	let actualUpstreamPath = upstreamPath;
 
@@ -2804,8 +2810,48 @@ proxy.all('/*', async (c) => {
 	} else if (isYouComProvider) {
 		// Convert OpenAI request to you.com Agents format.
 		// `upstreamModel` is the bare id after prefix strip (e.g. "express").
-		const youcomBody = convertRequestToYouCom(requestBody, upstreamModel);
-		youcomRequestBody = JSON.stringify(youcomBody);
+		const youcomRequest = convertRequestToYouCom(
+			requestBody,
+			upstreamModel,
+		);
+
+		// Tool-round-trip short-circuit: the client echoed back a cached
+		// tool result. Return it directly without calling you.com again.
+		if (youcomRequest.cachedAnswer) {
+			const cachedResponse = buildCachedRoundTripResponse(
+				model,
+				youcomRequest.cachedAnswer,
+			);
+			const cachedBody = JSON.stringify(cachedResponse);
+			if (isStreaming) {
+				const sseLines = buildYouComStreamChunks(cachedResponse);
+				const sseBody = sseLines.map((l) => l + '\n\n').join('');
+				return new Response(sseBody, {
+					status: 200,
+					headers: {
+						'Content-Type': 'text/event-stream; charset=utf-8',
+						'Cache-Control': 'no-cache',
+						Connection: 'keep-alive',
+					},
+				});
+			}
+			return new Response(cachedBody, {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			});
+		}
+
+		youcomRequestBody = JSON.stringify(youcomRequest.request);
+
+		// Stash the matching tool name + last user text for the response
+		// converter so it can build a real tool_call block.
+		youcomContext = {
+			clientSentTools:
+				Array.isArray(requestBody?.tools) &&
+				(requestBody.tools as unknown[]).length > 0,
+			matchedToolName: youcomRequest.matchedToolName,
+			lastUserText: youcomRequest.lastUserText,
+		};
 
 		// Redirect path to /v1/agents/runs for you.com
 		actualUpstreamPath = '/v1/agents/runs';
@@ -3109,11 +3155,16 @@ proxy.all('/*', async (c) => {
 		if (isYouComProvider && statusCode >= 200 && statusCode < 300) {
 			try {
 				const youParsed = JSON.parse(responseBody);
-				const openaiResponse = convertResponseToYouComOpenAI(
+				const conversion = convertResponseToYouComOpenAI(
 					youParsed,
 					model,
+					{
+						clientSentTools: youcomContext.clientSentTools,
+						matchedToolName: youcomContext.matchedToolName,
+						lastUserText: youcomContext.lastUserText,
+					},
 				);
-				responseBody = JSON.stringify(openaiResponse);
+				responseBody = JSON.stringify(conversion.openaiResponse);
 			} catch (convErr) {
 				console.error(
 					'[youcom-adapter] Failed to convert response:',
