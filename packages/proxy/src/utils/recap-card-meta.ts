@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Card meta (live anime wallpaper + nested tile plan) for the shareable recap
  * card. Selected server-side at generate time so the page renders consistently
  * without re-running network calls per visitor. The renderer swaps wallpaper
@@ -211,8 +211,8 @@ async function resolveWallpapers(seedId: string, stats: any, base: string, count
     }
   }
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, allLists.length) }, () => worker()));
-  // Pad with the first one if we got very little (the renderer will cycle).
-  while (out.length > 0 && out.length < 30) out.push(out[0]);
+  // No more padding to a fixed number. The renderer renders 1:1 with whatever
+  // unique URLs we found (or falls back to a single gradient if zero).
   if (out.length === 0) out.push("");
   return out;
 }
@@ -286,7 +286,7 @@ function buildTiles(stats: any, seed: number): CardTile[] {
   });
   if (models[0]?.model) candidates.push({
     key: "favModel", icon: "🤖", label: "Model favorit", value: String(models[0].model),
-    sub: fmtNum(models[0].requests) + " request", size: "wide",
+    sub: fmtNum(models[0].requests) + " request", size: "sm",
   });
   if (cmp.hasPrev) candidates.push({
     key: "growth",
@@ -305,13 +305,13 @@ function buildTiles(stats: any, seed: number): CardTile[] {
     size: "sm",
   });
 
-  // Shuffle candidates by seed, then add 2.
+  // Shuffle candidates by seed, then add 1 (1 hero + 2 sm + 1 candidate = 4).
   const order = candidates.map((_, i) => i).sort((a, b) => ((a * 7 + seed) % 13) - ((b * 11 + seed) % 13));
-  for (let i = 0; i < Math.min(2, order.length); i++) {
+  for (let i = 0; i < Math.min(1, order.length); i++) {
     out.push(candidates[order[i]]);
   }
 
-  return out.slice(0, 6);
+  return out.slice(0, 4);
 }
 
 /** Build the "top fun fact" string for the quote card. */
@@ -339,7 +339,7 @@ export async function resolveCardMeta(
   base: string,
 ): Promise<CardMeta> {
   const seed = seedFromStr(seedId);
-  const wallpapers = await resolveWallpapers(seedId, stats, base, 5);
+  const wallpapers = await resolveWallpapers(seedId, stats, base, 40);
   const tiles = buildTiles(stats, seed);
   const quote = buildQuote(stats, narrative);
   const badge = buildBadge(narrative, stats);

@@ -261,26 +261,26 @@ transform:scale(1.06);animation:wcPan 18s ease-in-out infinite alternate;will-ch
 @keyframes wcflow{0%,100%{background-position:0 50%}50%{background-position:100% 50%}}
 .wc-scrim{position:absolute;inset:0;z-index:1;pointer-events:none;
 background:linear-gradient(180deg,var(--wc-scrim,rgba(10,0,30,0.2)) 0%,var(--wc-scrim,rgba(10,0,30,0.2)) 30%,var(--wc-scrimEnd,rgba(10,0,30,0.85)) 100%)}
-.wc-stack{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;gap:8px;padding:14px 14px 14px;color:var(--wc-text,#fff)}
+.wc-stack{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;gap:7px;padding:12px 12px 14px;color:var(--wc-text,#fff)}
 /* Subtler glass — "barely there but present" */
 .wc-glass{position:relative;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
 border-radius:18px;backdrop-filter:blur(20px) saturate(120%);-webkit-backdrop-filter:blur(20px) saturate(120%);
 box-shadow:none;padding:10px 12px}
-.wc-id{display:flex;align-items:center;gap:12px;padding:10px 12px;background:rgba(0,0,0,.18);border-color:rgba(255,255,255,.14)}
-.wc-id .av{width:54px;height:54px;border-radius:50%;object-fit:cover;border:2.5px solid rgba(255,255,255,.7);flex:0 0 auto;box-shadow:0 6px 18px rgba(0,0,0,.4)}
-.wc-id .name{font-size:19px;font-weight:900;line-height:1.05;letter-spacing:-.01em;color:var(--wc-text,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-.wc-id .persona{font-size:12px;font-weight:800;color:var(--wc-muted,rgba(255,255,255,.85));text-transform:uppercase;letter-spacing:.08em;margin-top:2px}
-.wc-mosaic{display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:78px;gap:8px}
-.wc-tile{position:relative;display:flex;flex-direction:column;justify-content:center;overflow:hidden;padding:10px 12px;
-background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:16px;
-backdrop-filter:blur(14px) saturate(115%);-webkit-backdrop-filter:blur(14px) saturate(115%)}
-.wc-tile.hero{grid-column:span 2;grid-row:span 2;padding:14px 14px}
+.wc-id{display:flex;align-items:center;gap:10px;padding:8px 10px;background:rgba(0,0,0,.18);border-color:rgba(255,255,255,.14)}
+.wc-id .av{width:42px;height:42px;border-radius:50%;object-fit:cover;border:2px solid rgba(255,255,255,.7);flex:0 0 auto;box-shadow:0 6px 18px rgba(0,0,0,.4)}
+.wc-id .name{font-size:16px;font-weight:900;line-height:1.05;letter-spacing:-.01em;color:var(--wc-text,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.wc-id .persona{font-size:11px;font-weight:800;color:var(--wc-muted,rgba(255,255,255,.85));text-transform:uppercase;letter-spacing:.08em;margin-top:1px}
+.wc-mosaic{display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:74px;gap:9px}
+.wc-tile{position:relative;display:flex;flex-direction:column;justify-content:center;overflow:hidden;padding:11px 12px;gap:3px;
+background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.16);border-radius:14px;
+backdrop-filter:blur(12px) saturate(110%);-webkit-backdrop-filter:blur(12px) saturate(110%)}
+.wc-tile.hero{grid-column:span 2;grid-row:span 2;padding:14px 14px;gap:6px}
 .wc-tile.wide{grid-column:span 2;flex-direction:row;align-items:center;gap:10px}
-.wc-tile .ti{font-size:22px;line-height:1;flex:0 0 auto}
+.wc-tile .ti{font-size:20px;line-height:1;flex:0 0 auto}
 .wc-tile.hero .ti{font-size:30px}
 .wc-tile.wide .ti{font-size:24px}
 /* Rainbow glossy animated stat number — solid white fallback + shadow for legibility */
-.wc-tile .tv{font-weight:900;line-height:1;font-size:clamp(22px,5.8vw,30px);
+.wc-tile .tv{font-weight:900;line-height:1;font-size:clamp(20px,5.2vw,27px);
 color:#fff;text-shadow:0 0 1px rgba(0,0,0,.45),0 1px 2px rgba(0,0,0,.35);
 background:linear-gradient(90deg,#ff4d6d,#ffd93d,#6ee7b7,#22d3ee,#a78bfa,#f472b6,#ff4d6d);
 background-size:300% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;
@@ -295,10 +295,10 @@ animation:tvRainbow 6s linear infinite;letter-spacing:-.02em}
 .wc-tile.wide .tl{margin-top:0}
 .wc-tile .tglow{position:absolute;right:-30%;bottom:-30%;width:120px;height:120px;border-radius:50%;
 background:radial-gradient(closest-side,var(--wc-a,#fff),transparent 70%);opacity:.18;pointer-events:none}
-.wc-quote{display:flex;align-items:flex-start;gap:10px;padding:11px 13px;min-height:54px;background:rgba(0,0,0,.12);border-color:rgba(255,255,255,.12)}
+.wc-quote{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;min-height:48px;background:rgba(0,0,0,.25);border-color:rgba(255,255,255,.12);font-size:12px}
 .wc-quote .qi{font-size:20px;line-height:1;flex:0 0 auto}
 .wc-quote .qx{font-size:12.5px;font-weight:600;line-height:1.35;color:var(--wc-text,#fff);font-style:italic}
-.wc-badge{display:inline-flex;align-items:center;gap:8px;align-self:flex-start;padding:7px 12px;border-radius:999px;background:rgba(0,0,0,.16);border-color:rgba(255,255,255,.14)}
+.wc-badge{display:inline-flex;align-items:center;gap:8px;align-self:flex-start;padding:6px 11px;border-radius:999px;background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.18)}
 .wc-badge .bi{font-size:18px;line-height:1}
 .wc-badge .bt{font-size:12px;font-weight:800;letter-spacing:.02em;text-transform:uppercase}
 .wc-foot{display:flex;justify-content:space-between;align-items:center;padding:10px 6px 4px;font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--wc-muted,rgba(255,255,255,.9))}
@@ -314,7 +314,20 @@ scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.3) transparent}
 .wc-sw:hover{transform:scale(1.1)}
 .wc-sw.on{border-color:#fff;transform:scale(1.18);box-shadow:0 0 0 2px rgba(0,0,0,.4)}
 .wc-themes-hint{font-size:11px;color:var(--muted);text-align:center}
-@media(max-width:420px){.wrapcard{aspect-ratio:1/1.6}.wc-mosaic{grid-auto-rows:70px;gap:6px}.wc-stack{padding:12px 12px 12px;gap:7px}.wc-foot{font-size:11px;padding:12px 4px 2px}}
+@media(max-width:420px){.wrapcard{aspect-ratio:1/1.65}.wc-mosaic{grid-auto-rows:68px;gap:7px}.wc-stack{padding:10px 10px 12px;gap:6px}.wc-foot{font-size:11px;padding:10px 4px 2px}.wc-id .av{width:38px;height:38px}.wc-tile.hero .tv{font-size:clamp(28px,7vw,42px)}}
+/* Snap mode: html2canvas-compatible flat rendering for downloads. Kills
+   background-clip:text and backdrop-filter so text + glass survive capture. */
+body.wc-snap .wc-tile .tv{color:#fff!important;background-image:none!important;
+  -webkit-background-clip:initial!important;background-clip:initial!important;
+  -webkit-text-fill-color:#fff!important;animation:none!important;
+  text-shadow:0 1px 2px rgba(0,0,0,.5)}
+body.wc-snap .wc-tile,body.wc-snap .wc-glass,body.wc-snap .wc-quote,body.wc-snap .wc-badge{
+  backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+body.wc-snap .wc-tile{background:rgba(0,0,0,.28)!important;border-color:rgba(255,255,255,.18)!important}
+body.wc-snap .wc-quote{background:rgba(0,0,0,.32)!important}
+body.wc-snap .wc-badge{background:rgba(0,0,0,.36)!important}
+body.wc-snap .wc-foot{color:rgba(255,255,255,.95)!important}
+body.wc-snap .wc-id{background:rgba(0,0,0,.32)!important}
 @media(prefers-reduced-motion:reduce){.wc-wall,.wc-fallback{animation:none}.wc-tile .tv{animation:none}}
 .confetti{position:fixed;inset:0;pointer-events:none;z-index:40;overflow:hidden}
 .confetti i{position:absolute;top:-20px;width:10px;height:14px;opacity:.9;animation:fall linear forwards}
@@ -728,7 +741,7 @@ function buildSections(d: RecapHtmlData): string {
     </div>
     <div class="wc-themes-wrap reveal">
       <div class="wc-themes" id="wcThemes"></div>
-      <div class="wc-themes-hint">100 tema • klik buat ganti wallpaper + accent</div>
+      <div class="wc-themes-hint">Pilih wallpaper lain — klik untuk ganti</div>
     </div>
     <div class="btns reveal">
       <button class="btn" id="dlBtn">⬇️ Download Kartu (GIF)</button>
@@ -1046,8 +1059,8 @@ const RECAP_JS = `
     if(cardWall){
       cardWall.style.filter='saturate('+t.sat+') brightness('+t.bright+')';
       if(swapWall!==false){
-        // Use the wallpaper at the swatch's exact index (100 slots now).
-        var w=wallsData[curTheme]||wallsData[t.wall]||wallsData[0];
+        // Use the wallpaper at the swatch's exact index (1:1 with stored).
+        var w=wallsData[curTheme%wallCount]||wallsData[t.wall]||wallsData[0];
         if(w) cardWall.src=w;
       }
     }
@@ -1059,13 +1072,17 @@ const RECAP_JS = `
   }
   if(themesWrap){
     var wallCount=Math.max(wallsData.length,1);
-    for(var k=0;k<100;k++){
+    // Render 1:1 with wallsData — no duplicates. Capped at 50 to keep the
+    // picker scannable; users with more unique wallpapers can still cycle via
+    // the card wallpaper itself.
+    var slotCount=Math.min(wallCount, 50);
+    for(var k=0;k<slotCount;k++){
       (function(idx){
         var t=THEMES[idx%THEMES.length];
         var sw=document.createElement('button');
         sw.type='button';
         sw.className='wc-sw'+(idx===curTheme?' on':'');
-        // Background = actual live wallpaper preview (cycling 1:1 across 100 slots).
+        // Background = actual live wallpaper preview (1:1 with stored).
         var wu=wallsData[idx%wallCount];
         if(wu){
           sw.style.backgroundImage='url("'+wu+'")';
@@ -1094,6 +1111,10 @@ const RECAP_JS = `
 
   async function doDownload(){
     dlBtn.disabled=true;
+    // Snap mode: html2canvas doesn't support -webkit-background-clip:text or
+    // backdrop-filter. Adding .wc-snap class forces flat colors so text + glass
+    // survive capture. We re-apply the previous theme after capture.
+    var prevTheme=curTheme;
     try{
       setStatus('Menyiapkan render... 0%');
       await loadScript('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js');
@@ -1101,7 +1122,13 @@ const RECAP_JS = `
       // composited manually per-frame inside the GIF so the final file is
       // truly animated.
       var stackEl=card.querySelector('.wc-stack');
+      document.body.classList.add('wc-snap');
+      // Two RAFs so the browser flushes the new style before html2canvas reads.
+      await new Promise(function(r){requestAnimationFrame(function(){requestAnimationFrame(r);});});
       var base=await window.html2canvas(stackEl,{backgroundColor:null,scale:2,useCORS:true,logging:false});
+      document.body.classList.remove('wc-snap');
+      // Restore the visual theme state (in case CSS variables shifted).
+      applyTheme(prevTheme,false);
       var gifOk=false;
       try{
         await loadScript('https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js');
@@ -1130,7 +1157,11 @@ const RECAP_JS = `
           setStatus('Tersimpan sebagai PNG ✓');
         }
       }
-    }catch(e){ setStatus('Gagal render: '+(e&&e.message||'error')); }
+    }catch(e){
+      document.body.classList.remove('wc-snap');
+      applyTheme(prevTheme,false);
+      setStatus('Gagal render: '+(e&&e.message||'error'));
+    }
     finally{ dlBtn.disabled=false; }
   }
 
