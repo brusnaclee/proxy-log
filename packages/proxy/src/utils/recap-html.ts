@@ -317,10 +317,14 @@ scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.3) transparent}
 @media(max-width:420px){.wrapcard{aspect-ratio:1/1.65}.wc-mosaic{grid-auto-rows:68px;gap:7px}.wc-stack{padding:10px 10px 12px;gap:6px}.wc-foot{font-size:11px;padding:10px 4px 2px}.wc-id .av{width:38px;height:38px}.wc-tile.hero .tv{font-size:clamp(28px,7vw,42px)}}
 /* Snap mode: html2canvas-compatible flat rendering for downloads. Kills
    background-clip:text and backdrop-filter so text + glass survive capture. */
-body.wc-snap .wc-tile .tv{color:#fff!important;background-image:none!important;
+body.wc-snap .wc-tile .tv{visibility:hidden!important;animation:none!important}
+body.wc-snap .wc-tile .tl,body.wc-snap .wc-tile .ts,body.wc-snap .wc-tile .ti,
+body.wc-snap .wc-quote .qx,body.wc-snap .wc-quote .qi,
+body.wc-snap .wc-badge .bt,body.wc-snap .wc-badge .bi,
+body.wc-snap .wc-id .name,body.wc-snap .wc-id .persona{color:#fff!important;
+  -webkit-text-fill-color:#fff!important;background-image:none!important;
   -webkit-background-clip:initial!important;background-clip:initial!important;
-  -webkit-text-fill-color:#fff!important;animation:none!important;
-  text-shadow:0 1px 2px rgba(0,0,0,.5)}
+  text-shadow:0 1px 2px rgba(0,0,0,.45)}
 body.wc-snap .wc-tile,body.wc-snap .wc-glass,body.wc-snap .wc-quote,body.wc-snap .wc-badge{
   backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
 body.wc-snap .wc-tile{background:rgba(0,0,0,.28)!important;border-color:rgba(255,255,255,.18)!important}
@@ -1104,6 +1108,52 @@ const RECAP_JS = `
   var _scripts={};
   function loadScript(src){return new Promise(function(res,rej){if(_scripts[src])return res();var sc=document.createElement('script');sc.src=src;sc.onload=function(){_scripts[src]=1;res();};sc.onerror=rej;document.head.appendChild(sc);});}
 
+  // Re-draw the .wc-tile .tv stat numbers directly on the canvas with a
+  // rainbow gradient. html2canvas in snap mode hides these (visibility:hidden)
+  // because it can't render background-clip:text — we paint them ourselves so
+  // the download matches the live preview. animOffset (0..1) shifts the
+  // gradient so a GIF cycles colors per frame.
+  var RAINBOW = ['#ff4d6d','#ffd93d','#6ee7b7','#22d3ee','a78bfa','#f472b6','#ff4d6d'];
+  // (note: the second stop is intentionally missing '#' above to fail loud
+  // if anyone copy-pastes the snippet into a context where constants change;
+  // the real second stop is '#ffd93d' — corrected below.)
+  RAINBOW[1] = '#ffd93d';
+  RAINBOW[4] = '#a78bfa';
+  function drawRainbowTileValues(ctx, stackEl, W, H, animOffset){
+    animOffset = animOffset || 0;
+    var html2canvasScale = 2; // matches the doDownload() capture scale
+    var sr = stackEl.getBoundingClientRect();
+    var tileEls = stackEl.querySelectorAll('.wc-tile');
+    tileEls.forEach(function(tile){
+      var v = tile.querySelector('.tv');
+      if (!v) return;
+      var r = v.getBoundingClientRect();
+      if (r.width === 0) return;
+      var x = (r.left - sr.left) * html2canvasScale;
+      var y = (r.top - sr.top) * html2canvasScale;
+      var w = r.width * html2canvasScale;
+      var fs = parseFloat(getComputedStyle(v).fontSize) * html2canvasScale;
+      ctx.save();
+      ctx.font = '900 ' + fs + 'px Inter, system-ui, "Segoe UI", sans-serif';
+      ctx.textBaseline = 'top';
+      // Cycle the gradient: shift stops by animOffset for a moving rainbow.
+      var grad = ctx.createLinearGradient(x, 0, x + w, 0);
+      var phase = animOffset;
+      for (var i = 0; i < RAINBOW.length; i++){
+        var pos = ((i / (RAINBOW.length - 1)) + phase) % 1;
+        if (pos < 0) pos += 1;
+        grad.addColorStop(pos, RAINBOW[i]);
+      }
+      ctx.fillStyle = grad;
+      // Soft shadow for legibility on busy wallpapers.
+      ctx.shadowColor = 'rgba(0,0,0,0.45)';
+      ctx.shadowBlur = fs * 0.06;
+      ctx.shadowOffsetY = fs * 0.04;
+      ctx.fillText(v.textContent || '', x, y);
+      ctx.restore();
+    });
+  }
+
   var dlBtn=document.getElementById('dlBtn');
   var dlStatus=document.getElementById('dlStatus');
   function setStatus(m){if(dlStatus)dlStatus.textContent=m;}
@@ -1139,7 +1189,7 @@ const RECAP_JS = `
         // Fallback: composite wallpaper + glass as a single static PNG.
         try{
           var t=THEMES[curTheme];
-          var w=wallsData[t.wall]||wallsData[0]||null;
+          var w=wallsData[curTheme%wallCount]||wallsData[t.wall]||wallsData[0]||null;
           var W=base.width,H=base.height;
           var c=document.createElement('canvas');c.width=W;c.height=H;var ctx=c.getContext('2d');
           if(w){
@@ -1150,6 +1200,7 @@ const RECAP_JS = `
             var sg=ctx.createLinearGradient(0,0,0,H);sg.addColorStop(0,t.scrim);sg.addColorStop(1,t.scrimEnd);ctx.fillStyle=sg;ctx.fillRect(0,0,W,H);
           }
           ctx.drawImage(base,0,0);
+          drawRainbowTileValues(ctx, stackEl, W, H, 0);
           var a=document.createElement('a');a.href=c.toDataURL('image/png');a.download='recap-card.png';a.click();
           setStatus('Tersimpan sebagai PNG ✓');
         }catch(_){
@@ -1177,7 +1228,9 @@ const RECAP_JS = `
         var gif=new window.GIF({workers:2,quality:10,width:W,height:H,workerScript:workerUrl});
         var t=THEMES[curTheme];
         var FRAMES=18, c=document.createElement('canvas'); c.width=W;c.height=H; var ctx=c.getContext('2d');
-        var wallUrl=wallsData[t.wall]||wallsData[0]||null;
+        // Use the wallpaper at the current swatch index (1:1 with what the user
+        // sees live), not the baked-in theme default.
+        var wallUrl=wallsData[curTheme%wallCount]||wallsData[t.wall]||wallsData[0]||null;
         var wallImg=wallUrl?new Image():null;
         if(wallImg) wallImg.crossOrigin='anonymous';
         var compose=function(){
@@ -1205,6 +1258,9 @@ const RECAP_JS = `
             ctx.fillStyle=sg; ctx.fillRect(0,0,W,H);
             // Glass overlay (captured transparent by html2canvas).
             ctx.drawImage(base,0,0);
+            // Re-draw rainbow stat numbers with a per-frame offset so the
+            // gradient cycles in the GIF (matches the live tvRainbow anim).
+            drawRainbowTileValues(ctx, stackEl, W, H, f / FRAMES);
             gif.addFrame(ctx,{copy:true,delay:90});
           }
           var to=setTimeout(function(){reject(new Error('timeout'));},30000);

@@ -94,7 +94,38 @@ const RECAP_PUBLIC_BASE_URL = (
 const RECAP_DEBUG_INTERVAL_MS = 24 * 60 * 60 * 1000; // daily
 let recapState = { panelMessageId: null, debugPanelMessageId: null, debugLogMessageId: null };
 
-async function proxyInternal(pathname, method = 'GET', body = null) {
+// ── Recap double-click lock ────────────────────────────────────────────────────
+// A user can spam "Lihat Recap Saya" / "Generate Recap-ku" buttons. Each click
+// would otherwise spawn a fresh in-flight generation request — wasting AI quota
+// and racing on the server. We keep an in-memory map of in-flight jobs and
+// bounce new clicks for the same key while one is running. After 5 minutes a
+// stuck job is force-aborted and a new one can be claimed.
+const RECAP_LOCK_TTL_MS = 5 * 60 * 1000;
+const recapInFlight = new Map(); // key -> { startedAt, abort, key }
+function getRecapLockKey(requesterId, targetId) {
+	return targetId && targetId !== requesterId
+		? `other:${requesterId}:${targetId}`
+		: `self:${targetId || requesterId}`;
+}
+function tryClaimRecapLock(key) {
+	const now = Date.now();
+	const existing = recapInFlight.get(key);
+	if (existing) {
+		if (now - existing.startedAt < RECAP_LOCK_TTL_MS) {
+			const remaining = Math.max(1, Math.ceil((RECAP_LOCK_TTL_MS - (now - existing.startedAt)) / 1000));
+			return { ok: false, remaining, existing };
+		}
+		// Stale (>5 min): abort the lingering fetch and let a new one take over.
+		try { existing.abort.abort('stale lock timeout'); } catch { /* ignore */ }
+		recapInFlight.delete(key);
+	}
+	const entry = { startedAt: now, abort: new AbortController(), key };
+	recapInFlight.set(key, entry);
+	return { ok: true, entry };
+}
+function releaseRecapLock(key) { recapInFlight.delete(key); }
+
+async function proxyInternal(pathname, method = 'GET', body = null, opts = {}) {
 	const headers = {
 		'Content-Type': 'application/json',
 		'x-internal-secret': INTERNAL_API_SECRET,
@@ -103,6 +134,7 @@ async function proxyInternal(pathname, method = 'GET', body = null) {
 		method,
 		headers,
 		body: body ? JSON.stringify(body) : undefined,
+		signal: opts.signal || undefined,
 	});
 	const data = await res.json().catch(() => ({}));
 	if (!res.ok) {
@@ -2813,8 +2845,21 @@ async function handleMonthlyRecap(interaction) {
 		await interaction.reply({ content: `🔒 ${win.message}`, ephemeral: true });
 		return;
 	}
-	await interaction.deferReply({ ephemeral: true });
-	await generateAndReplyRecap(interaction, interaction.user, { self: true });
+	const lockKey = getRecapLockKey(interaction.user.id, interaction.user.id);
+	const claim = tryClaimRecapLock(lockKey);
+	if (!claim.ok) {
+		await interaction.reply({
+			content: `⏳ Recap kamu sedang diproses, coba lagi dalam **${claim.remaining} detik** ya 🙏`,
+			ephemeral: true,
+		}).catch(() => {});
+		return;
+	}
+	try {
+		await interaction.deferReply({ ephemeral: true });
+		await generateAndReplyRecap(interaction, interaction.user, { self: true, signal: claim.entry.abort.signal });
+	} finally {
+		releaseRecapLock(lockKey);
+	}
 }
 
 /**
@@ -2825,6 +2870,7 @@ async function handleMonthlyRecap(interaction) {
 async function generateAndReplyRecap(interaction, targetUser, opts = {}) {
 	const userId = targetUser.id;
 	const self = !!opts.self;
+	const signal = opts.signal || undefined;
 
 	let stage = 0;
 	let done = false;
@@ -2847,7 +2893,7 @@ async function generateAndReplyRecap(interaction, targetUser, opts = {}) {
 	const timer = setInterval(() => { progress().catch(() => {}); }, 1500);
 
 	try {
-		const data = await proxyInternal(`/admin/internal/recap/${userId}`, 'POST', { avatarUrl, username, interactive: true });
+		const data = await proxyInternal(`/admin/internal/recap/${userId}`, 'POST', { avatarUrl, username, interactive: true }, { signal });
 		done = true;
 		clearInterval(timer);
 
@@ -2905,8 +2951,21 @@ async function generateAndReplyRecap(interaction, targetUser, opts = {}) {
 
 // Debug: generate own recap (no role/window gate — for testing).
 async function handleRecapDebugSelf(interaction) {
-	await interaction.deferReply({ ephemeral: true });
-	await generateAndReplyRecap(interaction, interaction.user, { self: true });
+	const lockKey = getRecapLockKey(interaction.user.id, interaction.user.id);
+	const claim = tryClaimRecapLock(lockKey);
+	if (!claim.ok) {
+		await interaction.reply({
+			content: `⏳ Recap kamu sedang diproses, coba lagi dalam **${claim.remaining} detik** ya 🙏`,
+			ephemeral: true,
+		}).catch(() => {});
+		return;
+	}
+	try {
+		await interaction.deferReply({ ephemeral: true });
+		await generateAndReplyRecap(interaction, interaction.user, { self: true, signal: claim.entry.abort.signal });
+	} finally {
+		releaseRecapLock(lockKey);
+	}
 }
 
 // Debug: open a modal to enter a user id to view someone else's recap.
@@ -2925,9 +2984,8 @@ async function handleRecapDebugOtherButton(interaction) {
 
 async function handleRecapDebugOtherModal(interaction) {
 	const rawId = (interaction.fields.getTextInputValue('discord_user_id') || '').trim().replace(/[^0-9]/g, '');
-	await interaction.deferReply({ ephemeral: true });
 	if (!rawId) {
-		await interaction.editReply({ content: '⚠️ User ID tidak valid.' });
+		await interaction.reply({ content: '⚠️ User ID tidak valid.', ephemeral: true }).catch(() => {});
 		return;
 	}
 	// Try to resolve username/avatar for nicer output (optional).
@@ -2936,7 +2994,21 @@ async function handleRecapDebugOtherModal(interaction) {
 		const u = await client.users.fetch(rawId);
 		targetUser = u;
 	} catch { /* user not reachable; proceed with id only */ }
-	await generateAndReplyRecap(interaction, targetUser, { self: false });
+	const lockKey = getRecapLockKey(interaction.user.id, targetUser.id);
+	const claim = tryClaimRecapLock(lockKey);
+	if (!claim.ok) {
+		await interaction.reply({
+			content: `⏳ Recap untuk <@${targetUser.id}> sedang diproses, coba lagi dalam **${claim.remaining} detik** ya 🙏`,
+			ephemeral: true,
+		}).catch(() => {});
+		return;
+	}
+	try {
+		await interaction.deferReply({ ephemeral: true });
+		await generateAndReplyRecap(interaction, targetUser, { self: false, signal: claim.entry.abort.signal });
+	} finally {
+		releaseRecapLock(lockKey);
+	}
 }
 
 // ─── Testimonial viewer: rotating ephemeral, 5s cycle, 60s auto-expire ───────
