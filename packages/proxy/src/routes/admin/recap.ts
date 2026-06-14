@@ -55,7 +55,7 @@ recap.get("/internal/recap/window", (c) => {
  */
 recap.post("/internal/recap/:discordUserId", async (c) => {
   const discordUserId = c.req.param("discordUserId");
-  const body = await c.req.json<{ avatarUrl?: string; username?: string; force?: boolean; yearMonth?: string; interactive?: boolean }>().catch(() => ({} as any));
+  const body = await c.req.json<{ avatarUrl?: string; username?: string; force?: boolean; skipIfToday?: boolean; yearMonth?: string; interactive?: boolean }>().catch(() => ({} as any));
 
   const key = await findKeyByDiscordUser(discordUserId);
 
@@ -86,7 +86,7 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
     return c.json({ error: "User not found", found: false }, 404);
   }
 
-  if (existing && existing.generatedDate === today && !body.force) {
+  if (existing && existing.generatedDate === today && (body.skipIfToday || !body.force)) {
     // For interactive opens, mint a fresh single-use share token each time.
     let shareToken = existing.shareToken;
     if (body.interactive) {

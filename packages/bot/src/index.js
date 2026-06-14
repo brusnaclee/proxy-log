@@ -92,15 +92,15 @@ const RECAP_PUBLIC_BASE_URL = (
 	process.env.RECAP_PUBLIC_BASE_URL || PROXY_PUBLIC_BASE_URL || 'https://api.tokito.xyz'
 ).replace(/\/$/, '');
 const RECAP_DEBUG_INTERVAL_MS = 24 * 60 * 60 * 1000; // daily
-let recapState = { panelMessageId: null, debugPanelMessageId: null, debugLogMessageId: null };
+let recapState = { panelMessageId: null, debugPanelMessageId: null, debugLogMessageId: null, pregenFiredYearMonth: null };
 
 // ── Recap double-click lock ────────────────────────────────────────────────────
 // A user can spam "Lihat Recap Saya" / "Generate Recap-ku" buttons. Each click
 // would otherwise spawn a fresh in-flight generation request — wasting AI quota
 // and racing on the server. We keep an in-memory map of in-flight jobs and
-// bounce new clicks for the same key while one is running. After 5 minutes a
+// bounce new clicks for the same key while one is running. After 10 minutes a
 // stuck job is force-aborted and a new one can be claimed.
-const RECAP_LOCK_TTL_MS = 5 * 60 * 1000;
+const RECAP_LOCK_TTL_MS = 10 * 60 * 1000;
 const recapInFlight = new Map(); // key -> { startedAt, abort, key }
 function getRecapLockKey(requesterId, targetId) {
 	return targetId && targetId !== requesterId
@@ -2872,25 +2872,47 @@ async function generateAndReplyRecap(interaction, targetUser, opts = {}) {
 	const self = !!opts.self;
 	const signal = opts.signal || undefined;
 
-	let stage = 0;
 	let done = false;
 	const avatarUrl = typeof targetUser.displayAvatarURL === 'function'
 		? targetUser.displayAvatarURL({ size: 256, extension: 'png' })
 		: undefined;
 	const username = targetUser.username;
-	const progress = async () => {
+	// Smooth time-based progress. The bar climbs from ~5% to 99% over
+	// EXPECTED_MS using easeOutQuad so it looks alive early and creeps the
+	// last 30%. Stages rotate by elapsed-time fraction, so they feel
+	// "stages" without snapping the user into a frozen 95% while the AI
+	// narrative is still cooking. On a fast cache-hit, we still end up
+	// at 100% and immediately yield to the final reply.
+	const EXPECTED_MS = 90_000;
+	const startedAt = Date.now();
+	let lastPct = -1;
+	const renderProgress = async (pct, stageIdx) => {
 		if (done) return;
-		const pct = Math.min(95, (stage + 1) * 19);
-		const bar = '█'.repeat(Math.round(pct / 10)) + '░'.repeat(10 - Math.round(pct / 10));
+		const clamped = Math.max(0, Math.min(99, Math.round(pct)));
+		if (clamped === lastPct) return;
+		lastPct = clamped;
+		const stage = RECAP_PROGRESS_STAGES[Math.min(stageIdx, RECAP_PROGRESS_STAGES.length - 1)];
+		const filled = Math.round(clamped / 10);
+		const bar = '█'.repeat(filled) + '░'.repeat(10 - filled);
 		const embed = new EmbedBuilder()
 			.setColor(0x7c3aed)
 			.setTitle(self ? '🎁 Membuat Recap Kamu...' : `🔍 Mengambil Recap ${username || userId}...`)
-			.setDescription(`${RECAP_PROGRESS_STAGES[Math.min(stage, RECAP_PROGRESS_STAGES.length - 1)]}\n\`${bar}\` ${pct}%`);
+			.setDescription(`${stage}\n\`${bar}\` ${clamped}%`);
 		await interaction.editReply({ embeds: [embed] }).catch(() => {});
-		stage++;
 	};
-	await progress();
-	const timer = setInterval(() => { progress().catch(() => {}); }, 1500);
+	const stageForElapsed = (elapsed) => Math.min(
+		RECAP_PROGRESS_STAGES.length - 1,
+		Math.floor((elapsed / EXPECTED_MS) * RECAP_PROGRESS_STAGES.length),
+	);
+	const tick = async () => {
+		if (done) return;
+		const elapsed = Date.now() - startedAt;
+		const t = Math.min(1, elapsed / EXPECTED_MS);
+		const eased = 1 - (1 - t) * (1 - t);
+		await renderProgress(eased * 99, stageForElapsed(elapsed));
+	};
+	await renderProgress(5, 0);
+	const timer = setInterval(() => { tick().catch(() => {}); }, 700);
 
 	try {
 		const data = await proxyInternal(`/admin/internal/recap/${userId}`, 'POST', { avatarUrl, username, interactive: true }, { signal });
@@ -3087,13 +3109,18 @@ async function resolveAvatarsForLeaderboard(yearMonth) {
 	return lb;
 }
 
-async function runDailyRecapJob() {
-	console.log('[recap] Running daily recap regeneration...');
+async function runDailyRecapJob(opts = {}) {
+	const skipIfToday = !!opts.skipIfToday;
+	const label = skipIfToday ? 'pre-generate' : 'daily recap regeneration';
+	console.log(`[recap] Running ${label}...`);
 	let win = null;
 	try { win = await proxyInternal('/admin/internal/recap/window'); } catch { /* ignore */ }
 	const yearMonth = win ? win.yearMonth : undefined;
 
-	// Regenerate recap data for all users with a key (force = true).
+	// Regenerate recap data for all users with a key. The 24h daily job
+	// forces a full regen (force=true); the H-2 pregen reuses today's cache
+	// (skipIfToday=true) so we don't burn AI tokens for users who already
+	// opened their recap earlier in the day.
 	let users = [];
 	try {
 		const res = await proxyInternal('/admin/internal/recap/users');
@@ -3113,14 +3140,20 @@ async function runDailyRecapJob() {
 				avatarUrl = user.displayAvatarURL({ size: 256, extension: 'png' });
 				username = user.username;
 			} catch { /* ignore avatar fetch */ }
-			await proxyInternal(`/admin/internal/recap/${u.discordUserId}`, 'POST', { avatarUrl, username, force: true, yearMonth });
+			await proxyInternal(`/admin/internal/recap/${u.discordUserId}`, 'POST', {
+				avatarUrl,
+				username,
+				force: !skipIfToday,
+				skipIfToday,
+				yearMonth,
+			});
 			ok++;
 		} catch (err) {
 			fail++;
 			if (errors.length < 5) errors.push(`${u.discordUserId}: ${err.message}`);
 		}
 	}
-	if (errors.length) console.error('[recap] daily regenerate errors:', errors.join(' | '));
+	if (errors.length) console.error(`[recap] ${label} errors:`, errors.join(' | '));
 
 	const lb = await resolveAvatarsForLeaderboard(yearMonth);
 
@@ -3164,6 +3197,31 @@ async function runDailyRecapJob() {
 	await ensureRecapMessage().catch(() => {});
 	await ensureRecapDebugMessage().catch(() => {});
 	console.log(`[recap] Daily job done: ${ok} ok, ${fail} fail.`);
+}
+
+/**
+ * Fire-once-per-yearMonth pregen: when the recap access window transitions to
+ * isOpen=true for a new yearMonth, kick `runDailyRecapJob({skipIfToday:true})`
+ * in the background so all active users' recaps are warm-cached before they
+ * click. Idempotent — the fired yearMonth is persisted in recapState so a
+ * bot restart within the same window won't re-fire.
+ */
+async function maybeFirePregen() {
+	let win = null;
+	try { win = await proxyInternal('/admin/internal/recap/window'); } catch { return; }
+	if (!win || !win.isOpen) return;
+	if (recapState.pregenFiredYearMonth === win.yearMonth) return; // already fired for this cycle
+
+	console.log(`[recap] Window opened for ${win.yearMonth}, pre-generating all active keys...`);
+	recapState.pregenFiredYearMonth = win.yearMonth;
+	await saveRecapState().catch(() => {});
+
+	// Run in the background so the scheduler tick returns immediately.
+	setImmediate(() => {
+		runDailyRecapJob({ skipIfToday: true }).catch((err) =>
+			console.error('[recap] pregen error:', err.message),
+		);
+	});
 }
 
 // ─── Refresh Ranking Embeds ────────────────────────────────────────────────────
@@ -3568,10 +3626,16 @@ client.once('clientReady', async () => {
 	}, RECAP_DEBUG_INTERVAL_MS);
 
 	// Hourly: re-ensure the agverif panel so it appears/disappears promptly
-	// when the visibility window (25th-5th) opens or closes.
+	// when the visibility window (25th-5th) opens or closes, AND check
+	// whether the recap window has just opened (H-2) so we can pre-warm
+	// every active user's recap in the background.
 	setInterval(() => {
 		ensureRecapMessage().catch((err) => console.error('[recap] hourly panel refresh error:', err.message));
+		maybeFirePregen().catch((err) => console.error('[recap] pregen check error:', err.message));
 	}, 60 * 60 * 1000);
+	// Also kick a pregen check ~30s after startup so a bot that just restarted
+	// on/after H-2 doesn't have to wait an hour to discover the open window.
+	setTimeout(() => { maybeFirePregen().catch(() => {}); }, 30_000);
 
 	// Start 1-minute ranking refresh
 	setInterval(() => {
