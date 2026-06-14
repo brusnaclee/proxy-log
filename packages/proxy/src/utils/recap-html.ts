@@ -1207,7 +1207,10 @@ const RECAP_JS = `
       document.body.classList.add('wc-snap');
       // Two RAFs so the browser flushes the new style before html2canvas reads.
       await new Promise(function(r){requestAnimationFrame(function(){requestAnimationFrame(r);});});
-      var base=await window.html2canvas(stackEl,{backgroundColor:null,scale:2,useCORS:true,logging:false});
+      var base=await Promise.race([
+        window.html2canvas(stackEl,{backgroundColor:null,scale:2,useCORS:true,allowTaint:false,logging:false}),
+        new Promise(function(_,rej){setTimeout(function(){rej(new Error('html2canvas timeout 25s'));},25000);})
+      ]);
       document.body.classList.remove('wc-snap');
       // Restore the visual theme state (in case CSS variables shifted).
       applyTheme(prevTheme,false);
@@ -1216,7 +1219,7 @@ const RECAP_JS = `
       var gifOk=false;
       try{
         await loadScript('https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js');
-        await renderGif(base);
+        await renderGif(base, stackEl);
         gifOk=true;
       }catch(e){ gifOk=false; console.warn('GIF encode failed, falling back to PNG:', e); }
       if(!gifOk){
@@ -1255,14 +1258,24 @@ const RECAP_JS = `
     }
   }
 
-  function renderGif(base){return new Promise(function(resolve,reject){
+  function renderGif(base, stackEl){return new Promise(function(resolve,reject){
     if(rm){
       var a=document.createElement('a');a.href=base.toDataURL('image/png');a.download='recap-card.png';a.click();return resolve();
     }
     var W=base.width,H=base.height;
-    fetch('https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js')
+    // 15s budget for fetching the worker script. Cdnjs is fast on a normal
+    // connection, but we don't want a slow network to leave the button stuck.
+    var abortF=null;
+    try { abortF=new AbortController(); } catch(_){}
+    var fetchOpts=abortF?{signal:abortF.signal}:{};
+    var workerTimer=setTimeout(function(){
+      try { abortF && abortF.abort(); } catch(_){}
+      reject(new Error('worker fetch timeout'));
+    }, 15000);
+    fetch('https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js', fetchOpts)
       .then(function(r){ if(!r.ok) throw new Error('worker '+r.status); return r.text(); })
       .then(function(code){
+        clearTimeout(workerTimer);
         var workerUrl=URL.createObjectURL(new Blob([code],{type:'application/javascript'}));
         var gif=new window.GIF({workers:2,quality:10,width:W,height:H,workerScript:workerUrl});
         var t=THEMES[curTheme];
@@ -1272,7 +1285,20 @@ const RECAP_JS = `
         var wallUrl=wallsData[curTheme%wallCount]||wallsData[t.wall]||wallsData[0]||null;
         var wallImg=wallUrl?new Image():null;
         if(wallImg) wallImg.crossOrigin='anonymous';
-        var compose=function(){
+        var wallReady=!wallImg;
+        if(wallImg){
+          wallImg.onload=function(){wallReady=true;};
+          wallImg.onerror=function(){wallReady=true;};
+          wallImg.src=wallUrl;
+        }
+        // Wait for wallpaper to load (or 5s timeout) before composing frames.
+        var wallWaitStart=Date.now();
+        var waitWall=function(){
+          if(wallReady) return Promise.resolve();
+          if(Date.now()-wallWaitStart>5000) return Promise.resolve();
+          return new Promise(function(r){setTimeout(function(){waitWall().then(r);},80);});
+        };
+        waitWall().then(function(){
           for(var f=0;f<FRAMES;f++){
             var p=f/FRAMES;
             var ang=p*Math.PI*2;
@@ -1302,16 +1328,40 @@ const RECAP_JS = `
             drawRainbowTileValues(ctx, stackEl, W, H, f / FRAMES);
             gif.addFrame(ctx,{copy:true,delay:90});
           }
-          var to=setTimeout(function(){reject(new Error('timeout'));},30000);
-          gif.on('progress',function(pr){setStatus('Merender GIF... '+Math.round(pr*100)+'%');});
-          gif.on('finished',function(blob){clearTimeout(to);URL.revokeObjectURL(workerUrl);var u=URL.createObjectURL(blob);var a=document.createElement('a');a.href=u;a.download='recap-card.gif';a.click();setTimeout(function(){URL.revokeObjectURL(u);},4000);setStatus('Tersimpan sebagai GIF ✓');resolve();});
+          // 45s render budget. If progress hasn't moved at all in 8s after
+          // frames are added, the worker silently failed (no events fire) and
+          // we should bail out to the PNG fallback.
+          var stalledSince=Date.now();
+          var to=setTimeout(function(){reject(new Error('gif render timeout'));},45000);
+          var stallTo=setTimeout(function(){
+            console.warn('GIF worker stalled, no progress in 8s, aborting to PNG');
+            try { gif.abort(); } catch(_){}
+            clearTimeout(to);
+            reject(new Error('gif worker stalled'));
+          }, 8000);
+          gif.on('progress',function(pr){
+            stalledSince=Date.now();
+            clearTimeout(stallTo);
+            stallTo=setTimeout(function(){
+              console.warn('GIF worker stalled, no progress in 8s, aborting to PNG');
+              try { gif.abort(); } catch(_){}
+              clearTimeout(to);
+              reject(new Error('gif worker stalled'));
+            }, 8000);
+            setStatus('Merender GIF... '+Math.round(pr*100)+'%');
+          });
+          gif.on('finished',function(blob){
+            clearTimeout(to); clearTimeout(stallTo);
+            URL.revokeObjectURL(workerUrl);
+            var u=URL.createObjectURL(blob);
+            var a=document.createElement('a');
+            a.href=u; a.download='recap-card.gif'; a.click();
+            setTimeout(function(){URL.revokeObjectURL(u);},4000);
+            setStatus('Tersimpan sebagai GIF ✓');
+            resolve();
+          });
           gif.render();
-        };
-        if(wallImg){
-          wallImg.onload=compose;
-          wallImg.onerror=function(){ wallImg=null; compose(); };
-          wallImg.src=wallUrl;
-        } else { compose(); }
+        });
       })
       .catch(reject);
   });}
