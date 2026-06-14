@@ -43,6 +43,18 @@ export interface RecapHtmlData {
     quote: string;
     badge: { icon: string; title: string } | null;
   } | null;
+  /** AI-driven per-user layout decisions. */
+  layoutHints?: LayoutHints | null;
+}
+
+export type LayoutMood = "energetic" | "calm" | "wild" | "mysterious";
+export type LayoutHero = "stats" | "rank" | "activeTime" | "favoriteModel" | "persona";
+
+export interface LayoutHints {
+  hero?: LayoutHero;
+  mood?: LayoutMood;
+  hiddenSections?: string[];
+  reorderTop?: string[];
 }
 
 export function escapeHtml(s: any): string {
@@ -73,6 +85,19 @@ function safeJsonForScript(obj: any): string {
   return JSON.stringify(obj).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 }
 
+/** Inline Lucide icon sprite + helper. Returns <svg><use href="#luc-{name}"/></svg>. */
+const LUCIDE_ICONS: Record<string, string> = JSON.parse("{\"wrench\": \"<path d=\\\"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z\\\"/>\", \"calendar-check\": \"<rect width=\\\"18\\\" height=\\\"18\\\" x=\\\"3\\\" y=\\\"4\\\" rx=\\\"2\\\" ry=\\\"2\\\"/><line x1=\\\"16\\\" x2=\\\"16\\\" y1=\\\"2\\\" y2=\\\"6\\\"/><line x1=\\\"8\\\" x2=\\\"8\\\" y1=\\\"2\\\" y2=\\\"6\\\"/><line x1=\\\"3\\\" x2=\\\"21\\\" y1=\\\"10\\\" y2=\\\"10\\\"/><path d=\\\"m9 16 2 2 4-4\\\"/>\", \"calendar-heart\": \"<path d=\\\"M3 10h18\\\"/><path d=\\\"M3 6h18\\\"/><path d=\\\"M21 10v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-6\\\"/><path d=\\\"m17 17-3 3-3-3\\\"/><path d=\\\"M12 17V7\\\"/><path d=\\\"M9 7h6\\\"/>\", \"flame\": \"<path d=\\\"M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z\\\"/>\", \"message-circle\": \"<path d=\\\"M7.9 20A9 9 0 1 0 4 16.1L2 22z\\\"/>\", \"timer\": \"<line x1=\\\"10\\\" x2=\\\"14\\\" y1=\\\"2\\\" y2=\\\"2\\\"/><line x1=\\\"12\\\" x2=\\\"15\\\" y1=\\\"14\\\" y2=\\\"11\\\"/><circle cx=\\\"12\\\" cy=\\\"14\\\" r=\\\"8\\\"/>\", \"laptop\": \"<path d=\\\"M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16\\\"/>\", \"bot\": \"<path d=\\\"M12 8V4H8\\\"/><rect width=\\\"16\\\" height=\\\"12\\\" x=\\\"4\\\" y=\\\"8\\\" rx=\\\"2\\\"/><path d=\\\"M2 14h2\\\"/><path d=\\\"M20 14h2\\\"/><path d=\\\"M15 13v2\\\"/><path d=\\\"M9 13v2\\\"/>\", \"code-2\": \"<path d=\\\"m18 16 4-4-4-4\\\"/><path d=\\\"m6 8-4 4 4 4\\\"/><path d=\\\"m14.5 4-5 16\\\"/>\", \"zap\": \"<polygon points=\\\"13 2 3 14 12 14 11 22 21 10 12 10 13 2\\\"/>\", \"hourglass\": \"<path d=\\\"M5 22h14\\\"/><path d=\\\"M5 2h14\\\"/><path d=\\\"M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22\\\"/><path d=\\\"M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2\\\"/>\", \"sparkles\": \"<path d=\\\"M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z\\\"/><path d=\\\"M20 3v4\\\"/><path d=\\\"M22 5h-4\\\"/><path d=\\\"M4 17v2\\\"/><path d=\\\"M5 18H3\\\"/>\", \"trophy\": \"<path d=\\\"M6 9H4.5a2.5 2.5 0 0 1 0-5H6\\\"/><path d=\\\"M18 9h1.5a2.5 2.5 0 0 0 0-5H18\\\"/><path d=\\\"M4 22h16\\\"/><path d=\\\"M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22\\\"/><path d=\\\"M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22\\\"/><path d=\\\"M18 2H6v7a6 6 0 0 0 12 0V2Z\\\"/>\", \"trending-up\": \"<polyline points=\\\"22 7 13.5 15.5 8.5 10.5 2 17\\\"/><polyline points=\\\"16 7 22 7 22 13\\\"/>\", \"trending-down\": \"<polyline points=\\\"22 17 13.5 8.5 8.5 13.5 2 7\\\"/><polyline points=\\\"16 17 22 17 22 11\\\"/>\", \"bar-chart-3\": \"<path d=\\\"M3 3v18h18\\\"/><path d=\\\"M18 17V9\\\"/><path d=\\\"M13 17V5\\\"/><path d=\\\"M8 17v-3\\\"/>\", \"coins\": \"<circle cx=\\\"8\\\" cy=\\\"8\\\" r=\\\"6\\\"/><path d=\\\"M18.09 10.37A6 6 0 1 1 10.34 18\\\"/><path d=\\\"M7 6h1v4\\\"/><path d=\\\"m16.71 13.88.7.71-2.82 2.82\\\"/>\", \"rocket\": \"<path d=\\\"M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z\\\"/><path d=\\\"m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z\\\"/><path d=\\\"M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0\\\"/><path d=\\\"M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5\\\"/>\", \"crown\": \"<path d=\\\"M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519l-2.834 10.246a1 1 0 0 1-.956.734H5.81a1 1 0 0 1-.957-.734L2.02 6.02a.5.5 0 0 1 .798-.519l4.276 3.664a1 1 0 0 0 1.516-.294z\\\"/><path d=\\\"M5 21h14\\\"/>\", \"image\": \"<rect width=\\\"18\\\" height=\\\"18\\\" x=\\\"3\\\" y=\\\"3\\\" rx=\\\"2\\\" ry=\\\"2\\\"/><circle cx=\\\"9\\\" cy=\\\"9\\\" r=\\\"2\\\"/><path d=\\\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\\\"/>\"}");
+
+const LUCIDE_SPRITE = (() => {
+  const symbols = Object.keys(LUCIDE_ICONS).map(k => `<symbol id="luc-${k}" viewBox="0 0 24 24">${LUCIDE_ICONS[k]}</symbol>`).join("");
+  return `<svg class="lucide-sprite" width="0" height="0" style="position:absolute;width:0;height:0" aria-hidden="true">${symbols}</svg>`;
+})();
+
+/** Render an inline Lucide icon as <svg><use href="#luc-{name}"/></svg>. */
+function icon(name: string, size: number = 18, cls: string = ""): string {
+  return `<svg class="ic ${cls}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#luc-${name}"/></svg>`;
+}
+
 const RECAP_CSS = `
 :root{color-scheme:dark;--bg:#0b0b14;--fg:#fff;--muted:rgba(255,255,255,.7);
 --g1:#7c3aed;--g2:#ec4899;--g3:#f59e0b;--g4:#22d3ee;--card:rgba(255,255,255,.07);--line:rgba(255,255,255,.14)}
@@ -82,6 +107,12 @@ body.theme-cyan{--g1:#06b6d4;--g2:#3b82f6;--g4:#22d3ee}
 body.theme-ember{--g1:#ef4444;--g2:#f59e0b;--g4:#fb923c}
 body.theme-royal{--g1:#7c3aed;--g2:#f59e0b;--g4:#a855f7}
 body.theme-dawn{--g1:#f59e0b;--g2:#ec4899;--g4:#fcd34d}
+body.mood-calm{--g1:#60a5fa;--g2:#a78bfa;--g3:#34d399;--g4:#fbbf24;--anim-dur:14s}
+body.mood-wild{--g1:#f43f5e;--g2:#fbbf24;--g3:#22d3ee;--g4:#a855f7;--anim-dur:4s}
+body.mood-mysterious{--g1:#6366f1;--g2:#1e1b4b;--g3:#312e81;--g4:#1e293b;--anim-dur:18s}
+body.mood-energetic{--anim-dur:8s}
+.slide--hero .big{font-size:clamp(56px,20vw,150px);filter:drop-shadow(0 0 30px rgba(124,58,237,.5))}
+.slide--hero .headline{font-size:clamp(32px,10vw,72px)}
 .navdots{position:fixed;right:10px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:7px;z-index:30}
 .navdots i{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.25);transition:background .3s,transform .3s;cursor:pointer}
 .navdots i.on{background:var(--g4);transform:scale(1.5)}
@@ -100,7 +131,7 @@ radial-gradient(700px 500px at 100% 100%,rgba(236,72,153,.25),transparent 55%)}
 .kicker{font-size:clamp(12px,3.2vw,15px);letter-spacing:.18em;text-transform:uppercase;color:var(--muted);font-weight:700}
 .big{font-size:clamp(40px,16vw,120px);font-weight:900;line-height:.95;
 background:linear-gradient(120deg,var(--g4),var(--g1),var(--g2),var(--g3));-webkit-background-clip:text;
-background-clip:text;color:transparent;background-size:200% 200%;animation:flow 8s ease infinite}
+background-clip:text;color:transparent;background-size:200% 200%;animation:flow var(--anim-dur,8s) ease infinite}
 @keyframes flow{0%,100%{background-position:0 50%}50%{background-position:100% 50%}}
 .headline{font-size:clamp(26px,8vw,56px);font-weight:900;line-height:1.05}
 .caption{font-size:clamp(15px,4.4vw,22px);color:var(--muted);line-height:1.5;max-width:34ch}
@@ -126,22 +157,39 @@ border:1px solid var(--line);box-shadow:0 18px 50px rgba(0,0,0,.45)}
 @media(max-width:520px){.bento{grid-template-columns:1fr 1fr}}
 .bento2{display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:74px;gap:10px;width:100%;max-width:560px}
 .b2{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:18px;background:var(--card);
-display:flex;flex-direction:column;justify-content:center;padding:12px 14px;text-align:left;
+display:flex;flex-direction:column;justify-content:flex-end;padding:10px 12px 12px;text-align:left;
 transition:transform .2s,box-shadow .2s}
 .b2:hover{transform:translateY(-4px);box-shadow:0 12px 28px rgba(0,0,0,.35)}
-.b2-anchor{grid-column:span 2;grid-row:span 2;background:linear-gradient(140deg,rgba(124,58,237,.32),rgba(236,72,153,.18),var(--card))}
+.b2-anchor{grid-column:span 2;grid-row:span 2;display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:center;background:linear-gradient(140deg,rgba(124,58,237,.32),rgba(236,72,153,.18),var(--card))}
 .b2-wide{grid-column:span 2;flex-direction:row;align-items:center;gap:12px;background:linear-gradient(140deg,rgba(34,211,238,.2),var(--card))}
 .b2-sm{background:linear-gradient(140deg,rgba(255,255,255,.06),var(--card))}
 .b2-sm:nth-of-type(3n){background:linear-gradient(140deg,rgba(245,158,11,.16),var(--card))}
-.b2-ic{font-size:38px;line-height:1}
-.b2-ic-sm{font-size:24px;line-height:1}
-.b2-num{font-size:clamp(34px,9vw,52px);font-weight:900;line-height:1;margin-top:6px}
+.b2-ic,.b2-ic-sm{position:absolute;top:8px;right:8px;width:18px;height:18px;opacity:.55;color:var(--muted);display:inline-block}
+.b2-ic-sm{width:14px;height:14px}
+.b2-anchor .b2-ic{width:18px;height:18px;top:10px;right:10px}
+.b2-anchor .b2-l{display:flex;flex-direction:column;justify-content:center;gap:2px;min-width:0}
+.b2-num{font-size:clamp(28px,7.5vw,42px);font-weight:900;line-height:1;margin-top:0}
 .b2-num-sm{font-size:clamp(20px,5.5vw,28px);font-weight:900;line-height:1;margin-top:3px}
-.b2-lbl{font-size:14px;font-weight:700;margin-top:4px}
-.b2-lbl-sm{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
-.b2-quip{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.35}
+.b2-lbl{font-size:12px;font-weight:700;margin-top:4px}
+.b2-lbl-sm{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.b2-quip{font-size:11px;color:var(--muted);line-height:1.4;padding-right:24px;text-align:right;align-self:center;margin-top:0}
 .b2-wide-tx{display:flex;flex-direction:column}
 .bento-chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:14px}
+.ic{display:inline-block;vertical-align:middle;flex:0 0 auto;color:currentColor}
+.speed-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;width:100%;max-width:520px}
+.speed-card{position:relative;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:14px;text-align:left;display:flex;flex-direction:column;gap:4px}
+.speed-fast{background:linear-gradient(140deg,rgba(34,211,238,.18),var(--card))}
+.speed-slow{background:linear-gradient(140deg,rgba(245,158,11,.18),var(--card))}
+.speed-ic{position:absolute;top:10px;right:10px;font-size:16px;opacity:.7}
+.speed-lbl{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.speed-name{font-size:clamp(15px,4vw,20px);font-weight:800;line-height:1.15;padding-right:24px}
+.speed-val{font-size:clamp(20px,5vw,28px);font-weight:900;line-height:1.1}
+@media(max-width:420px){.speed-grid{grid-template-columns:1fr;gap:8px}}
+.stats-card{display:flex;flex-direction:column;gap:10px;margin-top:6px}
+.stats-row{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.stats-lbl{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.stats-val{font-size:clamp(18px,4vw,22px);font-weight:900;background:linear-gradient(120deg,var(--g1),var(--g2));-webkit-background-clip:text;background-clip:text;color:transparent}
+.chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:4px}
 @media(max-width:520px){.bento2{grid-auto-rows:64px;gap:8px}.b2-anchor{grid-row:span 2}}
 .stat .num{font-size:clamp(26px,7vw,40px);font-weight:900}
 .stat .lbl{font-size:clamp(12px,3.4vw,14px);color:var(--muted);margin-top:4px}
@@ -393,6 +441,41 @@ function section(id: string, inner: string): string {
   return `<section class="slide" data-slide="${id}"><div class="wrap">${inner}</div></section>`;
 }
 
+/** Apply AI-driven per-user layout hints to the rendered section list. */
+function applyLayoutHints(sections: string[], hints: LayoutHints | null | undefined): string[] {
+  if (!hints) return sections;
+  let arr = sections;
+  // 1. Reorder top N sections if requested
+  if (Array.isArray(hints.reorderTop) && hints.reorderTop.length) {
+    const wanted = hints.reorderTop
+      .map((id) => arr.find((html) => html.includes(`data-slide="${id}"`)))
+      .filter(Boolean) as string[];
+    if (wanted.length) {
+      const used = new Set(wanted);
+      const rest = arr.filter((html) => !used.has(html));
+      arr = [...wanted, ...rest];
+    }
+  }
+  // 2. Hide sections
+  if (Array.isArray(hints.hiddenSections) && hints.hiddenSections.length) {
+    const hideSet = new Set(hints.hiddenSections);
+    arr = arr.filter((html) => {
+      for (const id of hideSet) if (html.includes(`data-slide="${id}"`)) return false;
+      return true;
+    });
+  }
+  // 3. Hero: add class to the chosen section's wrapper
+  if (hints.hero) {
+    arr = arr.map((html) => {
+      if (html.includes(`data-slide="${hints.hero}"`)) {
+        return html.replace('class="slide"', 'class="slide slide--hero"');
+      }
+      return html;
+    });
+  }
+  return arr;
+}
+
 function n(stats: any, path: string, def = 0): number {
   try {
     return path.split(".").reduce((o, k) => (o == null ? undefined : o[k]), stats) ?? def;
@@ -428,20 +511,19 @@ function buildSections(d: RecapHtmlData): string {
     ${mediaTag(A.intro, d.base)}
     <div class="hint">Scroll / geser ke bawah ⌄</div>`));
 
-  // 2. Requests
+  // 2-3b. Combined Statistics (request + tokens + cost in one section)
   const reqT = txt("requests", `${fmtNum(n(s, "totals.requests"))} request`, "Total kamu mecut AI bulan ini.");
-  out.push(section("requests", `
-    <div class="kicker reveal">Total Request</div>
-    <div class="big reveal" data-count="${n(s, "totals.requests")}">0</div>
+  const cost = s.cost;
+  const hasCost = !!(cost && cost.totalMicro > 0);
+  out.push(section("stats", `
+    <div class="kicker reveal">Statistik Bulan Ini</div>
+    <div class="big reveal" data-count="${n(s, "totals.requests")}">${fmtNum(n(s, "totals.requests"))}</div>
     <div class="caption reveal">${reqT.caption}</div>
-    ${mediaTag(A.requests, d.base)}`));
-
-  // 3. Tokens (input vs output)
-  const tokT = txt("tokens", `${fmtNum(n(s, "totals.totalTokens"))} token`, "Seberapa banyak kamu ngobrol sama AI.");
-  out.push(section("tokens", `
-    <div class="kicker reveal">Token Kamu</div>
-    <div class="headline reveal">${tokT.headline}</div>
-    <div class="card reveal">
+    <div class="card reveal stats-card">
+      <div class="stats-row">
+        <div class="stats-lbl">Token</div>
+        <div class="stats-val">${fmtNum(n(s, "totals.totalTokens"))}</div>
+      </div>
       <div class="bars">
         <div><div class="barlbl"><span>📥 Input</span><span>${fmtNum(inputTok)}</span></div>
           <div class="bar" style="--w:${inPct}%"><span class="b-in"></span></div></div>
@@ -449,40 +531,30 @@ function buildSections(d: RecapHtmlData): string {
           <div class="bar" style="--w:${outPct}%"><span class="b-out"></span></div></div>
       </div>
     </div>
-    <div class="caption reveal">${tokT.caption}</div>
-    ${mediaTag(A.tokens, d.base)}`));
-
-  // 3b. Cost — what Groupy spends on your AI usage
-  const cost = s.cost;
-  if (cost && (cost.totalMicro > 0)) {
-    const maxC = Math.max(cost.inputMicro || 0, cost.outputMicro || 0, 1);
-    const inCPct = Math.round(((cost.inputMicro || 0) / maxC) * 100);
-    const outCPct = Math.round(((cost.outputMicro || 0) / maxC) * 100);
-    out.push(section("cost", `
-      <div class="kicker reveal">Biaya Groupy buat Kamu</div>
-      <div class="big reveal">${fmtMoney(cost.totalMicro)}</div>
-      <div class="card reveal">
-        <div class="bars">
-          <div><div class="barlbl"><span>📥 Input</span><span>${fmtMoney(cost.inputMicro)}</span></div>
-            <div class="bar" style="--w:${inCPct}%"><span class="b-in"></span></div></div>
-          <div><div class="barlbl"><span>📤 Output</span><span>${fmtMoney(cost.outputMicro)}</span></div>
-            <div class="bar" style="--w:${outCPct}%"><span class="b-out"></span></div></div>
-        </div>
+    ${hasCost ? `<div class="card reveal stats-card">
+      <div class="stats-row">
+        <div class="stats-lbl">Biaya</div>
+        <div class="stats-val">${fmtMoney(cost.totalMicro)}</div>
       </div>
-      ${cost.mostExpensiveModel ? `<div class="chip reveal">💸 Termahal: ${escapeHtml(cost.mostExpensiveModel.model)} (${fmtMoney(cost.mostExpensiveModel.micro)})</div>` : ""}
+      <div class="bars">
+        <div><div class="barlbl"><span>📥 Input</span><span>${fmtMoney(cost.inputMicro)}</span></div>
+          <div class="bar" style="--w:${Math.round(((cost.inputMicro||0)/Math.max(cost.inputMicro||0,cost.outputMicro||0,1))*100)}%"><span class="b-in"></span></div></div>
+        <div><div class="barlbl"><span>📤 Output</span><span>${fmtMoney(cost.outputMicro)}</span></div>
+          <div class="bar" style="--w:${Math.round(((cost.outputMicro||0)/Math.max(cost.inputMicro||0,cost.outputMicro||0,1))*100)}%"><span class="b-out"></span></div></div>
+      </div>
+      <div class="chips reveal">${cost.mostExpensiveModel ? `<div class="chip reveal">💎 Termahal: ${escapeHtml(cost.mostExpensiveModel.model)} (${fmtMoney(cost.mostExpensiveModel.micro)})</div>` : ""}
       ${cost.cheapestModel ? `<div class="chip reveal">🪙 Termurah: ${escapeHtml(cost.cheapestModel.model)} (${fmtMoney(cost.cheapestModel.micro)})</div>` : ""}
       ${cost.mostExpensiveDay ? `<div class="chip reveal">📅 Hari paling boros: ${escapeHtml(cost.mostExpensiveDay.day)} (${fmtMoney(cost.mostExpensiveDay.micro)})</div>` : ""}
-      ${cost.mostExpensiveHour !== null && cost.mostExpensiveHour ? `<div class="chip reveal">⏰ Jam paling boros: ${cost.mostExpensiveHour.hour}:00 WIB (${fmtMoney(cost.mostExpensiveHour.micro)})</div>` : ""}
-      <div class="caption reveal">Segini yang Groupy keluarin biar kamu bisa ngoding bareng AI. 🙏</div>
-      ${mediaTag(A.tokens, d.base)}`));
-  }
+      ${cost.mostExpensiveHour !== null && cost.mostExpensiveHour ? `<div class="chip reveal">⏰ Jam paling boros: ${cost.mostExpensiveHour.hour}:00 WIB (${fmtMoney(cost.mostExpensiveHour.micro)})</div>` : ""}</div>
+    </div>` : ""}
+    ${mediaTag(A.tokens, d.base)}`));
 
   // 4. Favorite model
   const favT = txt("favoriteModel", escapeHtml(n2(s, "models.favorite") || "-"), "Model andalan kamu.");
   out.push(section("favoriteModel", `
     <div class="kicker reveal">Model Favorit</div>
     <div class="headline reveal">${favT.headline}</div>
-    <div class="chip reveal">⭐ ${escapeHtml(n2(s, "models.favorite") || "-")}</div>
+    <div class="chips reveal"><div class="chip reveal">⭐ ${escapeHtml(n2(s, "models.favorite") || "-")}</div></div>
     <div class="caption reveal">${favT.caption}</div>
     ${mediaTag(A.favoriteModel, d.base)}`));
 
@@ -493,31 +565,35 @@ function buildSections(d: RecapHtmlData): string {
     out.push(section("leastModel", `
       <div class="kicker reveal">Yang Terlupakan</div>
       <div class="headline reveal">${leastT.headline}</div>
-      <div class="chip reveal">😶 ${escapeHtml(least.model)} — ${fmtNum(least.requests || 0)}x</div>
+      <div class="chips reveal"><div class="chip reveal">😶 ${escapeHtml(least.model)} — ${fmtNum(least.requests || 0)}x</div></div>
       <div class="caption reveal">${leastT.caption}</div>
       ${mediaTag(A.leastModel, d.base)}`));
   }
 
-  // 5b. Fastest model (lowest avg latency)
+  // 5b. Kecepatan Model (fastest + slowest combined)
   const fastest = s.models?.fastest;
-  if (fastest && fastest.model) {
-    out.push(section("fastestModel", `
-      <div class="kicker reveal">Model Tercepat</div>
-      <div class="headline reveal">${escapeHtml(fastest.model)}</div>
-      <div class="chip reveal">⚡ rata-rata ${fmtNum(fastest.avgLatencyMs || 0)}ms</div>
-      <div class="caption reveal">Ngebut, jawab kilat tanpa drama.</div>
-      ${mediaTag(A.fastestModel, d.base)}`));
-  }
-
-  // 5c. Slowest model (highest avg latency)
   const slowest = s.models?.slowest;
-  if (slowest && slowest.model && (!fastest || slowest.model !== fastest.model)) {
-    out.push(section("slowestModel", `
-      <div class="kicker reveal">Model Terlemot</div>
-      <div class="headline reveal">${escapeHtml(slowest.model)}</div>
-      <div class="chip reveal">🐌 rata-rata ${fmtNum(slowest.avgLatencyMs || 0)}ms</div>
-      <div class="caption reveal">Sabar ya, dia mikir keras dulu.</div>
-      ${mediaTag(A.slowestModel, d.base)}`));
+  const hasFast = !!(fastest && fastest.model);
+  const hasSlow = !!(slowest && slowest.model && (!fastest || slowest.model !== fastest.model));
+  if (hasFast || hasSlow) {
+    out.push(section("modelSpeed", `
+      <div class="kicker reveal">Kecepatan Model</div>
+      <div class="speed-grid reveal">
+        ${hasFast ? `<div class="speed-card speed-fast">
+          <div class="speed-ic">⚡</div>
+          <div class="speed-lbl">Tercepat</div>
+          <div class="speed-name">${escapeHtml(fastest.model)}</div>
+          <div class="speed-val">${fmtNum(fastest.avgLatencyMs || 0)}ms</div>
+        </div>` : ""}
+        ${hasSlow ? `<div class="speed-card speed-slow">
+          <div class="speed-ic">🐌</div>
+          <div class="speed-lbl">Terlemot</div>
+          <div class="speed-name">${escapeHtml(slowest.model)}</div>
+          <div class="speed-val">${fmtNum(slowest.avgLatencyMs || 0)}ms</div>
+        </div>` : ""}
+      </div>
+      <div class="caption reveal">${hasFast && hasSlow ? "Salah satu ngebut, yang satu mikir keras dulu." : hasFast ? "Ngebut, jawab kilat tanpa drama." : "Sabar ya, dia mikir keras dulu."}</div>
+      ${mediaTag(A.fastestModel, d.base)}`));
   }
 
   // 6. Active time
@@ -526,11 +602,13 @@ function buildSections(d: RecapHtmlData): string {
   out.push(section("activeTime", `
     <div class="kicker reveal">Jam Sibuk</div>
     <div class="big reveal">${hr >= 0 ? hr + ":00" : "-"}</div>
-    <div class="caption reveal">${actT.caption}</div>
+    <div class="chips reveal">
     ${s.activity?.favoriteWeekday ? `<div class="chip reveal">📅 Paling rajin hari ${escapeHtml(s.activity.favoriteWeekday)}</div>` : ""}
     ${s.activity?.mostProductiveHour ? `<div class="chip reveal">⚡ Jam paling produktif: ${n(s, "activity.mostProductiveHour.hour")}:00 WIB</div>` : ""}
     ${s.activity?.mostActiveDay ? `<div class="chip reveal">🔥 Hari paling aktif: ${escapeHtml(s.activity.mostActiveDay.day)} (${fmtNum(n(s, "activity.mostActiveDay.requests"))} req)</div>` : ""}
     ${(n(s, "activity.weekendRequests") + n(s, "activity.weekdayRequests")) > 0 ? `<div class="chip reveal">🗓️ Weekday ${fmtNum(n(s, "activity.weekdayRequests"))} vs Weekend ${fmtNum(n(s, "activity.weekendRequests"))}</div>` : ""}
+    </div>
+    <div class="caption reveal">${actT.caption}</div>
     ${mediaTag(A.activeTime, d.base)}`));
 
   // 7. Persona
@@ -545,17 +623,16 @@ function buildSections(d: RecapHtmlData): string {
   // 8. Stats grid
   out.push(section("grid", `
     <div class="kicker reveal">Angka Lain</div>
-    <div class="bento2 reveal">
-      ${bentoBig("🛠️", fmtNum(n(s, "tools.totalToolCalls")), "Tool calls", "Agentic sejati — nyuruh AI mulu.")}
-      ${bentoSm("📆", n(s, "activity.activeDays"), "Hari aktif")}
-      ${bentoSm("🔥", n(s, "activity.longestStreak"), "Streak")}
-      ${bentoSm("💬", n(s, "sessions.count"), "Sesi chat")}
-      ${bentoSm("⏱️", fmtNum(n(s, "latency.avgMs")), "Latency (ms)")}
-      ${bentoWide("🤖", n(s, "tools.toolTurnPercent") + "%", "turn pakai tool", "Tukang suruh AI.")}
-      ${bentoSm("💻", n(s, "devices.uniqueCount"), "Device")}
-    </div>
+<div class="bento2 reveal">
+      ${bentoBig(icon("wrench",18,"b2-ic"), fmtNum(n(s, "tools.totalToolCalls")), "Tool calls", "Agentic sejati — nyuruh AI mulu.")}
+      ${bentoSm(icon("calendar-check",14,"b2-ic-sm"), n(s, "activity.activeDays"), "Hari aktif")}
+      ${bentoSm(icon("flame",14,"b2-ic-sm"), n(s, "activity.longestStreak"), "Streak")}
+      ${bentoSm(icon("message-circle",14,"b2-ic-sm"), n(s, "sessions.count"), "Sesi chat")}
+      ${bentoSm(icon("timer",14,"b2-ic-sm"), fmtNum(n(s, "latency.avgMs")), "Latency (ms)")}
+      ${bentoWide(icon("bot",14,"b2-ic-sm"), n(s, "tools.toolTurnPercent") + "%", "turn pakai tool", "Tukang suruh AI.")}
+      ${bentoSm(icon("laptop",14,"b2-ic-sm"), n(s, "devices.uniqueCount"), "Device")}
     <div class="bento-chips reveal">
-      ${s.ide?.favorite ? `<div class="chip">💻 IDE favorit: ${escapeHtml(s.ide.favorite)}</div>` : ""}
+      ${s.ide?.favorite ? `<div class="chip">${icon("code-2",14)} IDE favorit: ${escapeHtml(s.ide.favorite)}</div>` : ""}
       ${s.comparison?.hasPrev ? `<div class="chip">${deltaChip(s.comparison)}</div>` : ""}
     </div>`));
 
@@ -775,7 +852,7 @@ function buildSections(d: RecapHtmlData): string {
     </div>
     ${buildTestimonialBlock(d)}`));
 
-  return out.join("\n");
+  return applyLayoutHints(out, d.layoutHints).join("\n");
 }
 
 function buildTestimonialBlock(d: RecapHtmlData): string {
@@ -811,22 +888,22 @@ function n2(stats: any, path: string): string {
   } catch { return ""; }
 }
 
-/** Bento anchor (2x2) tile: big emoji, big number, label, meme quip. */
+/** Bento anchor (2x2) tile: small icon top-right, big number on left, quip on right. */
 function bentoBig(icon: string, value: string | number, label: string, quip: string): string {
-  return `<div class="b2 b2-anchor"><div class="b2-ic">${icon}</div>
+  return `<div class="b2 b2-anchor">${icon}<div class="b2-l">
     <div class="b2-num">${escapeHtml(String(value))}</div>
-    <div class="b2-lbl">${escapeHtml(label)}</div>
+    <div class="b2-lbl">${escapeHtml(label)}</div></div>
     <div class="b2-quip">${escapeHtml(quip)}</div></div>`;
 }
 /** Bento small (1x1) tile. */
 function bentoSm(icon: string, value: string | number, label: string): string {
-  return `<div class="b2 b2-sm"><div class="b2-ic-sm">${icon}</div>
+  return `<div class="b2 b2-sm">${icon}
     <div class="b2-num-sm">${escapeHtml(String(value))}</div>
     <div class="b2-lbl-sm">${escapeHtml(label)}</div></div>`;
 }
 /** Bento wide (2x1) tile with quip. */
 function bentoWide(icon: string, value: string | number, label: string, quip: string): string {
-  return `<div class="b2 b2-wide"><div class="b2-ic-sm">${icon}</div>
+  return `<div class="b2 b2-wide">${icon}
     <div class="b2-wide-tx"><div class="b2-num-sm">${escapeHtml(String(value))} <span class="b2-lbl-sm">${escapeHtml(label)}</span></div>
     <div class="b2-quip">${escapeHtml(quip)}</div></div></div>`;
 }
@@ -834,11 +911,11 @@ function bentoWide(icon: string, value: string | number, label: string, quip: st
 function deltaChip(cmp: any): string {
   const r = cmp.requestsDeltaPercent || 0;
   const cls = r >= 0 ? "delta-up" : "delta-down";
-  const arrow = r >= 0 ? "▲" : "▼";
+  const arrow = r >= 0 ? icon("trending-up", 14) : icon("trending-down", 14);
   const tok = cmp.tokensDeltaPercent || 0;
   const tcls = tok >= 0 ? "delta-up" : "delta-down";
-  const tarrow = tok >= 0 ? "▲" : "▼";
-  return `📈 vs bulan lalu: <span class="${cls}">${arrow} ${Math.abs(r)}% req</span> · <span class="${tcls}">${tarrow} ${Math.abs(tok)}% token</span>`;
+  const tarrow = tok >= 0 ? icon("trending-up", 14) : icon("trending-down", 14);
+  return `${icon("bar-chart-3", 14)} vs bulan lalu: <span class="${cls}">${arrow} ${Math.abs(r)}% req</span> · <span class="${tcls}">${tarrow} ${Math.abs(tok)}% token</span>`;
 }
 
 /** Build a 7x24 heatmap (weekday rows x hour cols) from perDay/perHour data. */
@@ -1489,7 +1566,8 @@ export function renderRecapHtml(d: RecapHtmlData): string {
 <meta name="twitter:image" content="${escapeHtml(ogImg)}">
 <style>${RECAP_CSS}</style>
 </head>
-<body class="theme-${escapeHtml(personaThemeKey(d))}" data-url="${escapeHtml(d.pageUrl)}" data-title="${escapeHtml(title)}">
+<body class="theme-${escapeHtml(personaThemeKey(d))}${d.layoutHints?.mood ? ` mood-${escapeHtml(d.layoutHints.mood)}` : ""}" data-url="${escapeHtml(d.pageUrl)}" data-title="${escapeHtml(title)}">
+${LUCIDE_SPRITE}
 <script>window.__RECAP_CLEAN_PATH=${JSON.stringify(d.cleanPath || "")};</script>
 <div class="deck">${sections}</div>
 <div class="navdots" id="navDots"></div>

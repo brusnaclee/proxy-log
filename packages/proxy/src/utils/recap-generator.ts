@@ -24,6 +24,13 @@ export interface RecapNarrative {
   badges?: Array<{ icon: string; title: string; desc: string }>;
   /** Card meta: live anime wallpaper + nested glass tile plan. */
   card?: import("./recap-card-meta.js").CardMeta | null;
+  /** AI-driven per-user layout decisions (hero, mood, hide, reorder). */
+  layoutHints?: {
+    hero?: "stats" | "rank" | "activeTime" | "favoriteModel" | "persona";
+    mood?: "energetic" | "calm" | "wild" | "mysterious";
+    hiddenSections?: string[];
+    reorderTop?: string[];
+  } | null;
 }
 
 const SECTION_KEYS = [
@@ -335,9 +342,26 @@ Buat JSON dengan struktur PERSIS:
     "closing": { "headline": "...", "caption": "...", "assetId": "..." }
   },
   "badges": [ { "icon": "<1 emoji>", "title": "<max 24 char, kreatif & relevan ke angka>", "desc": "<max 60 char, lucu>" } ],
-  "closing": "..."
+  "closing": "...",
+  "layoutHints": {
+    "hero": "<stats|rank|activeTime|favoriteModel|persona>",
+    "mood": "<energetic|calm|wild|mysterious>",
+    "hiddenSections": ["<sectionId>", "..."],
+    "reorderTop": ["<sectionId>", "<sectionId>", "<sectionId>"]
+  }
 }
 ATURAN BADGE: 3-10 badge, tiap badge HARUS punya 1 emoji unik + judul kreatif yang nyambung ke statistik user (jangan generik), desc singkat lucu. Variasikan tiap user.
+
+ATURAN LAYOUT HINTS (keputusan layout visual per user — ini bukan caption, ini kendali UI):
+- "hero": section mana yang PALING KUAT untuk user ini (paling banyak request → "stats"; rank tinggi → "rank"; malam hari → "activeTime"; model spesifik → "favoriteModel"; persona kuat → "persona"). Default: "stats".
+- "mood": nuansa vibe user. Default "energetic".
+  - "energetic": user aktif produktif, request tinggi, default
+  - "calm": user santai, weekend-heavy, output ratio tinggi, sesi panjang
+  - "wild": user tidak teratur, request meledak di jam tertentu, sangat tidak均衡
+  - "mysterious": user minim data (baru, < 5 hari aktif, < 50 request)
+- "hiddenSections": section yang bisa di-skip (contoh: user < 5 hari aktif → hide "Hari Santai" & "Fun Facts" atau "modelSpeed" kalau model < 2). Pilih dari sectionId yang dikenal: "intro","stats","favoriteModel","leastModel","modelSpeed","activeTime","persona","grid","ach","facts","heatmap","rest","community","rank","ide","closing".
+- "reorderTop": urutan 3 section pertama. Misal top-3 user → ["rank","stats","persona"]; user nokturnal → ["activeTime","stats","persona"]. Max 3 section.
+
 HANYA JSON, tanpa teks lain, tanpa code fence.`;
 }
 
@@ -433,6 +457,20 @@ export async function generateNarrative(
         if (sections[k]) sections[k].assetId = assetChoices[k];
       }
 
+      // Extract AI-driven layout hints (validated, with safe defaults)
+      const VALID_HERO = ["stats", "rank", "activeTime", "favoriteModel", "persona"] as const;
+      const VALID_MOOD = ["energetic", "calm", "wild", "mysterious"] as const;
+      const lh = parsed.layoutHints || {};
+      const hero = VALID_HERO.includes(lh.hero) ? lh.hero : "stats";
+      const mood = VALID_MOOD.includes(lh.mood) ? lh.mood : "energetic";
+      const hiddenSections = Array.isArray(lh.hiddenSections)
+        ? lh.hiddenSections.filter((x: any) => typeof x === "string").slice(0, 8)
+        : undefined;
+      const reorderTop = Array.isArray(lh.reorderTop)
+        ? lh.reorderTop.filter((x: any) => typeof x === "string").slice(0, 3)
+        : undefined;
+      const layoutHints = { hero, mood, hiddenSections, reorderTop };
+
       return {
         ok: true,
         narrative: {
@@ -444,6 +482,7 @@ export async function generateNarrative(
           closing: typeof parsed.closing === "string" ? sanitizeText(String(parsed.closing)).slice(0, 200) : fallback.closing,
           assetChoices,
           badges: validateBadges(parsed.badges, fallback.badges),
+          layoutHints,
         },
       };
     } catch {
