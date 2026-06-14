@@ -270,11 +270,11 @@ box-shadow:none;padding:10px 12px}
 .wc-id .av{width:42px;height:42px;border-radius:50%;object-fit:cover;border:2px solid rgba(255,255,255,.7);flex:0 0 auto;box-shadow:0 6px 18px rgba(0,0,0,.4)}
 .wc-id .name{font-size:16px;font-weight:900;line-height:1.05;letter-spacing:-.01em;color:var(--wc-text,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .wc-id .persona{font-size:11px;font-weight:800;color:var(--wc-muted,rgba(255,255,255,.85));text-transform:uppercase;letter-spacing:.08em;margin-top:1px}
-.wc-mosaic{display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:74px;gap:9px}
-.wc-tile{position:relative;display:flex;flex-direction:column;justify-content:center;overflow:hidden;padding:11px 12px;gap:3px;
+.wc-mosaic{display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:78px;gap:9px}
+.wc-tile{position:relative;display:flex;flex-direction:column;justify-content:center;overflow:hidden;padding:10px 12px 12px;gap:3px;
 background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.16);border-radius:14px;
 backdrop-filter:blur(12px) saturate(110%);-webkit-backdrop-filter:blur(12px) saturate(110%)}
-.wc-tile.hero{grid-column:span 2;grid-row:span 2;padding:14px 14px;gap:6px}
+.wc-tile.hero{grid-column:span 2;grid-row:span 2;padding:12px 14px;gap:4px}
 .wc-tile.wide{grid-column:span 2;flex-direction:row;align-items:center;gap:10px}
 .wc-tile .ti{font-size:20px;line-height:1;flex:0 0 auto}
 .wc-tile.hero .ti{font-size:30px}
@@ -315,7 +315,7 @@ scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.3) transparent}
 .wc-sw.on{border-color:#fff;transform:scale(1.18);box-shadow:0 0 0 2px rgba(0,0,0,.4)}
 .wc-themes-hint{font-size:11px;color:var(--muted);text-align:center}
 .wc-themes.wc-locked{opacity:.45;pointer-events:none;filter:saturate(.4)}
-@media(max-width:420px){.wrapcard{aspect-ratio:1/1.65}.wc-mosaic{grid-auto-rows:68px;gap:7px}.wc-stack{padding:10px 10px 12px;gap:6px}.wc-foot{font-size:11px;padding:10px 4px 2px}.wc-id .av{width:38px;height:38px}.wc-tile.hero .tv{font-size:clamp(28px,7vw,42px)}}
+@media(max-width:420px){.wrapcard{aspect-ratio:1/1.65}.wc-mosaic{grid-auto-rows:72px;gap:7px}.wc-stack{padding:10px 10px 12px;gap:6px}.wc-foot{font-size:11px;padding:10px 4px 2px}.wc-id .av{width:38px;height:38px}.wc-tile.hero .tv{font-size:clamp(28px,7vw,42px)}.wc-tile{padding:9px 11px 11px}}
 /* Snap mode: html2canvas-compatible flat rendering for downloads. Kills
    background-clip:text and backdrop-filter so text + glass survive capture. */
 body.wc-snap .wc-tile .tv{visibility:hidden!important;animation:none!important}
@@ -333,6 +333,16 @@ body.wc-snap .wc-quote{background:rgba(0,0,0,.32)!important}
 body.wc-snap .wc-badge{background:rgba(0,0,0,.36)!important}
 body.wc-snap .wc-foot{color:rgba(255,255,255,.95)!important}
 body.wc-snap .wc-id{background:rgba(0,0,0,.32)!important}
+/* Snap mode relax: html2canvas + scale:2 rounds font glyphs a hair larger than
+   the live preview, so the .ts/.tl subtitles overflow .wc-tile's hidden
+   clip area and get sliced off in the download. Loosen just for the capture
+   pass — the live web keeps its tight grid look. */
+body.wc-snap .wc-tile{overflow:visible!important}
+body.wc-snap .wc-mosaic{grid-auto-rows:78px;gap:8px}
+body.wc-snap .wc-tile.hero{padding:12px 14px;gap:4px}
+body.wc-snap .wc-tile .ts{font-size:9px;line-height:1.2;margin-top:1px}
+body.wc-snap .wc-tile.hero .ts{font-size:10px;line-height:1.2;margin-top:2px}
+body.wc-snap .wc-tile .tl{margin-top:3px}
 @media(prefers-reduced-motion:reduce){.wc-wall,.wc-fallback{animation:none}.wc-tile .tv{animation:none}}
 .confetti{position:fixed;inset:0;pointer-events:none;z-index:40;overflow:hidden}
 .confetti i{position:absolute;top:-20px;width:10px;height:14px;opacity:.9;animation:fall linear forwards}
@@ -1152,10 +1162,16 @@ const RECAP_JS = `
       var x = (r.left - sr.left) * html2canvasScale;
       var y = (r.top - sr.top) * html2canvasScale;
       var w = r.width * html2canvasScale;
+      var h = r.height * html2canvasScale;
       var fs = parseFloat(getComputedStyle(v).fontSize) * html2canvasScale;
       ctx.save();
       ctx.font = '900 ' + fs + 'px Inter, system-ui, "Segoe UI", sans-serif';
-      ctx.textBaseline = 'top';
+      // Center the text in the .tv box. The live web uses CSS flex centering
+      // for the same effect, but the canvas has no flexbox — without an
+      // explicit textAlign the text draws flush-left, which is what was
+      // making hero "164" and small tiles look offset in the downloaded GIF.
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
       // Cycle the gradient: shift stops by animOffset for a moving rainbow.
       var grad = ctx.createLinearGradient(x, 0, x + w, 0);
       var phase = animOffset;
@@ -1169,7 +1185,7 @@ const RECAP_JS = `
       ctx.shadowColor = 'rgba(0,0,0,0.45)';
       ctx.shadowBlur = fs * 0.06;
       ctx.shadowOffsetY = fs * 0.04;
-      ctx.fillText(v.textContent || '', x, y);
+      ctx.fillText(v.textContent || '', x + w / 2, y + h / 2);
       ctx.restore();
     });
   }
@@ -1207,31 +1223,8 @@ const RECAP_JS = `
       document.body.classList.add('wc-snap');
       // Two RAFs so the browser flushes the new style before html2canvas reads.
       await new Promise(function(r){requestAnimationFrame(function(){requestAnimationFrame(r);});});
-      // Capture the .wrapcard (not just .wc-stack). The stack is absolutely
-      // positioned with inset:0, and html2canvas sometimes miscomputes its
-      // bounding box when the parent's width comes from aspect-ratio instead
-      // of an explicit px value, which is what made the previous downloads
-      // drift to the left and clip tiles off the bottom. The card itself has
-      // overflow:hidden + border-radius so the snapshot still looks clean.
-      // We also pass explicit width/height/scale so the output is
-      // deterministic regardless of CSS quirks.
-      var cardRect=card.getBoundingClientRect();
       var base=await Promise.race([
-        window.html2canvas(card,{
-          backgroundColor:null,
-          scale:2,
-          useCORS:true,
-          allowTaint:false,
-          logging:false,
-          width:cardRect.width,
-          height:cardRect.height,
-          windowWidth:document.documentElement.clientWidth,
-          windowHeight:document.documentElement.clientHeight,
-          scrollX:0,
-          scrollY:0,
-          x:cardRect.left + window.scrollX,
-          y:cardRect.top + window.scrollY
-        }),
+        window.html2canvas(stackEl,{backgroundColor:null,scale:2,useCORS:true,allowTaint:false,logging:false}),
         new Promise(function(_,rej){setTimeout(function(){rej(new Error('html2canvas timeout 25s'));},25000);})
       ]);
       document.body.classList.remove('wc-snap');
