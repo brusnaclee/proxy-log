@@ -1207,8 +1207,31 @@ const RECAP_JS = `
       document.body.classList.add('wc-snap');
       // Two RAFs so the browser flushes the new style before html2canvas reads.
       await new Promise(function(r){requestAnimationFrame(function(){requestAnimationFrame(r);});});
+      // Capture the .wrapcard (not just .wc-stack). The stack is absolutely
+      // positioned with inset:0, and html2canvas sometimes miscomputes its
+      // bounding box when the parent's width comes from aspect-ratio instead
+      // of an explicit px value, which is what made the previous downloads
+      // drift to the left and clip tiles off the bottom. The card itself has
+      // overflow:hidden + border-radius so the snapshot still looks clean.
+      // We also pass explicit width/height/scale so the output is
+      // deterministic regardless of CSS quirks.
+      var cardRect=card.getBoundingClientRect();
       var base=await Promise.race([
-        window.html2canvas(stackEl,{backgroundColor:null,scale:2,useCORS:true,allowTaint:false,logging:false}),
+        window.html2canvas(card,{
+          backgroundColor:null,
+          scale:2,
+          useCORS:true,
+          allowTaint:false,
+          logging:false,
+          width:cardRect.width,
+          height:cardRect.height,
+          windowWidth:document.documentElement.clientWidth,
+          windowHeight:document.documentElement.clientHeight,
+          scrollX:0,
+          scrollY:0,
+          x:cardRect.left + window.scrollX,
+          y:cardRect.top + window.scrollY
+        }),
         new Promise(function(_,rej){setTimeout(function(){rej(new Error('html2canvas timeout 25s'));},25000);})
       ]);
       document.body.classList.remove('wc-snap');
