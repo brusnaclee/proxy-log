@@ -149,30 +149,71 @@ function wallpaperQueries(stats: any): string[][] {
   return lists;
 }
 
-/** Resolve up to N distinct live anime wallpaper URLs (each from a different query set). */
-async function resolveWallpapers(seedId: string, stats: any, base: string, count = 5): Promise<string[]> {
+/** Extra generic "anime wallpaper" query groups, used to expand the 100-slot picker
+ *  beyond the persona-matched 5-6 sets. Each inner list is one search call that
+ *  may yield multiple candidate URLs. */
+const EXTRA_WALLPAPER_QUERIES: string[][] = [
+  ["anime wallpaper 4k loop", "anime city wallpaper", "anime sky loop", "anime night sky loop"],
+  ["anime bedroom loop", "anime classroom loop", "anime kitchen loop", "anime cafe loop"],
+  ["anime beach loop", "anime ocean loop", "anime forest loop", "anime mountain loop"],
+  ["anime train loop", "anime rain loop", "anime snow loop", "anime fireworks loop"],
+  ["anime library loop", "anime rooftop loop", "anime street loop", "anime shrine loop"],
+  ["anime magical girl loop", "anime mecha loop", "anime samurai loop", "anime idol loop"],
+  ["anime school uniform loop", "anime kimono loop", "anime cyber samurai loop", "anime shrine maiden loop"],
+  ["anime stars loop", "anime moon loop", "anime aurora loop", "anime cloud nine loop"],
+  ["anime sunset city loop", "anime rainy city loop", "anime neon city loop", "anime kanji loop"],
+  ["anime lofi girl loop", "anime lofi boy loop", "anime study loop", "anime chill loop"],
+  ["anime sky sunset loop", "anime purple sky loop", "anime clouds loop", "anime heaven loop"],
+  ["anime flower field loop", "anime sakura loop", "anime garden loop", "anime meadow loop"],
+  ["anime underwater loop", "anime aquarium loop", "anime pool loop", "anime ocean sunset loop"],
+  ["anime desert loop", "anime dune loop", "anime mirage loop", "anime oasis loop"],
+  ["anime space station loop", "anime spaceship loop", "anime galaxy swirl loop", "anime comet loop"],
+  ["anime dragon loop", "anime spirit loop", "anime fox spirit loop", "anime magic circle loop"],
+  ["anime cat ear loop", "anime maid loop", "anime witch loop", "anime knight loop"],
+  ["anime DJ loop", "anime concert loop", "anime disco loop", "anime dance loop"],
+  ["anime retro loop", "anime vaporwave loop", "anime 80s anime loop", "anime 90s anime loop"],
+  ["anime shounen loop", "anime slice of life loop", "anime isekai loop", "anime romcom loop"],
+  ["anime rooftop stars loop", "anime window rain loop", "anime cafe night loop", "anime night drive loop"],
+  ["anime aquarium jellyfish loop", "anime butterfly loop", "anime koi pond loop", "anime waterfall loop"],
+  ["anime bookstore loop", "anime stage loop", "anime theater loop", "anime music room loop"],
+  ["anime snow globe loop", "anime lantern loop", "anime night market loop", "anime festival loop"],
+  ["anime dreamy loop", "anime aesthetic loop", "anime cinematic loop", "anime vibes loop"],
+];
+
+/** Resolve up to N distinct live anime wallpaper URLs with bounded concurrency.
+ *  Each query list is searched once via findLiveGif (which validates the URL).
+ *  Returns whatever could be validated within a soft budget; renderer pads the
+ *  remainder by cycling if needed. */
+async function resolveWallpapers(seedId: string, stats: any, base: string, count = 100): Promise<string[]> {
   const seed = seedFromStr(seedId);
-  const lists = wallpaperQueries(stats);
+  const personaLists = wallpaperQueries(stats);
+  const allLists: string[][] = [...personaLists, ...EXTRA_WALLPAPER_QUERIES];
+
   const out: string[] = [];
   const seen = new Set<string>();
-  for (let i = 0; i < lists.length && out.length < count; i++) {
-    const q = lists[i];
-    let url: string | null = null;
-    try { url = await findLiveGif(q, seed + i); } catch { url = null; }
-    if (!url) {
-      // Last-resort: local self-hosted anime-styled SVG (always live, no CORS issue).
-      const local = memeForCategory("wallpaper" as GifCategory, q, seed + i);
-      if (local) url = assetUrl(base, local.file);
-    }
-    if (url && !seen.has(url)) {
-      seen.add(url);
-      out.push(url);
+  const CONCURRENCY = 8;
+  // Bail early if we already have `count` and a query returns 0 new.
+  let next = 0;
+  async function worker() {
+    while (out.length < count && next < allLists.length) {
+      const myIdx = next++;
+      const q = allLists[myIdx];
+      let url: string | null = null;
+      try { url = await findLiveGif(q, seed + myIdx); } catch { url = null; }
+      if (!url) {
+        const local = memeForCategory("wallpaper" as GifCategory, q, seed + myIdx);
+        if (local) url = assetUrl(base, local.file);
+      }
+      if (url && !seen.has(url)) {
+        seen.add(url);
+        out.push(url);
+      }
     }
   }
-  // If even local fallback didn't yield, synthesize a final entry by reusing first.
-  if (out.length === 0) {
-    out.push(""); // Renderer will fall back to CSS gradient.
-  }
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, allLists.length) }, () => worker()));
+  // Pad with the first one if we got very little (the renderer will cycle).
+  while (out.length > 0 && out.length < 30) out.push(out[0]);
+  if (out.length === 0) out.push("");
   return out;
 }
 

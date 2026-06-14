@@ -252,7 +252,7 @@ background:var(--card);border:1px solid var(--line);border-radius:18px;padding:1
 .heat-axis{display:flex;justify-content:space-between;margin-top:6px;font-size:10px;color:var(--muted);padding-left:17px}
 
 /* === V2 shareable recap card: live wallpaper + nested glass cards ======= */
-.wrapcard{position:relative;width:100%;max-width:380px;aspect-ratio:1/1.5;border-radius:28px;overflow:hidden;
+.wrapcard{position:relative;width:100%;max-width:380px;aspect-ratio:1/1.55;border-radius:28px;overflow:hidden;
 border:1px solid rgba(255,255,255,.28);box-shadow:0 30px 80px rgba(0,0,0,.55),inset 0 0 0 1px rgba(255,255,255,.06);isolation:isolate;background:#0b0b14}
 .wc-wall{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;
 transform:scale(1.06);animation:wcPan 18s ease-in-out infinite alternate;will-change:transform}
@@ -261,52 +261,61 @@ transform:scale(1.06);animation:wcPan 18s ease-in-out infinite alternate;will-ch
 @keyframes wcflow{0%,100%{background-position:0 50%}50%{background-position:100% 50%}}
 .wc-scrim{position:absolute;inset:0;z-index:1;pointer-events:none;
 background:linear-gradient(180deg,var(--wc-scrim,rgba(10,0,30,0.2)) 0%,var(--wc-scrim,rgba(10,0,30,0.2)) 30%,var(--wc-scrimEnd,rgba(10,0,30,0.85)) 100%)}
-.wc-stack{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;gap:8px;padding:14px 14px 12px;color:var(--wc-text,#fff)}
-.wc-glass{position:relative;background:rgba(255,255,255,var(--wc-glass,.14));border:1px solid var(--wc-border,rgba(255,255,255,.28));
-border-radius:18px;backdrop-filter:blur(18px) saturate(140%);-webkit-backdrop-filter:blur(18px) saturate(140%);
-box-shadow:0 8px 28px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.18);padding:10px 12px}
-.wc-id{display:flex;align-items:center;gap:12px;padding:10px 12px}
+.wc-stack{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;gap:8px;padding:14px 14px 14px;color:var(--wc-text,#fff)}
+/* Subtler glass — "barely there but present" */
+.wc-glass{position:relative;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
+border-radius:18px;backdrop-filter:blur(20px) saturate(120%);-webkit-backdrop-filter:blur(20px) saturate(120%);
+box-shadow:none;padding:10px 12px}
+.wc-id{display:flex;align-items:center;gap:12px;padding:10px 12px;background:rgba(0,0,0,.18);border-color:rgba(255,255,255,.14)}
 .wc-id .av{width:54px;height:54px;border-radius:50%;object-fit:cover;border:2.5px solid rgba(255,255,255,.7);flex:0 0 auto;box-shadow:0 6px 18px rgba(0,0,0,.4)}
 .wc-id .name{font-size:19px;font-weight:900;line-height:1.05;letter-spacing:-.01em;color:var(--wc-text,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .wc-id .persona{font-size:12px;font-weight:800;color:var(--wc-muted,rgba(255,255,255,.85));text-transform:uppercase;letter-spacing:.08em;margin-top:2px}
 .wc-mosaic{display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:78px;gap:8px}
-.wc-tile{position:relative;display:flex;flex-direction:column;justify-content:center;overflow:hidden;padding:10px 12px}
+.wc-tile{position:relative;display:flex;flex-direction:column;justify-content:center;overflow:hidden;padding:10px 12px;
+background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:16px;
+backdrop-filter:blur(14px) saturate(115%);-webkit-backdrop-filter:blur(14px) saturate(115%)}
 .wc-tile.hero{grid-column:span 2;grid-row:span 2;padding:14px 14px}
 .wc-tile.wide{grid-column:span 2;flex-direction:row;align-items:center;gap:10px}
 .wc-tile .ti{font-size:22px;line-height:1;flex:0 0 auto}
 .wc-tile.hero .ti{font-size:30px}
 .wc-tile.wide .ti{font-size:24px}
+/* Rainbow glossy animated stat number — solid white fallback + shadow for legibility */
 .wc-tile .tv{font-weight:900;line-height:1;font-size:clamp(22px,5.8vw,30px);
-background:linear-gradient(120deg,var(--wc-a,#fff),var(--wc-b,#fff));-webkit-background-clip:text;background-clip:text;color:transparent;letter-spacing:-.02em}
+color:#fff;text-shadow:0 0 1px rgba(0,0,0,.45),0 1px 2px rgba(0,0,0,.35);
+background:linear-gradient(90deg,#ff4d6d,#ffd93d,#6ee7b7,#22d3ee,#a78bfa,#f472b6,#ff4d6d);
+background-size:300% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;
+animation:tvRainbow 6s linear infinite;letter-spacing:-.02em}
+@keyframes tvRainbow{0%{background-position:0 0}100%{background-position:300% 0}}
 .wc-tile.hero .tv{font-size:clamp(34px,9vw,52px)}
-.wc-tile .tl{font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--wc-muted,rgba(255,255,255,.75));margin-top:4px}
+.wc-tile .tl{font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--wc-muted,rgba(255,255,255,.85));margin-top:4px}
 .wc-tile.hero .tl{font-size:12px;margin-top:6px}
-.wc-tile .ts{font-size:10px;color:var(--wc-muted,rgba(255,255,255,.65));margin-top:2px;line-height:1.25;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wc-tile .ts{font-size:10px;color:var(--wc-muted,rgba(255,255,255,.7));margin-top:2px;line-height:1.25;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wc-tile.wide .tx{display:flex;flex-direction:column;min-width:0}
 .wc-tile.wide .tv{font-size:clamp(15px,3.8vw,19px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wc-tile.wide .tl{margin-top:0}
 .wc-tile .tglow{position:absolute;right:-30%;bottom:-30%;width:120px;height:120px;border-radius:50%;
 background:radial-gradient(closest-side,var(--wc-a,#fff),transparent 70%);opacity:.18;pointer-events:none}
-.wc-quote{display:flex;align-items:flex-start;gap:10px;padding:11px 13px;min-height:54px}
+.wc-quote{display:flex;align-items:flex-start;gap:10px;padding:11px 13px;min-height:54px;background:rgba(0,0,0,.12);border-color:rgba(255,255,255,.12)}
 .wc-quote .qi{font-size:20px;line-height:1;flex:0 0 auto}
 .wc-quote .qx{font-size:12.5px;font-weight:600;line-height:1.35;color:var(--wc-text,#fff);font-style:italic}
-.wc-badge{display:inline-flex;align-items:center;gap:8px;align-self:flex-start;padding:7px 12px;border-radius:999px}
+.wc-badge{display:inline-flex;align-items:center;gap:8px;align-self:flex-start;padding:7px 12px;border-radius:999px;background:rgba(0,0,0,.16);border-color:rgba(255,255,255,.14)}
 .wc-badge .bi{font-size:18px;line-height:1}
 .wc-badge .bt{font-size:12px;font-weight:800;letter-spacing:.02em;text-transform:uppercase}
-.wc-foot{display:flex;justify-content:space-between;align-items:center;padding:6px 4px 0;font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--wc-muted,rgba(255,255,255,.85))}
+.wc-foot{display:flex;justify-content:space-between;align-items:center;padding:10px 6px 4px;font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--wc-muted,rgba(255,255,255,.9))}
 .wc-foot .brand{opacity:.95}
 .wc-themes-wrap{width:100%;max-width:380px;margin-top:14px;display:flex;flex-direction:column;gap:8px;align-items:center}
-.wc-themes{position:relative;width:100%;max-height:96px;overflow-y:auto;overflow-x:hidden;padding:4px;
+.wc-themes{position:relative;width:100%;max-height:170px;overflow-y:auto;overflow-x:hidden;padding:4px;
 display:grid;grid-template-columns:repeat(10,1fr);gap:6px;
 background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:16px;
 scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.3) transparent}
 .wc-themes::-webkit-scrollbar{width:6px}
 .wc-themes::-webkit-scrollbar-thumb{background:rgba(255,255,255,.3);border-radius:3px}
-.wc-sw{width:100%;aspect-ratio:1;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:transform .15s,border-color .15s;position:relative;flex:0 0 auto}
+.wc-sw{width:100%;aspect-ratio:1;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:transform .15s,border-color .15s;position:relative;flex:0 0 auto;background-size:cover;background-position:center;padding:0;outline:0}
+.wc-sw:hover{transform:scale(1.1)}
 .wc-sw.on{border-color:#fff;transform:scale(1.18);box-shadow:0 0 0 2px rgba(0,0,0,.4)}
 .wc-themes-hint{font-size:11px;color:var(--muted);text-align:center}
-@media(max-width:420px){.wc-mosaic{grid-auto-rows:70px;gap:6px}.wc-stack{padding:12px 12px 10px;gap:7px}}
-@media(prefers-reduced-motion:reduce){.wc-wall,.wc-fallback{animation:none}}
+@media(max-width:420px){.wrapcard{aspect-ratio:1/1.6}.wc-mosaic{grid-auto-rows:70px;gap:6px}.wc-stack{padding:12px 12px 12px;gap:7px}.wc-foot{font-size:11px;padding:12px 4px 2px}}
+@media(prefers-reduced-motion:reduce){.wc-wall,.wc-fallback{animation:none}.wc-tile .tv{animation:none}}
 .confetti{position:fixed;inset:0;pointer-events:none;z-index:40;overflow:hidden}
 .confetti i{position:absolute;top:-20px;width:10px;height:14px;opacity:.9;animation:fall linear forwards}
 @keyframes fall{to{transform:translateY(110dvh) rotate(720deg)}}
@@ -1037,7 +1046,8 @@ const RECAP_JS = `
     if(cardWall){
       cardWall.style.filter='saturate('+t.sat+') brightness('+t.bright+')';
       if(swapWall!==false){
-        var w=wallsData[t.wall]||wallsData[0];
+        // Use the wallpaper at the swatch's exact index (100 slots now).
+        var w=wallsData[curTheme]||wallsData[t.wall]||wallsData[0];
         if(w) cardWall.src=w;
       }
     }
@@ -1048,13 +1058,24 @@ const RECAP_JS = `
     [].slice.call(themesWrap?themesWrap.children:[]).forEach(function(sw,j){sw.classList.toggle('on',j===curTheme);});
   }
   if(themesWrap){
-    for(var k=0;k<THEMES.length;k++){
+    var wallCount=Math.max(wallsData.length,1);
+    for(var k=0;k<100;k++){
       (function(idx){
-        var t=THEMES[idx];
-        var sw=document.createElement('div');
+        var t=THEMES[idx%THEMES.length];
+        var sw=document.createElement('button');
+        sw.type='button';
         sw.className='wc-sw'+(idx===curTheme?' on':'');
-        sw.style.background='linear-gradient(135deg,'+t.a+','+t.b+')';
-        sw.title=idx+': '+t.a+' → '+t.b;
+        // Background = actual live wallpaper preview (cycling 1:1 across 100 slots).
+        var wu=wallsData[idx%wallCount];
+        if(wu){
+          sw.style.backgroundImage='url("'+wu+'")';
+          sw.style.backgroundSize='cover';
+          sw.style.backgroundPosition='center';
+        } else {
+          sw.style.background='linear-gradient(135deg,'+t.a+','+t.b+')';
+        }
+        sw.title='Wallpaper '+(idx+1);
+        sw.setAttribute('aria-label','Wallpaper '+(idx+1));
         sw.addEventListener('click',function(){applyTheme(idx);});
         themesWrap.appendChild(sw);
       })(k);
