@@ -314,6 +314,7 @@ scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.3) transparent}
 .wc-sw:hover{transform:scale(1.1)}
 .wc-sw.on{border-color:#fff;transform:scale(1.18);box-shadow:0 0 0 2px rgba(0,0,0,.4)}
 .wc-themes-hint{font-size:11px;color:var(--muted);text-align:center}
+.wc-themes.wc-locked{opacity:.45;pointer-events:none;filter:saturate(.4)}
 @media(max-width:420px){.wrapcard{aspect-ratio:1/1.65}.wc-mosaic{grid-auto-rows:68px;gap:7px}.wc-stack{padding:10px 10px 12px;gap:6px}.wc-foot{font-size:11px;padding:10px 4px 2px}.wc-id .av{width:38px;height:38px}.wc-tile.hero .tv{font-size:clamp(28px,7vw,42px)}}
 /* Snap mode: html2canvas-compatible flat rendering for downloads. Kills
    background-clip:text and backdrop-filter so text + glass survive capture. */
@@ -1097,16 +1098,35 @@ const RECAP_JS = `
         }
         sw.title='Wallpaper '+(idx+1);
         sw.setAttribute('aria-label','Wallpaper '+(idx+1));
-        sw.addEventListener('click',function(){applyTheme(idx);});
+        sw.addEventListener('click',function(){
+          if(isDownloading){ setStatus('Tunggu render selesai sebelum ganti wallpaper ⏳'); return; }
+          applyTheme(idx);
+        });
         themesWrap.appendChild(sw);
       })(k);
     }
     applyTheme(curTheme,false);
   }
 
-  // Lazy-load a script once.
+  // Lazy-load a script once. Bounded with a 10s timeout so a hung CDN never
+  // leaves the download button stuck on "Menyiapkan render...".
   var _scripts={};
-  function loadScript(src){return new Promise(function(res,rej){if(_scripts[src])return res();var sc=document.createElement('script');sc.src=src;sc.onload=function(){_scripts[src]=1;res();};sc.onerror=rej;document.head.appendChild(sc);});}
+  function loadScript(src){
+    return new Promise(function(res,rej){
+      if(_scripts[src]) return res();
+      var to;
+      var sc=document.createElement('script');
+      sc.src=src;
+      sc.onload=function(){_scripts[src]=1; clearTimeout(to); res();};
+      sc.onerror=function(){ clearTimeout(to); rej(new Error('Gagal memuat '+src)); };
+      to=setTimeout(function(){
+        sc.onload=sc.onerror=null;
+        sc.parentNode && sc.parentNode.removeChild(sc);
+        rej(new Error('Timeout memuat '+src));
+      }, 10000);
+      document.head.appendChild(sc);
+    });
+  }
 
   // Re-draw the .wc-tile .tv stat numbers directly on the canvas with a
   // rainbow gradient. html2canvas in snap mode hides these (visibility:hidden)
@@ -1157,21 +1177,33 @@ const RECAP_JS = `
   var dlBtn=document.getElementById('dlBtn');
   var dlStatus=document.getElementById('dlStatus');
   function setStatus(m){if(dlStatus)dlStatus.textContent=m;}
-  if(dlBtn) dlBtn.addEventListener('click',function(){ doDownload(); });
+  // While a download is in flight the user must wait — switching the wallpaper
+  // mid-render would make the captured stack disagree with the wallpaper that
+  // ends up in the file. Lock both the picker and the download button until
+  // the whole pipeline (capture + GIF encode) finishes or errors out.
+  var isDownloading=false;
+  if(dlBtn) dlBtn.addEventListener('click',function(){
+    if(isDownloading) return;
+    doDownload();
+  });
 
   async function doDownload(){
+    isDownloading=true;
     dlBtn.disabled=true;
+    if(themesWrap) themesWrap.classList.add('wc-locked');
     // Snap mode: html2canvas doesn't support -webkit-background-clip:text or
     // backdrop-filter. Adding .wc-snap class forces flat colors so text + glass
     // survive capture. We re-apply the previous theme after capture.
     var prevTheme=curTheme;
     try{
-      setStatus('Menyiapkan render... 0%');
+      setStatus('Memuat library render...');
       await loadScript('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js');
       // Capture the glass stack (transparent). The wallpaper + scrim are
       // composited manually per-frame inside the GIF so the final file is
       // truly animated.
       var stackEl=card.querySelector('.wc-stack');
+      if(!stackEl) throw new Error('Card stack not found');
+      setStatus('Mengambil snapshot kartu...');
       document.body.classList.add('wc-snap');
       // Two RAFs so the browser flushes the new style before html2canvas reads.
       await new Promise(function(r){requestAnimationFrame(function(){requestAnimationFrame(r);});});
@@ -1179,15 +1211,18 @@ const RECAP_JS = `
       document.body.classList.remove('wc-snap');
       // Restore the visual theme state (in case CSS variables shifted).
       applyTheme(prevTheme,false);
+      if(!base || !base.width || !base.height) throw new Error('Snapshot kosong');
+      setStatus('Menyusun frame GIF...');
       var gifOk=false;
       try{
         await loadScript('https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js');
         await renderGif(base);
         gifOk=true;
-      }catch(e){ gifOk=false; }
+      }catch(e){ gifOk=false; console.warn('GIF encode failed, falling back to PNG:', e); }
       if(!gifOk){
         // Fallback: composite wallpaper + glass as a single static PNG.
         try{
+          setStatus('Menyimpan sebagai PNG...');
           var t=THEMES[curTheme];
           var w=wallsData[curTheme%wallCount]||wallsData[t.wall]||wallsData[0]||null;
           var W=base.width,H=base.height;
@@ -1209,11 +1244,15 @@ const RECAP_JS = `
         }
       }
     }catch(e){
-      document.body.classList.remove('wc-snap');
-      applyTheme(prevTheme,false);
+      try { document.body.classList.remove('wc-snap'); } catch(_){}
+      try { applyTheme(prevTheme,false); } catch(_){}
+      console.error('doDownload failed:', e);
       setStatus('Gagal render: '+(e&&e.message||'error'));
+    }finally{
+      isDownloading=false;
+      dlBtn.disabled=false;
+      if(themesWrap) themesWrap.classList.remove('wc-locked');
     }
-    finally{ dlBtn.disabled=false; }
   }
 
   function renderGif(base){return new Promise(function(resolve,reject){
