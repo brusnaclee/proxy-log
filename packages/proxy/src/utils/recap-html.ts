@@ -49,12 +49,26 @@ export interface RecapHtmlData {
 
 export type LayoutMood = "energetic" | "calm" | "wild" | "mysterious";
 export type LayoutHero = "stats" | "rank" | "activeTime" | "favoriteModel" | "persona";
+export type LayoutGridAccent = "tools" | "activity" | "sessions" | "latency";
+export type LayoutChipsHighlight = "ide" | "delta" | "none";
+export type LayoutPersonaTone = "playful" | "humble" | "confident";
+export type LayoutCommunityFocus = "request" | "token";
 
 export interface LayoutHints {
+  /** Which section gets the visual "hero" emphasis (bigger text, glow). */
   hero?: LayoutHero;
+  /** Overall visual mood: controls gradient + animation duration. */
   mood?: LayoutMood;
+  /** Sections to skip entirely (e.g. leaderboard for users with no rank data). */
   hiddenSections?: string[];
-  reorderTop?: string[];
+  /**
+   * Inside-page adaptive hints. These do NOT change section order; they only
+   * change which element gets the spotlight or emphasis within a fixed page.
+   */
+  gridAccent?: LayoutGridAccent;
+  chipsHighlight?: LayoutChipsHighlight;
+  personaTone?: LayoutPersonaTone;
+  communityFocus?: LayoutCommunityFocus;
 }
 
 export function escapeHtml(s: any): string {
@@ -135,6 +149,17 @@ background-clip:text;color:transparent;background-size:200% 200%;animation:flow 
 @keyframes flow{0%,100%{background-position:0 50%}50%{background-position:100% 50%}}
 .headline{font-size:clamp(26px,8vw,56px);font-weight:900;line-height:1.05}
 .caption{font-size:clamp(15px,4.4vw,22px);color:var(--muted);line-height:1.5;max-width:34ch}
+/* Adaptive: persona caption tone */
+.persona-sub{transition:color .25s}
+.persona-sub.persona-tone-playful{color:var(--g3);font-weight:600}
+.persona-sub.persona-tone-humble{color:var(--muted);font-weight:500;font-style:italic}
+.persona-sub.persona-tone-confident{color:#fde68a;font-weight:700;letter-spacing:.2px}
+/* Adaptive: community percentile focus (one number is the headline, the other fades) */
+.community-num--focus{font-weight:900;font-size:clamp(36px,9vw,60px);
+background:linear-gradient(120deg,var(--g1),var(--g3));
+-webkit-background-clip:text;background-clip:text;color:transparent;
+filter:drop-shadow(0 4px 16px rgba(124,58,237,.45))}
+.community-num--dim{opacity:.5;filter:grayscale(.3)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:26px;padding:clamp(18px,5vw,34px);
 backdrop-filter:blur(14px);width:100%;box-shadow:0 20px 60px rgba(0,0,0,.35)}
 .avatar{width:clamp(96px,28vw,160px);height:clamp(96px,28vw,160px);border-radius:50%;object-fit:cover;
@@ -441,22 +466,21 @@ function section(id: string, inner: string): string {
   return `<section class="slide" data-slide="${id}"><div class="wrap">${inner}</div></section>`;
 }
 
-/** Apply AI-driven per-user layout hints to the rendered section list. */
+/**
+ * Apply AI-driven per-user layout hints to the rendered section list.
+ *
+ * IMPORTANT: section ORDER is fixed by `buildSections` and must NEVER be
+ * reshuffled per user. The adaptive part of layout lives INSIDE each section
+ * (anchor tile choice, chip emphasis, persona tone, community focus) and in
+ * the page-level mood/hero. This function only:
+ *   1. hides sections listed in `hiddenSections`
+ *   2. tags the chosen `hero` section with the `slide--hero` class
+ * The body mood class (`mood-*`) is applied separately at the body element.
+ */
 function applyLayoutHints(sections: string[], hints: LayoutHints | null | undefined): string[] {
   if (!hints) return sections;
   let arr = sections;
-  // 1. Reorder top N sections if requested
-  if (Array.isArray(hints.reorderTop) && hints.reorderTop.length) {
-    const wanted = hints.reorderTop
-      .map((id) => arr.find((html) => html.includes(`data-slide="${id}"`)))
-      .filter(Boolean) as string[];
-    if (wanted.length) {
-      const used = new Set(wanted);
-      const rest = arr.filter((html) => !used.has(html));
-      arr = [...wanted, ...rest];
-    }
-  }
-  // 2. Hide sections
+  // 1. Hide sections (do NOT reorder — order is fixed by buildSections)
   if (Array.isArray(hints.hiddenSections) && hints.hiddenSections.length) {
     const hideSet = new Set(hints.hiddenSections);
     arr = arr.filter((html) => {
@@ -464,7 +488,7 @@ function applyLayoutHints(sections: string[], hints: LayoutHints | null | undefi
       return true;
     });
   }
-  // 3. Hero: add class to the chosen section's wrapper
+  // 2. Hero: add class to the chosen section's wrapper
   if (hints.hero) {
     arr = arr.map((html) => {
       if (html.includes(`data-slide="${hints.hero}"`)) {
@@ -614,26 +638,61 @@ function buildSections(d: RecapHtmlData): string {
   // 7. Persona
   const personaTitle = nv.persona?.title || "Coder";
   const personaSub = nv.persona?.subtitle || "";
+  const personaToneCls = `persona-tone-${escapeHtml(d.layoutHints?.personaTone || "humble")}`;
   out.push(section("persona", `
     <div class="kicker reveal">Tipe Kamu</div>
     <div class="big reveal">${escapeHtml(personaTitle)}</div>
-    <div class="caption reveal">${escapeHtml(personaSub)}</div>
+    <div class="caption reveal persona-sub ${personaToneCls}">${escapeHtml(personaSub)}</div>
     ${mediaTag(A.persona, d.base)}`));
 
   // 8. Stats grid
+  // Adaptive: pick which bento tile becomes the 2x2 anchor (the visual hero
+  // inside the "Angka Lain" page). Section order is still fixed; only the
+  // spotlight shifts to the metric that best describes this user.
+  const accent = d.layoutHints?.gridAccent || "tools";
+  const tileTools    = bentoSm(icon("wrench",14,"b2-ic-sm"),        fmtNum(n(s, "tools.totalToolCalls")), "Tool calls");
+  const tileActivity = bentoSm(icon("calendar-check",14,"b2-ic-sm"), n(s, "activity.activeDays"),         "Hari aktif");
+  const tileStreak   = bentoSm(icon("flame",14,"b2-ic-sm"),         n(s, "activity.longestStreak"),      "Streak");
+  const tileSessions = bentoSm(icon("message-circle",14,"b2-ic-sm"), n(s, "sessions.count"),             "Sesi chat");
+  const tileLatency  = bentoSm(icon("timer",14,"b2-ic-sm"),         fmtNum(n(s, "latency.avgMs")),       "Latency (ms)");
+  const tileTurnPct  = bentoWide(icon("bot",14,"b2-ic-sm"),         n(s, "tools.toolTurnPercent") + "%", "turn pakai tool", "Tukang suruh AI.");
+  const tileDevices  = bentoSm(icon("laptop",14,"b2-ic-sm"),        n(s, "devices.uniqueCount"),        "Device");
+  const anchorMap: Record<string, string> = {
+    tools:    bentoBig(icon("wrench",18,"b2-ic"),         fmtNum(n(s, "tools.totalToolCalls")), "Tool calls", "Agentic sejati — nyuruh AI mulu."),
+    activity: bentoBig(icon("calendar-check",18,"b2-ic"), n(s, "activity.activeDays"),         "Hari aktif", "Konsisten itu mahal."),
+    sessions: bentoBig(icon("message-circle",18,"b2-ic"), n(s, "sessions.count"),             "Sesi chat",  "Ngobrol mulu sama AI."),
+    latency:  bentoBig(icon("timer",18,"b2-ic"),          fmtNum(n(s, "latency.avgMs")),       "Latency (ms)","Sabar nungguin."),
+  };
+  // Other tiles get rotated so the anchor still sits in the top-left 2x2 slot
+  // but the rest of the grid subtly reorders to follow the spotlight.
+  const smMap: Record<string, string[]> = {
+    tools:    [tileActivity, tileStreak,   tileSessions, tileTools,    tileDevices],
+    activity: [tileTools,    tileStreak,   tileSessions, tileActivity, tileDevices],
+    sessions: [tileTools,    tileActivity, tileStreak,   tileSessions, tileDevices],
+    latency:  [tileTools,    tileActivity, tileStreak,   tileSessions, tileDevices],
+  };
+  const anchorTile = anchorMap[accent] || anchorMap.tools;
+  const smTiles    = smMap[accent]       || smMap.tools;
+  const chipsHi    = d.layoutHints?.chipsHighlight || "ide";
+  const ideChip    = s.ide?.favorite
+    ? `<div class="chip${chipsHi === "ide" ? " chip--hero" : ""}">${icon("code-2",14)} IDE favorit: ${escapeHtml(s.ide.favorite)}</div>`
+    : "";
+  const deltaChipEl = s.comparison?.hasPrev
+    ? `<div class="chip${chipsHi === "delta" ? " chip--hero" : ""}">${deltaChip(s.comparison)}</div>`
+    : "";
   out.push(section("grid", `
     <div class="kicker reveal">Angka Lain</div>
-<div class="bento2 reveal">
-      ${bentoBig(icon("wrench",18,"b2-ic"), fmtNum(n(s, "tools.totalToolCalls")), "Tool calls", "Agentic sejati — nyuruh AI mulu.")}
-      ${bentoSm(icon("calendar-check",14,"b2-ic-sm"), n(s, "activity.activeDays"), "Hari aktif")}
-      ${bentoSm(icon("flame",14,"b2-ic-sm"), n(s, "activity.longestStreak"), "Streak")}
-      ${bentoSm(icon("message-circle",14,"b2-ic-sm"), n(s, "sessions.count"), "Sesi chat")}
-      ${bentoSm(icon("timer",14,"b2-ic-sm"), fmtNum(n(s, "latency.avgMs")), "Latency (ms)")}
-      ${bentoWide(icon("bot",14,"b2-ic-sm"), n(s, "tools.toolTurnPercent") + "%", "turn pakai tool", "Tukang suruh AI.")}
-      ${bentoSm(icon("laptop",14,"b2-ic-sm"), n(s, "devices.uniqueCount"), "Device")}
+<div class="bento2 reveal" data-accent="${escapeHtml(accent)}">
+      ${anchorTile}
+      ${smTiles[0]}
+      ${smTiles[1]}
+      ${smTiles[2]}
+      ${smTiles[3]}
+      ${tileTurnPct}
+      ${smTiles[4]}
     <div class="bento-chips reveal">
-      ${s.ide?.favorite ? `<div class="chip">${icon("code-2",14)} IDE favorit: ${escapeHtml(s.ide.favorite)}</div>` : ""}
-      ${s.comparison?.hasPrev ? `<div class="chip">${deltaChip(s.comparison)}</div>` : ""}
+      ${ideChip}
+      ${deltaChipEl}
     </div>`));
 
   // 8b. Achievements / badges (AI-generated preferred, deterministic fallback)
@@ -684,10 +743,15 @@ function buildSections(d: RecapHtmlData): string {
   // 8f. Banding komunitas
   const comm = s.extras?.community;
   if (comm && (comm.requestPercentile > 0 || comm.tokenPercentile > 0)) {
+        // Adaptive: which percentile is the visual focus? "request" emphasizes
+    // volume (default for heavy users); "token" emphasizes cost awareness.
+    const cFocus = d.layoutHints?.communityFocus || "request";
+    const reqCls  = cFocus === "request" ? "community-num--focus" : "community-num--dim";
+    const tokCls  = cFocus === "token"   ? "community-num--focus" : "community-num--dim";
     out.push(section("community", `
       <div class="kicker reveal">Kamu vs Komunitas</div>
-      <div class="big reveal">Top ${Math.max(1, 100 - comm.requestPercentile)}%</div>
-      <div class="caption reveal">Kamu lebih rajin dari <b>${comm.requestPercentile}%</b> developer Groupy${comm.tokenPercentile ? `, dan lebih boros token dari <b>${comm.tokenPercentile}%</b>` : ""}. 📊</div>
+      <div class="big reveal ${reqCls}">Top ${Math.max(1, 100 - comm.requestPercentile)}%</div>
+      <div class="caption reveal">Kamu lebih rajin dari <b class="${reqCls}">${comm.requestPercentile}%</b> developer Groupy${comm.tokenPercentile ? `, dan lebih boros token dari <b class="${tokCls}">${comm.tokenPercentile}%</b>` : ""}. 💪</div>
       ${mediaTag(A.rank, d.base)}`));
   }
 

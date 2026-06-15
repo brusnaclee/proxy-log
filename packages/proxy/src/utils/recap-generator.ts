@@ -24,12 +24,17 @@ export interface RecapNarrative {
   badges?: Array<{ icon: string; title: string; desc: string }>;
   /** Card meta: live anime wallpaper + nested glass tile plan. */
   card?: import("./recap-card-meta.js").CardMeta | null;
-  /** AI-driven per-user layout decisions (hero, mood, hide, reorder). */
+  /** AI-driven per-user layout decisions. Section ORDER is fixed; these hints
+   *  only change the visual emphasis inside each page (anchor tile, chip
+   *  spotlight, persona tone, community focus) and the page-level mood/hero. */
   layoutHints?: {
     hero?: "stats" | "rank" | "activeTime" | "favoriteModel" | "persona";
     mood?: "energetic" | "calm" | "wild" | "mysterious";
     hiddenSections?: string[];
-    reorderTop?: string[];
+    gridAccent?: "tools" | "activity" | "sessions" | "latency";
+    chipsHighlight?: "ide" | "delta" | "none";
+    personaTone?: "playful" | "humble" | "confident";
+    communityFocus?: "request" | "token";
   } | null;
 }
 
@@ -347,7 +352,10 @@ Buat JSON dengan struktur PERSIS:
     "hero": "<stats|rank|activeTime|favoriteModel|persona>",
     "mood": "<energetic|calm|wild|mysterious>",
     "hiddenSections": ["<sectionId>", "..."],
-    "reorderTop": ["<sectionId>", "<sectionId>", "<sectionId>"]
+    "gridAccent": "<tools|activity|sessions|latency>",
+    "chipsHighlight": "<ide|delta|none>",
+    "personaTone": "<playful|humble|confident>",
+    "communityFocus": "<request|token>"
   }
 }
 ATURAN BADGE: 3-10 badge, tiap badge HARUS punya 1 emoji unik + judul kreatif yang nyambung ke statistik user (jangan generik), desc singkat lucu. Variasikan tiap user.
@@ -361,6 +369,41 @@ ATURAN LAYOUT HINTS (keputusan layout visual per user — ini bukan caption, ini
   - "mysterious": user minim data (baru, < 5 hari aktif, < 50 request)
 - "hiddenSections": section yang bisa di-skip (contoh: user < 5 hari aktif → hide "Hari Santai" & "Fun Facts" atau "modelSpeed" kalau model < 2). Pilih dari sectionId yang dikenal: "intro","stats","favoriteModel","leastModel","modelSpeed","activeTime","persona","grid","ach","facts","heatmap","rest","community","rank","ide","closing".
 - "reorderTop": urutan 3 section pertama. Misal top-3 user → ["rank","stats","persona"]; user nokturnal → ["activeTime","stats","persona"]. Max 3 section.
+ATURAN LAYOUT HINTS (keputusan layout visual per user — kendali UI, bukan caption):
+SECTION ORDER TIDAK BOLEH DIUBAH. Jangan isi field "reorderTop" atau saran apapun untuk menukar urutan section. Urutan dari atas ke bawah adalah: intro → stats → favoriteModel → leastModel → modelSpeed → activeTime → persona → grid → ach → facts → heatmap → rest → community → rank → latency → projection → race → leaderboard → card → closing. Adaptasi per user HANYA boleh di level:
+  1. Pilih section mana yang paling kuat secara visual ("hero")
+  2. Tema warna & animasi ("mood")
+  3. Section mana yang benar-benar kosong/tidak relevan untuk di-hide ("hiddenSections")
+  4. PENEMPATAN visual DI DALAM halaman ("gridAccent", "chipsHighlight", "personaTone", "communityFocus")
+
+- "hero": section PALING KUAT untuk user ini (request banyak → "stats"; rank tinggi → "rank"; malam hari → "activeTime"; model spesifik → "favoriteModel"; persona kuat → "persona"). Default: "stats".
+- "mood": nuansa vibe user. Default "energetic".
+  - "energetic": user aktif produktif, request tinggi, default
+  - "calm": user santai, weekend-heavy, output ratio tinggi, sesi panjang
+  - "wild": user tidak teratur, request meledak di jam tertentu, sangat variatif
+  - "mysterious": user minim data (baru, < 5 hari aktif, < 50 request)
+- "hiddenSections": section yang bisa di-skip karena datanya kosong/tidak relevan (contoh: < 5 hari aktif → hide "rest"/"facts"; rank data kosong → hide "race"/"leaderboard"/"community"). Pilih dari: "intro","stats","favoriteModel","leastModel","modelSpeed","activeTime","persona","grid","ach","facts","heatmap","rest","community","rank","latency","projection","race","leaderboard","card","closing".
+- "gridAccent": tile mana yang jadi ANCHOR 2x2 (spotlight) di halaman "Angka Lain". Pilih berdasarkan karakter user:
+  - "tools": user agentic (tool% >= 50 atau tool calls tinggi) → "Tool calls" jadi b2-anchor
+  - "activity": user baru/kasual (active days < 7 atau request rendah) → "Hari aktif" jadi b2-anchor
+  - "sessions": user yang banyak ngobrol (sessions.count tinggi) → "Sesi chat" jadi b2-anchor
+  - "latency": user yang sering nunggu (latency tinggi atau variasi ekstrim) → "Latency (ms)" jadi b2-anchor
+  - Default: "tools"
+- "chipsHighlight": chip mana di baris bawah "Angka Lain" yang paling mencolok. Pilih SATU:
+  - "ide": untuk power user (punya IDE favorit, request > 200) → IDE favorit chip jadi chip--hero
+  - "delta": untuk yang suka compare tren (ada comparison.hasPrev DAN delta signifikan) → delta chip jadi chip--hero
+  - "none": untuk user kasual/baru → tidak ada chip yang di-highlight
+  - Default: "ide"
+- "personaTone": tone caption di halaman "Tipe Kamu":
+  - "playful": user baru/kasual, ramai, suka bercanda
+  - "humble": user mid-tier, konsisten, santai
+  - "confident": user power/berperingkat tinggi, dominan
+  - Default: "humble"
+- "communityFocus": di halaman "Kamu vs Komunitas", percentile mana yang di-highlight:
+  - "request": user yang bangga dengan volume request (default, untuk user aktif)
+  - "token": user yang sadar biaya/token (untuk user dengan token tinggi atau ratio output tinggi)
+  - Default: "request"
+
 
 HANYA JSON, tanpa teks lain, tanpa code fence.`;
 }
@@ -460,16 +503,21 @@ export async function generateNarrative(
       // Extract AI-driven layout hints (validated, with safe defaults)
       const VALID_HERO = ["stats", "rank", "activeTime", "favoriteModel", "persona"] as const;
       const VALID_MOOD = ["energetic", "calm", "wild", "mysterious"] as const;
+      const VALID_GRID_ACCENT = ["tools", "activity", "sessions", "latency"] as const;
+      const VALID_CHIPS_HIGHLIGHT = ["ide", "delta", "none"] as const;
+      const VALID_PERSONA_TONE = ["playful", "humble", "confident"] as const;
+      const VALID_COMMUNITY_FOCUS = ["request", "token"] as const;
       const lh = parsed.layoutHints || {};
       const hero = VALID_HERO.includes(lh.hero) ? lh.hero : "stats";
       const mood = VALID_MOOD.includes(lh.mood) ? lh.mood : "energetic";
       const hiddenSections = Array.isArray(lh.hiddenSections)
         ? lh.hiddenSections.filter((x: any) => typeof x === "string").slice(0, 8)
         : undefined;
-      const reorderTop = Array.isArray(lh.reorderTop)
-        ? lh.reorderTop.filter((x: any) => typeof x === "string").slice(0, 3)
-        : undefined;
-      const layoutHints = { hero, mood, hiddenSections, reorderTop };
+      const gridAccent = (VALID_GRID_ACCENT as readonly string[]).includes(lh.gridAccent) ? lh.gridAccent : "tools";
+      const chipsHighlight = (VALID_CHIPS_HIGHLIGHT as readonly string[]).includes(lh.chipsHighlight) ? lh.chipsHighlight : "ide";
+      const personaTone = (VALID_PERSONA_TONE as readonly string[]).includes(lh.personaTone) ? lh.personaTone : "humble";
+      const communityFocus = (VALID_COMMUNITY_FOCUS as readonly string[]).includes(lh.communityFocus) ? lh.communityFocus : "request";
+      const layoutHints = { hero, mood, hiddenSections, gridAccent, chipsHighlight, personaTone, communityFocus };
 
       return {
         ok: true,
