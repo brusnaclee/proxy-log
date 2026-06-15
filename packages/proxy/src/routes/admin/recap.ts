@@ -33,6 +33,7 @@ import { loadAssets, memeForCategory, assetUrl } from "../../utils/recap-assets.
 import { findLiveGif } from "../../utils/recap-gif-search.js";
 import { type GifCategory } from "../../utils/recap-gifs.js";
 import { resolveCardMeta } from "../../utils/recap-card-meta.js";
+import { isInternalRequest } from "../../middleware/session.js";
 
 const recap = new Hono();
 
@@ -324,14 +325,13 @@ recap.post("/internal/recap/leaderboard-avatars", async (c) => {
  * scratch. Use after schema changes (e.g. speed duo / race backfill) or as a
  * general "reset recap" button from the dashboard.
  *
- * Auth: requires INTERNAL_API_TOKEN via x-internal-token header. Body:
+ * Auth: requires INTERNAL_API_SECRET via x-internal-secret header (same as the
+ * other internal routes). Body:
  *   { yearMonth?: "YYYY-MM" | "all" }   default: current window
  *   { includeTestimonials?: boolean }    default: true
  */
 recap.post("/internal/recap/reset", async (c) => {
-  const token = c.req.header("x-internal-token");
-  const expected = process.env.INTERNAL_API_TOKEN;
-  if (!expected || token !== expected) return c.json({ error: "Unauthorized" }, 401);
+  if (!isInternalRequest(c)) return c.json({ error: "Unauthorized" }, 401);
 
   const body = await c.req.json<{ yearMonth?: string; includeTestimonials?: boolean }>().catch(() => ({} as any)) || {};
   const includeTestimonials = body.includeTestimonials !== false;
