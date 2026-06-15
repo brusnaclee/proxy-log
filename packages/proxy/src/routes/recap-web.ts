@@ -15,6 +15,8 @@ import { getRecapWindow, monthLabelFromYearMonth, wibTodayDateStr } from "../uti
 import { getAsset, fallbackForCategory, memeForCategory, assetUrl } from "../utils/recap-assets.js";
 import { renderRecapHtml, renderMessagePage } from "../utils/recap-html.js";
 import { dayToken } from "./admin/recap.js";
+import { getMonthLeaderboard } from "../utils/recap-stats.js";
+import { getRaceTimelapse } from "../utils/recap-stats.js";
 
 const recapWeb = new Hono();
 
@@ -73,6 +75,17 @@ recapWeb.get("/:apiKeyName", async (c) => {
   const yearMonth = row.yearMonth;
   const monthLabel = monthLabelFromYearMonth(yearMonth);
 
+  // Backfill timelapse for older cache rows that were generated before
+  // `stats.race` was populated, or that hit the silent catch in the
+  // generate path. Recompute on the fly so every visitor sees the section.
+  if (stats && row.apiKeyId && (!stats.race || !Array.isArray(stats.race.days) || stats.race.days.length < 2)) {
+    try {
+      const lb = await getMonthLeaderboard(yearMonth);
+      const race = await getRaceTimelapse(row.apiKeyId, yearMonth, lb);
+      if (race) stats.race = race;
+    } catch { /* race remains null -> section just won't render */ }
+  }
+
   // Single-use share token: if ?t= matches and unused, mark used and mint a
   // short-lived submit token so the user can leave a testimonial. The client
   // then strips ?t= from the URL so shared/copied links are clean.
@@ -98,7 +111,8 @@ recapWeb.get("/:apiKeyName", async (c) => {
   // Resolve asset urls for each section choice (with category fallback).
   const sectionCategory: Record<string, string> = {
     intro: "misc", requests: "reactions", tokens: "personas",
-    favoriteModel: "models", leastModel: "models", fastestModel: "models", slowestModel: "models",
+    favoriteModel: "models", leastModel: "models",
+    modelSpeed: "models", fastestModel: "models", slowestModel: "models",
     activeTime: "time", persona: "personas", rank: "ranks", race: "ranks", ide: "misc", closing: "confetti",
   };
   const resolvedAssets: Record<string, { url: string; type: string } | null> = {};
@@ -107,7 +121,7 @@ recapWeb.get("/:apiKeyName", async (c) => {
   const seedBase = (stats?.totals?.requests || 0) + (stats?.totals?.totalTokens || 0);
   const choices = (narrative?.assetChoices || {}) as Record<string, string>;
   const gifs = (narrative?.gifs || {}) as Record<string, string>;
-  const sectionKeys = ["intro","requests","tokens","favoriteModel","leastModel","fastestModel","slowestModel","activeTime","persona","rank","race","ide","closing"];
+  const sectionKeys = ["intro","stats","requests","tokens","favoriteModel","leastModel","modelSpeed","fastestModel","slowestModel","activeTime","persona","rank","race","ide","closing"];
   sectionKeys.forEach((section, i) => {
     const searched = gifs[section];
     if (searched && /^https?:\/\//.test(searched)) {
@@ -140,7 +154,6 @@ recapWeb.get("/:apiKeyName", async (c) => {
     existingTestimonial: existingTesti ? { stars: existingTesti.stars, body: existingTesti.body } : null,
     cleanPath: `/recap/${encodeURIComponent(apiKeyName)}`,
     cardMeta: (narrative && narrative.card) || null,
-    layoutHints: (narrative && narrative.layoutHints) || null,
   });
 
   return c.html(html);

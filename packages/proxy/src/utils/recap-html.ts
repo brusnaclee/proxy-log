@@ -43,32 +43,6 @@ export interface RecapHtmlData {
     quote: string;
     badge: { icon: string; title: string } | null;
   } | null;
-  /** AI-driven per-user layout decisions. */
-  layoutHints?: LayoutHints | null;
-}
-
-export type LayoutMood = "energetic" | "calm" | "wild" | "mysterious";
-export type LayoutHero = "stats" | "rank" | "activeTime" | "favoriteModel" | "persona";
-export type LayoutGridAccent = "tools" | "activity" | "sessions" | "latency";
-export type LayoutChipsHighlight = "ide" | "delta" | "none";
-export type LayoutPersonaTone = "playful" | "humble" | "confident";
-export type LayoutCommunityFocus = "request" | "token";
-
-export interface LayoutHints {
-  /** Which section gets the visual "hero" emphasis (bigger text, glow). */
-  hero?: LayoutHero;
-  /** Overall visual mood: controls gradient + animation duration. */
-  mood?: LayoutMood;
-  /** Sections to skip entirely (e.g. leaderboard for users with no rank data). */
-  hiddenSections?: string[];
-  /**
-   * Inside-page adaptive hints. These do NOT change section order; they only
-   * change which element gets the spotlight or emphasis within a fixed page.
-   */
-  gridAccent?: LayoutGridAccent;
-  chipsHighlight?: LayoutChipsHighlight;
-  personaTone?: LayoutPersonaTone;
-  communityFocus?: LayoutCommunityFocus;
 }
 
 export function escapeHtml(s: any): string {
@@ -78,6 +52,95 @@ export function escapeHtml(s: any): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+/** Inline Phosphor fill icons (no CDN — safe for download/GIF capture). */
+const PHOSPHOR_SVG: Record<string, string> = {
+  wrench: "M226.76,69.59,135.23,162.12,109.77,211.57a16,16,0,0,1-22.62,6.1l-13.68-8.8a16,16,0,0,1-6.11-22.61l49.46-25.46,92.53-92.53a8,8,0,0,1,11.31,0l8.8,8.81A8,8,0,0,1,226.76,69.59Z",
+  "calendar-dots": "M40,48H216a8,8,0,0,0,8-8V24a8,8,0,0,0-8-8H40a8,8,0,0,0-8,8V40A8,8,0,0,0,40,48Zm24-32a12,12,0,1,1-12,12A12,12,0,0,1,64,16Zm80,0a12,12,0,1,1-12,12A12,12,0,0,1,144,16Zm80,0a12,12,0,1,1-12,12A12,12,0,0,1,224,16ZM32,96H224V208a8,8,0,0,1-8,8H40a8,8,0,0,1-8-8Zm56,56a8,8,0,0,0,8-8,8,8,0,0,0-8-8H80a8,8,0,0,0-8,8,8,8,0,0,0,8,8Zm56-8a8,8,0,0,0-8,8,8,8,0,0,0,8,8h16a8,8,0,0,0,8-8,8,8,0,0,0-8-8Zm64,0a8,8,0,0,0-8,8,8,8,0,0,0,8,8h16a8,8,0,0,0,8-8,8,8,0,0,0-8-8Z",
+  flame: "M166,30.68A8,8,0,0,0,154.32,35a88,88,0,0,1-20,39.59V88a8,8,0,0,1-8,8,105.11,105.11,0,0,0-41.22,86.34,12,12,0,0,0,12,12.48h53.28a8,8,0,0,0,8-8.72,112.34,112.34,0,0,1,.4-15.22,8,8,0,0,0-3.45-6.78,88.09,88.09,0,0,1,8.45-65.66,8,8,0,0,0-1.22-8.68Z",
+  "chat-circle-dots": "M128,24A104,104,0,0,0,36.18,176.88L24.83,210.75a16,16,0,0,0,20.9,20.9l33.87-11.35A104,104,0,1,0,128,24Zm32,128a12,12,0,1,1,12-12A12,12,0,0,1,160,152Zm-64,0a12,12,0,1,1,12-12A12,12,0,0,1,96,152Zm32,0a12,12,0,1,1,12-12A12,12,0,0,1,128,152Z",
+  timer: "M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm40-88a8,8,0,0,1-8,8H128a8,8,0,0,1,0-16h32A8,8,0,0,1,168,128ZM120,72V40a8,8,0,0,1,16,0V72a8,8,0,0,1-16,0Z",
+  laptop: "M232,168H24a8,8,0,0,0,0,16H232a8,8,0,0,0,0-16ZM208,48H48A16,16,0,0,0,32,64V160H224V64A16,16,0,0,0,208,48Z",
+  "trend-up": "M240,56v64a8,8,0,0,1-16,0V83.31l-82.34,82.35a8,8,0,0,1-11.32,0L96,123.31,29.66,189.66a8,8,0,0,1-11.32-11.32l72-72a8,8,0,0,1,11.32,0L136,140.69,212.69,64H168a8,8,0,0,1,0-16h64A8,8,0,0,1,240,56Z",
+  robot: "M200,48H168V32a8,8,0,0,0-16,0V48H104V32a8,8,0,0,0-16,0V48H56A32,32,0,0,0,24,80V192a32,32,0,0,0,32,32H200a32,32,0,0,0,32-32V80A32,32,0,0,0,200,48ZM96,144a16,16,0,1,1,16-16A16,16,0,0,1,96,144Zm64,0a16,16,0,1,1,16-16A16,16,0,0,1,160,144Zm32,48H64a8,8,0,0,1,0-16H192a8,8,0,0,1,0,16Z",
+  monitor: "M208,40H48A24,24,0,0,0,24,64V176a24,24,0,0,0,24,24H208a24,24,0,0,0,24-24V64A24,24,0,0,0,208,40Zm8,136a8,8,0,0,1-8,8H48a8,8,0,0,1-8-8V64a8,8,0,0,1,8-8H208a8,8,0,0,1,8,8Zm-48,48a8,8,0,0,1-8,8H96a8,8,0,0,1,0-16h64A8,8,0,0,1,168,224Z",
+  "currency-dollar": "M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm40-40a8,8,0,0,1-8,8H136v8a8,8,0,0,1-16,0V176H112a8,8,0,0,1,0-16h16V152H112a8,8,0,0,1,0-16h8V128a8,8,0,0,1,16,0v8h16a32,32,0,0,1,0,64Zm-8-16a16,16,0,0,0,0-32h-8v32Z",
+  clock: "M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm40-88a8,8,0,0,1-8,8H128a8,8,0,0,1,0-16h32A8,8,0,0,1,168,128Z",
+  lightning: "M215.56,123.06,144,202.92V40a8,8,0,0,0-13.3-6l-80,72a8,8,0,0,0,5.3,13.78H112l-71.56,79.86A8,8,0,0,0,48,208H208a8,8,0,0,0,7.56-10.94Z",
+  turtle: "M232,120a8,8,0,0,0-8-8H200.32A96.13,96.13,0,0,0,136,32.37V24a8,8,0,0,0-16,0v8.37A96.13,96.13,0,0,0,55.68,112H32a8,8,0,0,0,0,16H55.68A96.13,96.13,0,0,0,120,223.63V232a8,8,0,0,0,16,0v-8.37A96.13,96.13,0,0,0,200.32,128H224A8,8,0,0,0,232,120ZM128,208a80,80,0,1,1,80-80A80.09,80.09,0,0,1,128,208Z",
+  target: "M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm32-88a32,32,0,1,1-32-32A32,32,0,0,1,160,128Zm-16,0a16,16,0,1,0-16,16A16,16,0,0,0,144,128Z",
+  trophy: "M232,64H208V48a16,16,0,0,0-16-16H64A16,16,0,0,0,48,48V64H24a8,8,0,0,0-8,8v16a40,40,0,0,0,40,40h8.69A80.55,80.55,0,0,0,104,191.75V200H88a8,8,0,0,0,0,16h80a8,8,0,0,0,0-16H152v-8.25A80.55,80.55,0,0,0,195.31,128H204a40,40,0,0,0,40-40V72A8,8,0,0,0,232,64Z",
+  lightbulb: "M176,232H80a8,8,0,0,1,0-16h96a8,8,0,0,1,0,16Zm-8-32a8,8,0,0,1-8,8H96a8,8,0,0,1,0-16h64A8,8,0,0,1,168,200ZM128,24a80,80,0,0,0-56.57,136.57A16,16,0,0,1,80,168v8a8,8,0,0,0,8,8h80a8,8,0,0,0,8-8v-8a16,16,0,0,1,8.57-7.43A80,80,0,0,0,128,24Z",
+  "chart-bar": "M224,200h-8V40a8,8,0,0,0-8-8H152a8,8,0,0,0-8,8V200H104V88a8,8,0,0,0-8-8H56a8,8,0,0,0-8,8V200H40a8,8,0,0,0,0,16H224a8,8,0,0,0,0-16ZM168,48h32V200H168Zm-64,48h32V200H104ZM56,96H88V200H56Z",
+  crown: "M240,176H16a8,8,0,0,0,0,16H240a8,8,0,0,0,0-16ZM24,160H232L192,88,144,128,128,72,112,128,64,88Z",
+  confetti: "M216,56H176a8,8,0,0,0,0,16h40a8,8,0,0,0,0-16ZM56,56H16a8,8,0,0,0,0,16H56a8,8,0,0,0,0-16ZM128,24a8,8,0,0,0-8,8v40a8,8,0,0,0,16,0V32A8,8,0,0,0,128,24ZM80,88a8,8,0,0,0-11.32,0L48,108.69,35.31,96A8,8,0,0,0,24,107.31L48.69,132,24,156.69A8,8,0,0,0,35.31,168L48,155.31,68.69,176A8,8,0,0,0,80,164.69L59.31,144,80,123.31A8,8,0,0,0,80,88Zm96,0a8,8,0,0,0,0,11.31L196.69,120,176,140.69A8,8,0,0,0,187.31,152L208,131.31,228.69,152A8,8,0,0,0,240,140.69L219.31,120,240,99.31A8,8,0,0,0,228.69,88L208,108.69,187.31,88A8,8,0,0,0,176,88Z",
+  "moon-stars": "M233.54,142.23a8,8,0,0,0-8-2,88.08,88.08,0,0,1-109.8-109.8,8,8,0,0,0-10-10,104.84,104.84,0,0,0-52.91,37A104,104,0,0,0,136,224a103.09,103.09,0,0,0,62.52-20.88,104.84,104.84,0,0,0,37-52.91A8,8,0,0,0,233.54,142.23ZM188.9,190.34A88,88,0,0,1,65.66,67.11a89,89,0,0,1,31.4-26.06,88,88,0,0,0,110.5,110.5A89,89,0,0,1,188.9,190.34Z",
+  star: "M234.5,114.38l-45.1,39.36,13.51,58.6a16,16,0,0,1-23.84,17.34l-51.11-31-51,31a16,16,0,0,1-23.84-17.34L66.61,153.8,21.5,114.38a16,16,0,0,1,9.11-28.06l59.46-5.15,23.21-55.36a15.95,15.95,0,0,1,29.44,0h0L166,81.17l59.44,5.15a16,16,0,0,1,9.11,28.06Z",
+  rocket: "M223.85,47.12a16,16,0,0,0-15-15c-37.68-2.09-64.68,8.48-80.33,31.15L97.4,88.58l-2.64-2.64a16,16,0,0,0-22.63,0L42.34,116a16,16,0,0,0,0,22.63l2.64,2.64L42.34,144a16,16,0,0,0,0,22.63l25.39,25.39a16,16,0,0,0,22.63,0l2.64-2.64,2.64,2.64a16,16,0,0,0,22.63,0l32.06-32.06a16,16,0,0,0,0-22.63l-2.64-2.64,25.39-5.39c22.67-15.65,33.24-42.65,31.15-80.33A16,16,0,0,0,223.85,47.12ZM176,136a16,16,0,1,1,16-16A16,16,0,0,1,176,136Z",
+  coin: "M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm40-88a8,8,0,0,1-8,8H136v8a8,8,0,0,1-16,0V136H112a8,8,0,0,1,0-16h8V112a8,8,0,0,1,16,0v8h24A8,8,0,0,1,168,128Z",
+  "arrow-down": "M208,144a8,8,0,0,1-8,8H136v56a8,8,0,0,1-16,0V152H56a8,8,0,0,1,0-16h80V80a8,8,0,0,1,16,0v56h80A8,8,0,0,1,208,144Z",
+  "arrow-up": "M205.66,117.66a8,8,0,0,1-11.32,0L136,59.31V216a8,8,0,0,1-16,0V59.31L61.66,117.66a8,8,0,0,1-11.32-11.32l72-72a8,8,0,0,1,11.32,0l72,72A8,8,0,0,1,205.66,117.66Z",
+  ghost: "M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm-8-40a12,12,0,1,0,12,12A12,12,0,0,0,120,176Zm48,0a12,12,0,1,0,12,12A12,12,0,0,0,168,176Z",
+  share: "M237.66,74.34l-72-72A8,8,0,0,0,152,8V40a8,8,0,0,1-8,8H96a56.06,56.06,0,0,0-56,56v48a8,8,0,0,0,16,0V104a40,40,0,0,1,40-40h48a8,8,0,0,1,8,8v32a8,8,0,0,0,16,0V72l34.34,34.34a8,8,0,0,0,11.32-11.32Z",
+  link: "M240,88.23a54.43,54.43,0,0,1-16,37L192,157.66a54.27,54.27,0,0,1-77,0,8,8,0,0,1,11.32-11.32,38.26,38.26,0,0,0,54,0l32-32a38.26,38.26,0,0,0,0-54,38.26,38.26,0,0,0-54,0,8,8,0,0,1-11.32-11.32,54.27,54.27,0,0,1,77,0l32,32A54.43,54.43,0,0,1,240,88.23Z",
+  download: "M224,144v64a8,8,0,0,1-8,8H40a8,8,0,0,1-8-8V144a8,8,0,0,1,16,0v56H208V144a8,8,0,0,1,16,0Zm-101.66,5.66a8,8,0,0,0,11.32,0l40-40a8,8,0,0,0-11.32-11.32L136,124.69V32a8,8,0,0,0-16,0v92.69L93.66,98.34a8,8,0,0,0-11.32,11.32Z",
+};
+
+function phosphor(name: string, size = 16, cls = "b2-ic-sm"): string {
+  const path = PHOSPHOR_SVG[name];
+  if (!path) return "";
+  return `<svg class="${cls}" xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" fill="currentColor" viewBox="0 0 256 256" aria-hidden="true"><path d="${path}"/></svg>`;
+}
+
+/** Map legacy emoji to Phosphor icon names. */
+const EMOJI_TO_PHOSPHOR: Record<string, string> = {
+  "🛠️": "wrench", "📆": "calendar-dots", "🔥": "flame", "💬": "chat-circle-dots",
+  "⏱️": "timer", "💻": "laptop", "📈": "trend-up", "🤖": "robot", "💸": "currency-dollar",
+  "🪙": "coin", "⏰": "clock", "🗓️": "calendar-dots", "⚡": "lightning", "🐌": "turtle",
+  "🏆": "trophy", "💡": "lightbulb", "📊": "chart-bar", "👑": "crown", "🎉": "confetti",
+  "⭐": "star", "🚀": "rocket", "📥": "arrow-down", "📤": "arrow-up", "😶": "ghost",
+  "📅": "calendar-dots", "😴": "moon-stars", "🎯": "target",
+};
+
+function iconHtml(emojiOrName: string, size = 16, cls = "b2-ic-sm"): string {
+  const name = EMOJI_TO_PHOSPHOR[emojiOrName] || emojiOrName;
+  const svg = phosphor(name, size, cls);
+  return svg || escapeHtml(emojiOrName);
+}
+
+export interface LayoutHints {
+  hero?: "stats" | "rank" | "activeTime";
+  mood?: "energetic" | "calm" | "wild" | "mysterious";
+  hiddenSections?: string[];
+  reorderTop?: string[];
+  emphasisTiles?: string[];
+}
+
+interface SlideItem { id: string; html: string; }
+
+function applyLayoutHints(items: SlideItem[], hints: LayoutHints = {}): SlideItem[] {
+  const hidden = new Set(hints.hiddenSections || []);
+  let out = items.filter((it) => !hidden.has(it.id));
+  const reorderTop = hints.reorderTop || [];
+  if (reorderTop.length) {
+    const top: SlideItem[] = [];
+    const rest: SlideItem[] = [];
+    const seen = new Set<string>();
+    for (const id of reorderTop) {
+      const found = out.find((it) => it.id === id);
+      if (found && !seen.has(id)) { top.push(found); seen.add(id); }
+    }
+    for (const it of out) {
+      if (!seen.has(it.id)) rest.push(it);
+    }
+    out = [...top, ...rest];
+  }
+  const hero = hints.hero || "stats";
+  return out.map((it) => {
+    if (it.id !== hero) return it;
+    return { ...it, html: it.html.replace('class="slide"', 'class="slide slide--hero"') };
+  });
 }
 
 function fmtNum(n: number): string {
@@ -99,19 +162,6 @@ function safeJsonForScript(obj: any): string {
   return JSON.stringify(obj).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 }
 
-/** Inline Lucide icon sprite + helper. Returns <svg><use href="#luc-{name}"/></svg>. */
-const LUCIDE_ICONS: Record<string, string> = JSON.parse("{\"wrench\": \"<path d=\\\"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z\\\"/>\", \"calendar-check\": \"<rect width=\\\"18\\\" height=\\\"18\\\" x=\\\"3\\\" y=\\\"4\\\" rx=\\\"2\\\" ry=\\\"2\\\"/><line x1=\\\"16\\\" x2=\\\"16\\\" y1=\\\"2\\\" y2=\\\"6\\\"/><line x1=\\\"8\\\" x2=\\\"8\\\" y1=\\\"2\\\" y2=\\\"6\\\"/><line x1=\\\"3\\\" x2=\\\"21\\\" y1=\\\"10\\\" y2=\\\"10\\\"/><path d=\\\"m9 16 2 2 4-4\\\"/>\", \"calendar-heart\": \"<path d=\\\"M3 10h18\\\"/><path d=\\\"M3 6h18\\\"/><path d=\\\"M21 10v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-6\\\"/><path d=\\\"m17 17-3 3-3-3\\\"/><path d=\\\"M12 17V7\\\"/><path d=\\\"M9 7h6\\\"/>\", \"flame\": \"<path d=\\\"M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z\\\"/>\", \"message-circle\": \"<path d=\\\"M7.9 20A9 9 0 1 0 4 16.1L2 22z\\\"/>\", \"timer\": \"<line x1=\\\"10\\\" x2=\\\"14\\\" y1=\\\"2\\\" y2=\\\"2\\\"/><line x1=\\\"12\\\" x2=\\\"15\\\" y1=\\\"14\\\" y2=\\\"11\\\"/><circle cx=\\\"12\\\" cy=\\\"14\\\" r=\\\"8\\\"/>\", \"laptop\": \"<path d=\\\"M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16\\\"/>\", \"bot\": \"<path d=\\\"M12 8V4H8\\\"/><rect width=\\\"16\\\" height=\\\"12\\\" x=\\\"4\\\" y=\\\"8\\\" rx=\\\"2\\\"/><path d=\\\"M2 14h2\\\"/><path d=\\\"M20 14h2\\\"/><path d=\\\"M15 13v2\\\"/><path d=\\\"M9 13v2\\\"/>\", \"code-2\": \"<path d=\\\"m18 16 4-4-4-4\\\"/><path d=\\\"m6 8-4 4 4 4\\\"/><path d=\\\"m14.5 4-5 16\\\"/>\", \"zap\": \"<polygon points=\\\"13 2 3 14 12 14 11 22 21 10 12 10 13 2\\\"/>\", \"hourglass\": \"<path d=\\\"M5 22h14\\\"/><path d=\\\"M5 2h14\\\"/><path d=\\\"M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22\\\"/><path d=\\\"M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2\\\"/>\", \"sparkles\": \"<path d=\\\"M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z\\\"/><path d=\\\"M20 3v4\\\"/><path d=\\\"M22 5h-4\\\"/><path d=\\\"M4 17v2\\\"/><path d=\\\"M5 18H3\\\"/>\", \"trophy\": \"<path d=\\\"M6 9H4.5a2.5 2.5 0 0 1 0-5H6\\\"/><path d=\\\"M18 9h1.5a2.5 2.5 0 0 0 0-5H18\\\"/><path d=\\\"M4 22h16\\\"/><path d=\\\"M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22\\\"/><path d=\\\"M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22\\\"/><path d=\\\"M18 2H6v7a6 6 0 0 0 12 0V2Z\\\"/>\", \"trending-up\": \"<polyline points=\\\"22 7 13.5 15.5 8.5 10.5 2 17\\\"/><polyline points=\\\"16 7 22 7 22 13\\\"/>\", \"trending-down\": \"<polyline points=\\\"22 17 13.5 8.5 8.5 13.5 2 7\\\"/><polyline points=\\\"16 17 22 17 22 11\\\"/>\", \"bar-chart-3\": \"<path d=\\\"M3 3v18h18\\\"/><path d=\\\"M18 17V9\\\"/><path d=\\\"M13 17V5\\\"/><path d=\\\"M8 17v-3\\\"/>\", \"coins\": \"<circle cx=\\\"8\\\" cy=\\\"8\\\" r=\\\"6\\\"/><path d=\\\"M18.09 10.37A6 6 0 1 1 10.34 18\\\"/><path d=\\\"M7 6h1v4\\\"/><path d=\\\"m16.71 13.88.7.71-2.82 2.82\\\"/>\", \"rocket\": \"<path d=\\\"M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z\\\"/><path d=\\\"m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z\\\"/><path d=\\\"M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0\\\"/><path d=\\\"M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5\\\"/>\", \"crown\": \"<path d=\\\"M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519l-2.834 10.246a1 1 0 0 1-.956.734H5.81a1 1 0 0 1-.957-.734L2.02 6.02a.5.5 0 0 1 .798-.519l4.276 3.664a1 1 0 0 0 1.516-.294z\\\"/><path d=\\\"M5 21h14\\\"/>\", \"image\": \"<rect width=\\\"18\\\" height=\\\"18\\\" x=\\\"3\\\" y=\\\"3\\\" rx=\\\"2\\\" ry=\\\"2\\\"/><circle cx=\\\"9\\\" cy=\\\"9\\\" r=\\\"2\\\"/><path d=\\\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\\\"/>\"}");
-
-const LUCIDE_SPRITE = (() => {
-  const symbols = Object.keys(LUCIDE_ICONS).map(k => `<symbol id="luc-${k}" viewBox="0 0 24 24">${LUCIDE_ICONS[k]}</symbol>`).join("");
-  return `<svg class="lucide-sprite" width="0" height="0" style="position:absolute;width:0;height:0" aria-hidden="true">${symbols}</svg>`;
-})();
-
-/** Render an inline Lucide icon as <svg><use href="#luc-{name}"/></svg>. */
-function icon(name: string, size: number = 18, cls: string = ""): string {
-  return `<svg class="ic ${cls}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#luc-${name}"/></svg>`;
-}
-
 const RECAP_CSS = `
 :root{color-scheme:dark;--bg:#0b0b14;--fg:#fff;--muted:rgba(255,255,255,.7);
 --g1:#7c3aed;--g2:#ec4899;--g3:#f59e0b;--g4:#22d3ee;--card:rgba(255,255,255,.07);--line:rgba(255,255,255,.14)}
@@ -121,12 +171,10 @@ body.theme-cyan{--g1:#06b6d4;--g2:#3b82f6;--g4:#22d3ee}
 body.theme-ember{--g1:#ef4444;--g2:#f59e0b;--g4:#fb923c}
 body.theme-royal{--g1:#7c3aed;--g2:#f59e0b;--g4:#a855f7}
 body.theme-dawn{--g1:#f59e0b;--g2:#ec4899;--g4:#fcd34d}
-body.mood-calm{--g1:#60a5fa;--g2:#a78bfa;--g3:#34d399;--g4:#fbbf24;--anim-dur:14s}
-body.mood-wild{--g1:#f43f5e;--g2:#fbbf24;--g3:#22d3ee;--g4:#a855f7;--anim-dur:4s}
-body.mood-mysterious{--g1:#6366f1;--g2:#1e1b4b;--g3:#312e81;--g4:#1e293b;--anim-dur:18s}
-body.mood-energetic{--anim-dur:8s}
+body.mood-calm{--g1:#60a5fa;--g2:#a78bfa;--g3:#34d399;--g4:#fbbf24}
+body.mood-wild{--g1:#f43f5e;--g2:#fbbf24;--g3:#22d3ee;--g4:#a855f7}
+body.mood-mysterious{--g1:#6366f1;--g2:#1e1b4b;--g3:#312e81;--g4:#1e293b}
 .slide--hero .big{font-size:clamp(56px,20vw,150px);filter:drop-shadow(0 0 30px rgba(124,58,237,.5))}
-.slide--hero .headline{font-size:clamp(32px,10vw,72px)}
 .navdots{position:fixed;right:10px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:7px;z-index:30}
 .navdots i{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.25);transition:background .3s,transform .3s;cursor:pointer}
 .navdots i.on{background:var(--g4);transform:scale(1.5)}
@@ -137,29 +185,18 @@ body{background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"S
 overflow-x:hidden}
 .deck{height:100dvh;overflow-y:scroll;scroll-snap-type:y mandatory;scroll-behavior:smooth}
 .slide{min-height:100dvh;scroll-snap-align:start;display:flex;flex-direction:column;align-items:center;
-justify-content:center;text-align:center;padding:max(24px,6vw) 20px;position:relative;gap:clamp(12px,3vw,22px)}
+justify-content:center;text-align:center;padding:max(24px,6vw) 20px;position:relative;gap:clamp(14px,3.4vw,26px)}
 .slide::before{content:"";position:absolute;inset:0;z-index:-1;opacity:.5;
 background:radial-gradient(900px 600px at 50% 0%,rgba(124,58,237,.35),transparent 60%),
 radial-gradient(700px 500px at 100% 100%,rgba(236,72,153,.25),transparent 55%)}
 .wrap{width:100%;max-width:760px;margin:0 auto;display:flex;flex-direction:column;align-items:center;gap:inherit}
-.kicker{font-size:clamp(12px,3.2vw,15px);letter-spacing:.18em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.kicker{font-size:clamp(12px,3.2vw,15px);letter-spacing:.18em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-bottom:8px}
 .big{font-size:clamp(40px,16vw,120px);font-weight:900;line-height:.95;
 background:linear-gradient(120deg,var(--g4),var(--g1),var(--g2),var(--g3));-webkit-background-clip:text;
-background-clip:text;color:transparent;background-size:200% 200%;animation:flow var(--anim-dur,8s) ease infinite}
+background-clip:text;color:transparent;background-size:200% 200%;animation:flow 8s ease infinite}
 @keyframes flow{0%,100%{background-position:0 50%}50%{background-position:100% 50%}}
 .headline{font-size:clamp(26px,8vw,56px);font-weight:900;line-height:1.05}
-.caption{font-size:clamp(15px,4.4vw,22px);color:var(--muted);line-height:1.5;max-width:34ch}
-/* Adaptive: persona caption tone */
-.persona-sub{transition:color .25s}
-.persona-sub.persona-tone-playful{color:var(--g3);font-weight:600}
-.persona-sub.persona-tone-humble{color:var(--muted);font-weight:500;font-style:italic}
-.persona-sub.persona-tone-confident{color:#fde68a;font-weight:700;letter-spacing:.2px}
-/* Adaptive: community percentile focus (one number is the headline, the other fades) */
-.community-num--focus{font-weight:900;font-size:clamp(36px,9vw,60px);
-background:linear-gradient(120deg,var(--g1),var(--g3));
--webkit-background-clip:text;background-clip:text;color:transparent;
-filter:drop-shadow(0 4px 16px rgba(124,58,237,.45))}
-.community-num--dim{opacity:.5;filter:grayscale(.3)}
+.caption{font-size:clamp(13px,3.8vw,18px);color:var(--muted);line-height:1.6;max-width:34ch}
 .card{background:var(--card);border:1px solid var(--line);border-radius:26px;padding:clamp(18px,5vw,34px);
 backdrop-filter:blur(14px);width:100%;box-shadow:0 20px 60px rgba(0,0,0,.35)}
 .avatar{width:clamp(96px,28vw,160px);height:clamp(96px,28vw,160px);border-radius:50%;object-fit:cover;
@@ -182,40 +219,27 @@ border:1px solid var(--line);box-shadow:0 18px 50px rgba(0,0,0,.45)}
 @media(max-width:520px){.bento{grid-template-columns:1fr 1fr}}
 .bento2{display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:74px;gap:10px;width:100%;max-width:560px}
 .b2{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:18px;background:var(--card);
-display:flex;flex-direction:column;justify-content:flex-end;padding:10px 12px 12px;text-align:left;
+display:flex;flex-direction:column;justify-content:center;padding:12px 14px;text-align:left;
 transition:transform .2s,box-shadow .2s}
 .b2:hover{transform:translateY(-4px);box-shadow:0 12px 28px rgba(0,0,0,.35)}
-.b2-anchor{grid-column:span 2;grid-row:span 2;display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:center;background:linear-gradient(140deg,rgba(124,58,237,.32),rgba(236,72,153,.18),var(--card))}
+.b2-anchor{grid-column:span 2;grid-row:span 2;background:linear-gradient(140deg,rgba(124,58,237,.32),rgba(236,72,153,.18),var(--card))}
 .b2-wide{grid-column:span 2;flex-direction:row;align-items:center;gap:12px;background:linear-gradient(140deg,rgba(34,211,238,.2),var(--card))}
 .b2-sm{background:linear-gradient(140deg,rgba(255,255,255,.06),var(--card))}
 .b2-sm:nth-of-type(3n){background:linear-gradient(140deg,rgba(245,158,11,.16),var(--card))}
-.b2-ic,.b2-ic-sm{position:absolute;top:8px;right:8px;width:18px;height:18px;opacity:.55;color:var(--muted);display:inline-block}
-.b2-ic-sm{width:14px;height:14px}
-.b2-anchor .b2-ic{width:18px;height:18px;top:10px;right:10px}
-.b2-anchor .b2-l{display:flex;flex-direction:column;justify-content:center;gap:2px;min-width:0}
-.b2-num{font-size:clamp(28px,7.5vw,42px);font-weight:900;line-height:1;margin-top:0}
+.b2-ic,.b2-ic-sm,.wc-tile .ti,.chip-ic,.bubble-ic,.badge-ic,.tb-ic,.qi{
+  position:absolute;top:10px;right:12px;color:var(--muted);opacity:.7;pointer-events:none;line-height:1}
+.b2-anchor .b2-ic{width:20px;height:20px;top:10px;right:12px}
+.b2-wide .b2-ic-sm{width:18px;height:18px;top:10px;right:12px}
+.b2-sm .b2-ic-sm{width:16px;height:16px;top:10px;right:10px}
+.b2:hover .b2-ic,.b2:hover .b2-ic-sm{opacity:1;transform:scale(1.08)}
+.b2-num{font-size:clamp(34px,9vw,52px);font-weight:900;line-height:1;margin-top:6px}
 .b2-num-sm{font-size:clamp(20px,5.5vw,28px);font-weight:900;line-height:1;margin-top:3px}
 .b2-lbl{font-size:12px;font-weight:700;margin-top:4px}
 .b2-lbl-sm{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
-.b2-quip{font-size:11px;color:var(--muted);line-height:1.4;padding-right:24px;text-align:right;align-self:center;margin-top:0}
+.b2-quip{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.35}
 .b2-wide-tx{display:flex;flex-direction:column}
 .bento-chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:14px}
-.ic{display:inline-block;vertical-align:middle;flex:0 0 auto;color:currentColor}
-.speed-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;width:100%;max-width:520px}
-.speed-card{position:relative;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:14px;text-align:left;display:flex;flex-direction:column;gap:4px}
-.speed-fast{background:linear-gradient(140deg,rgba(34,211,238,.18),var(--card))}
-.speed-slow{background:linear-gradient(140deg,rgba(245,158,11,.18),var(--card))}
-.speed-ic{position:absolute;top:10px;right:10px;font-size:16px;opacity:.7}
-.speed-lbl{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
-.speed-name{font-size:clamp(15px,4vw,20px);font-weight:800;line-height:1.15;padding-right:24px}
-.speed-val{font-size:clamp(20px,5vw,28px);font-weight:900;line-height:1.1}
-@media(max-width:420px){.speed-grid{grid-template-columns:1fr;gap:8px}}
-.stats-card{display:flex;flex-direction:column;gap:10px;margin-top:6px}
-.stats-row{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
-.stats-lbl{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
-.stats-val{font-size:clamp(18px,4vw,22px);font-weight:900;background:linear-gradient(120deg,var(--g1),var(--g2));-webkit-background-clip:text;background-clip:text;color:transparent}
-.chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:4px}
-@media(max-width:520px){.bento2{grid-auto-rows:64px;gap:8px}.b2-anchor{grid-row:span 2}}
+@media(max-width:520px){.bento2{grid-auto-rows:64px;gap:8px;padding-top:26px}.b2-anchor{grid-row:span 2}}
 .stat .num{font-size:clamp(26px,7vw,40px);font-weight:900}
 .stat .lbl{font-size:clamp(12px,3.4vw,14px);color:var(--muted);margin-top:4px}
 .bars{width:100%;display:flex;flex-direction:column;gap:14px;margin-top:8px}
@@ -226,7 +250,8 @@ transition:transform .2s,box-shadow .2s}
 .bar .b-out{background:linear-gradient(90deg,var(--g2),var(--g3))}
 .barlbl{display:flex;justify-content:space-between;font-size:13px;color:var(--muted);margin-bottom:4px}
 .chip{display:inline-flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);
-border-radius:999px;padding:10px 18px;font-weight:700;font-size:clamp(14px,4vw,18px)}
+border-radius:999px;padding:8px 16px;font-weight:700;font-size:clamp(12px,3.6vw,16px);position:relative;padding-right:36px}
+.chip-ic{position:absolute;right:12px;top:50%;transform:translateY(-50%);opacity:.75}
 .lb{width:100%;display:flex;flex-direction:column;gap:10px}
 .lb-tabs{display:flex;gap:8px;justify-content:center;margin-bottom:6px}
 .lb-tab{background:var(--card);border:1px solid var(--line);color:var(--fg);border-radius:999px;
@@ -349,9 +374,9 @@ background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.16);border-radius:
 backdrop-filter:blur(12px) saturate(110%);-webkit-backdrop-filter:blur(12px) saturate(110%)}
 .wc-tile.hero{grid-column:span 2;grid-row:span 2;padding:12px 14px;gap:4px}
 .wc-tile.wide{grid-column:span 2;flex-direction:row;align-items:center;gap:10px}
-.wc-tile .ti{font-size:20px;line-height:1;flex:0 0 auto}
-.wc-tile.hero .ti{font-size:30px}
-.wc-tile.wide .ti{font-size:24px}
+.wc-tile .ti{width:20px;height:20px;line-height:1;flex:0 0 auto}
+.wc-tile.hero .ti{width:30px;height:30px}
+.wc-tile.wide .ti{width:24px;height:24px}
 /* Rainbow glossy animated stat number — solid white fallback + shadow for legibility */
 .wc-tile .tv{font-weight:900;line-height:1;font-size:clamp(20px,5.2vw,27px);
 color:#fff;text-shadow:0 0 1px rgba(0,0,0,.45),0 1px 2px rgba(0,0,0,.35);
@@ -388,7 +413,7 @@ scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.3) transparent}
 .wc-sw.on{border-color:#fff;transform:scale(1.18);box-shadow:0 0 0 2px rgba(0,0,0,.4)}
 .wc-themes-hint{font-size:11px;color:var(--muted);text-align:center}
 .wc-themes.wc-locked{opacity:.45;pointer-events:none;filter:saturate(.4)}
-@media(max-width:420px){.wrapcard{aspect-ratio:1/1.65}.wc-mosaic{grid-auto-rows:72px;gap:7px}.wc-stack{padding:10px 10px 12px;gap:6px}.wc-foot{font-size:11px;padding:10px 4px 2px}.wc-id .av{width:38px;height:38px}.wc-tile.hero .tv{font-size:clamp(28px,7vw,42px)}.wc-tile{padding:9px 11px 11px}}
+@media(max-width:420px){.wrapcard{aspect-ratio:1/1.65}.wc-mosaic{grid-auto-rows:72px;gap:7px}.wc-stack{padding:10px 10px 12px;gap:6px}.wc-foot{font-size:11px;padding:10px 4px 2px}.wc-id .av{width:38px;height:38px}.wc-tile.hero .tv{font-size:clamp(28px,7vw,42px)}.wc-tile{padding:9px 11px 11px}.wc-tile.hero .ti{width:22px;height:22px;top:8px;right:10px}.wc-tile.sm .ti,.wc-tile.wide .ti{width:16px;height:16px;top:8px;right:10px}.wc-themes-wrap{flex-direction:column;align-items:stretch}.btns{flex-direction:column;width:100%;max-width:380px}}
 /* Snap mode: html2canvas-compatible flat rendering for downloads. Kills
    background-clip:text and backdrop-filter so text + glass survive capture. */
 body.wc-snap .wc-tile .tv{visibility:hidden!important;animation:none!important}
@@ -424,6 +449,29 @@ body.wc-snap .wc-tile .tl{margin-top:3px}
 .reveal,.pop{transition:none !important;opacity:1 !important;transform:none !important}
 .big{animation:none}.confetti{display:none}.hint{animation:none}
 .bar>span{transition:none}}
+
+/* === Speed duo (tercepat vs terlemot) ============================== */
+.speed-duo{display:grid;grid-template-columns:1fr auto 1fr;gap:14px;width:100%;max-width:620px;align-items:stretch}
+@media(max-width:520px){.speed-duo{grid-template-columns:1fr;gap:12px}.speed-mid{order:3}}
+.speed-col{position:relative;background:var(--card);border:1px solid var(--line);border-radius:20px;padding:36px 14px 16px;text-align:center;overflow:hidden}
+.speed-col .speed-ic{position:absolute;top:10px;right:12px;opacity:.7}
+.speed-col.speed-fast{background:linear-gradient(140deg,rgba(34,211,238,.18),var(--card))}
+.speed-col.speed-slow{background:linear-gradient(140deg,rgba(236,72,153,.16),var(--card))}
+.speed-lbl{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.speed-name{font-size:clamp(13px,3.6vw,15px);font-weight:800;margin-top:4px;line-height:1.25;word-break:break-all;overflow-wrap:anywhere}
+.speed-ms{font-size:clamp(26px,7vw,36px);font-weight:900;line-height:1;margin-top:8px;background:linear-gradient(120deg,var(--g4),var(--g1));-webkit-background-clip:text;background-clip:text;color:transparent}
+.speed-ms span{font-size:12px;font-weight:700;color:var(--muted);margin-left:4px;-webkit-text-fill-color:var(--muted)}
+.media-duo{width:100%;max-width:180px;max-height:140px;object-fit:cover;border-radius:14px;margin:10px auto 0;display:block;border:1px solid var(--line)}
+.speed-mid{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:10px;min-width:120px;padding:8px 0}
+.speed-spectrum{position:relative;width:120px;height:18px;border-radius:999px;background:linear-gradient(90deg,rgba(236,72,153,.5),rgba(245,158,11,.45),rgba(34,211,238,.55));border:1px solid var(--line);overflow:visible}
+.speed-spectrum .speed-bar{position:absolute;inset:0;border-radius:999px;background:linear-gradient(90deg,rgba(255,255,255,.05),rgba(255,255,255,.25),rgba(255,255,255,.05));background-size:200% 100%;animation:speedSweep 2.6s linear infinite}
+@keyframes speedSweep{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.speed-needle{position:absolute;top:-4px;bottom:-4px;width:4px;border-radius:3px;background:#fff;box-shadow:0 0 12px rgba(255,255,255,.7),0 0 4px rgba(0,0,0,.6);left:50%;transform:translateX(-50%) scaleY(.4);transition:left 1.2s cubic-bezier(.2,.7,.2,1),transform .4s}
+.speed-needle.armed{transform:translateX(-50%) scaleY(1)}
+.speed-tick{position:absolute;top:-22px;font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center;width:18px;height:18px;color:var(--muted)}
+.speed-tick-fast{right:-2px;color:var(--g4)}
+.speed-tick-slow{left:-2px;color:var(--g2)}
+.speed-ratio{font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);text-align:center}
 `;
 
 function crownSvg(rank: number): string {
@@ -433,16 +481,17 @@ function crownSvg(rank: number): string {
   return `<svg class="crown" viewBox="0 0 24 24" fill="${color}" aria-hidden="true"><path d="M3 7l4 4 5-7 5 7 4-4-2 12H5L3 7z"/></svg>`;
 }
 
-function mediaTag(asset: { url: string; type: string } | null | undefined, base: string): string {
+function mediaTag(asset: { url: string; type: string } | null | undefined, base: string, extraClass = "media"): string {
   if (!asset || !asset.url) return "";
   const fallback = `${base}/recap-assets/misc/default.svg`;
+  const cls = `media reveal ${extraClass}`.trim();
   if (asset.type === "video") {
-    return `<video class="media reveal" autoplay muted loop playsinline preload="metadata"
+    return `<video class="${cls}" autoplay muted loop playsinline preload="metadata"
       onerror="this.style.display='none'"><source src="${escapeHtml(asset.url)}"></video>`;
   }
   // GIF/meme as centerpiece. For external (searched) GIFs, on error swap to the
   // local default meme SVG so a dead link never shows a broken image.
-  return `<img class="media reveal" loading="lazy" referrerpolicy="no-referrer" alt="" src="${escapeHtml(asset.url)}"
+  return `<img class="${cls}" loading="lazy" referrerpolicy="no-referrer" alt="" src="${escapeHtml(asset.url)}"
     onerror="this.onerror=null;this.src='${escapeHtml(fallback)}'">`;
 }
 
@@ -462,42 +511,12 @@ function renderLeaderboardList(rows: LeaderboardRow[], viewerId: string | null, 
   }).join("");
 }
 
-function section(id: string, inner: string): string {
-  return `<section class="slide" data-slide="${id}"><div class="wrap">${inner}</div></section>`;
+function section(id: string, inner: string): SlideItem {
+  return { id, html: `<section class="slide" data-slide="${id}"><div class="wrap">${inner}</div></section>` };
 }
 
-/**
- * Apply AI-driven per-user layout hints to the rendered section list.
- *
- * IMPORTANT: section ORDER is fixed by `buildSections` and must NEVER be
- * reshuffled per user. The adaptive part of layout lives INSIDE each section
- * (anchor tile choice, chip emphasis, persona tone, community focus) and in
- * the page-level mood/hero. This function only:
- *   1. hides sections listed in `hiddenSections`
- *   2. tags the chosen `hero` section with the `slide--hero` class
- * The body mood class (`mood-*`) is applied separately at the body element.
- */
-function applyLayoutHints(sections: string[], hints: LayoutHints | null | undefined): string[] {
-  if (!hints) return sections;
-  let arr = sections;
-  // 1. Hide sections (do NOT reorder — order is fixed by buildSections)
-  if (Array.isArray(hints.hiddenSections) && hints.hiddenSections.length) {
-    const hideSet = new Set(hints.hiddenSections);
-    arr = arr.filter((html) => {
-      for (const id of hideSet) if (html.includes(`data-slide="${id}"`)) return false;
-      return true;
-    });
-  }
-  // 2. Hero: add class to the chosen section's wrapper
-  if (hints.hero) {
-    arr = arr.map((html) => {
-      if (html.includes(`data-slide="${hints.hero}"`)) {
-        return html.replace('class="slide"', 'class="slide slide--hero"');
-      }
-      return html;
-    });
-  }
-  return arr;
+function chipHtml(iconName: string, text: string): string {
+  return `<div class="chip reveal">${escapeHtml(text)}<span class="chip-ic">${phosphor(iconName, 14, "chip-ic")}</span></div>`;
 }
 
 function n(stats: any, path: string, def = 0): number {
@@ -506,7 +525,7 @@ function n(stats: any, path: string, def = 0): number {
   } catch { return def; }
 }
 
-function buildSections(d: RecapHtmlData): string {
+function buildSectionItems(d: RecapHtmlData): SlideItem[] {
   const s = d.stats || {};
   const nv = d.narrative || {};
   const sec = (nv.sections || {}) as Record<string, { headline?: string; caption?: string }>;
@@ -522,7 +541,7 @@ function buildSections(d: RecapHtmlData): string {
   const inPct = Math.round((inputTok / maxTok) * 100);
   const outPct = Math.round((outputTok / maxTok) * 100);
 
-  const out: string[] = [];
+  const out: SlideItem[] = [];
 
   // 1. Intro
   const introT = txt("intro", `Recap ${d.monthLabel}`, "Yuk lihat perjalanan ngoding kamu!");
@@ -535,50 +554,40 @@ function buildSections(d: RecapHtmlData): string {
     ${mediaTag(A.intro, d.base)}
     <div class="hint">Scroll / geser ke bawah ⌄</div>`));
 
-  // 2-3b. Combined Statistics (request + tokens + cost in one section)
-  const reqT = txt("requests", `${fmtNum(n(s, "totals.requests"))} request`, "Total kamu mecut AI bulan ini.");
+  // 2. Statistik Bulan Ini (merged requests + tokens + cost)
+  const statsT = txt("stats",
+    `${fmtNum(n(s, "totals.requests"))} request · ${fmtNum(n(s, "totals.totalTokens"))} token`,
+    sec.stats?.caption || sec.requests?.caption || "Total kamu mecut AI bulan ini.");
   const cost = s.cost;
-  const hasCost = !!(cost && cost.totalMicro > 0);
+  const costChips: string[] = [];
+  if (cost && cost.totalMicro > 0) {
+    if (cost.mostExpensiveModel) costChips.push(chipHtml("currency-dollar", `Termahal: ${cost.mostExpensiveModel.model} (${fmtMoney(cost.mostExpensiveModel.micro)})`));
+    if (cost.cheapestModel) costChips.push(chipHtml("coin", `Termurah: ${cost.cheapestModel.model} (${fmtMoney(cost.cheapestModel.micro)})`));
+    if (cost.mostExpensiveDay) costChips.push(chipHtml("calendar-dots", `Hari paling boros: ${cost.mostExpensiveDay.day} (${fmtMoney(cost.mostExpensiveDay.micro)})`));
+    if (cost.mostExpensiveHour !== null && cost.mostExpensiveHour) costChips.push(chipHtml("clock", `Jam paling boros: ${cost.mostExpensiveHour.hour}:00 WIB (${fmtMoney(cost.mostExpensiveHour.micro)})`));
+  }
   out.push(section("stats", `
     <div class="kicker reveal">Statistik Bulan Ini</div>
-    <div class="big reveal" data-count="${n(s, "totals.requests")}">${fmtNum(n(s, "totals.requests"))}</div>
-    <div class="caption reveal">${reqT.caption}</div>
-    <div class="card reveal stats-card">
-      <div class="stats-row">
-        <div class="stats-lbl">Token</div>
-        <div class="stats-val">${fmtNum(n(s, "totals.totalTokens"))}</div>
-      </div>
+    <div class="big reveal" data-count="${n(s, "totals.requests")}">0</div>
+    <div class="card reveal">
       <div class="bars">
-        <div><div class="barlbl"><span>📥 Input</span><span>${fmtNum(inputTok)}</span></div>
+        <div><div class="barlbl"><span>${phosphor("arrow-down", 14)} Input</span><span>${fmtNum(inputTok)}</span></div>
           <div class="bar" style="--w:${inPct}%"><span class="b-in"></span></div></div>
-        <div><div class="barlbl"><span>📤 Output</span><span>${fmtNum(outputTok)}</span></div>
+        <div><div class="barlbl"><span>${phosphor("arrow-up", 14)} Output</span><span>${fmtNum(outputTok)}</span></div>
           <div class="bar" style="--w:${outPct}%"><span class="b-out"></span></div></div>
       </div>
     </div>
-    ${hasCost ? `<div class="card reveal stats-card">
-      <div class="stats-row">
-        <div class="stats-lbl">Biaya</div>
-        <div class="stats-val">${fmtMoney(cost.totalMicro)}</div>
-      </div>
-      <div class="bars">
-        <div><div class="barlbl"><span>📥 Input</span><span>${fmtMoney(cost.inputMicro)}</span></div>
-          <div class="bar" style="--w:${Math.round(((cost.inputMicro||0)/Math.max(cost.inputMicro||0,cost.outputMicro||0,1))*100)}%"><span class="b-in"></span></div></div>
-        <div><div class="barlbl"><span>📤 Output</span><span>${fmtMoney(cost.outputMicro)}</span></div>
-          <div class="bar" style="--w:${Math.round(((cost.outputMicro||0)/Math.max(cost.inputMicro||0,cost.outputMicro||0,1))*100)}%"><span class="b-out"></span></div></div>
-      </div>
-      <div class="chips reveal">${cost.mostExpensiveModel ? `<div class="chip reveal">💎 Termahal: ${escapeHtml(cost.mostExpensiveModel.model)} (${fmtMoney(cost.mostExpensiveModel.micro)})</div>` : ""}
-      ${cost.cheapestModel ? `<div class="chip reveal">🪙 Termurah: ${escapeHtml(cost.cheapestModel.model)} (${fmtMoney(cost.cheapestModel.micro)})</div>` : ""}
-      ${cost.mostExpensiveDay ? `<div class="chip reveal">📅 Hari paling boros: ${escapeHtml(cost.mostExpensiveDay.day)} (${fmtMoney(cost.mostExpensiveDay.micro)})</div>` : ""}
-      ${cost.mostExpensiveHour !== null && cost.mostExpensiveHour ? `<div class="chip reveal">⏰ Jam paling boros: ${cost.mostExpensiveHour.hour}:00 WIB (${fmtMoney(cost.mostExpensiveHour.micro)})</div>` : ""}</div>
-    </div>` : ""}
-    ${mediaTag(A.tokens, d.base)}`));
+    ${cost && cost.totalMicro > 0 ? `<div class="big reveal">${fmtMoney(cost.totalMicro)}</div>` : ""}
+    ${costChips.join("")}
+    <div class="caption reveal">${statsT.caption}</div>
+    ${mediaTag(A.requests || A.tokens, d.base)}`));
 
   // 4. Favorite model
   const favT = txt("favoriteModel", escapeHtml(n2(s, "models.favorite") || "-"), "Model andalan kamu.");
   out.push(section("favoriteModel", `
     <div class="kicker reveal">Model Favorit</div>
     <div class="headline reveal">${favT.headline}</div>
-    <div class="chips reveal"><div class="chip reveal">⭐ ${escapeHtml(n2(s, "models.favorite") || "-")}</div></div>
+    ${chipHtml("star", escapeHtml(n2(s, "models.favorite") || "-"))}
     <div class="caption reveal">${favT.caption}</div>
     ${mediaTag(A.favoriteModel, d.base)}`));
 
@@ -589,35 +598,70 @@ function buildSections(d: RecapHtmlData): string {
     out.push(section("leastModel", `
       <div class="kicker reveal">Yang Terlupakan</div>
       <div class="headline reveal">${leastT.headline}</div>
-      <div class="chips reveal"><div class="chip reveal">😶 ${escapeHtml(least.model)} — ${fmtNum(least.requests || 0)}x</div></div>
+      ${chipHtml("ghost", `${escapeHtml(least.model)} — ${fmtNum(least.requests || 0)}x`)}
       <div class="caption reveal">${leastT.caption}</div>
       ${mediaTag(A.leastModel, d.base)}`));
   }
 
-  // 5b. Kecepatan Model (fastest + slowest combined)
+  // 5b/5c. Kecepatan Model — duo (tercepat vs terlemot) in one slide
   const fastest = s.models?.fastest;
   const slowest = s.models?.slowest;
-  const hasFast = !!(fastest && fastest.model);
-  const hasSlow = !!(slowest && slowest.model && (!fastest || slowest.model !== fastest.model));
-  if (hasFast || hasSlow) {
+  if (fastest && fastest.model && slowest && slowest.model && slowest.model !== fastest.model) {
+    const slowMs = slowest.avgLatencyMs || 0;
+    const fastMs = fastest.avgLatencyMs || 0;
+    // Needle position 0..100 across the spectrum: 100 = fastest, 0 = slowest.
+    const range = Math.max(slowMs - fastMs, 1);
+    const slowPct = 100 - Math.round(((slowMs - fastMs) / range) * 0); // always 0 end
+    const fastPct = 100;
+    const needlePct = slowMs > fastMs
+      ? Math.max(2, Math.min(98, Math.round(((slowMs - fastMs) > 0 ? 0 : 100)))
+        + Math.round((fastMs / Math.max(slowMs, 1)) * 96) - 4)
+      : 50;
     out.push(section("modelSpeed", `
       <div class="kicker reveal">Kecepatan Model</div>
-      <div class="speed-grid reveal">
-        ${hasFast ? `<div class="speed-card speed-fast">
-          <div class="speed-ic">⚡</div>
-          <div class="speed-lbl">Tercepat</div>
-          <div class="speed-name">${escapeHtml(fastest.model)}</div>
-          <div class="speed-val">${fmtNum(fastest.avgLatencyMs || 0)}ms</div>
-        </div>` : ""}
-        ${hasSlow ? `<div class="speed-card speed-slow">
-          <div class="speed-ic">🐌</div>
+      <div class="headline reveal">Dari Ngebut sampai Mikir Keras</div>
+      <div class="speed-duo reveal">
+        <div class="speed-col speed-slow" data-speed-side="slow">
+          <div class="speed-ic">${phosphor("turtle", 18, "chip-ic")}</div>
           <div class="speed-lbl">Terlemot</div>
           <div class="speed-name">${escapeHtml(slowest.model)}</div>
-          <div class="speed-val">${fmtNum(slowest.avgLatencyMs || 0)}ms</div>
-        </div>` : ""}
+          <div class="speed-ms">${fmtNum(slowMs)}<span>ms</span></div>
+          ${mediaTag(A.slowestModel, d.base, "media-duo")}
+        </div>
+        <div class="speed-mid">
+          <div class="speed-spectrum" id="speedSpectrum"
+            data-fast="${fastPct}" data-slow="${slowPct}" data-needle="${needlePct}">
+            <div class="speed-bar"></div>
+            <div class="speed-needle" id="speedNeedle"></div>
+            <div class="speed-tick speed-tick-fast">${phosphor("lightning", 14)}</div>
+            <div class="speed-tick speed-tick-slow">${phosphor("moon-stars", 14)}</div>
+          </div>
+          <div class="speed-ratio">${slowMs && fastMs ? `${(slowMs / Math.max(fastMs, 1)).toFixed(1)}x lebih lambat` : ""}</div>
+        </div>
+        <div class="speed-col speed-fast" data-speed-side="fast">
+          <div class="speed-ic">${phosphor("lightning", 18, "chip-ic")}</div>
+          <div class="speed-lbl">Tercepat</div>
+          <div class="speed-name">${escapeHtml(fastest.model)}</div>
+          <div class="speed-ms">${fmtNum(fastMs)}<span>ms</span></div>
+          ${mediaTag(A.fastestModel, d.base, "media-duo")}
+        </div>
       </div>
-      <div class="caption reveal">${hasFast && hasSlow ? "Salah satu ngebut, yang satu mikir keras dulu." : hasFast ? "Ngebut, jawab kilat tanpa drama." : "Sabar ya, dia mikir keras dulu."}</div>
+      <div class="caption reveal">Salah satu ngebut, yang satu mikir keras dulu.</div>`));
+  } else if (fastest && fastest.model) {
+    // Fallback when only one model has latency data
+    out.push(section("modelSpeed", `
+      <div class="kicker reveal">Kecepatan Model</div>
+      <div class="headline reveal">${escapeHtml(fastest.model)}</div>
+      ${chipHtml("lightning", `rata-rata ${fmtNum(fastest.avgLatencyMs || 0)}ms`)}
+      <div class="caption reveal">Ngebut, jawab kilat tanpa drama.</div>
       ${mediaTag(A.fastestModel, d.base)}`));
+  } else if (slowest && slowest.model) {
+    out.push(section("modelSpeed", `
+      <div class="kicker reveal">Kecepatan Model</div>
+      <div class="headline reveal">${escapeHtml(slowest.model)}</div>
+      ${chipHtml("turtle", `rata-rata ${fmtNum(slowest.avgLatencyMs || 0)}ms`)}
+      <div class="caption reveal">Sabar ya, dia mikir keras dulu.</div>
+      ${mediaTag(A.slowestModel, d.base)}`));
   }
 
   // 6. Active time
@@ -626,73 +670,37 @@ function buildSections(d: RecapHtmlData): string {
   out.push(section("activeTime", `
     <div class="kicker reveal">Jam Sibuk</div>
     <div class="big reveal">${hr >= 0 ? hr + ":00" : "-"}</div>
-    <div class="chips reveal">
-    ${s.activity?.favoriteWeekday ? `<div class="chip reveal">📅 Paling rajin hari ${escapeHtml(s.activity.favoriteWeekday)}</div>` : ""}
-    ${s.activity?.mostProductiveHour ? `<div class="chip reveal">⚡ Jam paling produktif: ${n(s, "activity.mostProductiveHour.hour")}:00 WIB</div>` : ""}
-    ${s.activity?.mostActiveDay ? `<div class="chip reveal">🔥 Hari paling aktif: ${escapeHtml(s.activity.mostActiveDay.day)} (${fmtNum(n(s, "activity.mostActiveDay.requests"))} req)</div>` : ""}
-    ${(n(s, "activity.weekendRequests") + n(s, "activity.weekdayRequests")) > 0 ? `<div class="chip reveal">🗓️ Weekday ${fmtNum(n(s, "activity.weekdayRequests"))} vs Weekend ${fmtNum(n(s, "activity.weekendRequests"))}</div>` : ""}
-    </div>
+    ${s.activity?.favoriteWeekday ? chipHtml("calendar-dots", `Paling rajin hari ${s.activity.favoriteWeekday}`) : ""}
+    ${s.activity?.mostProductiveHour ? chipHtml("lightning", `Jam paling produktif: ${n(s, "activity.mostProductiveHour.hour")}:00 WIB`) : ""}
+    ${s.activity?.mostActiveDay ? chipHtml("flame", `Hari paling aktif: ${s.activity.mostActiveDay.day} (${fmtNum(n(s, "activity.mostActiveDay.requests"))} req)`) : ""}
+    ${(n(s, "activity.weekendRequests") + n(s, "activity.weekdayRequests")) > 0 ? chipHtml("calendar-dots", `Weekday ${fmtNum(n(s, "activity.weekdayRequests"))} vs Weekend ${fmtNum(n(s, "activity.weekendRequests"))}`) : ""}
     <div class="caption reveal">${actT.caption}</div>
     ${mediaTag(A.activeTime, d.base)}`));
 
   // 7. Persona
   const personaTitle = nv.persona?.title || "Coder";
   const personaSub = nv.persona?.subtitle || "";
-  const personaToneCls = `persona-tone-${escapeHtml(d.layoutHints?.personaTone || "humble")}`;
   out.push(section("persona", `
     <div class="kicker reveal">Tipe Kamu</div>
     <div class="big reveal">${escapeHtml(personaTitle)}</div>
-    <div class="caption reveal persona-sub ${personaToneCls}">${escapeHtml(personaSub)}</div>
+    <div class="caption reveal">${escapeHtml(personaSub)}</div>
     ${mediaTag(A.persona, d.base)}`));
 
   // 8. Stats grid
-  // Adaptive: pick which bento tile becomes the 2x2 anchor (the visual hero
-  // inside the "Angka Lain" page). Section order is still fixed; only the
-  // spotlight shifts to the metric that best describes this user.
-  const accent = d.layoutHints?.gridAccent || "tools";
-  const tileTools    = bentoSm(icon("wrench",14,"b2-ic-sm"),        fmtNum(n(s, "tools.totalToolCalls")), "Tool calls");
-  const tileActivity = bentoSm(icon("calendar-check",14,"b2-ic-sm"), n(s, "activity.activeDays"),         "Hari aktif");
-  const tileStreak   = bentoSm(icon("flame",14,"b2-ic-sm"),         n(s, "activity.longestStreak"),      "Streak");
-  const tileSessions = bentoSm(icon("message-circle",14,"b2-ic-sm"), n(s, "sessions.count"),             "Sesi chat");
-  const tileLatency  = bentoSm(icon("timer",14,"b2-ic-sm"),         fmtNum(n(s, "latency.avgMs")),       "Latency (ms)");
-  const tileTurnPct  = bentoWide(icon("bot",14,"b2-ic-sm"),         n(s, "tools.toolTurnPercent") + "%", "turn pakai tool", "Tukang suruh AI.");
-  const tileDevices  = bentoSm(icon("laptop",14,"b2-ic-sm"),        n(s, "devices.uniqueCount"),        "Device");
-  const anchorMap: Record<string, string> = {
-    tools:    bentoBig(icon("wrench",18,"b2-ic"),         fmtNum(n(s, "tools.totalToolCalls")), "Tool calls", "Agentic sejati — nyuruh AI mulu."),
-    activity: bentoBig(icon("calendar-check",18,"b2-ic"), n(s, "activity.activeDays"),         "Hari aktif", "Konsisten itu mahal."),
-    sessions: bentoBig(icon("message-circle",18,"b2-ic"), n(s, "sessions.count"),             "Sesi chat",  "Ngobrol mulu sama AI."),
-    latency:  bentoBig(icon("timer",18,"b2-ic"),          fmtNum(n(s, "latency.avgMs")),       "Latency (ms)","Sabar nungguin."),
-  };
-  // Other tiles get rotated so the anchor still sits in the top-left 2x2 slot
-  // but the rest of the grid subtly reorders to follow the spotlight.
-  const smMap: Record<string, string[]> = {
-    tools:    [tileActivity, tileStreak,   tileSessions, tileTools,    tileDevices],
-    activity: [tileTools,    tileStreak,   tileSessions, tileActivity, tileDevices],
-    sessions: [tileTools,    tileActivity, tileStreak,   tileSessions, tileDevices],
-    latency:  [tileTools,    tileActivity, tileStreak,   tileSessions, tileDevices],
-  };
-  const anchorTile = anchorMap[accent] || anchorMap.tools;
-  const smTiles    = smMap[accent]       || smMap.tools;
-  const chipsHi    = d.layoutHints?.chipsHighlight || "ide";
-  const ideChip    = s.ide?.favorite
-    ? `<div class="chip${chipsHi === "ide" ? " chip--hero" : ""}">${icon("code-2",14)} IDE favorit: ${escapeHtml(s.ide.favorite)}</div>`
-    : "";
-  const deltaChipEl = s.comparison?.hasPrev
-    ? `<div class="chip${chipsHi === "delta" ? " chip--hero" : ""}">${deltaChip(s.comparison)}</div>`
-    : "";
   out.push(section("grid", `
     <div class="kicker reveal">Angka Lain</div>
-<div class="bento2 reveal" data-accent="${escapeHtml(accent)}">
-      ${anchorTile}
-      ${smTiles[0]}
-      ${smTiles[1]}
-      ${smTiles[2]}
-      ${smTiles[3]}
-      ${tileTurnPct}
-      ${smTiles[4]}
+    <div class="bento2 reveal">
+      ${bentoBig("wrench", fmtNum(n(s, "tools.totalToolCalls")), "Tool calls", "Agentic sejati — nyuruh AI mulu.")}
+      ${bentoSm("calendar-dots", n(s, "activity.activeDays"), "Hari aktif")}
+      ${bentoSm("flame", n(s, "activity.longestStreak"), "Streak")}
+      ${bentoSm("chat-circle-dots", n(s, "sessions.count"), "Sesi chat")}
+      ${bentoSm("timer", fmtNum(n(s, "latency.avgMs")), "Latency (ms)")}
+      ${bentoWide("robot", n(s, "tools.toolTurnPercent") + "%", "turn pakai tool", "Tukang suruh AI.")}
+      ${bentoSm("laptop", n(s, "devices.uniqueCount"), "Device")}
+    </div>
     <div class="bento-chips reveal">
-      ${ideChip}
-      ${deltaChipEl}
+      ${s.ide?.favorite ? chipHtml("laptop", `IDE favorit: ${s.ide.favorite}`) : ""}
+      ${s.comparison?.hasPrev ? `<div class="chip reveal">${deltaChip(s.comparison)}</div>` : ""}
     </div>`));
 
   // 8b. Achievements / badges (AI-generated preferred, deterministic fallback)
@@ -702,7 +710,7 @@ function buildSections(d: RecapHtmlData): string {
       <div class="kicker reveal">Lencana Kamu</div>
       <div class="headline reveal">${ach.length} Badge Kekunci 🏅</div>
       <div class="trophy reveal">
-        ${ach.slice(0, 10).map((b) => `<div class="trophy-badge"><div class="tb-shine"></div><div class="tb-ic">${b.icon}</div><div class="tb-title">${escapeHtml(b.title)}</div><div class="tb-desc">${escapeHtml(b.desc)}</div></div>`).join("")}
+        ${ach.slice(0, 10).map((b) => `<div class="trophy-badge"><div class="tb-shine"></div><div class="tb-ic">${iconHtml(b.icon, 28, "tb-ic")}</div><div class="tb-title">${escapeHtml(b.title)}</div><div class="tb-desc">${escapeHtml(b.desc)}</div></div>`).join("")}
       </div>
       ${mediaTag(A.persona, d.base)}`));
   }
@@ -713,7 +721,7 @@ function buildSections(d: RecapHtmlData): string {
     out.push(section("facts", `
       <div class="kicker reveal">Fakta Iseng</div>
       <div class="headline reveal">Tau Gak? 🤔</div>
-      <div class="bubbles">${facts.slice(0, 4).map((f, i) => `<div class="bubble ${i % 2 === 0 ? "bb-left" : "bb-right"} reveal"><span class="bubble-ic">${["🤯", "👀", "🔥", "💡"][i % 4]}</span><span class="bubble-tx">${escapeHtml(f)}</span></div>`).join("")}</div>
+      <div class="bubbles">${facts.slice(0, 4).map((f, i) => `<div class="bubble ${i % 2 === 0 ? "bb-left" : "bb-right"} reveal"><span class="bubble-ic">${phosphor(["lightbulb", "target", "flame", "chart-bar"][i % 4], 20, "bubble-ic")}</span><span class="bubble-tx">${escapeHtml(f)}</span></div>`).join("")}</div>
       ${mediaTag(A.requests, d.base)}`));
   }
 
@@ -734,8 +742,8 @@ function buildSections(d: RecapHtmlData): string {
     out.push(section("rest", `
       <div class="kicker reveal">Hari Santai</div>
       <div class="headline reveal">${rest ? `Kamu Libur Tiap ${escapeHtml(rest)}` : "Hari Tersepi"}</div>
-      ${quiet ? `<div class="chip reveal">😴 Paling sepi: ${escapeHtml(quiet.day)} (${fmtNum(n(s, "activity.quietestActiveDay.requests"))} req)</div>` : ""}
-      ${s.activity?.firstActiveDay ? `<div class="chip reveal">🚀 Mulai aktif: ${escapeHtml(s.activity.firstActiveDay)}</div>` : ""}
+      ${quiet ? chipHtml("moon-stars", `Paling sepi: ${quiet.day} (${fmtNum(n(s, "activity.quietestActiveDay.requests"))} req)`) : ""}
+      ${s.activity?.firstActiveDay ? chipHtml("rocket", `Mulai aktif: ${s.activity.firstActiveDay}`) : ""}
       <div class="caption reveal">Semua orang butuh rebahan. 🛌</div>
       ${mediaTag(A.activeTime, d.base)}`));
   }
@@ -743,15 +751,10 @@ function buildSections(d: RecapHtmlData): string {
   // 8f. Banding komunitas
   const comm = s.extras?.community;
   if (comm && (comm.requestPercentile > 0 || comm.tokenPercentile > 0)) {
-        // Adaptive: which percentile is the visual focus? "request" emphasizes
-    // volume (default for heavy users); "token" emphasizes cost awareness.
-    const cFocus = d.layoutHints?.communityFocus || "request";
-    const reqCls  = cFocus === "request" ? "community-num--focus" : "community-num--dim";
-    const tokCls  = cFocus === "token"   ? "community-num--focus" : "community-num--dim";
     out.push(section("community", `
       <div class="kicker reveal">Kamu vs Komunitas</div>
-      <div class="big reveal ${reqCls}">Top ${Math.max(1, 100 - comm.requestPercentile)}%</div>
-      <div class="caption reveal">Kamu lebih rajin dari <b class="${reqCls}">${comm.requestPercentile}%</b> developer Groupy${comm.tokenPercentile ? `, dan lebih boros token dari <b class="${tokCls}">${comm.tokenPercentile}%</b>` : ""}. 💪</div>
+      <div class="big reveal">Top ${Math.max(1, 100 - comm.requestPercentile)}%</div>
+      <div class="caption reveal">Kamu lebih rajin dari <b>${comm.requestPercentile}%</b> developer Groupy${comm.tokenPercentile ? `, dan lebih boros token dari <b>${comm.tokenPercentile}%</b>` : ""}. 📊</div>
       ${mediaTag(A.rank, d.base)}`));
   }
 
@@ -793,7 +796,7 @@ function buildSections(d: RecapHtmlData): string {
         <div class="stat"><div class="num">${fmtNum(proj.requests)}</div><div class="lbl">Estimasi request</div></div>
         <div class="stat"><div class="num">${fmtNum(proj.tokens)}</div><div class="lbl">Estimasi token</div></div>
       </div>
-      ${proj.costMicro > 0 ? `<div class="chip reveal">💸 Estimasi biaya: ${fmtMoney(proj.costMicro)}</div>` : ""}
+      ${proj.costMicro > 0 ? chipHtml("currency-dollar", `Estimasi biaya: ${fmtMoney(proj.costMicro)}`) : ""}
       <div class="caption reveal">Bukan ramalan dukun, ini matematika. 🔮</div>
       ${mediaTag(A.requests, d.base)}`));
   }
@@ -860,10 +863,11 @@ function buildSections(d: RecapHtmlData): string {
   // Wide tiles need a different inner structure; render with tx wrapper when present
   const tilesFinal = cardMeta.tiles.map((t) => {
     const sub = t.sub ? `<div class="ts">${escapeHtml(t.sub)}</div>` : "";
+    const ti = iconHtml(t.icon, t.size === "hero" ? 22 : 16, "ti");
     if (t.size === "wide") {
-      return `<div class="wc-tile wide"><div class="tglow"></div><div class="ti">${t.icon}</div><div class="tx"><div class="tv">${escapeHtml(t.value)}</div><div class="tl">${escapeHtml(t.label)}</div>${sub}</div></div>`;
+      return `<div class="wc-tile wide"><div class="tglow"></div>${ti}<div class="tx"><div class="tv">${escapeHtml(t.value)}</div><div class="tl">${escapeHtml(t.label)}</div>${sub}</div></div>`;
     }
-    return `<div class="wc-tile ${escapeHtml(t.size)}"><div class="tglow"></div><div class="ti">${t.icon}</div><div class="tv">${escapeHtml(t.value)}</div><div class="tl">${escapeHtml(t.label)}</div>${sub}</div>`;
+    return `<div class="wc-tile ${escapeHtml(t.size)}"><div class="tglow"></div>${ti}<div class="tv">${escapeHtml(t.value)}</div><div class="tl">${escapeHtml(t.label)}</div>${sub}</div>`;
   }).join("");
   out.push(section("card", `
     <div class="kicker reveal">Kartu Recap Kamu</div>
@@ -885,10 +889,10 @@ function buildSections(d: RecapHtmlData): string {
         </div>
         <div class="wc-mosaic">${tilesFinal}</div>
         <div class="wc-glass wc-quote">
-          <div class="qi">💬</div>
+          <div class="qi">${phosphor("chat-circle-dots", 18, "qi")}</div>
           <div class="qx">"${escapeHtml(cardMeta.quote)}"</div>
         </div>
-        ${cardMeta.badge ? `<div class="wc-glass wc-badge"><div class="bi">${cardMeta.badge.icon}</div><div class="bt">${escapeHtml(cardMeta.badge.title)}</div></div>` : ""}
+        ${cardMeta.badge ? `<div class="wc-glass wc-badge">${iconHtml(cardMeta.badge.icon, 18, "bi")}<div class="bt">${escapeHtml(cardMeta.badge.title)}</div></div>` : ""}
         <div class="wc-foot">
           <span>Wrapped ${escapeHtml(d.monthLabel)}</span>
           <span class="brand">✦ Groupy</span>
@@ -900,23 +904,23 @@ function buildSections(d: RecapHtmlData): string {
       <div class="wc-themes-hint">Pilih wallpaper lain — klik untuk ganti</div>
     </div>
     <div class="btns reveal">
-      <button class="btn" id="dlBtn">⬇️ Download Kartu (GIF)</button>
+      <button class="btn" id="dlBtn">${phosphor("download", 16)} Download Kartu (GIF)</button>
     </div>
     <div class="caption reveal" id="dlStatus">Ganti tema, klik download — nanti di-render ke GIF 📸</div>`));
 
   out.push(section("closing", `
-    <div class="big reveal">🎉</div>
+    <div class="big reveal">${phosphor("confetti", 48)}</div>
     <div class="headline reveal">${escapeHtml(closeT)}</div>
     <div class="caption reveal">Bagikan recap kamu ke teman-teman!</div>
     ${mediaTag(A.closing, d.base)}
     <div class="btns reveal">
-      <button class="btn" id="shareBtn">📤 Share</button>
-      <button class="btn ghost" id="copyBtn">🔗 Salin Link</button>
-      <a class="btn ghost" href="https://discord.com/channels/@me" target="_blank" rel="noopener">💬 Discord</a>
+      <button class="btn" id="shareBtn">${phosphor("share", 16)} Share</button>
+      <button class="btn ghost" id="copyBtn">${phosphor("link", 16)} Salin Link</button>
+      <a class="btn ghost" href="https://discord.com/channels/@me" target="_blank" rel="noopener">${phosphor("chat-circle-dots", 16)} Discord</a>
     </div>
     ${buildTestimonialBlock(d)}`));
 
-  return applyLayoutHints(out, d.layoutHints).join("\n");
+  return out;
 }
 
 function buildTestimonialBlock(d: RecapHtmlData): string {
@@ -952,22 +956,22 @@ function n2(stats: any, path: string): string {
   } catch { return ""; }
 }
 
-/** Bento anchor (2x2) tile: small icon top-right, big number on left, quip on right. */
-function bentoBig(icon: string, value: string | number, label: string, quip: string): string {
-  return `<div class="b2 b2-anchor">${icon}<div class="b2-l">
+/** Bento anchor (2x2) tile: Phosphor icon top-right, big number, label, meme quip. */
+function bentoBig(iconName: string, value: string | number, label: string, quip: string): string {
+  return `<div class="b2 b2-anchor">${phosphor(iconName, 20, "b2-ic")}
     <div class="b2-num">${escapeHtml(String(value))}</div>
-    <div class="b2-lbl">${escapeHtml(label)}</div></div>
+    <div class="b2-lbl">${escapeHtml(label)}</div>
     <div class="b2-quip">${escapeHtml(quip)}</div></div>`;
 }
 /** Bento small (1x1) tile. */
-function bentoSm(icon: string, value: string | number, label: string): string {
-  return `<div class="b2 b2-sm">${icon}
+function bentoSm(iconName: string, value: string | number, label: string): string {
+  return `<div class="b2 b2-sm">${phosphor(iconName, 16, "b2-ic-sm")}
     <div class="b2-num-sm">${escapeHtml(String(value))}</div>
     <div class="b2-lbl-sm">${escapeHtml(label)}</div></div>`;
 }
 /** Bento wide (2x1) tile with quip. */
-function bentoWide(icon: string, value: string | number, label: string, quip: string): string {
-  return `<div class="b2 b2-wide">${icon}
+function bentoWide(iconName: string, value: string | number, label: string, quip: string): string {
+  return `<div class="b2 b2-wide">${phosphor(iconName, 18, "b2-ic-sm")}
     <div class="b2-wide-tx"><div class="b2-num-sm">${escapeHtml(String(value))} <span class="b2-lbl-sm">${escapeHtml(label)}</span></div>
     <div class="b2-quip">${escapeHtml(quip)}</div></div></div>`;
 }
@@ -975,11 +979,11 @@ function bentoWide(icon: string, value: string | number, label: string, quip: st
 function deltaChip(cmp: any): string {
   const r = cmp.requestsDeltaPercent || 0;
   const cls = r >= 0 ? "delta-up" : "delta-down";
-  const arrow = r >= 0 ? icon("trending-up", 14) : icon("trending-down", 14);
+  const arrow = r >= 0 ? "▲" : "▼";
   const tok = cmp.tokensDeltaPercent || 0;
   const tcls = tok >= 0 ? "delta-up" : "delta-down";
-  const tarrow = tok >= 0 ? icon("trending-up", 14) : icon("trending-down", 14);
-  return `${icon("bar-chart-3", 14)} vs bulan lalu: <span class="${cls}">${arrow} ${Math.abs(r)}% req</span> · <span class="${tcls}">${tarrow} ${Math.abs(tok)}% token</span>`;
+  const tarrow = tok >= 0 ? "▲" : "▼";
+  return `📈 vs bulan lalu: <span class="${cls}">${arrow} ${Math.abs(r)}% req</span> · <span class="${tcls}">${tarrow} ${Math.abs(tok)}% token</span>`;
 }
 
 /** Build a 7x24 heatmap (weekday rows x hour cols) from perDay/perHour data. */
@@ -1157,6 +1161,28 @@ const RECAP_JS = `
       if(e.isIntersecting&&!bcrStarted){bcrStarted=true;runBcr(bcrBox.getAttribute('data-mode')||'requests');}
     });},{threshold:0.35});
     io3.observe(bcrBox);
+  }
+
+  // Kecepatan Model duo: animate the spectrum needle on first reveal
+  var speedSlide=document.querySelector('.slide[data-slide="modelSpeed"]');
+  if(speedSlide){
+    var spec=document.getElementById('speedSpectrum');
+    var needle=document.getElementById('speedNeedle');
+    if(spec&&needle){
+      var finalPct=parseFloat(spec.getAttribute('data-needle'))||50;
+      needle.style.left='100%';
+      var speedStarted=false;
+      var ioSpeed=new IntersectionObserver(function(es){
+        es.forEach(function(e){
+          if(e.isIntersecting&&!speedStarted){
+            speedStarted=true;
+            if(rm){ needle.style.left=finalPct+'%'; return; }
+            setTimeout(function(){ needle.classList.add('armed'); needle.style.left=finalPct+'%'; }, 350);
+          }
+        });
+      },{threshold:0.35});
+      ioSpeed.observe(speedSlide);
+    }
   }
 
   // Share + copy
@@ -1612,7 +1638,10 @@ export function renderRecapHtml(d: RecapHtmlData): string {
   const title = `Recap ${d.monthLabel} - ${d.displayName}`;
   const desc = ogDescription(d);
   const ogImg = d.avatarUrl || `${d.base}/recap-assets/misc/default.svg`;
-  const sections = buildSections(d);
+  const hints = ((d.narrative as any)?.layoutHints || {}) as LayoutHints;
+  const mood = hints.mood || "energetic";
+  const moodClass = mood === "energetic" ? "" : ` mood-${mood}`;
+  const sections = applyLayoutHints(buildSectionItems(d), hints).map((it) => it.html).join("\n");
 
   return `<!DOCTYPE html><html lang="id"><head>
 <meta charset="utf-8">
@@ -1630,8 +1659,7 @@ export function renderRecapHtml(d: RecapHtmlData): string {
 <meta name="twitter:image" content="${escapeHtml(ogImg)}">
 <style>${RECAP_CSS}</style>
 </head>
-<body class="theme-${escapeHtml(personaThemeKey(d))}${d.layoutHints?.mood ? ` mood-${escapeHtml(d.layoutHints.mood)}` : ""}" data-url="${escapeHtml(d.pageUrl)}" data-title="${escapeHtml(title)}">
-${LUCIDE_SPRITE}
+<body class="theme-${escapeHtml(personaThemeKey(d))}${moodClass}" data-url="${escapeHtml(d.pageUrl)}" data-title="${escapeHtml(title)}">
 <script>window.__RECAP_CLEAN_PATH=${JSON.stringify(d.cleanPath || "")};</script>
 <div class="deck">${sections}</div>
 <div class="navdots" id="navDots"></div>

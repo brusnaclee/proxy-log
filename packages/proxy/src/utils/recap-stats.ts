@@ -690,9 +690,26 @@ export async function getRaceTimelapse(
     metric: "requests" | "tokens",
   ): Promise<TimelapseTrack | null> => {
     const active = list.filter((e) => (metric === "requests" ? e.requests > 0 : e.tokens > 0) && e.apiKeyId != null);
-    if (active.length < 2) return null;
-    const myIdx = active.findIndex((e) => e.apiKeyId === keyId);
-    if (myIdx < 0) return null;
+    if (active.length < 2) {
+      // Community too small for a race. Caller decides whether to render anything.
+      console.warn(`[recap-race] ${metric}: only ${active.length} active participants — section will be skipped`);
+      return null;
+    }
+    let myIdx = active.findIndex((e) => e.apiKeyId === keyId);
+    if (myIdx < 0) {
+      // Viewer not in the leaderboard for this metric but has usage — inject a
+      // synthetic entry so they still see their own trajectory.
+      const ownEntry = list.find((e) => e.apiKeyId === keyId);
+      if (!ownEntry || (metric === "requests" ? ownEntry.requests : ownEntry.tokens) <= 0) return null;
+      console.warn(`[recap-race] ${metric}: viewer not in leaderboard — injecting synthetic entry`);
+      const synthetic: LeaderboardEntry = {
+        ...ownEntry,
+        requests: metric === "requests" ? ownEntry.requests : 0,
+        tokens: metric === "tokens" ? ownEntry.tokens : 0,
+      };
+      active.push(synthetic);
+      myIdx = active.length - 1;
+    }
     const lo = Math.max(0, myIdx - 5);
     const hi = Math.min(active.length, myIdx + 6);
     const windowed = active.slice(lo, hi);

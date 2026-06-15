@@ -93,13 +93,26 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
       shareToken = randomBytes(16).toString("hex");
       await db.update(userRecaps).set({ shareToken, shareTokenUsed: false, updatedAt: new Date() }).where(eq(userRecaps.id, existing.id));
     }
+    const cachedStats = safeParse(existing.statsJson) || {};
+    // Backfill timelapse on cache hit so older rows (pre-race feature, or
+    // generated when the silent catch fired) get the section on next open.
+    if (!cachedStats.race || !Array.isArray(cachedStats.race?.days) || cachedStats.race.days.length < 2) {
+      try {
+        const lb = await getMonthLeaderboard(yearMonth);
+        const race = await getRaceTimelapse(key.id, yearMonth, lb);
+        if (race) {
+          cachedStats.race = race;
+          await db.update(userRecaps).set({ statsJson: JSON.stringify(cachedStats), updatedAt: new Date() }).where(eq(userRecaps.id, existing.id));
+        }
+      } catch { /* leave stats as-is */ }
+    }
     return c.json({
       cached: true,
       apiKeyName: existing.apiKeyName || key.name,
       yearMonth,
       monthLabel,
       window: win,
-      stats: safeParse(existing.statsJson),
+      stats: cachedStats,
       narrative: safeParse(existing.narrativeJson),
       rank: { requests: existing.rankRequests || 0, tokens: existing.rankTokens || 0 },
       shareToken: body.interactive ? dayToken(discordUserId, yearMonth) : undefined,
