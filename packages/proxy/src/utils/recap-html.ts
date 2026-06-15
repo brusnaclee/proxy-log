@@ -546,385 +546,425 @@ function buildSectionItems(d: RecapHtmlData): SlideItem[] {
   const inPct = Math.round((inputTok / maxTok) * 100);
   const outPct = Math.round((outputTok / maxTok) * 100);
 
-  const out: SlideItem[] = [];
+  // ── Section builders ────────────────────────────────────────────────────
+  // Each builder returns a SlideItem or null. The final deck is composed by
+  // pushing builders in the order below — that is the only place ordering
+  // lives, so re-arranging slides is a 1-line change.
+  const builders: Record<string, (() => SlideItem | null)> = {
 
-  // 1. Intro
-  const introT = txt("intro", `Recap ${d.monthLabel}`, "Yuk lihat perjalanan ngoding kamu!");
-  out.push(section("intro", `
-    ${d.avatarUrl ? `<img class="avatar pop" src="${escapeHtml(d.avatarUrl)}" alt="" onerror="this.style.display='none'">` : ""}
-    <div class="kicker reveal">Monthly Recap</div>
-    <div class="big reveal">${escapeHtml(d.monthLabel)}</div>
-    <div class="headline reveal">${escapeHtml(d.displayName)}</div>
-    <div class="caption reveal">${introT.caption}</div>
-    ${mediaTag(A.intro, d.base)}
-    <div class="hint">Scroll / geser ke bawah ⌄</div>`));
+    intro: () => {
+      const introT = txt("intro", `Recap ${d.monthLabel}`, "Yuk lihat perjalanan ngoding kamu!");
+      return section("intro", `
+        ${d.avatarUrl ? `<img class="avatar pop" src="${escapeHtml(d.avatarUrl)}" alt="" onerror="this.style.display='none'">` : ""}
+        <div class="kicker reveal">Monthly Recap</div>
+        <div class="big reveal">${escapeHtml(d.monthLabel)}</div>
+        <div class="headline reveal">${escapeHtml(d.displayName)}</div>
+        <div class="caption reveal">${introT.caption}</div>
+        ${mediaTag(A.intro, d.base)}
+        <div class="hint">Scroll / geser ke bawah ⤵</div>`);
+    },
 
-  // 2. Statistik Bulan Ini (merged requests + tokens + cost)
-  const statsT = txt("stats",
-    `${fmtNum(n(s, "totals.requests"))} request · ${fmtNum(n(s, "totals.totalTokens"))} token`,
-    sec.stats?.caption || sec.requests?.caption || "Total kamu mecut AI bulan ini.");
-  const cost = s.cost;
-  const costChips: string[] = [];
-  if (cost && cost.totalMicro > 0) {
-    if (cost.mostExpensiveModel) costChips.push(chipHtml("currency-dollar", `Termahal: ${cost.mostExpensiveModel.model} (${fmtMoney(cost.mostExpensiveModel.micro)})`));
-    if (cost.cheapestModel) costChips.push(chipHtml("coin", `Termurah: ${cost.cheapestModel.model} (${fmtMoney(cost.cheapestModel.micro)})`));
-    if (cost.mostExpensiveDay) costChips.push(chipHtml("calendar-dots", `Hari paling boros: ${cost.mostExpensiveDay.day} (${fmtMoney(cost.mostExpensiveDay.micro)})`));
-    if (cost.mostExpensiveHour !== null && cost.mostExpensiveHour) costChips.push(chipHtml("clock", `Jam paling boros: ${cost.mostExpensiveHour.hour}:00 WIB (${fmtMoney(cost.mostExpensiveHour.micro)})`));
-  }
-  out.push(section("stats", `
-    <div class="kicker reveal">Statistik Bulan Ini</div>
-    <div class="big reveal" data-count="${n(s, "totals.requests")}">0</div>
-    <div class="card reveal">
-      <div class="bars">
-        <div><div class="barlbl"><span>${phosphor("arrow-down", 14)} Input</span><span>${fmtNum(inputTok)}</span></div>
-          <div class="bar" style="--w:${inPct}%"><span class="b-in"></span></div></div>
-        <div><div class="barlbl"><span>${phosphor("arrow-up", 14)} Output</span><span>${fmtNum(outputTok)}</span></div>
-          <div class="bar" style="--w:${outPct}%"><span class="b-out"></span></div></div>
-      </div>
-    </div>
-    ${cost && cost.totalMicro > 0 ? `<div class="big reveal">${fmtMoney(cost.totalMicro)}</div>` : ""}
-    ${costChips.join("")}
-    <div class="caption reveal">${statsT.caption}</div>
-    ${mediaTag(A.requests || A.tokens, d.base)}`));
+    persona: () => {
+      const personaTitle = nv.persona?.title || "Coder";
+      const personaSub = nv.persona?.subtitle || "";
+      return section("persona", `
+        <div class="kicker reveal">Tipe Kamu</div>
+        <div class="big reveal">${escapeHtml(personaTitle)}</div>
+        <div class="caption reveal">${escapeHtml(personaSub)}</div>
+        ${mediaTag(A.persona, d.base)}`);
+    },
 
-  // 4. Favorite model
-  const favT = txt("favoriteModel", escapeHtml(n2(s, "models.favorite") || "-"), "Model andalan kamu.");
-  out.push(section("favoriteModel", `
-    <div class="kicker reveal">Model Favorit</div>
-    <div class="headline reveal">${favT.headline}</div>
-    ${chipHtml("star", escapeHtml(n2(s, "models.favorite") || "-"))}
-    <div class="caption reveal">${favT.caption}</div>
-    ${mediaTag(A.favoriteModel, d.base)}`));
+    favoriteModel: () => {
+      const favT = txt("favoriteModel", escapeHtml(n2(s, "models.favorite") || "-"), "Model andalan kamu.");
+      return section("favoriteModel", `
+        <div class="kicker reveal">Model Favorit</div>
+        <div class="headline reveal">${favT.headline}</div>
+        ${chipHtml("star", escapeHtml(n2(s, "models.favorite") || "-"))}
+        <div class="caption reveal">${favT.caption}</div>
+        ${mediaTag(A.favoriteModel, d.base)}`);
+    },
 
-  // 5. Least used model (paling sedikit request)
-  const least = (s.models?.leastUsed || [])[0];
-  if (least) {
-    const leastT = txt("leastModel", escapeHtml(least.model), `Cuma ${least.requests || 0}x dipanggil. Kita kan teman? 🥲`);
-    out.push(section("leastModel", `
-      <div class="kicker reveal">Yang Terlupakan</div>
-      <div class="headline reveal">${leastT.headline}</div>
-      ${chipHtml("ghost", `${escapeHtml(least.model)} — ${fmtNum(least.requests || 0)}x`)}
-      <div class="caption reveal">${leastT.caption}</div>
-      ${mediaTag(A.leastModel, d.base)}`));
-  }
+    leastModel: () => {
+      const least = (s.models?.leastUsed || [])[0];
+      if (!least) return null;
+      const leastT = txt("leastModel", escapeHtml(least.model), `Cuma ${least.requests || 0}x dipanggil. Kita kan teman? 🥲`);
+      return section("leastModel", `
+        <div class="kicker reveal">Yang Terlupakan</div>
+        <div class="headline reveal">${leastT.headline}</div>
+        ${chipHtml("ghost", `${escapeHtml(least.model)} · ${fmtNum(least.requests || 0)}x`)}
+        <div class="caption reveal">${leastT.caption}</div>
+        ${mediaTag(A.leastModel, d.base)}`);
+    },
 
-  // 5b/5c. Kecepatan Model — duo (tercepat vs terlemot) in one slide
-  const fastest = s.models?.fastest;
-  const slowest = s.models?.slowest;
-  if (fastest && fastest.model && slowest && slowest.model && slowest.model !== fastest.model) {
-    const slowMs = slowest.avgLatencyMs || 0;
-    const fastMs = fastest.avgLatencyMs || 0;
-    // Needle position 0..100 across the spectrum: 100 = fastest, 0 = slowest.
-    const range = Math.max(slowMs - fastMs, 1);
-    const slowPct = 100 - Math.round(((slowMs - fastMs) / range) * 0); // always 0 end
-    const fastPct = 100;
-    const needlePct = slowMs > fastMs
-      ? Math.max(2, Math.min(98, Math.round(((slowMs - fastMs) > 0 ? 0 : 100)))
-        + Math.round((fastMs / Math.max(slowMs, 1)) * 96) - 4)
-      : 50;
-    out.push(section("modelSpeed", `
-      <div class="kicker reveal">Kecepatan Model</div>
-      <div class="headline reveal">Dari Ngebut sampai Mikir Keras</div>
-      <div class="speed-duo reveal">
-        <div class="speed-col speed-slow" data-speed-side="slow">
-          <div class="speed-ic">${phosphor("turtle", 18, "chip-ic")}</div>
-          <div class="speed-lbl">Terlemot</div>
-          <div class="speed-name">${escapeHtml(slowest.model)}</div>
-          <div class="speed-ms">${fmtNum(slowMs)}<span>ms</span></div>
-          ${mediaTag(A.slowestModel, d.base, "media-duo")}
-        </div>
-        <div class="speed-mid">
-          <div class="speed-spectrum" id="speedSpectrum"
-            data-fast="${fastPct}" data-slow="${slowPct}" data-needle="${needlePct}">
-            <div class="speed-bar"></div>
-            <div class="speed-needle" id="speedNeedle"></div>
-            <div class="speed-tick speed-tick-fast">${phosphor("lightning", 14)}</div>
-            <div class="speed-tick speed-tick-slow">${phosphor("moon-stars", 14)}</div>
+    modelSpeed: () => {
+      const fastest = s.models?.fastest;
+      const slowest = s.models?.slowest;
+      if (fastest && fastest.model && slowest && slowest.model && slowest.model !== fastest.model) {
+        const slowMs = slowest.avgLatencyMs || 0;
+        const fastMs = fastest.avgLatencyMs || 0;
+        const range = Math.max(slowMs - fastMs, 1);
+        const slowPct = 100 - Math.round(((slowMs - fastMs) / range) * 0);
+        const fastPct = 100;
+        const needlePct = slowMs > fastMs
+          ? Math.max(2, Math.min(98, Math.round(((slowMs - fastMs) > 0 ? 0 : 100))
+            + Math.round((fastMs / Math.max(slowMs, 1)) * 96) - 4))
+          : 50;
+        return section("modelSpeed", `
+          <div class="kicker reveal">Kecepatan Model</div>
+          <div class="headline reveal">Dari Ngebut sampai Mikir Keras</div>
+          <div class="speed-duo reveal">
+            <div class="speed-col speed-slow" data-speed-side="slow">
+              <div class="speed-ic">${phosphor("turtle", 18, "chip-ic")}</div>
+              <div class="speed-lbl">Terlemot</div>
+              <div class="speed-name">${escapeHtml(slowest.model)}</div>
+              <div class="speed-ms">${fmtNum(slowMs)}<span>ms</span></div>
+              ${mediaTag(A.slowestModel, d.base, "media-duo")}
+            </div>
+            <div class="speed-mid">
+              <div class="speed-spectrum" id="speedSpectrum"
+                data-fast="${fastPct}" data-slow="${slowPct}" data-needle="${needlePct}">
+                <div class="speed-bar"></div>
+                <div class="speed-needle" id="speedNeedle"></div>
+                <div class="speed-tick speed-tick-fast">${phosphor("lightning", 14)}</div>
+                <div class="speed-tick speed-tick-slow">${phosphor("moon-stars", 14)}</div>
+              </div>
+              <div class="speed-ratio">${slowMs && fastMs ? `${(slowMs / Math.max(fastMs, 1)).toFixed(1)}x lebih lambat` : ""}</div>
+            </div>
+            <div class="speed-col speed-fast" data-speed-side="fast">
+              <div class="speed-ic">${phosphor("lightning", 18, "chip-ic")}</div>
+              <div class="speed-lbl">Tercepat</div>
+              <div class="speed-name">${escapeHtml(fastest.model)}</div>
+              <div class="speed-ms">${fmtNum(fastMs)}<span>ms</span></div>
+              ${mediaTag(A.fastestModel, d.base, "media-duo")}
+            </div>
           </div>
-          <div class="speed-ratio">${slowMs && fastMs ? `${(slowMs / Math.max(fastMs, 1)).toFixed(1)}x lebih lambat` : ""}</div>
+          <div class="caption reveal">Salah satu ngebut, yang satu mikir keras dulu.</div>`);
+      }
+      if (fastest && fastest.model) {
+        return section("modelSpeed", `
+          <div class="kicker reveal">Kecepatan Model</div>
+          <div class="headline reveal">${escapeHtml(fastest.model)}</div>
+          ${chipHtml("lightning", `rata-rata ${fmtNum(fastest.avgLatencyMs || 0)}ms`)}
+          <div class="caption reveal">Ngebut, jawab kilat tanpa drama.</div>
+          ${mediaTag(A.fastestModel, d.base)}`);
+      }
+      if (slowest && slowest.model) {
+        return section("modelSpeed", `
+          <div class="kicker reveal">Kecepatan Model</div>
+          <div class="headline reveal">${escapeHtml(slowest.model)}</div>
+          ${chipHtml("turtle", `rata-rata ${fmtNum(slowest.avgLatencyMs || 0)}ms`)}
+          <div class="caption reveal">Sabar ya, dia mikir keras dulu.</div>
+          ${mediaTag(A.slowestModel, d.base)}`);
+      }
+      return null;
+    },
+
+    activeTime: () => {
+      const hr = n(s, "activity.mostActiveHour.hour", -1);
+      const actT = txt("activeTime", hr >= 0 ? `${hr}:00 WIB` : "-", "Waktu paling produktif kamu.");
+      return section("activeTime", `
+        <div class="kicker reveal">Jam Sibuk</div>
+        <div class="big reveal">${hr >= 0 ? hr + ":00" : "-"}</div>
+        ${s.activity?.favoriteWeekday ? chipHtml("calendar-dots", `Paling rajin hari ${s.activity.favoriteWeekday}`) : ""}
+        ${s.activity?.mostProductiveHour ? chipHtml("lightning", `Jam paling produktif: ${n(s, "activity.mostProductiveHour.hour")}:00 WIB`) : ""}
+        ${s.activity?.mostActiveDay ? chipHtml("flame", `Hari paling aktif: ${s.activity.mostActiveDay.day} (${fmtNum(n(s, "activity.mostActiveDay.requests"))} req)`) : ""}
+        ${(n(s, "activity.weekendRequests") + n(s, "activity.weekdayRequests")) > 0 ? chipHtml("calendar-dots", `Weekday ${fmtNum(n(s, "activity.weekdayRequests"))} vs Weekend ${fmtNum(n(s, "activity.weekendRequests"))}`) : ""}
+        <div class="caption reveal">${actT.caption}</div>
+        ${mediaTag(A.activeTime, d.base)}`);
+    },
+
+    stats: () => {
+      const statsT = txt("stats",
+        `${fmtNum(n(s, "totals.requests"))} request · ${fmtNum(n(s, "totals.totalTokens"))} token`,
+        sec.stats?.caption || sec.requests?.caption || "Total kamu mecut AI bulan ini.");
+      const cost = s.cost;
+      const costChips: string[] = [];
+      if (cost && cost.totalMicro > 0) {
+        if (cost.mostExpensiveModel) costChips.push(chipHtml("currency-dollar", `Termahal: ${cost.mostExpensiveModel.model} (${fmtMoney(cost.mostExpensiveModel.micro)})`));
+        if (cost.cheapestModel) costChips.push(chipHtml("coin", `Termurah: ${cost.cheapestModel.model} (${fmtMoney(cost.cheapestModel.micro)})`));
+        if (cost.mostExpensiveDay) costChips.push(chipHtml("calendar-dots", `Hari paling boros: ${cost.mostExpensiveDay.day} (${fmtMoney(cost.mostExpensiveDay.micro)})`));
+        if (cost.mostExpensiveHour !== null && cost.mostExpensiveHour) costChips.push(chipHtml("clock", `Jam paling boros: ${cost.mostExpensiveHour.hour}:00 WIB (${fmtMoney(cost.mostExpensiveHour.micro)})`));
+      }
+      return section("stats", `
+        <div class="kicker reveal">Statistik Bulan Ini</div>
+        <div class="big reveal" data-count="${n(s, "totals.requests")}">0</div>
+        <div class="card reveal">
+          <div class="bars">
+            <div><div class="barlbl"><span>${phosphor("arrow-down", 14)} Input</span><span>${fmtNum(inputTok)}</span></div>
+              <div class="bar" style="--w:${inPct}%"><span class="b-in"></span></div></div>
+            <div><div class="barlbl"><span>${phosphor("arrow-up", 14)} Output</span><span>${fmtNum(outputTok)}</span></div>
+              <div class="bar" style="--w:${outPct}%"><span class="b-out"></span></div></div>
+          </div>
         </div>
-        <div class="speed-col speed-fast" data-speed-side="fast">
-          <div class="speed-ic">${phosphor("lightning", 18, "chip-ic")}</div>
-          <div class="speed-lbl">Tercepat</div>
-          <div class="speed-name">${escapeHtml(fastest.model)}</div>
-          <div class="speed-ms">${fmtNum(fastMs)}<span>ms</span></div>
-          ${mediaTag(A.fastestModel, d.base, "media-duo")}
+        ${cost && cost.totalMicro > 0 ? `<div class="big reveal">${fmtMoney(cost.totalMicro)}</div>` : ""}
+        ${costChips.join("")}
+        <div class="caption reveal">${statsT.caption}</div>
+        ${mediaTag(A.requests || A.tokens, d.base)}`);
+    },
+
+    ach: () => {
+      const ach = nv.badges || [];
+      if (!ach.length) return null;
+      const achT = txt("ach", `${ach.length} Badge Kekunci 🏅`, "Bukti kamu konsisten dan eksperimental.");
+      return section("ach", `
+        <div class="kicker reveal">Lencana Kamu</div>
+        <div class="headline reveal">${achT.headline}</div>
+        <div class="trophy reveal">
+          ${ach.slice(0, 4).map((b) => `<div class="trophy-badge">
+            <div class="tb-shine"></div>
+            <div class="tb-ic">${iconHtml(b.icon, 34, "badge-ic")}</div>
+            <div class="tb-title">${escapeHtml(b.title)}</div>
+            <div class="tb-desc">${escapeHtml(b.desc || "")}</div>
+          </div>`).join("")}
         </div>
-      </div>
-      <div class="caption reveal">Salah satu ngebut, yang satu mikir keras dulu.</div>`));
-  } else if (fastest && fastest.model) {
-    // Fallback when only one model has latency data
-    out.push(section("modelSpeed", `
-      <div class="kicker reveal">Kecepatan Model</div>
-      <div class="headline reveal">${escapeHtml(fastest.model)}</div>
-      ${chipHtml("lightning", `rata-rata ${fmtNum(fastest.avgLatencyMs || 0)}ms`)}
-      <div class="caption reveal">Ngebut, jawab kilat tanpa drama.</div>
-      ${mediaTag(A.fastestModel, d.base)}`));
-  } else if (slowest && slowest.model) {
-    out.push(section("modelSpeed", `
-      <div class="kicker reveal">Kecepatan Model</div>
-      <div class="headline reveal">${escapeHtml(slowest.model)}</div>
-      ${chipHtml("turtle", `rata-rata ${fmtNum(slowest.avgLatencyMs || 0)}ms`)}
-      <div class="caption reveal">Sabar ya, dia mikir keras dulu.</div>
-      ${mediaTag(A.slowestModel, d.base)}`));
-  }
+        <div class="caption reveal">${achT.caption}</div>
+        ${mediaTag(A.ach, d.base)}`);
+    },
 
-  // 6. Active time
-  const hr = n(s, "activity.mostActiveHour.hour", -1);
-  const actT = txt("activeTime", hr >= 0 ? `${hr}:00 WIB` : "-", "Waktu paling produktif kamu.");
-  out.push(section("activeTime", `
-    <div class="kicker reveal">Jam Sibuk</div>
-    <div class="big reveal">${hr >= 0 ? hr + ":00" : "-"}</div>
-    ${s.activity?.favoriteWeekday ? chipHtml("calendar-dots", `Paling rajin hari ${s.activity.favoriteWeekday}`) : ""}
-    ${s.activity?.mostProductiveHour ? chipHtml("lightning", `Jam paling produktif: ${n(s, "activity.mostProductiveHour.hour")}:00 WIB`) : ""}
-    ${s.activity?.mostActiveDay ? chipHtml("flame", `Hari paling aktif: ${s.activity.mostActiveDay.day} (${fmtNum(n(s, "activity.mostActiveDay.requests"))} req)`) : ""}
-    ${(n(s, "activity.weekendRequests") + n(s, "activity.weekdayRequests")) > 0 ? chipHtml("calendar-dots", `Weekday ${fmtNum(n(s, "activity.weekdayRequests"))} vs Weekend ${fmtNum(n(s, "activity.weekendRequests"))}`) : ""}
-    <div class="caption reveal">${actT.caption}</div>
-    ${mediaTag(A.activeTime, d.base)}`));
+    grid: () => section("grid", `
+        <div class="kicker reveal">Angka Lain</div>
+        <div class="bento2 reveal">
+          ${bentoBig("wrench", fmtNum(n(s, "tools.totalToolCalls")), "Tool calls", "Agentic sejati — nyuruh AI mulu.")}
+          ${bentoSm("calendar-dots", n(s, "activity.activeDays"), "Hari aktif")}
+          ${bentoSm("flame", n(s, "activity.longestStreak"), "Streak")}
+          ${bentoSm("chat-circle-dots", n(s, "sessions.count"), "Sesi chat")}
+          ${bentoSm("timer", fmtNum(n(s, "latency.avgMs")), "Latency (ms)")}
+          ${bentoWide("robot", n(s, "tools.toolTurnPercent") + "%", "turn pakai tool", "Tukang suruh AI.")}
+          ${bentoSm("laptop", n(s, "devices.uniqueCount"), "Device")}
+        </div>
+        <div class="bento-chips reveal">
+          ${s.ide?.favorite ? chipHtml("laptop", `IDE favorit: ${s.ide.favorite}`) : ""}
+          ${s.comparison?.hasPrev ? `<div class="chip reveal">${s.comparison.requestsDelta > 0 ? phosphor("trend-up", 14, "chip-ic") : phosphor("trend-down", 14, "chip-ic")}<span>${s.comparison.requestsDelta > 0 ? "+" : ""}${fmtNum(s.comparison.requestsDelta)} req vs bulan lalu</span></div>` : ""}
+        </div>
+        ${mediaTag(A.requests, d.base)}`),
 
-  // 7. Persona
-  const personaTitle = nv.persona?.title || "Coder";
-  const personaSub = nv.persona?.subtitle || "";
-  out.push(section("persona", `
-    <div class="kicker reveal">Tipe Kamu</div>
-    <div class="big reveal">${escapeHtml(personaTitle)}</div>
-    <div class="caption reveal">${escapeHtml(personaSub)}</div>
-    ${mediaTag(A.persona, d.base)}`));
+    facts: () => {
+      const facts = (nv.facts || []).slice(0, 4);
+      if (!facts.length) return null;
+      return section("facts", `
+        <div class="kicker reveal">Fakta Iseng</div>
+        <div class="headline reveal">Tau Gak? 🤔</div>
+        <div class="facts reveal">
+          ${facts.map((f) => `<div class="fact">${escapeHtml(f)}</div>`).join("")}
+        </div>
+        ${mediaTag(A.activeTime, d.base)}`);
+    },
 
-  // 8. Stats grid
-  out.push(section("grid", `
-    <div class="kicker reveal">Angka Lain</div>
-    <div class="bento2 reveal">
-      ${bentoBig("wrench", fmtNum(n(s, "tools.totalToolCalls")), "Tool calls", "Agentic sejati — nyuruh AI mulu.")}
-      ${bentoSm("calendar-dots", n(s, "activity.activeDays"), "Hari aktif")}
-      ${bentoSm("flame", n(s, "activity.longestStreak"), "Streak")}
-      ${bentoSm("chat-circle-dots", n(s, "sessions.count"), "Sesi chat")}
-      ${bentoSm("timer", fmtNum(n(s, "latency.avgMs")), "Latency (ms)")}
-      ${bentoWide("robot", n(s, "tools.toolTurnPercent") + "%", "turn pakai tool", "Tukang suruh AI.")}
-      ${bentoSm("laptop", n(s, "devices.uniqueCount"), "Device")}
-    </div>
-    <div class="bento-chips reveal">
-      ${s.ide?.favorite ? chipHtml("laptop", `IDE favorit: ${s.ide.favorite}`) : ""}
-      ${s.comparison?.hasPrev ? `<div class="chip reveal">${deltaChip(s.comparison)}</div>` : ""}
-    </div>`));
+    heatmap: () => {
+      const heat = s.activity?.hourlyHeatmap;
+      if (!heat) return null;
+      const max = Math.max(...Object.values(heat).map((v) => Number(v) || 0), 1);
+      const cells: string[] = [];
+      for (let d = 0; d < 7; d++) {
+        for (let h = 0; h < 24; h++) {
+          const v = Number(heat[`${d}-${h}`] || 0);
+          const a = Math.min(1, v / max);
+          cells.push(`<div class="hc" style="--a:${a.toFixed(2)}" title="${d}:00 ${h}:00 — ${fmtNum(v)} req"></div>`);
+        }
+      }
+      return section("heatmap", `
+        <div class="kicker reveal">Kapan Kamu Ngoding</div>
+        <div class="headline reveal">Pola Jam x Hari</div>
+        <div class="heat reveal">${cells.join("")}</div>
+        <div class="caption reveal">Makin gelap, makin asik kamu mikir.</div>
+        ${mediaTag(A.activeTime, d.base)}`);
+    },
 
-  // 8b. Achievements / badges (AI-generated preferred, deterministic fallback)
-  const ach = ((nv.badges && nv.badges.length ? nv.badges : s.extras?.achievements) || []) as Array<{ icon: string; title: string; desc: string }>;
-  if (ach.length) {
-    out.push(section("ach", `
-      <div class="kicker reveal">Lencana Kamu</div>
-      <div class="headline reveal">${ach.length} Badge Kekunci 🏅</div>
-      <div class="trophy reveal">
-        ${ach.slice(0, 10).map((b) => `<div class="trophy-badge"><div class="tb-shine"></div><div class="tb-ic">${iconHtml(b.icon, 28, "tb-ic")}</div><div class="tb-title">${escapeHtml(b.title)}</div><div class="tb-desc">${escapeHtml(b.desc)}</div></div>`).join("")}
-      </div>
-      ${mediaTag(A.persona, d.base)}`));
-  }
+    rest: () => {
+      const rest = s.activity?.mostRestedWeekday;
+      const quiet = s.activity?.quietestActiveDay;
+      if (!rest && !quiet) return null;
+      return section("rest", `
+        <div class="kicker reveal">Hari Santai</div>
+        <div class="headline reveal">${rest ? `Kamu Libur Tiap ${escapeHtml(rest)}` : "Hari Tersepi"}</div>
+        ${rest ? chipHtml("coffee", `Paling sering libur: ${rest}`) : ""}
+        ${quiet ? chipHtml("moon-stars", `Paling sepi: ${quiet.day} (${fmtNum(n(s, "activity.quietestActiveDay.requests"))} req)`) : ""}
+        ${s.activity?.firstActiveDay ? chipHtml("rocket", `Mulai aktif: ${s.activity.firstActiveDay}`) : ""}
+        <div class="caption reveal">Semua orang butuh rebahan. 🌴</div>
+        ${mediaTag(A.activeTime, d.base)}`);
+    },
 
-  // 8c. Fun facts
-  const facts = (s.extras?.funFacts || []) as string[];
-  if (facts.length) {
-    out.push(section("facts", `
-      <div class="kicker reveal">Fakta Iseng</div>
-      <div class="headline reveal">Tau Gak? 🤔</div>
-      <div class="bubbles">${facts.slice(0, 4).map((f, i) => `<div class="bubble ${i % 2 === 0 ? "bb-left" : "bb-right"} reveal"><span class="bubble-ic">${phosphor(["lightbulb", "target", "flame", "chart-bar"][i % 4], 20, "bubble-ic")}</span><span class="bubble-tx">${escapeHtml(f)}</span></div>`).join("")}</div>
-      ${mediaTag(A.requests, d.base)}`));
-  }
+    community: () => {
+      const comm = s.extras?.community;
+      if (!comm || (comm.requestPercentile <= 0 && comm.tokenPercentile <= 0)) return null;
+      return section("community", `
+        <div class="kicker reveal">Kamu vs Komunitas</div>
+        <div class="big reveal">Top ${Math.max(1, 100 - comm.requestPercentile)}%</div>
+        <div class="caption reveal">Kamu lebih rajin dari <b>${comm.requestPercentile}%</b> developer Groupy${comm.tokenPercentile ? `, dan lebih boros token dari <b>${comm.tokenPercentile}%</b>` : ""}. 🚀</div>
+        ${mediaTag(A.rank, d.base)}`);
+    },
 
-  // 8d. Heatmap jam x hari
-  const heat = buildHeatmap(s);
-  if (heat) {
-    out.push(section("heatmap", `
-      <div class="kicker reveal">Kapan Kamu Ngoding</div>
-      <div class="headline reveal">Pola Jam x Hari</div>
-      <div class="heat card reveal">${heat}</div>
-      <div class="caption reveal">Makin terang, makin sering kamu nyiksa AI di jam itu. 🔥</div>`));
-  }
+    rank: () => {
+      const rankReq = d.rank.requests;
+      const rankTok = d.rank.tokens;
+      const rankT = txt("rank", rankReq ? `Peringkat #${rankReq}` : "Belum berperingkat", "");
+      return section("rank", `
+        <div class="kicker reveal">Peringkat Kamu</div>
+        <div class="headline reveal">${rankT.headline}</div>
+        <div class="row2 reveal">
+          <div class="stat"><div class="num">${rankReq ? "#" + rankReq : "-"}</div><div class="lbl">Request</div></div>
+          <div class="stat"><div class="num">${rankTok ? "#" + rankTok : "-"}</div><div class="lbl">Token</div></div>
+        </div>
+        <div class="caption reveal">${rankT.caption || (rankReq && rankReq <= 5 ? "Sultan AI! Mecut terus 🚀" : "Terus semangat ngoding!")}</div>
+        ${mediaTag(A.rank, d.base)}`);
+    },
 
-  // 8e. Hari sepi / libur
-  const rest = s.extras?.restWeekday;
-  const quiet = s.activity?.quietestActiveDay;
-  if (rest || quiet) {
-    out.push(section("rest", `
-      <div class="kicker reveal">Hari Santai</div>
-      <div class="headline reveal">${rest ? `Kamu Libur Tiap ${escapeHtml(rest)}` : "Hari Tersepi"}</div>
-      ${quiet ? chipHtml("moon-stars", `Paling sepi: ${quiet.day} (${fmtNum(n(s, "activity.quietestActiveDay.requests"))} req)`) : ""}
-      ${s.activity?.firstActiveDay ? chipHtml("rocket", `Mulai aktif: ${s.activity.firstActiveDay}`) : ""}
-      <div class="caption reveal">Semua orang butuh rebahan. 🛌</div>
-      ${mediaTag(A.activeTime, d.base)}`));
-  }
+    race: () => {
+      const race = s.race;
+      const trackReq = race?.byRequests;
+      const trackTok = race?.byTokens;
+      const hasReq = !!(trackReq && Array.isArray(trackReq.users) && trackReq.users.length >= 2);
+      const hasTok = !!(trackTok && Array.isArray(trackTok.users) && trackTok.users.length >= 2);
+      if (!race || !Array.isArray(race.days) || race.days.length < 2 || (!hasReq && !hasTok)) return null;
+      const defMode = hasReq ? "requests" : "tokens";
+      const myReqRank = trackReq?.myRank;
+      const tabs = `
+        <div class="bcr-tabs reveal">
+          ${hasReq ? `<button class="bcr-tab${defMode === "requests" ? " active" : ""}" data-mode="requests">📈 By Request</button>` : ""}
+          ${hasTok ? `<button class="bcr-tab${defMode === "tokens" ? " active" : ""}" data-mode="tokens">🪙 By Token</button>` : ""}
+        </div>`;
+      const cap = myReqRank
+        ? (myReqRank <= 3 ? `Kamu finish di #${myReqRank}. Gokil! 📈` : `Kamu naik ke #${myReqRank}. Lihat perjuangannya!`)
+        : "Lihat perjalanan peringkat kamu sepanjang bulan.";
+      return section("race", `
+        <div class="kicker reveal">Perjalanan Peringkat</div>
+        <div class="headline reveal">Dari Tanggal 1 Sampai Sekarang</div>
+        ${tabs}
+        <div class="bcr card reveal" id="bcrBox"
+          data-days='${escapeHtml(JSON.stringify(race.days))}'
+          data-req='${escapeHtml(JSON.stringify(trackReq || null))}'
+          data-tok='${escapeHtml(JSON.stringify(trackTok || null))}'
+          data-mode='${defMode}'>
+          <div class="bcr-day" id="bcrDay">&nbsp;</div>
+          <div class="bcr-rows" id="bcrRows"></div>
+        </div>
+        <div class="caption reveal">${escapeHtml(cap)}</div>`);
+    },
 
-  // 8f. Banding komunitas
-  const comm = s.extras?.community;
-  if (comm && (comm.requestPercentile > 0 || comm.tokenPercentile > 0)) {
-    out.push(section("community", `
-      <div class="kicker reveal">Kamu vs Komunitas</div>
-      <div class="big reveal">Top ${Math.max(1, 100 - comm.requestPercentile)}%</div>
-      <div class="caption reveal">Kamu lebih rajin dari <b>${comm.requestPercentile}%</b> developer Groupy${comm.tokenPercentile ? `, dan lebih boros token dari <b>${comm.tokenPercentile}%</b>` : ""}. 📊</div>
-      ${mediaTag(A.rank, d.base)}`));
-  }
+    leaderboard: () => section("leaderboard", `
+        <div class="kicker reveal">Papan Peringkat ${escapeHtml(d.monthLabel)}</div>
+        <div class="lb-tabs reveal">
+          <button class="lb-tab active" data-lb="requests">📈 Request</button>
+          <button class="lb-tab" data-lb="tokens">🪙 Token</button>
+        </div>
+        <div class="lb reveal" id="lb-requests">${renderLeaderboardList(d.leaderboard.byRequests, d.viewerDiscordUserId, "req")}</div>
+        <div class="lb reveal" id="lb-tokens" style="display:none">${renderLeaderboardList(d.leaderboard.byTokens, d.viewerDiscordUserId, "tok")}</div>`),
 
-  // 9. Rank
-  const rankReq = d.rank.requests;
-  const rankTok = d.rank.tokens;
-  const rankT = txt("rank", rankReq ? `Peringkat #${rankReq}` : "Belum berperingkat", "");
-  out.push(section("rank", `
-    <div class="kicker reveal">Peringkat Kamu</div>
-    <div class="headline reveal">${rankT.headline}</div>
-    <div class="row2 reveal">
-      <div class="stat"><div class="num">${rankReq ? "#" + rankReq : "-"}</div><div class="lbl">Request</div></div>
-      <div class="stat"><div class="num">${rankTok ? "#" + rankTok : "-"}</div><div class="lbl">Token</div></div>
-    </div>
-    <div class="caption reveal">${rankT.caption || (rankReq && rankReq <= 5 ? "Sultan AI! Mecut terus 🔥" : "Terus semangat ngoding!")}</div>
-    ${mediaTag(A.rank, d.base)}`));
+    projection: () => {
+      const proj = s.extras?.projection;
+      if (!proj || proj.requests <= 0) return null;
+      return section("projection", `
+        <div class="kicker reveal">Ramalan Bulan Depan</div>
+        <div class="headline reveal">Kalau Lanjut Segini...</div>
+        <div class="row2 reveal">
+          <div class="stat"><div class="num">${fmtNum(proj.requests)}</div><div class="lbl">Estimasi request</div></div>
+          <div class="stat"><div class="num">${fmtNum(proj.tokens)}</div><div class="lbl">Estimasi token</div></div>
+        </div>
+        ${proj.costMicro > 0 ? chipHtml("currency-dollar", `Estimasi biaya: ${fmtMoney(proj.costMicro)}`) : ""}
+        <div class="caption reveal">Bukan ramalan dukun, ini matematika. 🔮</div>
+        ${mediaTag(A.requests, d.base)}`);
+    },
 
-  // 9a. Request tercepat & terlama
-  const fastMs = n(s, "latency.fastestMs");
-  const slowMs = n(s, "latency.slowestMs");
-  if (fastMs > 0 || slowMs > 0) {
-    out.push(section("latency", `
-      <div class="kicker reveal">Kecepatan Respon</div>
-      <div class="headline reveal">Tercepat vs Terlama</div>
-      <div class="row2 reveal">
-        <div class="stat"><div class="num">${fastMs > 0 ? fmtNum(fastMs) : "-"}</div><div class="lbl">Tercepat (ms)</div></div>
-        <div class="stat"><div class="num">${slowMs > 0 ? fmtNum(slowMs) : "-"}</div><div class="lbl">Terlama (ms)</div></div>
-      </div>
-      <div class="caption reveal">Yang cepet bikin senyum, yang lama bikin sabar. ⏳</div>`));
-  }
+    card: () => {
+      const persona = nv.persona || {};
+      const cardMeta = d.cardMeta || {
+        wallpaper: null,
+        wallpapers: [],
+        defaultThemeId: 0,
+        tiles: [
+          { key: "requests", icon: "💬", label: "Request", value: fmtNum(n(s, "totals.requests")), sub: "Bulan ini", size: "hero" },
+          { key: "rank", icon: "📈", label: "Peringkat", value: d.rank.requests ? "#" + d.rank.requests : "—", sub: "dari semua developer", size: "sm" },
+          { key: "tokens", icon: "🪙", label: "Token", value: fmtNum(n(s, "totals.totalTokens")), sub: "Input + output", size: "sm" },
+        ],
+        quote: persona.subtitle || "Bulan yang produktif! Terus gas ya.",
+        badge: (nv.badges && nv.badges[0]) ? { icon: nv.badges[0].icon, title: nv.badges[0].title } : null,
+      };
+      const initialWallpaper = cardMeta.wallpapers[0] || cardMeta.wallpaper || "";
+      const tilesFinal = cardMeta.tiles.map((t) => {
+        const sub = t.sub ? `<div class="ts">${escapeHtml(t.sub)}</div>` : "";
+        const ti = iconHtml(t.icon, t.size === "hero" ? 22 : 16, "ti");
+        if (t.size === "wide") {
+          return `<div class="wc-tile wide"><div class="tglow"></div>${ti}<div class="tx"><div class="tv">${escapeHtml(t.value)}</div><div class="tl">${escapeHtml(t.label)}</div>${sub}</div></div>`;
+        }
+        return `<div class="wc-tile ${escapeHtml(t.size)}"><div class="tglow"></div>${ti}<div class="tv">${escapeHtml(t.value)}</div><div class="tl">${escapeHtml(t.label)}</div>${sub}</div>`;
+      }).join("");
+      return section("card", `
+        <div class="kicker reveal">Kartu Recap Kamu</div>
+        <div class="wrapcard reveal" id="wrapCard"
+          data-walls='${escapeHtml(JSON.stringify(cardMeta.wallpapers))}'
+          data-theme='${cardMeta.defaultThemeId || 0}'>
+          <div class="wc-fallback" id="wcFallback"></div>
+          <img class="wc-wall" id="wcWall" crossorigin="anonymous" alt=""
+            src="${escapeHtml(initialWallpaper)}"
+            onerror="this.style.display='none';document.getElementById('wcFallback').style.display='block';" />
+          <div class="wc-scrim"></div>
+          <div class="wc-stack">
+            <div class="wc-glass wc-id">
+              ${d.avatarUrl ? `<img class="av" crossorigin="anonymous" src="${escapeHtml(d.avatarUrl)}" alt="" onerror="this.style.display='none'">` : "<div class=\"av\" style=\"background:rgba(255,255,255,.2)\"></div>"}
+              <div style="min-width:0;flex:1">
+                <div class="name">${escapeHtml(d.displayName)}</div>
+                <div class="persona">${escapeHtml(persona.title || "Coder")}</div>
+              </div>
+            </div>
+            <div class="wc-mosaic">${tilesFinal}</div>
+            <div class="wc-glass wc-quote">
+              <div class="qi">${phosphor("chat-circle-dots", 18, "qi")}</div>
+              <div class="qx">"${escapeHtml(cardMeta.quote)}"</div>
+            </div>
+            ${cardMeta.badge ? `<div class="wc-glass wc-badge">${iconHtml(cardMeta.badge.icon, 18, "bi")}<div class="bt">${escapeHtml(cardMeta.badge.title)}</div></div>` : ""}
+            <div class="wc-foot">
+              <span>Wrapped ${escapeHtml(d.monthLabel)}</span>
+              <span class="brand">· Groupy</span>
+            </div>
+          </div>
+        </div>
+        <div class="wc-themes-wrap reveal">
+          <div class="wc-themes" id="wcThemes"></div>
+          <div class="wc-themes-hint">Pilih wallpaper lain — klik untuk ganti</div>
+        </div>
+        <div class="btns reveal">
+          <button class="btn" id="dlBtn">${phosphor("download", 16)} Download Kartu (GIF)</button>
+        </div>
+        <div class="caption reveal" id="dlStatus">Ganti tema, klik download — nanti di-render ke GIF 📥</div>`);
+    },
 
-  // 9c. Prediksi bulan depan
-  const proj = s.extras?.projection;
-  if (proj && proj.requests > 0) {
-    out.push(section("projection", `
-      <div class="kicker reveal">Ramalan Bulan Depan</div>
-      <div class="headline reveal">Kalau Lanjut Segini...</div>
-      <div class="row2 reveal">
-        <div class="stat"><div class="num">${fmtNum(proj.requests)}</div><div class="lbl">Estimasi request</div></div>
-        <div class="stat"><div class="num">${fmtNum(proj.tokens)}</div><div class="lbl">Estimasi token</div></div>
-      </div>
-      ${proj.costMicro > 0 ? chipHtml("currency-dollar", `Estimasi biaya: ${fmtMoney(proj.costMicro)}`) : ""}
-      <div class="caption reveal">Bukan ramalan dukun, ini matematika. 🔮</div>
-      ${mediaTag(A.requests, d.base)}`));
-  }
-
-  // 9b. Leaderboard timelapse (bar-chart-race, day 1 -> today). Toggle Request/Token.
-  const race = s.race;
-  const trackReq = race?.byRequests;
-  const trackTok = race?.byTokens;
-  const hasReq = !!(trackReq && Array.isArray(trackReq.users) && trackReq.users.length >= 2);
-  const hasTok = !!(trackTok && Array.isArray(trackTok.users) && trackTok.users.length >= 2);
-  if (race && Array.isArray(race.days) && race.days.length >= 2 && (hasReq || hasTok)) {
-    const defMode = hasReq ? "requests" : "tokens";
-    const myReqRank = trackReq?.myRank;
-    const tabs = `
-      <div class="bcr-tabs reveal">
-        ${hasReq ? `<button class="bcr-tab${defMode === "requests" ? " active" : ""}" data-mode="requests">🏆 By Request</button>` : ""}
-        ${hasTok ? `<button class="bcr-tab${defMode === "tokens" ? " active" : ""}" data-mode="tokens">🪙 By Token</button>` : ""}
-      </div>`;
-    const cap = myReqRank
-      ? (myReqRank <= 3 ? `Kamu finish di #${myReqRank}. Gokil! 🏆` : `Kamu naik ke #${myReqRank}. Lihat perjuangannya!`)
-      : "Lihat perjalanan peringkat kamu sepanjang bulan.";
-    out.push(section("race", `
-      <div class="kicker reveal">Perjalanan Peringkat</div>
-      <div class="headline reveal">Dari Tanggal 1 Sampai Sekarang</div>
-      ${tabs}
-      <div class="bcr card reveal" id="bcrBox"
-        data-days='${escapeHtml(JSON.stringify(race.days))}'
-        data-req='${escapeHtml(JSON.stringify(trackReq || null))}'
-        data-tok='${escapeHtml(JSON.stringify(trackTok || null))}'
-        data-mode='${defMode}'>
-        <div class="bcr-day" id="bcrDay">&nbsp;</div>
-        <div class="bcr-rows" id="bcrRows"></div>
-      </div>
-      <div class="caption reveal">${escapeHtml(cap)}</div>`));
-  }
-
-  // 10. Leaderboard
-  out.push(section("leaderboard", `
-    <div class="kicker reveal">Papan Peringkat ${escapeHtml(d.monthLabel)}</div>
-    <div class="lb-tabs reveal">
-      <button class="lb-tab active" data-lb="requests">🏆 Request</button>
-      <button class="lb-tab" data-lb="tokens">🪙 Token</button>
-    </div>
-    <div class="lb reveal" id="lb-requests">${renderLeaderboardList(d.leaderboard.byRequests, d.viewerDiscordUserId, "req")}</div>
-    <div class="lb reveal" id="lb-tokens" style="display:none">${renderLeaderboardList(d.leaderboard.byTokens, d.viewerDiscordUserId, "tok")}</div>`));
-
-  // 11. Closing + share
-  const closeT = nv.closing || "Sampai jumpa bulan depan!";
-  // 10b. V2 Wrapped Card (live anime wallpaper + nested glass tiles)
-  const persona = nv.persona || {};
-  const cardMeta = d.cardMeta || {
-    wallpaper: null,
-    wallpapers: [],
-    defaultThemeId: 0,
-    tiles: [
-      { key: "requests", icon: "🚀", label: "Request", value: fmtNum(n(s, "totals.requests")), sub: "Bulan ini", size: "hero" },
-      { key: "rank", icon: "🏆", label: "Peringkat", value: d.rank.requests ? "#" + d.rank.requests : "—", sub: "dari semua developer", size: "sm" },
-      { key: "tokens", icon: "🪙", label: "Token", value: fmtNum(n(s, "totals.totalTokens")), sub: "Input + output", size: "sm" },
-    ],
-    quote: persona.subtitle || "Bulan yang produktif! Terus gas ya.",
-    badge: (nv.badges && nv.badges[0]) ? { icon: nv.badges[0].icon, title: nv.badges[0].title } : null,
+    closing: () => {
+      const closeT = nv.closing || "Sampai jumpa bulan depan!";
+      return section("closing", `
+        <div class="big reveal">${phosphor("confetti", 48)}</div>
+        <div class="headline reveal">${escapeHtml(closeT)}</div>
+        <div class="caption reveal">Bagikan recap kamu ke teman-teman!</div>
+        ${mediaTag(A.closing, d.base)}
+        <div class="btns reveal">
+          <button class="btn" id="shareBtn">${phosphor("share", 16)} Share</button>
+          <button class="btn ghost" id="copyBtn">${phosphor("link", 16)} Salin Link</button>
+          <a class="btn ghost" href="https://discord.com/channels/@me" target="_blank" rel="noopener">${phosphor("chat-circle-dots", 16)} Discord</a>
+        </div>
+        ${buildTestimonialBlock(d)}`);
+    },
   };
-  const initialWallpaper = cardMeta.wallpapers[0] || cardMeta.wallpaper || "";
-  // Wide tiles need a different inner structure; render with tx wrapper when present
-  const tilesFinal = cardMeta.tiles.map((t) => {
-    const sub = t.sub ? `<div class="ts">${escapeHtml(t.sub)}</div>` : "";
-    const ti = iconHtml(t.icon, t.size === "hero" ? 22 : 16, "ti");
-    if (t.size === "wide") {
-      return `<div class="wc-tile wide"><div class="tglow"></div>${ti}<div class="tx"><div class="tv">${escapeHtml(t.value)}</div><div class="tl">${escapeHtml(t.label)}</div>${sub}</div></div>`;
-    }
-    return `<div class="wc-tile ${escapeHtml(t.size)}"><div class="tglow"></div>${ti}<div class="tv">${escapeHtml(t.value)}</div><div class="tl">${escapeHtml(t.label)}</div>${sub}</div>`;
-  }).join("");
-  out.push(section("card", `
-    <div class="kicker reveal">Kartu Recap Kamu</div>
-    <div class="wrapcard reveal" id="wrapCard"
-      data-walls='${escapeHtml(JSON.stringify(cardMeta.wallpapers))}'
-      data-theme='${cardMeta.defaultThemeId || 0}'>
-      <div class="wc-fallback" id="wcFallback"></div>
-      <img class="wc-wall" id="wcWall" crossorigin="anonymous" alt=""
-        src="${escapeHtml(initialWallpaper)}"
-        onerror="this.style.display='none';document.getElementById('wcFallback').style.display='block';" />
-      <div class="wc-scrim"></div>
-      <div class="wc-stack">
-        <div class="wc-glass wc-id">
-          ${d.avatarUrl ? `<img class="av" crossorigin="anonymous" src="${escapeHtml(d.avatarUrl)}" alt="" onerror="this.style.display='none'">` : "<div class=\"av\" style=\"background:rgba(255,255,255,.2)\"></div>"}
-          <div style="min-width:0;flex:1">
-            <div class="name">${escapeHtml(d.displayName)}</div>
-            <div class="persona">${escapeHtml(persona.title || "Coder")}</div>
-          </div>
-        </div>
-        <div class="wc-mosaic">${tilesFinal}</div>
-        <div class="wc-glass wc-quote">
-          <div class="qi">${phosphor("chat-circle-dots", 18, "qi")}</div>
-          <div class="qx">"${escapeHtml(cardMeta.quote)}"</div>
-        </div>
-        ${cardMeta.badge ? `<div class="wc-glass wc-badge">${iconHtml(cardMeta.badge.icon, 18, "bi")}<div class="bt">${escapeHtml(cardMeta.badge.title)}</div></div>` : ""}
-        <div class="wc-foot">
-          <span>Wrapped ${escapeHtml(d.monthLabel)}</span>
-          <span class="brand">✦ Groupy</span>
-        </div>
-      </div>
-    </div>
-    <div class="wc-themes-wrap reveal">
-      <div class="wc-themes" id="wcThemes"></div>
-      <div class="wc-themes-hint">Pilih wallpaper lain — klik untuk ganti</div>
-    </div>
-    <div class="btns reveal">
-      <button class="btn" id="dlBtn">${phosphor("download", 16)} Download Kartu (GIF)</button>
-    </div>
-    <div class="caption reveal" id="dlStatus">Ganti tema, klik download — nanti di-render ke GIF 📸</div>`));
 
-  out.push(section("closing", `
-    <div class="big reveal">${phosphor("confetti", 48)}</div>
-    <div class="headline reveal">${escapeHtml(closeT)}</div>
-    <div class="caption reveal">Bagikan recap kamu ke teman-teman!</div>
-    ${mediaTag(A.closing, d.base)}
-    <div class="btns reveal">
-      <button class="btn" id="shareBtn">${phosphor("share", 16)} Share</button>
-      <button class="btn ghost" id="copyBtn">${phosphor("link", 16)} Salin Link</button>
-      <a class="btn ghost" href="https://discord.com/channels/@me" target="_blank" rel="noopener">${phosphor("chat-circle-dots", 16)} Discord</a>
-    </div>
-    ${buildTestimonialBlock(d)}`));
+  // ── Section order (storytelling arc) ────────────────────────────────────
+  // 1) intro → 2) persona → 3) favoriteModel → 4) leastModel →
+  // 5) modelSpeed → 6) activeTime → 7) stats (hero number) →
+  // 8) ach → 9) grid → 10) facts → 11) heatmap → 12) rest →
+  // 13) community → 14) rank → 15) race → 16) leaderboard →
+  // 17) projection → 18) card → 19) closing
+  const order: string[] = [
+    "intro", "persona", "favoriteModel", "leastModel",
+    "modelSpeed", "activeTime", "stats", "ach",
+    "grid", "facts", "heatmap", "rest",
+    "community", "rank", "race", "leaderboard",
+    "projection", "card", "closing",
+  ];
 
+  const out: SlideItem[] = [];
+  for (const id of order) {
+    const builder = builders[id];
+    if (!builder) continue;
+    const slide = builder();
+    if (slide) out.push(slide);
+  }
   return out;
 }
 
@@ -1035,6 +1075,10 @@ function buildHeatmap(s: any): string | null {
 
 const RECAP_JS = `
 (function(){
+  // Mobile-friendly: always start at top so the intro (slide #1) is the
+  // first thing the user sees, not whatever slide they last scrolled to.
+  try { if ('scrollRestoration' in history) history.scrollRestoration = 'manual'; } catch(e) {}
+  try { window.scrollTo(0, 0); } catch(e) {}
   var rm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   // Reveal on scroll
   var io = new IntersectionObserver(function(es){
