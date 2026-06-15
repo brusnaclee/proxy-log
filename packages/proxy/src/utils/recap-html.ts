@@ -128,6 +128,7 @@ function applyLayoutHints(items: SlideItem[], hints: LayoutHints = {}): SlideIte
     const rest: SlideItem[] = [];
     const seen = new Set<string>();
     for (const id of reorderTop) {
+      if (id === "intro" || id === "closing") continue; // intro/closing are pinned, skip from reorderTop
       const found = out.find((it) => it.id === id);
       if (found && !seen.has(id)) { top.push(found); seen.add(id); }
     }
@@ -135,6 +136,19 @@ function applyLayoutHints(items: SlideItem[], hints: LayoutHints = {}): SlideIte
       if (!seen.has(it.id)) rest.push(it);
     }
     out = [...top, ...rest];
+  }
+  // Pin intro at the start and closing at the end, regardless of any
+  // reordering or hiddenSections above. This guarantees the user always sees
+  // a clear opening and farewell slide.
+  const intro = out.find((it) => it.id === "intro");
+  const closing = out.find((it) => it.id === "closing");
+  if (intro || closing) {
+    const middle = out.filter((it) => it.id !== "intro" && it.id !== "closing");
+    out = [
+      ...(intro ? [intro] : []),
+      ...middle,
+      ...(closing ? [closing] : []),
+    ];
   }
   const hero = hints.hero || "stats";
   return out.map((it) => {
