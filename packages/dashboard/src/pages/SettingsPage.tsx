@@ -29,6 +29,8 @@ export default function SettingsPage() {
   const [globalModelLimits, setGlobalModelLimits] = useState<ModelLimitEntry[]>([]);
   const [modelCatalog, setModelCatalog] = useState<string[]>([]);
   const [newModelOverride, setNewModelOverride] = useState("");
+  const [newModelOverrideIsPattern, setNewModelOverrideIsPattern] = useState(false);
+  const [globalModelMatchPreview, setGlobalModelMatchPreview] = useState<{ ids: string[]; total: number }>({ ids: [], total: 0 });
   const [newModelOverrideLimit, setNewModelOverrideLimit] = useState(0);
   const [newModelOverrideDailyTokenLimit, setNewModelOverrideDailyTokenLimit] = useState(0);
   const [newModelOverrideMonthlyTokenLimit, setNewModelOverrideMonthlyTokenLimit] = useState(0);
@@ -363,14 +365,30 @@ export default function SettingsPage() {
                       
                       <div className="grid grid-cols-2 md:grid-cols-3 gap-4 border p-4 rounded-lg bg-accent/10">
                         <div className="col-span-2 md:col-span-3">
-                          <Label>Model</Label>
-                          <select
-                            className="w-full mt-1 px-3 py-2 text-sm rounded-md border border-border bg-background"
+                          <Label>Model (ketik pattern, mis. "claude" / "ag" / "qwen3.5")</Label>
+                          <Input
+                            className="mt-1"
+                            placeholder="Ketik untuk cari model..."
                             value={newModelOverride}
                             onChange={(e) => {
-                              const model = e.target.value;
-                              setNewModelOverride(model);
-                              const existing = globalModelLimits.find(ml => ml.model === model);
+                              const v = e.target.value;
+                              setNewModelOverride(v);
+                              if ((window as any).__globalMlMatchT) {
+                                clearTimeout((window as any).__globalMlMatchT);
+                              }
+                              (window as any).__globalMlMatchT = setTimeout(async () => {
+                                if (!v || v.length < 1) {
+                                  setGlobalModelMatchPreview({ ids: [], total: 0 });
+                                  return;
+                                }
+                                try {
+                                  const r = await globalSettings.matchModelCatalog(v);
+                                  setGlobalModelMatchPreview({ ids: r.data, total: r.total });
+                                } catch {
+                                  setGlobalModelMatchPreview({ ids: [], total: 0 });
+                                }
+                              }, 300);
+                              const existing = globalModelLimits.find(ml => ml.model === v);
                               if (existing) {
                                 setNewModelOverrideLimit(existing.promptLimit || 0);
                                 setNewModelOverrideDailyTokenLimit(existing.dailyTokenLimit || 0);
@@ -385,12 +403,54 @@ export default function SettingsPage() {
                                 setNewModelOverrideDailyOutputTokenLimit(0);
                               }
                             }}
-                          >
-                            <option value="">Select model...</option>
-                            {modelCatalog.map(m => (
-                              <option key={m} value={m}>{m}</option>
-                            ))}
-                          </select>
+                          />
+                          {newModelOverride.length > 0 && (
+                            <div className="mt-1 space-y-1 text-xs text-muted-foreground">
+                              {newModelOverrideIsPattern ? (
+                                <>
+                                  <div>
+                                    Pattern akan apply ke <b>{globalModelMatchPreview.total}</b> model yang mengandung substring <span className="font-mono">"{newModelOverride}"</span>:
+                                  </div>
+                                  {globalModelMatchPreview.total > 0 && (
+                                    <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto p-1 border rounded bg-background/40">
+                                      {globalModelMatchPreview.ids.map((m) => (
+                                        <span key={m} className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 font-mono text-[10px]">
+                                          {m}
+                                        </span>
+                                      ))}
+                                      {globalModelMatchPreview.total > globalModelMatchPreview.ids.length && (
+                                        <span className="px-1.5 py-0.5 rounded bg-muted text-muted-foreground text-[10px]">
+                                          ...{(globalModelMatchPreview.total - globalModelMatchPreview.ids.length).toLocaleString()} lagi
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                  {globalModelMatchPreview.total === 0 && (
+                                    <div className="text-amber-600 dark:text-amber-400">
+                                      Belum ada model di catalog yang cocok. Pattern tetap tersimpan dan akan apply ke model baru yang mengandung substring ini.
+                                    </div>
+                                  )}
+                                </>
+                              ) : (
+                                <div>
+                                  {globalModelMatchPreview.total > 0
+                                    ? `Cocok dengan ${globalModelMatchPreview.total} model di catalog: ${globalModelMatchPreview.ids.slice(0, 3).join(", ")}${globalModelMatchPreview.total > 3 ? ` +${globalModelMatchPreview.total - 3}` : ""}`
+                                    : "Tidak ada model di catalog yang cocok (entry exact akan tersimpan, tidak match ke model lain)"}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          <div className="mt-2 flex items-center gap-2">
+                            <input
+                              id="newModelOverrideIsPattern"
+                              type="checkbox"
+                              checked={newModelOverrideIsPattern}
+                              onChange={(e) => setNewModelOverrideIsPattern(e.target.checked)}
+                            />
+                            <Label htmlFor="newModelOverrideIsPattern" className="cursor-pointer text-xs">
+                              <b>Pattern / batch</b> — 1 entry ini auto-apply ke semua model yang substring mengandung "{newModelOverride}" (lihat daftar di bawah)
+                            </Label>
+                          </div>
                         </div>
                         <div>
                           <Label>Prompt Limit</Label>
@@ -412,24 +472,85 @@ export default function SettingsPage() {
                           <Label>Daily Output Token Limit</Label>
                           <Input type="number" value={newModelOverrideDailyOutputTokenLimit} onChange={(e) => setNewModelOverrideDailyOutputTokenLimit(parseInt(e.target.value) || 0)} className="mt-1" />
                         </div>
-                        <div className="col-span-2 md:col-span-3 flex justify-end">
-                          <Button onClick={async () => {
-                            if (!newModelOverride) return;
-                            await globalSettings.setModelLimit(newModelOverride, {
-                              promptLimit: newModelOverrideLimit,
-                              dailyTokenLimit: newModelOverrideDailyTokenLimit,
-                              monthlyTokenLimit: newModelOverrideMonthlyTokenLimit,
-                              dailyInputTokenLimit: newModelOverrideDailyInputTokenLimit,
-                              dailyOutputTokenLimit: newModelOverrideDailyOutputTokenLimit
-                            });
-                            setNewModelOverride(""); 
-                            setNewModelOverrideLimit(0);
-                            setNewModelOverrideDailyTokenLimit(0);
-                            setNewModelOverrideMonthlyTokenLimit(0);
-                            setNewModelOverrideDailyInputTokenLimit(0);
-                            setNewModelOverrideDailyOutputTokenLimit(0);
-                            const ml = await globalSettings.getModelLimits(); setGlobalModelLimits(ml.data || []);
-                          }}>Save Model Override</Button>
+                        <div className="col-span-2 md:col-span-3 flex flex-wrap items-center justify-end gap-2">
+                          {newModelOverrideIsPattern && globalModelMatchPreview.total > 0 && (
+                            <Button
+                              variant="outline"
+                              disabled={loading}
+                              onClick={async () => {
+                                if (!newModelOverride) return;
+                                if (!confirm(`Buat ${globalModelMatchPreview.total} entry exact untuk semua model yang cocok?`)) return;
+                                setLoading(true);
+                                try {
+                                  const limits = {
+                                    promptLimit: newModelOverrideLimit,
+                                    dailyTokenLimit: newModelOverrideDailyTokenLimit,
+                                    monthlyTokenLimit: newModelOverrideMonthlyTokenLimit,
+                                    dailyInputTokenLimit: newModelOverrideDailyInputTokenLimit,
+                                    dailyOutputTokenLimit: newModelOverrideDailyOutputTokenLimit,
+                                  };
+                                  for (const m of globalModelMatchPreview.ids) {
+                                    await globalSettings.setModelLimit(m, { ...limits, isPattern: false });
+                                  }
+                                  setMessage(`Berhasil apply ke ${globalModelMatchPreview.ids.length} model exact.`);
+                                } catch (e: any) {
+                                  setError(`Gagal bulk apply: ${e?.message || e}`);
+                                } finally {
+                                  setLoading(false);
+                                }
+                                setNewModelOverride("");
+                                setNewModelOverrideIsPattern(false);
+                                setNewModelOverrideLimit(0);
+                                setNewModelOverrideDailyTokenLimit(0);
+                                setNewModelOverrideMonthlyTokenLimit(0);
+                                setNewModelOverrideDailyInputTokenLimit(0);
+                                setNewModelOverrideDailyOutputTokenLimit(0);
+                                setGlobalModelMatchPreview({ ids: [], total: 0 });
+                                const ml = await globalSettings.getModelLimits(); setGlobalModelLimits(ml.data || []);
+                              }}
+                            >
+                              Bulk Exact ke {globalModelMatchPreview.total} model
+                            </Button>
+                          )}
+                          <Button
+                            disabled={loading}
+                            onClick={async () => {
+                              if (!newModelOverride) return;
+                              setLoading(true);
+                              try {
+                                await globalSettings.setModelLimit(newModelOverride, {
+                                  promptLimit: newModelOverrideLimit,
+                                  dailyTokenLimit: newModelOverrideDailyTokenLimit,
+                                  monthlyTokenLimit: newModelOverrideMonthlyTokenLimit,
+                                  dailyInputTokenLimit: newModelOverrideDailyInputTokenLimit,
+                                  dailyOutputTokenLimit: newModelOverrideDailyOutputTokenLimit,
+                                  isPattern: newModelOverrideIsPattern,
+                                });
+                                if (newModelOverrideIsPattern) {
+                                  setMessage(`Pattern "${newModelOverride}" tersimpan. Akan auto-apply ke ${globalModelMatchPreview.total} model yang cocok.`);
+                                } else {
+                                  setMessage(`Model override untuk "${newModelOverride}" tersimpan.`);
+                                }
+                              } catch (e: any) {
+                                setError(`Gagal simpan: ${e?.message || e}`);
+                              } finally {
+                                setLoading(false);
+                              }
+                              setNewModelOverride("");
+                              setNewModelOverrideIsPattern(false);
+                              setNewModelOverrideLimit(0);
+                              setNewModelOverrideDailyTokenLimit(0);
+                              setNewModelOverrideMonthlyTokenLimit(0);
+                              setNewModelOverrideDailyInputTokenLimit(0);
+                              setNewModelOverrideDailyOutputTokenLimit(0);
+                              setGlobalModelMatchPreview({ ids: [], total: 0 });
+                              const ml = await globalSettings.getModelLimits(); setGlobalModelLimits(ml.data || []);
+                            }}
+                          >
+                            {newModelOverrideIsPattern
+                              ? `Simpan Pattern (auto ke ${globalModelMatchPreview.total} model)`
+                              : "Save Model Override"}
+                          </Button>
                         </div>
                       </div>
 
@@ -452,7 +573,14 @@ export default function SettingsPage() {
                               <tbody className="divide-y">
                                 {globalModelLimits.map(ml => (
                                   <tr key={ml.id} className="hover:bg-muted/50">
-                                    <td className="p-2 font-mono">{ml.model}</td>
+                                    <td className="p-2 font-mono">
+                                      {ml.model}
+                                      {ml.isPattern && (
+                                        <span className="ml-1.5 inline-flex items-center rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                                          PATTERN
+                                        </span>
+                                      )}
+                                    </td>
                                     <td className="p-2">{ml.promptLimit || '-'}</td>
                                     <td className="p-2">{ml.dailyTokenLimit || '-'}</td>
                                     <td className="p-2">{ml.monthlyTokenLimit || '-'}</td>

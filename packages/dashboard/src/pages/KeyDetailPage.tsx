@@ -29,7 +29,7 @@ const MODEL_COLORS   = ["#818cf8", "#34d399", "#f59e0b", "#f87171", "#a78bfa", "
 export default function KeyDetailPage() {
   const { id: idSlug } = useParams<{ id: string }>();
   // Slug format is "{numericId}-{name-slug}" â€” extract just the numeric ID prefix
-  const id = idSlug?.split("-")[0];
+  const id = idSlug?.split("-")[0] ?? "";
   const navigate = useNavigate();
   const [keyData, setKeyData] = useState<ApiKeyDetail | null>(null);
   const [deviceList, setDeviceList] = useState<any[]>([]);
@@ -77,11 +77,13 @@ export default function KeyDetailPage() {
   const [keyModelLimits, setKeyModelLimits] = useState<ModelLimitEntry[]>([]);
   const [keyModelCatalog, setKeyModelCatalog] = useState<string[]>([]);
   const [newKeyModelOverride, setNewKeyModelOverride] = useState("");
+  const [newKeyModelOverrideIsPattern, setNewKeyModelOverrideIsPattern] = useState(false);
   const [newKeyModelOverrideLimit, setNewKeyModelOverrideLimit] = useState(0);
   const [newKeyModelOverrideDailyTokenLimit, setNewKeyModelOverrideDailyTokenLimit] = useState(0);
   const [newKeyModelOverrideMonthlyTokenLimit, setNewKeyModelOverrideMonthlyTokenLimit] = useState(0);
   const [newKeyModelOverrideDailyInputTokenLimit, setNewKeyModelOverrideDailyInputTokenLimit] = useState(0);
   const [newKeyModelOverrideDailyOutputTokenLimit, setNewKeyModelOverrideDailyOutputTokenLimit] = useState(0);
+  const [keyModelMatchPreview, setKeyModelMatchPreview] = useState<{ ids: string[]; total: number }>({ ids: [], total: 0 });
 
   useEffect(() => {
     if (id) loadAll();
@@ -665,14 +667,32 @@ export default function KeyDetailPage() {
             
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4 border p-4 rounded-lg bg-accent/10">
               <div className="col-span-2 md:col-span-3">
-                <Label>Model</Label>
-                <select
-                  className="w-full mt-1 px-3 py-2 text-sm rounded-md border border-border bg-background"
+                <Label>Model (ketik pattern, mis. "claude" / "ag" / "qwen3.5")</Label>
+                <Input
+                  className="mt-1"
+                  placeholder="Ketik untuk cari model..."
                   value={newKeyModelOverride}
                   onChange={(e) => {
-                    const model = e.target.value;
-                    setNewKeyModelOverride(model);
-                    const existing = keyModelLimits.find(ml => ml.model === model);
+                    const v = e.target.value;
+                    setNewKeyModelOverride(v);
+                    // Debounced catalog match
+                    if ((window as any).__mlMatchT) {
+                      clearTimeout((window as any).__mlMatchT);
+                    }
+                    (window as any).__mlMatchT = setTimeout(async () => {
+                      if (!v || v.length < 1) {
+                        setKeyModelMatchPreview({ ids: [], total: 0 });
+                        return;
+                      }
+                      try {
+                        const r = await keys.matchModelCatalog(parseInt(id), v);
+                        setKeyModelMatchPreview({ ids: r.data, total: r.total });
+                      } catch {
+                        setKeyModelMatchPreview({ ids: [], total: 0 });
+                      }
+                    }, 300);
+                    // Pre-fill limits if an existing override matches exactly
+                    const existing = keyModelLimits.find(ml => ml.model === v);
                     if (existing) {
                       setNewKeyModelOverrideLimit(existing.promptLimit || 0);
                       setNewKeyModelOverrideDailyTokenLimit(existing.dailyTokenLimit || 0);
@@ -687,12 +707,35 @@ export default function KeyDetailPage() {
                       setNewKeyModelOverrideDailyOutputTokenLimit(0);
                     }
                   }}
-                >
-                  <option value="">Select model...</option>
-                  {keyModelCatalog.map(m => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </select>
+                />
+                {newKeyModelOverride.length > 0 && (
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {newKeyModelOverrideIsPattern ? (
+                      <span>
+                        Pattern akan apply ke <b>{keyModelMatchPreview.total}</b> model:{" "}
+                        <span className="font-mono">{keyModelMatchPreview.ids.slice(0, 5).join(", ")}</span>
+                        {keyModelMatchPreview.total > 5 && ` +${keyModelMatchPreview.total - 5} lainnya`}
+                      </span>
+                    ) : (
+                      <span>
+                        {keyModelMatchPreview.total > 0
+                          ? `Cocok dengan model di catalog: ${keyModelMatchPreview.ids.slice(0, 3).join(", ")}${keyModelMatchPreview.total > 3 ? ` +${keyModelMatchPreview.total - 3}` : ""}`
+                          : "Tidak ada model di catalog yang cocok (exact match tetap tersimpan)"}
+                      </span>
+                    )}
+                  </div>
+                )}
+                <div className="mt-2 flex items-center gap-2">
+                  <input
+                    id="newKeyModelOverrideIsPattern"
+                    type="checkbox"
+                    checked={newKeyModelOverrideIsPattern}
+                    onChange={(e) => setNewKeyModelOverrideIsPattern(e.target.checked)}
+                  />
+                  <Label htmlFor="newKeyModelOverrideIsPattern" className="cursor-pointer text-xs">
+                    Pattern (substring) — apply ke semua model yang mengandung "{newKeyModelOverride}"
+                  </Label>
+                </div>
               </div>
               <div>
                 <Label>Prompt Limit</Label>
@@ -722,14 +765,17 @@ export default function KeyDetailPage() {
                     dailyTokenLimit: newKeyModelOverrideDailyTokenLimit,
                     monthlyTokenLimit: newKeyModelOverrideMonthlyTokenLimit,
                     dailyInputTokenLimit: newKeyModelOverrideDailyInputTokenLimit,
-                    dailyOutputTokenLimit: newKeyModelOverrideDailyOutputTokenLimit
+                    dailyOutputTokenLimit: newKeyModelOverrideDailyOutputTokenLimit,
+                    isPattern: newKeyModelOverrideIsPattern,
                   });
-                  setNewKeyModelOverride(""); 
+                  setNewKeyModelOverride("");
+                  setNewKeyModelOverrideIsPattern(false);
                   setNewKeyModelOverrideLimit(0);
                   setNewKeyModelOverrideDailyTokenLimit(0);
                   setNewKeyModelOverrideMonthlyTokenLimit(0);
                   setNewKeyModelOverrideDailyInputTokenLimit(0);
                   setNewKeyModelOverrideDailyOutputTokenLimit(0);
+                  setKeyModelMatchPreview({ ids: [], total: 0 });
                   const ml = await keys.getModelLimits(parseInt(id)); setKeyModelLimits(ml.data || []);
                 }}>Save Model Override</Button>
               </div>
@@ -754,7 +800,14 @@ export default function KeyDetailPage() {
                     <tbody className="divide-y">
                       {keyModelLimits.map(ml => (
                         <tr key={ml.id} className="hover:bg-muted/50">
-                          <td className="p-2 font-mono">{ml.model}</td>
+                          <td className="p-2 font-mono">
+                            {ml.model}
+                            {ml.isPattern && (
+                              <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30" title="Pattern: applies to all models whose ID contains this substring">
+                                PATTERN
+                              </span>
+                            )}
+                          </td>
                           <td className="p-2">{ml.promptLimit || '-'}</td>
                           <td className="p-2">{ml.dailyTokenLimit || '-'}</td>
                           <td className="p-2">{ml.monthlyTokenLimit || '-'}</td>
