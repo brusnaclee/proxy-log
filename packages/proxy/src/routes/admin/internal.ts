@@ -9,6 +9,7 @@ import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindo
 import { isInternalRequest } from "../../middleware/session.js";
 import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, sanitizeRows } from "../../utils/counting.js";
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
+import { getModelCatalogResponse } from "../../utils/model-catalog.js";
 
 const internal = new Hono();
 
@@ -729,6 +730,54 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
         estimatedCost: monthStats?.estimatedCost || 0,
         topModels: monthModels,
       },
+  });
+});
+
+internal.get("/internal/stats/user-detail/:discordUserId/model-overrides", async (c) => {
+  const discordUserId = c.req.param("discordUserId");
+  const key = await findKeyByDiscordUser(discordUserId);
+  if (!key) return c.json({ error: "User not found" }, 404);
+
+  const [config] = await db.select().from(adminConfig);
+  const defaultWindow = key.perModelPromptLimitWindow || config?.globalPerModelPromptLimitWindow || "30m";
+
+  const [keyRows, globalRows] = await Promise.all([
+    db.select().from(modelLimits).where(and(eq(modelLimits.scope, "key"), eq(modelLimits.scopeId, key.id))),
+    db.select().from(modelLimits).where(and(eq(modelLimits.scope, "global"), eq(modelLimits.scopeId, 0))),
+  ]);
+
+  let catalogIds: string[] = [];
+  try {
+    const catalog = await getModelCatalogResponse();
+    catalogIds = ((catalog as any)?.data || []).map((m: { id: string }) => m.id).filter(Boolean);
+  } catch { /* catalog optional */ }
+
+  const enrich = (rows: typeof keyRows, scope: "key" | "global") =>
+    rows.map((r) => {
+      const pat = (r.model || "").toLowerCase();
+      const matched = r.isPattern
+        ? catalogIds.filter((id) => id.toLowerCase().includes(pat))
+        : (catalogIds.some((id) => id === r.model) ? [r.model] : []);
+      return {
+        scope,
+        model: r.model,
+        isPattern: !!r.isPattern,
+        promptLimit: r.promptLimit || 0,
+        dailyTokenLimit: r.dailyTokenLimit || 0,
+        monthlyTokenLimit: r.monthlyTokenLimit || 0,
+        dailyInputTokenLimit: r.dailyInputTokenLimit || 0,
+        dailyOutputTokenLimit: r.dailyOutputTokenLimit || 0,
+        matchCount: matched.length,
+        matchedSampleIds: matched.slice(0, 8),
+      };
+    });
+
+  return c.json({
+    keyId: key.id,
+    discordUserId: key.discordUserId,
+    defaultWindow,
+    keyLimits: enrich(keyRows, "key"),
+    globalLimits: enrich(globalRows, "global"),
   });
 });
 

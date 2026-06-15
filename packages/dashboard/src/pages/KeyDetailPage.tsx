@@ -687,6 +687,9 @@ export default function KeyDetailPage() {
                       try {
                         const r = await keys.matchModelCatalog(parseInt(id), v);
                         setKeyModelMatchPreview({ ids: r.data, total: r.total });
+                        // Auto-detect pattern: 2+ matches => pattern, 0/1 => exact
+                        if (r.total >= 2) setNewKeyModelOverrideIsPattern(true);
+                        else if (r.total === 1) setNewKeyModelOverrideIsPattern(false);
                       } catch {
                         setKeyModelMatchPreview({ ids: [], total: 0 });
                       }
@@ -733,7 +736,7 @@ export default function KeyDetailPage() {
                     onChange={(e) => setNewKeyModelOverrideIsPattern(e.target.checked)}
                   />
                   <Label htmlFor="newKeyModelOverrideIsPattern" className="cursor-pointer text-xs">
-                    Pattern (substring) — apply ke semua model yang mengandung "{newKeyModelOverride}"
+                    <b>Pattern / batch</b> (auto-detect: ON saat ≥2 model cocok) — 1 entry ini auto-apply ke semua model yang substring mengandung "{newKeyModelOverride}"
                   </Label>
                 </div>
               </div>
@@ -757,7 +760,37 @@ export default function KeyDetailPage() {
                 <Label>Daily Output Token Limit</Label>
                 <Input type="number" value={newKeyModelOverrideDailyOutputTokenLimit} onChange={(e) => setNewKeyModelOverrideDailyOutputTokenLimit(parseInt(e.target.value) || 0)} className="mt-1" />
               </div>
-              <div className="col-span-2 md:col-span-3 flex justify-end">
+              <div className="col-span-2 md:col-span-3 flex flex-wrap items-center justify-end gap-2">
+                {newKeyModelOverrideIsPattern && keyModelMatchPreview.total > 0 && (
+                  <Button
+                    variant="outline"
+                    onClick={async () => {
+                      if (!id || !newKeyModelOverride) return;
+                      if (!confirm(`Buat ${keyModelMatchPreview.total} entry exact untuk semua model yang cocok?`)) return;
+                      const limits = {
+                        promptLimit: newKeyModelOverrideLimit,
+                        dailyTokenLimit: newKeyModelOverrideDailyTokenLimit,
+                        monthlyTokenLimit: newKeyModelOverrideMonthlyTokenLimit,
+                        dailyInputTokenLimit: newKeyModelOverrideDailyInputTokenLimit,
+                        dailyOutputTokenLimit: newKeyModelOverrideDailyOutputTokenLimit,
+                      };
+                      for (const m of keyModelMatchPreview.ids) {
+                        await keys.setModelLimit(parseInt(id), m, { ...limits, isPattern: false });
+                      }
+                      setNewKeyModelOverride("");
+                      setNewKeyModelOverrideIsPattern(false);
+                      setNewKeyModelOverrideLimit(0);
+                      setNewKeyModelOverrideDailyTokenLimit(0);
+                      setNewKeyModelOverrideMonthlyTokenLimit(0);
+                      setNewKeyModelOverrideDailyInputTokenLimit(0);
+                      setNewKeyModelOverrideDailyOutputTokenLimit(0);
+                      setKeyModelMatchPreview({ ids: [], total: 0 });
+                      const ml = await keys.getModelLimits(parseInt(id)); setKeyModelLimits(ml.data || []);
+                    }}
+                  >
+                    Bulk Exact ke {keyModelMatchPreview.total} model
+                  </Button>
+                )}
                 <Button onClick={async () => {
                   if (!id || !newKeyModelOverride) return;
                   await keys.setModelLimit(parseInt(id), newKeyModelOverride, {
@@ -777,7 +810,11 @@ export default function KeyDetailPage() {
                   setNewKeyModelOverrideDailyOutputTokenLimit(0);
                   setKeyModelMatchPreview({ ids: [], total: 0 });
                   const ml = await keys.getModelLimits(parseInt(id)); setKeyModelLimits(ml.data || []);
-                }}>Save Model Override</Button>
+                }}>
+                  {newKeyModelOverrideIsPattern
+                    ? `Simpan Pattern (auto ke ${keyModelMatchPreview.total} model)`
+                    : "Save Model Override"}
+                </Button>
               </div>
             </div>
 

@@ -464,10 +464,15 @@ body.wc-snap .wc-tile .tl{margin-top:3px}
 .media-duo{width:100%;max-width:180px;max-height:140px;object-fit:cover;border-radius:14px;margin:10px auto 0;display:block;border:1px solid var(--line)}
 .speed-mid{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:10px;min-width:120px;padding:8px 0}
 .speed-spectrum{position:relative;width:120px;height:18px;border-radius:999px;background:linear-gradient(90deg,rgba(236,72,153,.5),rgba(245,158,11,.45),rgba(34,211,238,.55));border:1px solid var(--line);overflow:visible}
-.speed-spectrum .speed-bar{position:absolute;inset:0;border-radius:999px;background:linear-gradient(90deg,rgba(255,255,255,.05),rgba(255,255,255,.25),rgba(255,255,255,.05));background-size:200% 100%;animation:speedSweep 2.6s linear infinite}
-@keyframes speedSweep{0%{background-position:200% 0}100%{background-position:-200% 0}}
-.speed-needle{position:absolute;top:-4px;bottom:-4px;width:4px;border-radius:3px;background:#fff;box-shadow:0 0 12px rgba(255,255,255,.7),0 0 4px rgba(0,0,0,.6);left:50%;transform:translateX(-50%) scaleY(.4);transition:left 1.2s cubic-bezier(.2,.7,.2,1),transform .4s}
+.speed-spectrum .speed-bar{position:absolute;inset:0;border-radius:999px;background:linear-gradient(90deg,rgba(255,255,255,.05),rgba(255,255,255,.25),rgba(255,255,255,.05))}
+.speed-needle{position:absolute;top:-4px;bottom:-4px;width:4px;border-radius:3px;background:#fff;box-shadow:0 0 12px rgba(255,255,255,.7),0 0 4px rgba(0,0,0,.6);left:50%;transform:translateX(-50%) scaleY(.4);transition:transform .4s}
 .speed-needle.armed{transform:translateX(-50%) scaleY(1)}
+/* Needle oscillates left↔right across the spectrum after the slide is revealed. */
+.speed-needle.oscillating{left:0;animation:speedOscillate 1.8s cubic-bezier(.45,.05,.55,.95) infinite}
+@keyframes speedOscillate{0%{left:0}50%{left:100%}100%{left:0}}
+@media(prefers-reduced-motion:reduce){
+  .speed-needle.oscillating{animation:none;left:var(--needle-final,50%)}
+}
 .speed-tick{position:absolute;top:-22px;font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center;width:18px;height:18px;color:var(--muted)}
 .speed-tick-fast{right:-2px;color:var(--g4)}
 .speed-tick-slow{left:-2px;color:var(--g2)}
@@ -1163,21 +1168,23 @@ const RECAP_JS = `
     io3.observe(bcrBox);
   }
 
-  // Kecepatan Model duo: animate the spectrum needle on first reveal
+  // Kecepatan Model duo: oscillate the spectrum needle on first reveal
   var speedSlide=document.querySelector('.slide[data-slide="modelSpeed"]');
   if(speedSlide){
     var spec=document.getElementById('speedSpectrum');
     var needle=document.getElementById('speedNeedle');
     if(spec&&needle){
       var finalPct=parseFloat(spec.getAttribute('data-needle'))||50;
-      needle.style.left='100%';
+      needle.style.setProperty('--needle-final', finalPct+'%');
+      needle.style.left=finalPct+'%';
       var speedStarted=false;
       var ioSpeed=new IntersectionObserver(function(es){
         es.forEach(function(e){
           if(e.isIntersecting&&!speedStarted){
             speedStarted=true;
-            if(rm){ needle.style.left=finalPct+'%'; return; }
-            setTimeout(function(){ needle.classList.add('armed'); needle.style.left=finalPct+'%'; }, 350);
+            needle.classList.add('armed');
+            if(rm){ return; } // respect reduced motion: stay at finalPct
+            setTimeout(function(){ needle.classList.add('oscillating'); }, 250);
           }
         });
       },{threshold:0.35});

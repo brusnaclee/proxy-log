@@ -72,7 +72,8 @@ const TOKITO_LATENCY_INTERVAL_MS =
 	parseInt(process.env.TOKITO_LATENCY_INTERVAL_MS) || 600000;
 const TOKITO_PAGE_SIZE = parseInt(process.env.TOKITO_PAGE_SIZE) || 10;
 const TOKITO_REQUEST_TIMEOUT_MS =
-	parseInt(process.env.TOKITO_REQUEST_TIMEOUT_MS) || 30000;
+	parseInt(process.env.TOKITO_REQUEST_TIMEOUT_MS) || 600000;
+const SWEEP_CONCURRENCY = parseInt(process.env.SWEEP_CONCURRENCY) || 8;
 const TOKITO_SESSION_TIMEOUT_MS =
 	parseInt(process.env.TOKITO_SESSION_TIMEOUT_MS) || 180000; // 3 minutes
 const TOKITO_FALLBACK_MAX_INDEX =
@@ -1410,63 +1411,76 @@ async function testSingleModel(entry) {
 	};
 }
 
+// ─── Smart Retry: update retry state after a model test ─────────────────────
+
+function applyModelRetryState(entry, latency) {
+	const key = entryKey(entry);
+	if (latency.ok) {
+		runtime.modelRetryState.delete(key);
+	} else if (latency.status === 429) {
+		runtime.modelRetryState.set(key, {
+			retryCount: 0,
+			lastTestAt: new Date().toISOString(),
+			suspendedUntil: null,
+			isRateLimited: true,
+		});
+	} else {
+		const current = runtime.modelRetryState.get(key) || { retryCount: 0 };
+		const newRetryCount = current.retryCount + 1;
+		const suspendedUntil = newRetryCount >= 3
+			? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+			: null;
+		runtime.modelRetryState.set(key, {
+			retryCount: newRetryCount,
+			lastTestAt: new Date().toISOString(),
+			suspendedUntil,
+		});
+	}
+}
+
+async function sweepModelsParallel(entries, label) {
+	if (!entries.length) return;
+	console.log(`[tokito-monitor] ${label}: testing ${entries.length} models (parallel, concurrency ${SWEEP_CONCURRENCY})`);
+	for (let i = 0; i < entries.length; i += SWEEP_CONCURRENCY) {
+		const batch = entries.slice(i, i + SWEEP_CONCURRENCY);
+		const results = await Promise.allSettled(
+			batch.map(async (entry) => {
+				const latency = await testSingleModel(entry);
+				const key = entryKey(entry);
+				runtime.latency.set(key, latency);
+				await pushSingleModelStatus(entry, latency);
+				return { entry, latency };
+			}),
+		);
+		for (const r of results) {
+			if (r.status !== 'fulfilled') continue;
+			applyModelRetryState(r.value.entry, r.value.latency);
+			if (label === 'retry sweep' && r.value.latency.ok) {
+				console.log(`[tokito-monitor] model back online: ${r.value.entry.modelId}`);
+			}
+		}
+	}
+	runtime.lastLatencyAt = Date.now();
+	console.log(`[tokito-monitor] ${label} complete`);
+}
+
 // ─── Smart Retry: Full sweep — test ALL models, push results individually ─────
 
 async function runFullSweep() {
 	await pollModelStatus();
 	if (!runtime.modelEntries.length) return;
 
-	console.log(`[tokito-monitor] full sweep: testing ${runtime.modelEntries.length} models`);
-
-	for (const entry of runtime.modelEntries) {
+	const queue = runtime.modelEntries.filter((entry) => {
 		const key = entryKey(entry);
-
-		// Skip models currently suspended (waiting for cooldown)
 		const retryState = runtime.modelRetryState.get(key);
 		if (retryState?.suspendedUntil) {
 			const suspendedUntil = new Date(retryState.suspendedUntil).getTime();
-			if (Date.now() < suspendedUntil) {
-				continue;
-			}
+			if (Date.now() < suspendedUntil) return false;
 		}
+		return true;
+	});
 
-		const latency = await testSingleModel(entry);
-		runtime.latency.set(key, latency);
-		await pushSingleModelStatus(entry, latency);
-
-		if (latency.ok) {
-			// Online: clear retry state
-			runtime.modelRetryState.delete(key);
-		} else if (latency.status === 429) {
-			// Rate limited: DON'T increment retry count - model is working, just busy
-			// Store as rate limited state but don't mark as offline
-			runtime.modelRetryState.set(key, {
-				retryCount: 0, // Don't count 429 as failure
-				lastTestAt: new Date().toISOString(),
-				suspendedUntil: null,
-				isRateLimited: true,
-			});
-		} else {
-			// Actual failure (5xx, timeout, connection error): increment retry count
-			const current = runtime.modelRetryState.get(key) || { retryCount: 0 };
-			const newRetryCount = current.retryCount + 1;
-			// After 3 failures, suspend for 24 hours
-			const suspendedUntil = newRetryCount >= 3 
-				? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
-				: null;
-			runtime.modelRetryState.set(key, {
-				retryCount: newRetryCount,
-				lastTestAt: new Date().toISOString(),
-				suspendedUntil,
-			});
-		}
-
-		// Small delay between tests to avoid rate limiting
-		await new Promise(r => setTimeout(r, 500));
-	}
-
-	runtime.lastLatencyAt = Date.now();
-	console.log('[tokito-monitor] full sweep complete');
+	await sweepModelsParallel(queue, 'full sweep');
 }
 
 // ─── Smart Retry: Retry sweep — test only offline models that aren't suspended ─
@@ -1479,55 +1493,19 @@ async function runRetrySweep() {
 		const key = entryKey(entry);
 		const retryState = runtime.modelRetryState.get(key);
 
-		if (!retryState) continue; // not tracked as offline
-		if (retryState.isRateLimited) continue; // skip rate-limited models (429)
-		if (retryState.retryCount >= 3) continue; // max retries reached, suspended for 24h
+		if (!retryState) continue;
+		if (retryState.isRateLimited) continue;
+		if (retryState.retryCount >= 3) continue;
 
 		if (retryState.suspendedUntil) {
 			const suspendedUntil = new Date(retryState.suspendedUntil).getTime();
-			if (Date.now() < suspendedUntil) continue; // still suspended
+			if (Date.now() < suspendedUntil) continue;
 		}
 
 		entriesToRetry.push(entry);
 	}
 
-	if (entriesToRetry.length === 0) return;
-
-	console.log(`[tokito-monitor] retry sweep: testing ${entriesToRetry.length} offline models`);
-
-	for (const entry of entriesToRetry) {
-		const key = entryKey(entry);
-		const latency = await testSingleModel(entry);
-		runtime.latency.set(key, latency);
-		await pushSingleModelStatus(entry, latency);
-
-		if (latency.ok) {
-			runtime.modelRetryState.delete(key);
-			console.log(`[tokito-monitor] model back online: ${entry.modelId}`);
-		} else if (latency.status === 429) {
-			// Rate limited: mark as rate limited, don't count as failure
-			runtime.modelRetryState.set(key, {
-				retryCount: 0,
-				lastTestAt: new Date().toISOString(),
-				suspendedUntil: null,
-				isRateLimited: true,
-			});
-		} else {
-			const current = runtime.modelRetryState.get(key) || { retryCount: 0 };
-			const newRetryCount = current.retryCount + 1;
-			const suspendedUntil = newRetryCount >= 3 
-				? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
-				: null;
-			runtime.modelRetryState.set(key, {
-				retryCount: newRetryCount,
-				lastTestAt: new Date().toISOString(),
-				suspendedUntil,
-			});
-		}
-	}
-
-	runtime.lastLatencyAt = Date.now();
-	console.log('[tokito-monitor] retry sweep complete');
+	await sweepModelsParallel(entriesToRetry, 'retry sweep');
 }
 
 // ─── Smart Retry: Midnight reset — clear all retry states ─────────────────────
@@ -3513,6 +3491,147 @@ async function handleRankingSearchModal(interaction) {
 		)
 		.setTimestamp();
 
+	await interaction.editReply({
+		embeds: [embed],
+		components: [
+			new ActionRowBuilder().addComponents(
+				new ButtonBuilder()
+					.setCustomId(`usage_model_overrides:${discordUserId}`)
+					.setLabel('Override per model')
+					.setStyle(ButtonStyle.Secondary)
+					.setEmoji('🎯'),
+				new ButtonBuilder()
+					.setCustomId(`usage_pattern_overrides:${discordUserId}`)
+					.setLabel('Pattern / Batch')
+					.setStyle(ButtonStyle.Secondary)
+					.setEmoji('🧩'),
+			),
+		],
+	});
+}
+
+function fmtModelLimitLine(r, defaultWindow, opts) {
+	opts = opts || {};
+	const parts = [];
+	if (r.promptLimit > 0) parts.push(r.promptLimit + ' prompt / ' + defaultWindow);
+	if (r.dailyTokenLimit > 0) parts.push(r.dailyTokenLimit.toLocaleString() + ' daily tok');
+	if (r.monthlyTokenLimit > 0) parts.push(r.monthlyTokenLimit.toLocaleString() + ' monthly tok');
+	if (r.dailyInputTokenLimit > 0) parts.push(r.dailyInputTokenLimit.toLocaleString() + ' daily in');
+	if (r.dailyOutputTokenLimit > 0) parts.push(r.dailyOutputTokenLimit.toLocaleString() + ' daily out');
+	const limit = parts.length ? parts.join(', ') : 'Unlimited';
+	const scopeTag = opts.showScope ? '**' + r.scopeLabel + '**' : '';
+	const modelTag = '`' + r.model + '`';
+	let sample = '';
+	if (r.matchedSampleIds && r.matchedSampleIds.length) {
+		const s = r.matchedSampleIds.slice(0, 5).map((m) => '`' + m + '`').join(', ');
+		sample = '\n   _Sample:_ ' + s + (r.matchCount > 5 ? ' +' + (r.matchCount - 5) : '');
+	}
+	return (scopeTag ? scopeTag + ' · ' : '') + modelTag + ' - ' + limit + sample;
+}
+
+async function fetchModelOverrides(discordUserId) {
+	const data = await proxyInternal('/admin/internal/stats/user-detail/' + discordUserId + '/model-overrides');
+	const keyId = data.keyId;
+	const defaultWindow = data.defaultWindow;
+	const keyLimits = data.keyLimits || [];
+	const globalLimits = data.globalLimits || [];
+	const all = [
+		...keyLimits.map((r) => Object.assign({}, r, { scopeLabel: 'Key' })),
+		...globalLimits.map((r) => Object.assign({}, r, { scopeLabel: 'Global' })),
+	];
+	return { keyId: keyId, defaultWindow: defaultWindow, all: all };
+}
+
+async function handleUsageModelOverrides(interaction) {
+	const discordUserId = interaction.customId.split(':')[1];
+	await interaction.deferReply({ ephemeral: true });
+
+	let payload;
+	try {
+		payload = await fetchModelOverrides(discordUserId);
+	} catch (err) {
+		await interaction.editReply({ content: '❌ Gagal mengambil model overrides: ' + (err.message || 'Unknown error') });
+		return;
+	}
+	const keyId = payload.keyId;
+	const defaultWindow = payload.defaultWindow;
+	const all = payload.all;
+
+	if (!all.length) {
+		await interaction.editReply({ content: 'ℹ️ Tidak ada model override untuk user `' + discordUserId + '` (key #' + keyId + ').\n\nTambah dari dashboard **Settings > Model Limits** (per model atau pattern/batch).' });
+		return;
+	}
+
+	const exacts = all.filter((r) => !r.isPattern);
+	const patterns = all.filter((r) => r.isPattern);
+
+	const sections = [];
+	if (exacts.length) {
+		sections.push('**🎯 Override per model (' + exacts.length + ')**');
+		sections.push(exacts.slice(0, 12).map((r) => fmtModelLimitLine(r, defaultWindow, { showScope: true })).join('\n\n'));
+		if (exacts.length > 12) sections.push('_...dan ' + (exacts.length - 12) + ' exact lainnya_');
+	}
+	if (patterns.length) {
+		sections.push('\n**🧩 Pattern / Batch (' + patterns.length + ')** - auto-apply via substring');
+		sections.push(patterns.slice(0, 8).map((r) => fmtModelLimitLine(r, defaultWindow, { showScope: true })).join('\n\n'));
+		if (patterns.length > 8) sections.push('_...dan ' + (patterns.length - 8) + ' pattern lainnya_');
+	}
+
+	const embed = new EmbedBuilder()
+		.setTitle('Model Overrides · Key #' + keyId)
+		.setDescription(sections.join('\n'))
+		.setColor(0x5865f2)
+		.setFooter({ text: 'Pattern (🧩) = substring match ke semua model di catalog. Priority: Key Exact > Key Pattern > Global Exact > Global Pattern.' })
+		.setTimestamp();
+
+	await interaction.editReply({ embeds: [embed] });
+}
+
+async function handleUsagePatternOverrides(interaction) {
+	const discordUserId = interaction.customId.split(':')[1];
+	await interaction.deferReply({ ephemeral: true });
+
+	let payload;
+	try {
+		payload = await fetchModelOverrides(discordUserId);
+	} catch (err) {
+		await interaction.editReply({ content: '❌ Gagal mengambil pattern overrides: ' + (err.message || 'Unknown error') });
+		return;
+	}
+	const keyId = payload.keyId;
+	const defaultWindow = payload.defaultWindow;
+	const all = payload.all;
+
+	if (!all.length) {
+		await interaction.editReply({ content: 'ℹ️ Tidak ada model override untuk user `' + discordUserId + '` (key #' + keyId + ').' });
+		return;
+	}
+
+	const patterns = all.filter((r) => r.isPattern);
+	const exacts = all.filter((r) => !r.isPattern);
+
+	if (!patterns.length) {
+		await interaction.editReply({ content: 'ℹ️ Tidak ada **Pattern / Batch** override untuk user `' + discordUserId + '`.\n\nAda ' + exacts.length + ' override per-model (lihat tombol **Override per model**).' });
+		return;
+	}
+
+	const totalMatch = patterns.reduce((s, r) => s + (r.matchCount || 0), 0);
+
+	const lines = patterns.slice(0, 12).map((r) => fmtModelLimitLine(r, defaultWindow, { showScope: true }));
+	if (patterns.length > 12) lines.push('_...dan ' + (patterns.length - 12) + ' pattern lainnya_');
+
+	const embed = new EmbedBuilder()
+		.setTitle('🧩 Pattern / Batch · Key #' + keyId)
+		.setDescription([
+			'Total pattern aktif: **' + patterns.length + '**',
+			'Total model yang ter-cover: **' + totalMatch + '**',
+			'',
+			...lines,
+		].join('\n'))
+		.setColor(0xfbbf24)
+		.setFooter({ text: 'Pattern = substring case-insensitive. Berlaku untuk model yang mengandung teks pattern di catalog.' })
+		.setTimestamp();
+
 	await interaction.editReply({ embeds: [embed] });
 }
 
@@ -3781,6 +3900,36 @@ client.once('clientReady', async () => {
 
 client.on('interactionCreate', async (interaction) => {
 	try {
+		// ─── Usage Model Overrides Button ────────────────────────────────────
+		if (interaction.isButton() && interaction.customId.startsWith('usage_model_overrides:')) {
+			if (REQUIRED_ROLE_ID && !interaction.member.roles.cache.has(REQUIRED_ROLE_ID)) {
+				const role = interaction.guild.roles.cache.get(REQUIRED_ROLE_ID);
+				const roleName = role ? role.name : 'Required Role';
+				await interaction.reply({
+					content: `Anda memerlukan role **${roleName}** untuk menggunakan fitur ini.`,
+					ephemeral: true,
+				});
+				return;
+			}
+			await handleUsageModelOverrides(interaction);
+			return;
+		}
+
+		// ─── Usage Pattern / Batch Overrides Button ──────────────────────────
+		if (interaction.isButton() && interaction.customId.startsWith('usage_pattern_overrides:')) {
+			if (REQUIRED_ROLE_ID && !interaction.member.roles.cache.has(REQUIRED_ROLE_ID)) {
+				const role = interaction.guild.roles.cache.get(REQUIRED_ROLE_ID);
+				const roleName = role ? role.name : 'Required Role';
+				await interaction.reply({
+					content: `Anda memerlukan role **${roleName}** untuk menggunakan fitur ini.`,
+					ephemeral: true,
+				});
+				return;
+			}
+			await handleUsagePatternOverrides(interaction);
+			return;
+		}
+
 		// ─── Ranking Search Button ───────────────────────────────────────────
 		if (interaction.isButton() && interaction.customId === 'ranking_search_user') {
 			// Role-gate: require REQUIRED_ROLE_ID

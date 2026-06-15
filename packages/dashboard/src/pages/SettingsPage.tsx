@@ -384,6 +384,9 @@ export default function SettingsPage() {
                                 try {
                                   const r = await globalSettings.matchModelCatalog(v);
                                   setGlobalModelMatchPreview({ ids: r.data, total: r.total });
+                                  // Auto-detect pattern: 2+ matches => pattern, 0/1 => exact
+                                  if (r.total >= 2) setNewModelOverrideIsPattern(true);
+                                  else if (r.total === 1) setNewModelOverrideIsPattern(false);
                                 } catch {
                                   setGlobalModelMatchPreview({ ids: [], total: 0 });
                                 }
@@ -448,7 +451,7 @@ export default function SettingsPage() {
                               onChange={(e) => setNewModelOverrideIsPattern(e.target.checked)}
                             />
                             <Label htmlFor="newModelOverrideIsPattern" className="cursor-pointer text-xs">
-                              <b>Pattern / batch</b> — 1 entry ini auto-apply ke semua model yang substring mengandung "{newModelOverride}" (lihat daftar di bawah)
+                              <b>Pattern / batch</b> (auto-detect: ON saat ≥2 model cocok) — 1 entry ini auto-apply ke semua model yang substring mengandung "{newModelOverride}"
                             </Label>
                           </div>
                         </div>
