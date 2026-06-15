@@ -49,10 +49,44 @@ recap.get("/internal/recap/window", (c) => {
   return c.json(getRecapWindow());
 });
 
+recap.post("/internal/recap/reset", async (c) => {
+  if (!isInternalRequest(c)) return c.json({ error: "Unauthorized" }, 401);
+
+  const body = await c.req.json<{ yearMonth?: string; includeTestimonials?: boolean }>().catch(() => ({} as any)) || {};
+  const includeTestimonials = body.includeTestimonials !== false;
+
+  try {
+    const ym = (body.yearMonth || getRecapWindow().yearMonth).trim();
+    if (ym === "all") {
+      await db.delete(recapLeaderboard);
+      await db.delete(userRecaps);
+      if (includeTestimonials) await db.delete(recapTestimonials);
+      return c.json({ success: true, scope: "all", leaderboardDeleted: true, recapsDeleted: true, testimonialsDeleted: includeTestimonials });
+    }
+    if (!/^\d{4}-\d{2}$/.test(ym)) return c.json({ error: "yearMonth must be YYYY-MM or 'all'" }, 400);
+    const lb = await db.delete(recapLeaderboard).where(eq(recapLeaderboard.yearMonth, ym)).returning();
+    const ur = await db.delete(userRecaps).where(eq(userRecaps.yearMonth, ym)).returning();
+    let te: any[] = [];
+    if (includeTestimonials) te = await db.delete(recapTestimonials).where(eq(recapTestimonials.yearMonth, ym)).returning();
+    return c.json({
+      success: true,
+      scope: ym,
+      leaderboardDeleted: lb.length,
+      recapsDeleted: ur.length,
+      testimonialsDeleted: te.length,
+    });
+  } catch (err: any) {
+    return c.json({ error: "reset failed", detail: err?.message || String(err) }, 500);
+  }
+});
+
 /**
  * Generate (or return cached) recap for a user for the current target month.
  * Body: { avatarUrl?, username?, force?, yearMonth? }
  * Cached per WIB day: same day -> reuse; new day -> regenerate.
+ *
+ * Note: declared AFTER `/internal/recap/reset` so the literal "reset" path
+ * takes precedence over the `:discordUserId` placeholder.
  */
 recap.post("/internal/recap/:discordUserId", async (c) => {
   const discordUserId = c.req.param("discordUserId");
@@ -318,47 +352,6 @@ recap.post("/internal/recap/leaderboard-avatars", async (c) => {
     updated++;
   }
   return c.json({ success: true, updated });
-});
-
-/**
- * Wipe all generated recap data so the next interactive open regenerates from
- * scratch. Use after schema changes (e.g. speed duo / race backfill) or as a
- * general "reset recap" button from the dashboard.
- *
- * Auth: requires INTERNAL_API_SECRET via x-internal-secret header (same as the
- * other internal routes). Body:
- *   { yearMonth?: "YYYY-MM" | "all" }   default: current window
- *   { includeTestimonials?: boolean }    default: true
- */
-recap.post("/internal/recap/reset", async (c) => {
-  if (!isInternalRequest(c)) return c.json({ error: "Unauthorized" }, 401);
-
-  const body = await c.req.json<{ yearMonth?: string; includeTestimonials?: boolean }>().catch(() => ({} as any)) || {};
-  const includeTestimonials = body.includeTestimonials !== false;
-
-  try {
-    const ym = (body.yearMonth || getRecapWindow().yearMonth).trim();
-    if (ym === "all") {
-      await db.delete(recapLeaderboard);
-      await db.delete(userRecaps);
-      if (includeTestimonials) await db.delete(recapTestimonials);
-      return c.json({ success: true, scope: "all", leaderboardDeleted: true, recapsDeleted: true, testimonialsDeleted: includeTestimonials });
-    }
-    if (!/^\d{4}-\d{2}$/.test(ym)) return c.json({ error: "yearMonth must be YYYY-MM or 'all'" }, 400);
-    const lb = await db.delete(recapLeaderboard).where(eq(recapLeaderboard.yearMonth, ym)).returning();
-    const ur = await db.delete(userRecaps).where(eq(userRecaps.yearMonth, ym)).returning();
-    let te: any[] = [];
-    if (includeTestimonials) te = await db.delete(recapTestimonials).where(eq(recapTestimonials.yearMonth, ym)).returning();
-    return c.json({
-      success: true,
-      scope: ym,
-      leaderboardDeleted: lb.length,
-      recapsDeleted: ur.length,
-      testimonialsDeleted: te.length,
-    });
-  } catch (err: any) {
-    return c.json({ error: "reset failed", detail: err?.message || String(err) }, 500);
-  }
 });
 
 /** List discord users that have a key (for the daily batch regenerate job). */
