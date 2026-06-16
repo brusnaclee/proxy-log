@@ -51,6 +51,26 @@ function fmtNum(n: number): string {
   return String(Math.round(n));
 }
 
+/** True when URL is cross-origin relative to the recap public base. */
+function isExternalUrl(url: string, base: string): boolean {
+  if (!url || !/^https?:\/\//i.test(url)) return false;
+  try {
+    const b = new URL(base.replace(/\/$/, "") || "https://localhost");
+    const u = new URL(url);
+    return u.origin !== b.origin;
+  } catch {
+    return false;
+  }
+}
+
+/** Same-origin proxy so canvas/GIF capture can read wallpaper pixels. */
+export function proxiedWallpaperUrl(url: string, base: string): string {
+  if (!url) return url;
+  if (!isExternalUrl(url, base)) return url;
+  const clean = base.replace(/\/$/, "");
+  return `${clean}/recap/image-proxy?url=${encodeURIComponent(url)}`;
+}
+
 /** Persona-matched anime wallpaper query lists. */
 function wallpaperQueries(stats: any): string[][] {
   const ratio = stats?.totals?.ioRatio ?? 0.3;
@@ -206,7 +226,7 @@ async function resolveWallpapers(seedId: string, stats: any, base: string, count
       }
       if (url && !seen.has(url)) {
         seen.add(url);
-        out.push(url);
+        out.push(proxiedWallpaperUrl(url, base));
       }
     }
   }
@@ -305,10 +325,11 @@ function buildTiles(stats: any, seed: number): CardTile[] {
     size: "sm",
   });
 
-  // Shuffle candidates by seed, then add 1 (1 hero + 2 sm + 1 candidate = 4).
+  // Shuffle candidates by seed, then add 1 wide tile (hero + rank + tokens + extra wide).
   const order = candidates.map((_, i) => i).sort((a, b) => ((a * 7 + seed) % 13) - ((b * 11 + seed) % 13));
   for (let i = 0; i < Math.min(1, order.length); i++) {
-    out.push(candidates[order[i]]);
+    const picked = { ...candidates[order[i]], size: "wide" as const };
+    out.push(picked);
   }
 
   return out.slice(0, 4);

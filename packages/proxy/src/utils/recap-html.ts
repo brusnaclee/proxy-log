@@ -85,6 +85,9 @@ const PHOSPHOR_SVG: Record<string, string> = {
   share: "M237.66,74.34l-72-72A8,8,0,0,0,152,8V40a8,8,0,0,1-8,8H96a56.06,56.06,0,0,0-56,56v48a8,8,0,0,0,16,0V104a40,40,0,0,1,40-40h48a8,8,0,0,1,8,8v32a8,8,0,0,0,16,0V72l34.34,34.34a8,8,0,0,0,11.32-11.32Z",
   link: "M240,88.23a54.43,54.43,0,0,1-16,37L192,157.66a54.27,54.27,0,0,1-77,0,8,8,0,0,1,11.32-11.32,38.26,38.26,0,0,0,54,0l32-32a38.26,38.26,0,0,0,0-54,38.26,38.26,0,0,0-54,0,8,8,0,0,1-11.32-11.32,54.27,54.27,0,0,1,77,0l32,32A54.43,54.43,0,0,1,240,88.23Z",
   download: "M224,144v64a8,8,0,0,1-8,8H40a8,8,0,0,1-8-8V144a8,8,0,0,1,16,0v56H208V144a8,8,0,0,1,16,0Zm-101.66,5.66a8,8,0,0,0,11.32,0l40-40a8,8,0,0,0-11.32-11.32L136,124.69V32a8,8,0,0,0-16,0v92.69L93.66,98.34a8,8,0,0,0-11.32,11.32Z",
+  "trend-down": "M240,56v64a8,8,0,0,1-16,0V172.69l-82.34,82.35a8,8,0,0,1-11.32,0L96,180.69,29.66,246.34a8,8,0,0,1-11.32-11.32l72-72a8,8,0,0,1,11.32,0L136,115.31,212.69,40H168a8,8,0,0,1,0-16h64A8,8,0,0,1,240,56Z",
+  "sun-horizon": "M256,56a8,8,0,0,1-8,8H216V48a16,16,0,0,0-16-16H56A16,16,0,0,0,40,48V64H8a8,8,0,0,1,0-16H40V48A32,32,0,0,1,72,16H184a32,32,0,0,1,32,32V48h32A8,8,0,0,1,256,56ZM128,88a40,40,0,1,0,40,40A40,40,0,0,0,128,88Zm0,64a24,24,0,1,1,24-24A24,24,0,0,1,128,152ZM32,192H224a8,8,0,0,1,0,16H32a8,8,0,0,1,0-16Z",
+  quotes: "M116,72H88A16,16,0,0,0,72,88v32a16,16,0,0,0,16,16h8v8a8,8,0,0,1-8,8H88a8,8,0,0,1-8-8V88a32,32,0,0,1,32-32h4a8,8,0,0,1,0,16Zm80,0H168a16,16,0,0,0-16,16v32a16,16,0,0,0,16,16h8v8a8,8,0,0,1-8,8h-8a8,8,0,0,1-8-8V88a32,32,0,0,1,32-32h4a8,8,0,0,1,0,16Z",
 };
 
 function phosphor(name: string, size = 16, cls = "b2-ic-sm"): string {
@@ -96,17 +99,25 @@ function phosphor(name: string, size = 16, cls = "b2-ic-sm"): string {
 /** Map legacy emoji to Phosphor icon names. */
 const EMOJI_TO_PHOSPHOR: Record<string, string> = {
   "🛠️": "wrench", "📆": "calendar-dots", "🔥": "flame", "💬": "chat-circle-dots",
-  "⏱️": "timer", "💻": "laptop", "📈": "trend-up", "🤖": "robot", "💸": "currency-dollar",
+  "⏱️": "timer", "💻": "laptop", "📈": "trend-up", "📉": "trend-down", "🤖": "robot", "💸": "currency-dollar",
   "🪙": "coin", "⏰": "clock", "🗓️": "calendar-dots", "⚡": "lightning", "🐌": "turtle",
   "🏆": "trophy", "💡": "lightbulb", "📊": "chart-bar", "👑": "crown", "🎉": "confetti",
   "⭐": "star", "🚀": "rocket", "📥": "arrow-down", "📤": "arrow-up", "😶": "ghost",
-  "📅": "calendar-dots", "😴": "moon-stars", "🎯": "target",
+  "📅": "calendar-dots", "😴": "moon-stars", "🎯": "target", "🌅": "sun-horizon", "🌄": "sun-horizon",
 };
 
 function iconHtml(emojiOrName: string, size = 16, cls = "b2-ic-sm"): string {
   const name = EMOJI_TO_PHOSPHOR[emojiOrName] || emojiOrName;
   const svg = phosphor(name, size, cls);
   return svg || escapeHtml(emojiOrName);
+}
+
+/** Explicit grid-area for deterministic card mosaic layout. */
+function tileGridArea(key: string, size: string): string {
+  if (size === "hero" || key === "requests") return "hero";
+  if (key === "rank") return "rank";
+  if (key === "tokens") return "tokens";
+  return "extra";
 }
 
 export interface LayoutHints {
@@ -178,7 +189,11 @@ function safeJsonForScript(obj: any): string {
 
 const RECAP_CSS = `
 :root{color-scheme:dark;--bg:#0b0b14;--fg:#fff;--muted:rgba(255,255,255,.7);
---g1:#7c3aed;--g2:#ec4899;--g3:#f59e0b;--g4:#22d3ee;--card:rgba(255,255,255,.07);--line:rgba(255,255,255,.14)}
+--g1:#7c3aed;--g2:#ec4899;--g3:#f59e0b;--g4:#22d3ee;--card:rgba(255,255,255,.07);--line:rgba(255,255,255,.14);
+--font-display:"Bricolage Grotesque",system-ui,sans-serif;
+--font-body:"DM Sans",system-ui,sans-serif;
+--font-label:"Space Grotesk",system-ui,sans-serif;
+--slide-gap:clamp(12px,3vw,22px);--head-gap:clamp(6px,1.5vw,10px)}
 body.theme-gold{--g1:#f59e0b;--g2:#f43f5e;--g4:#fbbf24}
 body.theme-night{--g1:#4c1d95;--g2:#7c3aed;--g4:#6366f1;--bg:#070710}
 body.theme-cyan{--g1:#06b6d4;--g2:#3b82f6;--g4:#22d3ee}
@@ -195,28 +210,33 @@ body.mood-mysterious{--g1:#6366f1;--g2:#1e1b4b;--g3:#312e81;--g4:#1e293b}
 @media(max-width:520px){.navdots{right:6px;gap:6px}.navdots i{width:6px;height:6px}}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html{scroll-behavior:smooth}
-body{background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+body{background:var(--bg);color:var(--fg);font-family:var(--font-body),system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
 overflow-x:hidden}
 .deck{height:100dvh;overflow-y:scroll;scroll-snap-type:y mandatory;scroll-behavior:smooth}
 .slide{min-height:100dvh;scroll-snap-align:start;display:flex;flex-direction:column;align-items:center;
-justify-content:center;text-align:center;padding:max(24px,6vw) 20px;position:relative;gap:clamp(14px,3.4vw,26px)}
+justify-content:center;text-align:center;padding:max(24px,6vw) 20px;position:relative;gap:var(--slide-gap)}
 .slide::before{content:"";position:absolute;inset:0;z-index:-1;opacity:.5;
 background:radial-gradient(900px 600px at 50% 0%,rgba(124,58,237,.35),transparent 60%),
 radial-gradient(700px 500px at 100% 100%,rgba(236,72,153,.25),transparent 55%)}
-.wrap{width:100%;max-width:760px;margin:0 auto;display:flex;flex-direction:column;align-items:center;gap:inherit}
-.kicker{font-size:clamp(12px,3.2vw,15px);letter-spacing:.18em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-bottom:8px}
-.big{font-size:clamp(40px,16vw,120px);font-weight:900;line-height:.95;
+.wrap{width:100%;max-width:760px;margin:0 auto;display:flex;flex-direction:column;align-items:center;gap:var(--slide-gap)}
+.kicker{font-family:var(--font-label),system-ui,sans-serif;font-size:clamp(12px,3.2vw,15px);letter-spacing:.18em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-bottom:0}
+.big{font-family:var(--font-display),system-ui,sans-serif;font-size:clamp(40px,16vw,120px);font-weight:900;line-height:.95;
 background:linear-gradient(120deg,var(--g4),var(--g1),var(--g2),var(--g3));-webkit-background-clip:text;
 background-clip:text;color:transparent;background-size:200% 200%;animation:flow 8s ease infinite}
 @keyframes flow{0%,100%{background-position:0 50%}50%{background-position:100% 50%}}
-.headline{font-size:clamp(26px,8vw,56px);font-weight:900;line-height:1.05}
-.caption{font-size:clamp(13px,3.8vw,18px);color:var(--muted);line-height:1.6;max-width:34ch}
+.headline{font-family:var(--font-display),system-ui,sans-serif;font-size:clamp(26px,8vw,56px);font-weight:900;line-height:1.05}
+.headline+.caption{margin-top:var(--head-gap)}
+.avatar+.kicker{margin-top:var(--head-gap)}
+.caption{font-family:var(--font-body),system-ui,sans-serif;font-size:clamp(13px,3.8vw,18px);color:var(--muted);line-height:1.6;max-width:34ch}
 .card{background:var(--card);border:1px solid var(--line);border-radius:26px;padding:clamp(18px,5vw,34px);
 backdrop-filter:blur(14px);width:100%;box-shadow:0 20px 60px rgba(0,0,0,.35)}
 .avatar{width:clamp(96px,28vw,160px);height:clamp(96px,28vw,160px);border-radius:50%;object-fit:cover;
 border:4px solid rgba(255,255,255,.25);box-shadow:0 12px 40px rgba(124,58,237,.5)}
 .media{width:auto;max-width:min(86%,420px);max-height:42dvh;border-radius:22px;object-fit:cover;
 border:1px solid var(--line);box-shadow:0 18px 50px rgba(0,0,0,.45)}
+@media(max-width:520px){.media{max-height:38dvh}.big{line-height:.92}}
+.b2-num{font-family:var(--font-display),system-ui,sans-serif;font-size:clamp(34px,9vw,52px);font-weight:900;line-height:1;margin-top:6px}
+.b2-num-sm{font-family:var(--font-display),system-ui,sans-serif;font-size:clamp(20px,5.5vw,28px);font-weight:900;line-height:1;margin-top:3px}
 .reveal{opacity:0;transform:translateY(34px) scale(.96);transition:opacity .7s cubic-bezier(.2,.7,.2,1),transform .7s cubic-bezier(.2,.7,.2,1)}
 .reveal.in{opacity:1;transform:none}
 .rv-left{opacity:0;transform:translateX(-60px);transition:opacity .7s cubic-bezier(.2,.7,.2,1),transform .7s cubic-bezier(.2,.7,.2,1)}
@@ -246,8 +266,6 @@ transition:transform .2s,box-shadow .2s}
 .b2-wide .b2-ic-sm{width:18px;height:18px;top:10px;right:12px}
 .b2-sm .b2-ic-sm{width:16px;height:16px;top:10px;right:10px}
 .b2:hover .b2-ic,.b2:hover .b2-ic-sm{opacity:1;transform:scale(1.08)}
-.b2-num{font-size:clamp(34px,9vw,52px);font-weight:900;line-height:1;margin-top:6px}
-.b2-num-sm{font-size:clamp(20px,5.5vw,28px);font-weight:900;line-height:1;margin-top:3px}
 .b2-lbl{font-size:12px;font-weight:700;margin-top:4px}
 .b2-lbl-sm{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
 .b2-quip{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.35}
@@ -380,39 +398,49 @@ border-radius:18px;backdrop-filter:blur(20px) saturate(120%);-webkit-backdrop-fi
 box-shadow:none;padding:10px 12px}
 .wc-id{display:flex;align-items:center;gap:10px;padding:8px 10px;background:rgba(0,0,0,.18);border-color:rgba(255,255,255,.14)}
 .wc-id .av{width:42px;height:42px;border-radius:50%;object-fit:cover;border:2px solid rgba(255,255,255,.7);flex:0 0 auto;box-shadow:0 6px 18px rgba(0,0,0,.4)}
-.wc-id .name{font-size:16px;font-weight:900;line-height:1.05;letter-spacing:-.01em;color:var(--wc-text,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-.wc-id .persona{font-size:11px;font-weight:800;color:var(--wc-muted,rgba(255,255,255,.85));text-transform:uppercase;letter-spacing:.08em;margin-top:1px}
-.wc-mosaic{display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:78px;gap:9px}
-.wc-tile{position:relative;display:flex;flex-direction:column;justify-content:center;overflow:hidden;padding:10px 12px 12px;gap:3px;
+.wc-id .name{font-family:var(--font-display),system-ui,sans-serif;font-size:16px;font-weight:900;line-height:1.05;letter-spacing:-.01em;color:var(--wc-text,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.wc-id .persona{font-family:var(--font-label),system-ui,sans-serif;font-size:11px;font-weight:800;color:var(--wc-muted,rgba(255,255,255,.85));text-transform:uppercase;letter-spacing:.08em;margin-top:1px}
+.wc-mosaic{display:grid;grid-template-columns:1fr 1fr;gap:9px;align-items:stretch}
+.wc-mosaic--3{grid-template-rows:minmax(84px,auto) minmax(84px,auto) minmax(72px,auto);
+grid-template-areas:"hero hero" "hero hero" "rank tokens"}
+.wc-mosaic--4{grid-template-rows:minmax(84px,auto) minmax(84px,auto) minmax(72px,auto) minmax(56px,auto);
+grid-template-areas:"hero hero" "hero hero" "rank tokens" "extra extra"}
+.wc-tile.hero,.wc-area-hero{grid-area:hero}
+.wc-area-rank{grid-area:rank}
+.wc-area-tokens{grid-area:tokens}
+.wc-area-extra{grid-area:extra}
+.wc-tile{position:relative;display:flex;flex-direction:column;justify-content:center;overflow:hidden;padding:10px 12px 12px;gap:3px;min-height:72px;
 background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.16);border-radius:14px;
 backdrop-filter:blur(12px) saturate(110%);-webkit-backdrop-filter:blur(12px) saturate(110%)}
-.wc-tile.hero{grid-column:span 2;grid-row:span 2;padding:12px 14px;gap:4px}
-.wc-tile.wide{grid-column:span 2;flex-direction:row;align-items:center;gap:10px}
+.wc-tile.hero{padding:12px 14px;gap:4px;min-height:0}
+.wc-tile.wide,.wc-area-extra{flex-direction:row;align-items:center;gap:10px;min-height:56px}
 .wc-tile .ti{width:20px;height:20px;line-height:1;flex:0 0 auto}
 .wc-tile.hero .ti{width:30px;height:30px}
 .wc-tile.wide .ti{width:24px;height:24px}
+.wc-tile.sm{padding-top:12px}
 /* Rainbow glossy animated stat number — solid white fallback + shadow for legibility */
-.wc-tile .tv{font-weight:900;line-height:1;font-size:clamp(20px,5.2vw,27px);
+.wc-tile .tv{font-family:var(--font-display),system-ui,sans-serif;font-weight:900;line-height:1;font-size:clamp(20px,5.2vw,27px);
 color:#fff;text-shadow:0 0 1px rgba(0,0,0,.45),0 1px 2px rgba(0,0,0,.35);
 background:linear-gradient(90deg,#ff4d6d,#ffd93d,#6ee7b7,#22d3ee,#a78bfa,#f472b6,#ff4d6d);
 background-size:300% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;
 animation:tvRainbow 6s linear infinite;letter-spacing:-.02em}
 @keyframes tvRainbow{0%{background-position:0 0}100%{background-position:300% 0}}
 .wc-tile.hero .tv{font-size:clamp(34px,9vw,52px)}
-.wc-tile .tl{font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--wc-muted,rgba(255,255,255,.85));margin-top:4px}
+.wc-tile .tl{font-family:var(--font-label),system-ui,sans-serif;font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--wc-muted,rgba(255,255,255,.85));margin-top:4px}
 .wc-tile.hero .tl{font-size:12px;margin-top:6px}
-.wc-tile .ts{font-size:10px;color:var(--wc-muted,rgba(255,255,255,.7));margin-top:2px;line-height:1.25;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wc-tile .ts{font-size:10px;color:var(--wc-muted,rgba(255,255,255,.7));margin-top:2px;line-height:1.25;max-width:100%;
+display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden}
 .wc-tile.wide .tx{display:flex;flex-direction:column;min-width:0}
-.wc-tile.wide .tv{font-size:clamp(15px,3.8vw,19px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wc-tile.wide .tv{font-size:clamp(15px,3.8vw,19px)}
 .wc-tile.wide .tl{margin-top:0}
 .wc-tile .tglow{position:absolute;right:-30%;bottom:-30%;width:120px;height:120px;border-radius:50%;
 background:radial-gradient(closest-side,var(--wc-a,#fff),transparent 70%);opacity:.18;pointer-events:none}
 .wc-quote{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;min-height:48px;background:rgba(0,0,0,.25);border-color:rgba(255,255,255,.12);font-size:12px}
-.wc-quote .qi{font-size:20px;line-height:1;flex:0 0 auto}
-.wc-quote .qx{font-size:12.5px;font-weight:600;line-height:1.35;color:var(--wc-text,#fff);font-style:italic}
+.wc-quote .qi{width:20px;height:20px;line-height:1;flex:0 0 auto;color:var(--wc-muted,rgba(255,255,255,.75));position:static;opacity:1}
+.wc-quote .qx{font-family:var(--font-body),system-ui,sans-serif;font-size:12.5px;font-weight:600;line-height:1.35;color:var(--wc-text,#fff);font-style:italic}
 .wc-badge{display:inline-flex;align-items:center;gap:8px;align-self:flex-start;padding:6px 11px;border-radius:999px;background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.18)}
-.wc-badge .bi{font-size:18px;line-height:1}
-.wc-badge .bt{font-size:12px;font-weight:800;letter-spacing:.02em;text-transform:uppercase}
+.wc-badge .bi{width:18px;height:18px;line-height:1;position:static;opacity:1;color:var(--wc-muted,rgba(255,255,255,.9))}
+.wc-badge .bt{font-family:var(--font-label),system-ui,sans-serif;font-size:12px;font-weight:800;letter-spacing:.02em;text-transform:uppercase}
 .wc-foot{display:flex;justify-content:space-between;align-items:center;padding:10px 6px 4px;font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--wc-muted,rgba(255,255,255,.9))}
 .wc-foot .brand{opacity:.95}
 .wc-themes-wrap{width:100%;max-width:380px;margin-top:14px;display:flex;flex-direction:column;gap:8px;align-items:center}
@@ -427,7 +455,9 @@ scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.3) transparent}
 .wc-sw.on{border-color:#fff;transform:scale(1.18);box-shadow:0 0 0 2px rgba(0,0,0,.4)}
 .wc-themes-hint{font-size:11px;color:var(--muted);text-align:center}
 .wc-themes.wc-locked{opacity:.45;pointer-events:none;filter:saturate(.4)}
-@media(max-width:420px){.wrapcard{aspect-ratio:1/1.65}.wc-mosaic{grid-auto-rows:72px;gap:7px}.wc-stack{padding:10px 10px 12px;gap:6px}.wc-foot{font-size:11px;padding:10px 4px 2px}.wc-id .av{width:38px;height:38px}.wc-tile.hero .tv{font-size:clamp(28px,7vw,42px)}.wc-tile{padding:9px 11px 11px}.wc-tile.hero .ti{width:22px;height:22px;top:8px;right:10px}.wc-tile.sm .ti,.wc-tile.wide .ti{width:16px;height:16px;top:8px;right:10px}.wc-themes-wrap{flex-direction:column;align-items:stretch}.btns{flex-direction:column;width:100%;max-width:380px}}
+@media(max-width:420px){.wrapcard{aspect-ratio:1/1.65}.wc-mosaic--3{grid-template-rows:minmax(76px,auto) minmax(76px,auto) minmax(68px,auto)}
+.wc-mosaic--4{grid-template-rows:minmax(76px,auto) minmax(76px,auto) minmax(68px,auto) minmax(52px,auto)}
+.wc-mosaic{gap:7px}.wc-stack{padding:10px 10px 12px;gap:6px}.wc-foot{font-size:11px;padding:10px 4px 2px}.wc-id .av{width:38px;height:38px}.wc-tile.hero .tv{font-size:clamp(28px,7vw,42px)}.wc-tile{padding:9px 11px 11px}.wc-tile.hero .ti{width:22px;height:22px;top:8px;right:10px}.wc-tile.sm .ti,.wc-tile.wide .ti{width:16px;height:16px;top:8px;right:10px}.wc-themes-wrap{flex-direction:column;align-items:stretch}.btns{flex-direction:column;width:100%;max-width:380px}}
 /* Snap mode: html2canvas-compatible flat rendering for downloads. Kills
    background-clip:text and backdrop-filter so text + glass survive capture. */
 body.wc-snap .wc-tile .tv{visibility:hidden!important;animation:none!important}
@@ -445,16 +475,12 @@ body.wc-snap .wc-quote{background:rgba(0,0,0,.32)!important}
 body.wc-snap .wc-badge{background:rgba(0,0,0,.36)!important}
 body.wc-snap .wc-foot{color:rgba(255,255,255,.95)!important}
 body.wc-snap .wc-id{background:rgba(0,0,0,.32)!important}
-/* Snap mode relax: html2canvas + scale:2 rounds font glyphs a hair larger than
-   the live preview, so the .ts/.tl subtitles overflow .wc-tile's hidden
-   clip area and get sliced off in the download. Loosen just for the capture
-   pass — the live web keeps its tight grid look. */
-body.wc-snap .wc-tile{overflow:visible!important}
-body.wc-snap .wc-mosaic{grid-auto-rows:78px;gap:8px}
 body.wc-snap .wc-tile.hero{padding:12px 14px;gap:4px}
-body.wc-snap .wc-tile .ts{font-size:9px;line-height:1.2;margin-top:1px}
+body.wc-snap .wc-tile .ts{font-size:9px;line-height:1.2;margin-top:1px;-webkit-line-clamp:2;line-clamp:2}
 body.wc-snap .wc-tile.hero .ts{font-size:10px;line-height:1.2;margin-top:2px}
 body.wc-snap .wc-tile .tl{margin-top:3px}
+body.wc-snap .wc-tile.sm{min-height:68px;padding:8px 10px 10px}
+body.wc-snap .wc-tile.wide{min-height:52px;padding:8px 12px}
 @media(prefers-reduced-motion:reduce){.wc-wall,.wc-fallback{animation:none}.wc-tile .tv{animation:none}}
 .confetti{position:fixed;inset:0;pointer-events:none;z-index:40;overflow:hidden}
 .confetti i{position:absolute;top:-20px;width:10px;height:14px;opacity:.9;animation:fall linear forwards}
@@ -500,17 +526,16 @@ function crownSvg(rank: number): string {
   return `<svg class="crown" viewBox="0 0 24 24" fill="${color}" aria-hidden="true"><path d="M3 7l4 4 5-7 5 7 4-4-2 12H5L3 7z"/></svg>`;
 }
 
-function mediaTag(asset: { url: string; type: string } | null | undefined, base: string, extraClass = "media"): string {
+function mediaTag(asset: { url: string; type: string } | null | undefined, base: string, extraClass = "media", eager = false): string {
   if (!asset || !asset.url) return "";
   const fallback = `${base}/recap-assets/misc/default.svg`;
   const cls = `media reveal ${extraClass}`.trim();
+  const loadAttr = eager ? 'loading="eager" fetchpriority="high" decoding="async"' : 'loading="lazy" decoding="async"';
   if (asset.type === "video") {
     return `<video class="${cls}" autoplay muted loop playsinline preload="metadata"
       onerror="this.style.display='none'"><source src="${escapeHtml(asset.url)}"></video>`;
   }
-  // GIF/meme as centerpiece. For external (searched) GIFs, on error swap to the
-  // local default meme SVG so a dead link never shows a broken image.
-  return `<img class="${cls}" loading="lazy" referrerpolicy="no-referrer" alt="" src="${escapeHtml(asset.url)}"
+  return `<img class="${cls}" ${loadAttr} referrerpolicy="no-referrer" alt="" src="${escapeHtml(asset.url)}"
     onerror="this.onerror=null;this.src='${escapeHtml(fallback)}'">`;
 }
 
@@ -574,7 +599,7 @@ function buildSectionItems(d: RecapHtmlData): SlideItem[] {
         <div class="big reveal">${escapeHtml(d.monthLabel)}</div>
         <div class="headline reveal">${escapeHtml(d.displayName)}</div>
         <div class="caption reveal">${introT.caption}</div>
-        ${mediaTag(A.intro, d.base)}
+        ${mediaTag(A.intro, d.base, "media", true)}
         <div class="hint">Scroll / geser ke bawah ⤵</div>`);
     },
 
@@ -585,7 +610,7 @@ function buildSectionItems(d: RecapHtmlData): SlideItem[] {
         <div class="kicker reveal">Tipe Kamu</div>
         <div class="big reveal">${escapeHtml(personaTitle)}</div>
         <div class="caption reveal">${escapeHtml(personaSub)}</div>
-        ${mediaTag(A.persona, d.base)}`);
+        ${mediaTag(A.persona, d.base, "media", true)}`);
     },
 
     favoriteModel: () => {
@@ -894,13 +919,17 @@ function buildSectionItems(d: RecapHtmlData): SlideItem[] {
         badge: (nv.badges && nv.badges[0]) ? { icon: nv.badges[0].icon, title: nv.badges[0].title } : null,
       };
       const initialWallpaper = cardMeta.wallpapers[0] || cardMeta.wallpaper || "";
+      const hasExtraTile = cardMeta.tiles.some((t) => t.key !== "requests" && t.key !== "rank" && t.key !== "tokens");
+      const mosaicClass = hasExtraTile ? "wc-mosaic wc-mosaic--4" : "wc-mosaic wc-mosaic--3";
       const tilesFinal = cardMeta.tiles.map((t) => {
         const sub = t.sub ? `<div class="ts">${escapeHtml(t.sub)}</div>` : "";
         const ti = iconHtml(t.icon, t.size === "hero" ? 22 : 16, "ti");
+        const area = tileGridArea(t.key, t.size);
+        const areaCls = `wc-area-${area}`;
         if (t.size === "wide") {
-          return `<div class="wc-tile wide"><div class="tglow"></div>${ti}<div class="tx"><div class="tv">${escapeHtml(t.value)}</div><div class="tl">${escapeHtml(t.label)}</div>${sub}</div></div>`;
+          return `<div class="wc-tile wide ${areaCls}"><div class="tglow"></div>${ti}<div class="tx"><div class="tv">${escapeHtml(t.value)}</div><div class="tl">${escapeHtml(t.label)}</div>${sub}</div></div>`;
         }
-        return `<div class="wc-tile ${escapeHtml(t.size)}"><div class="tglow"></div>${ti}<div class="tv">${escapeHtml(t.value)}</div><div class="tl">${escapeHtml(t.label)}</div>${sub}</div>`;
+        return `<div class="wc-tile ${escapeHtml(t.size)} ${areaCls}"><div class="tglow"></div>${ti}<div class="tv">${escapeHtml(t.value)}</div><div class="tl">${escapeHtml(t.label)}</div>${sub}</div>`;
       }).join("");
       return section("card", `
         <div class="kicker reveal">Kartu Recap Kamu</div>
@@ -920,9 +949,9 @@ function buildSectionItems(d: RecapHtmlData): SlideItem[] {
                 <div class="persona">${escapeHtml(persona.title || "Coder")}</div>
               </div>
             </div>
-            <div class="wc-mosaic">${tilesFinal}</div>
+            <div class="${mosaicClass}">${tilesFinal}</div>
             <div class="wc-glass wc-quote">
-              <div class="qi">${phosphor("chat-circle-dots", 18, "qi")}</div>
+              <div class="qi">${phosphor("quotes", 18, "qi")}</div>
               <div class="qx">"${escapeHtml(cardMeta.quote)}"</div>
             </div>
             ${cardMeta.badge ? `<div class="wc-glass wc-badge">${iconHtml(cardMeta.badge.icon, 18, "bi")}<div class="bt">${escapeHtml(cardMeta.badge.title)}</div></div>` : ""}
@@ -1380,33 +1409,25 @@ const RECAP_JS = `
   var RAINBOW = ['#ff4d6d','#ffd93d','#6ee7b7','#22d3ee','#a78bfa','#f472b6','#fb923c'];
   function drawRainbowTileValues(ctx, stackEl, W, H, animOffset){
     animOffset = animOffset || 0;
-    var html2canvasScale = 2; // matches the doDownload() capture scale
+    var html2canvasScale = 2;
     var sr = stackEl.getBoundingClientRect();
     var tileEls = stackEl.querySelectorAll('.wc-tile');
     tileEls.forEach(function(tile){
       var v = tile.querySelector('.tv');
       if (!v) return;
+      var tr = tile.getBoundingClientRect();
+      if (tr.width === 0) return;
       var r = v.getBoundingClientRect();
-      if (r.width === 0) return;
-      var x = (r.left - sr.left) * html2canvasScale;
-      var y = (r.top - sr.top) * html2canvasScale;
-      var w = r.width * html2canvasScale;
-      var h = r.height * html2canvasScale;
+      var x = (tr.left - sr.left) * html2canvasScale;
+      var y = (tr.top - sr.top) * html2canvasScale;
+      var w = tr.width * html2canvasScale;
+      var h = tr.height * html2canvasScale;
       var fs = parseFloat(getComputedStyle(v).fontSize) * html2canvasScale;
+      var ff = getComputedStyle(v).fontFamily || '"Bricolage Grotesque", system-ui, sans-serif';
       ctx.save();
-      ctx.font = '900 ' + fs + 'px Inter, system-ui, "Segoe UI", sans-serif';
-      // Center the text in the .tv box. The live web uses CSS flex centering
-      // for the same effect, but the canvas has no flexbox — without an
-      // explicit textAlign the text draws flush-left, which is what was
-      // making hero "164" and small tiles look offset in the downloaded GIF.
+      ctx.font = '900 ' + fs + 'px ' + ff;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      // Build a horizontal gradient that covers the full box width and cycles
-      // twice across it so the rainbow reads as glossy regardless of tile
-      // width (a single cycle looked pink-dominant on the wide hero tile).
-      // The gradient spans two full cycles of the 7-stop palette, so the
-      // start and end colors are the same (no pink→pink wash) and a short
-      // stat number still samples a wide swath of the palette.
       var grad = ctx.createLinearGradient(x, 0, x + w, 0);
       var N = RAINBOW.length;
       for (var cycle = 0; cycle < 2; cycle++){
@@ -1417,13 +1438,37 @@ const RECAP_JS = `
         }
       }
       ctx.fillStyle = grad;
-      // Soft shadow for legibility on busy wallpapers.
       ctx.shadowColor = 'rgba(0,0,0,0.45)';
       ctx.shadowBlur = fs * 0.06;
       ctx.shadowOffsetY = fs * 0.04;
       ctx.fillText(v.textContent || '', x + w / 2, y + h / 2);
       ctx.restore();
     });
+  }
+
+  function preloadImage(src, ms){
+    ms = ms || 5000;
+    return new Promise(function(res){
+      if(!src){ return res(false); }
+      var img = new Image();
+      img.crossOrigin = 'anonymous';
+      var done = false;
+      var to = setTimeout(function(){ if(!done){ done=true; res(false); } }, ms);
+      img.onload = function(){ if(!done){ done=true; clearTimeout(to); res(true); } };
+      img.onerror = function(){ if(!done){ done=true; clearTimeout(to); res(false); } };
+      img.src = src;
+    });
+  }
+
+  async function preloadDownloadAssets(stackEl){
+    var urls = [];
+    if(cardWall && cardWall.src) urls.push(cardWall.src);
+    var av = stackEl && stackEl.querySelector('.wc-id .av');
+    if(av && av.src) urls.push(av.src);
+    urls = urls.filter(function(u,i,a){ return u && a.indexOf(u)===i; });
+    if(document.fonts && document.fonts.ready) await document.fonts.ready;
+    await Promise.all(urls.map(function(u){ return preloadImage(u, 5000); }));
+    await new Promise(function(r){ setTimeout(r, 120); });
   }
 
   var dlBtn=document.getElementById('dlBtn');
@@ -1455,10 +1500,14 @@ const RECAP_JS = `
       // truly animated.
       var stackEl=card.querySelector('.wc-stack');
       if(!stackEl) throw new Error('Card stack not found');
+      setStatus('Menyiapkan aset...');
+      if(card) card.scrollIntoView({block:'center',behavior:'instant'});
+      await preloadDownloadAssets(stackEl);
       setStatus('Mengambil snapshot kartu...');
       document.body.classList.add('wc-snap');
-      // Two RAFs so the browser flushes the new style before html2canvas reads.
       await new Promise(function(r){requestAnimationFrame(function(){requestAnimationFrame(r);});});
+      if(document.fonts && document.fonts.ready) await document.fonts.ready;
+      await new Promise(function(r){setTimeout(r,80);});
       var base=await Promise.race([
         window.html2canvas(stackEl,{backgroundColor:null,scale:2,useCORS:true,allowTaint:false,logging:false}),
         new Promise(function(_,rej){setTimeout(function(){rej(new Error('html2canvas timeout 25s'));},25000);})
@@ -1711,6 +1760,9 @@ export function renderRecapHtml(d: RecapHtmlData): string {
   return `<!DOCTYPE html><html lang="id"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800;12..96,900&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
 <title>${escapeHtml(title)}</title>
 <meta name="description" content="${escapeHtml(desc)}">
 <meta property="og:type" content="website">

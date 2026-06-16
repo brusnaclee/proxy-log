@@ -45,6 +45,34 @@ function safeParse(s: string | null | undefined): any {
   try { return JSON.parse(s); } catch { return null; }
 }
 
+/** Same-origin proxy for external GIF/image URLs (canvas + GIF encoder need CORS-safe pixels). */
+recapWeb.get("/image-proxy", async (c) => {
+  const raw = c.req.query("url");
+  if (!raw || !/^https?:\/\//i.test(raw)) return c.text("url required", 400);
+  try {
+    const upstream = new URL(raw);
+    if (!["http:", "https:"].includes(upstream.protocol)) return c.text("invalid protocol", 400);
+    const res = await fetch(raw, {
+      headers: { "User-Agent": "MonitRecap/1.0", Accept: "image/*,*/*" },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return c.text("upstream error", 502);
+    const ct = res.headers.get("content-type") || "image/gif";
+    if (!/^image\//i.test(ct) && !ct.includes("octet-stream")) return c.text("not an image", 415);
+    const buf = await res.arrayBuffer();
+    return new Response(buf, {
+      status: 200,
+      headers: {
+        "Content-Type": ct.split(";")[0].trim(),
+        "Cache-Control": "public, max-age=86400",
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
+  } catch {
+    return c.text("fetch failed", 502);
+  }
+});
+
 recapWeb.get("/:apiKeyName", async (c) => {
   const apiKeyName = decodeURIComponent(c.req.param("apiKeyName"));
   const base = publicBase();
