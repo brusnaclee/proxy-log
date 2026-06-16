@@ -177,13 +177,14 @@ settings.put("/settings/model-limits", async (c) => {
   // For exact (non-pattern), still allow any string (legacy compat). For pattern,
   // we accept any substring — the matcher runs case-insensitive includes() at lookup.
 
-  // Upsert: delete existing then insert
-  await db.delete(modelLimits).where(and(
-    eq(modelLimits.scope, "global"),
-    eq(modelLimits.scopeId, 0),
-    eq(modelLimits.model, modelName),
-    eq(modelLimits.isPattern, isPattern),
-  ));
+  // Upsert: delete existing then insert. Use raw SQL here because the Drizzle
+  // query builder hits a known issue with the boolean is_pattern column on
+  // some pg client combinations.
+  const { pool } = await import("../../db/index.js");
+  await pool.query(
+    `DELETE FROM model_limits WHERE scope = $1 AND scope_id = $2 AND model = $3 AND is_pattern = $4`,
+    ["global", 0, modelName, isPattern]
+  );
 
   if (limit > 0 || dailyTokenLimit > 0 || monthlyTokenLimit > 0 || dailyInputTokenLimit > 0 || dailyOutputTokenLimit > 0) {
     await db.insert(modelLimits).values({

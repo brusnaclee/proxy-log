@@ -552,13 +552,13 @@ keys.put("/keys/:id/model-limits", async (c) => {
   const dailyInputTokenLimit = Math.max(0, body.dailyInputTokenLimit || 0);
   const dailyOutputTokenLimit = Math.max(0, body.dailyOutputTokenLimit || 0);
 
-  // Upsert (key + model + isPattern is the unique triple)
-  await db.delete(modelLimits).where(and(
-    eq(modelLimits.scope, "key"),
-    eq(modelLimits.scopeId, keyId),
-    eq(modelLimits.model, modelName),
-    eq(modelLimits.isPattern, isPattern),
-  ));
+  // Upsert (key + model + isPattern is the unique triple). Use raw SQL for
+  // the DELETE to avoid a Drizzle issue with the boolean is_pattern column.
+  const { pool } = await import("../../db/index.js");
+  await pool.query(
+    `DELETE FROM model_limits WHERE scope = $1 AND scope_id = $2 AND model = $3 AND is_pattern = $4`,
+    ["key", keyId, modelName, isPattern]
+  );
 
   if (limit > 0 || dailyTokenLimit > 0 || monthlyTokenLimit > 0 || dailyInputTokenLimit > 0 || dailyOutputTokenLimit > 0) {
     await db.insert(modelLimits).values({

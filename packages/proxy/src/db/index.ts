@@ -33,6 +33,16 @@ export async function initializeDatabase() {
 		throw err;
 	}
 
+	// Idempotent column migrations (in case drizzle-kit push hasn't been re-run
+	// against this DB). Each statement uses IF NOT EXISTS where supported.
+	try {
+		await pool.query(`ALTER TABLE model_limits ADD COLUMN IF NOT EXISTS is_pattern boolean NOT NULL DEFAULT false`);
+		await pool.query(`CREATE INDEX IF NOT EXISTS idx_model_limits_pattern ON model_limits (is_pattern)`);
+		console.log('✅ Applied idempotent model_limits migrations');
+	} catch (err: any) {
+		console.warn('⚠️ model_limits idempotent migration warning:', err?.message || err);
+	}
+
 	// Push schema using drizzle-kit push equivalent at runtime:
 	// We rely on drizzle-kit push:pg being run before first start.
 	// But we still seed defaults below.
