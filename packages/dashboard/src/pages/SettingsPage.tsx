@@ -575,13 +575,39 @@ export default function SettingsPage() {
                               </thead>
                               <tbody className="divide-y">
                                 {globalModelLimits.map(ml => (
-                                  <tr key={ml.id} className="hover:bg-muted/50">
+                                  <tr key={ml.id} className="hover:bg-muted/50 align-top">
                                     <td className="p-2 font-mono">
-                                      {ml.model}
-                                      {ml.isPattern && (
-                                        <span className="ml-1.5 inline-flex items-center rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide bg-amber-500/15 text-amber-600 dark:text-amber-400">
-                                          PATTERN
-                                        </span>
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span>{ml.model}</span>
+                                        {ml.isPattern && (
+                                          <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                                            PATTERN
+                                          </span>
+                                        )}
+                                        {ml.isPattern && (
+                                          <span className="text-[10px] text-muted-foreground">
+                                            ({ml.matchCount ?? 0} model ter-attach)
+                                          </span>
+                                        )}
+                                      </div>
+                                      {ml.isPattern && ml.matchedIds && ml.matchedIds.length > 0 && (
+                                        <div className="mt-1 flex flex-wrap gap-1 max-h-20 overflow-y-auto p-1 border rounded bg-background/40">
+                                          {ml.matchedIds.slice(0, 20).map((m) => (
+                                            <span key={m} className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-300 font-mono text-[10px]">
+                                              {m}
+                                            </span>
+                                          ))}
+                                          {(ml.matchCount ?? 0) > (ml.matchedIds?.length ?? 0) && (
+                                            <span className="px-1.5 py-0.5 rounded bg-muted text-muted-foreground text-[10px]">
+                                              +{(ml.matchCount ?? 0) - (ml.matchedIds?.length ?? 0)} lagi
+                                            </span>
+                                          )}
+                                        </div>
+                                      )}
+                                      {ml.isPattern && ml.matchCount === 0 && (
+                                        <div className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
+                                          Belum ada model di catalog yang cocok dengan pattern ini.
+                                        </div>
                                       )}
                                     </td>
                                     <td className="p-2">{ml.promptLimit || '-'}</td>

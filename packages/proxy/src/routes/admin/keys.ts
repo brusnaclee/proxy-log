@@ -8,6 +8,8 @@ import { getModelRates } from "../../utils/cost-calculator.js";
 import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, sanitizeRows } from "../../utils/counting.js";
 import { applyTokenMultiplierRows, getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { apiKeyCache, statsCache } from "../../utils/cache.js";
+import { getModelCatalogResponse } from "../../utils/model-catalog.js";
+import { enrichModelLimitsWithCatalog } from "../../utils/model-limits-enrich.js";
 
 const keys = new Hono();
 
@@ -534,30 +536,33 @@ keys.get("/keys/:id/model-limits", async (c) => {
   const keyId = parseInt(c.req.param("id"));
   const rows = await db.select().from(modelLimits)
     .where(and(eq(modelLimits.scope, "key"), eq(modelLimits.scopeId, keyId)));
-  return c.json({ data: rows });
+  const data = await enrichModelLimitsWithCatalog(rows);
+  return c.json({ data });
 });
 
 keys.put("/keys/:id/model-limits", async (c) => {
   const keyId = parseInt(c.req.param("id"));
-  const body = await c.req.json<{ model: string; promptLimit?: number; dailyTokenLimit?: number; monthlyTokenLimit?: number; dailyInputTokenLimit?: number; dailyOutputTokenLimit?: number }>();
+  const body = await c.req.json<{ model: string; promptLimit?: number; dailyTokenLimit?: number; monthlyTokenLimit?: number; dailyInputTokenLimit?: number; dailyOutputTokenLimit?: number; isPattern?: boolean }>();
   if (!body.model || body.model.trim() === "") return c.json({ error: "model is required" }, 400);
   const modelName = body.model.trim();
+  const isPattern = !!body.isPattern;
   const limit = Math.max(0, body.promptLimit || 0);
   const dailyTokenLimit = Math.max(0, body.dailyTokenLimit || 0);
   const monthlyTokenLimit = Math.max(0, body.monthlyTokenLimit || 0);
   const dailyInputTokenLimit = Math.max(0, body.dailyInputTokenLimit || 0);
   const dailyOutputTokenLimit = Math.max(0, body.dailyOutputTokenLimit || 0);
 
-  // Upsert
+  // Upsert (key + model + isPattern is the unique triple)
   await db.delete(modelLimits).where(and(
     eq(modelLimits.scope, "key"),
     eq(modelLimits.scopeId, keyId),
     eq(modelLimits.model, modelName),
+    eq(modelLimits.isPattern, isPattern),
   ));
 
   if (limit > 0 || dailyTokenLimit > 0 || monthlyTokenLimit > 0 || dailyInputTokenLimit > 0 || dailyOutputTokenLimit > 0) {
     await db.insert(modelLimits).values({
-      scope: "key", scopeId: keyId, model: modelName, 
+      scope: "key", scopeId: keyId, model: modelName, isPattern,
       promptLimit: limit,
       dailyTokenLimit,
       monthlyTokenLimit,
@@ -566,7 +571,22 @@ keys.put("/keys/:id/model-limits", async (c) => {
     });
   }
 
-  return c.json({ success: true, model: modelName, promptLimit: limit, dailyTokenLimit, monthlyTokenLimit, dailyInputTokenLimit, dailyOutputTokenLimit });
+  return c.json({ success: true, model: modelName, isPattern, promptLimit: limit, dailyTokenLimit, monthlyTokenLimit, dailyInputTokenLimit, dailyOutputTokenLimit });
+});
+
+// GET /keys/:id/model-catalog/match?pattern=X
+keys.get("/keys/:id/model-catalog/match", async (c) => {
+  const pattern = (c.req.query("pattern") || "").toLowerCase().trim();
+  try {
+    const catalog = await getModelCatalogResponse();
+    const all: Array<{ id: string }> = (catalog as any)?.data || [];
+    const matched = pattern
+      ? all.filter(m => (m.id || "").toLowerCase().includes(pattern))
+      : all;
+    return c.json({ data: matched.map(m => m.id), total: matched.length, totalAll: all.length });
+  } catch (err: any) {
+    return c.json({ data: [], total: 0, totalAll: 0, error: err?.message || "catalog error" }, 200);
+  }
 });
 
 keys.delete("/keys/:id/model-limits/:model", async (c) => {

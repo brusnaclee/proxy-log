@@ -2572,12 +2572,8 @@ function buildRankingEmbed(title, color, todayItems, monthItems, formatItem) {
 
 async function buildSearchEmbed() {
 	let limits = {};
-	let modelLimitsData = [];
 	try {
-		[limits, modelLimitsData] = await Promise.all([
-			proxyInternal('/admin/settings/global'),
-			proxyInternal('/admin/settings/model-limits').then(r => r.data || []).catch(() => []),
-		]);
+		limits = await proxyInternal('/admin/settings/global');
 	} catch (err) {
 		console.error('[ranking] Failed to fetch limits:', err.message);
 	}
@@ -2597,44 +2593,17 @@ async function buildSearchEmbed() {
 		'**Global Prompt Limits:**',
 		`- Prompt Limit: ${fmt(limits.globalPromptLimit, 'req')} (${limits.globalPromptLimitWindow || '1d'})`,
 		`- Rate Limit: ${fmt(limits.globalRateLimit, 'req')} (${limits.globalRateLimitWindow || '1h'})`,
+		`- Per-Model Default: ${limits.globalPerModelPromptLimit > 0 ? `${limits.globalPerModelPromptLimit} req (${limits.globalPerModelPromptLimitWindow || '1d'})` : 'Unlimited'}`,
+		'',
+		'**Token Limits:**',
+		`- Input Harian: ${fmtTok(limits.globalDailyInputTokenLimit)}`,
+		`- Output Harian: ${fmtTok(limits.globalDailyOutputTokenLimit)}`,
+		`- Total Harian: ${fmtTok(limits.globalDailyTokenLimit)}`,
+		`- Bulanan: ${fmtTok(limits.globalMonthlyTokenLimit)}`,
+		'',
+		'_Per-user limits bervariasi per API key. Klik tombol untuk cek usage spesifik._',
+		'_Klik **See Model Limit** untuk lihat override per-model atau pattern._',
 	];
-
-	// Per-model prompt limits from model_limits table
-	const promptModelLimits = modelLimitsData.filter(m => m.promptLimit > 0);
-	if (promptModelLimits.length > 0) {
-		lines.push('');
-		lines.push('**Per-Model Prompt Limits:**');
-		for (const m of promptModelLimits) {
-			lines.push(`- \`${m.model}\`: ${m.promptLimit} req`);
-		}
-	} else if (limits.globalPerModelPromptLimit > 0) {
-		lines.push(`- Per-Model Default: ${limits.globalPerModelPromptLimit} req (${limits.globalPerModelPromptLimitWindow || '1d'})`);
-	}
-
-	lines.push('');
-	lines.push('**Token Limits:**');
-	lines.push(`- Input Harian: ${fmtTok(limits.globalDailyInputTokenLimit)}`);
-	lines.push(`- Output Harian: ${fmtTok(limits.globalDailyOutputTokenLimit)}`);
-	lines.push(`- Total Harian: ${fmtTok(limits.globalDailyTokenLimit)}`);
-	lines.push(`- Bulanan: ${fmtTok(limits.globalMonthlyTokenLimit)}`);
-
-	// Per-model token limits
-	const tokenModelLimits = modelLimitsData.filter(m => m.dailyTokenLimit > 0 || m.monthlyTokenLimit > 0 || m.dailyInputTokenLimit > 0 || m.dailyOutputTokenLimit > 0);
-	if (tokenModelLimits.length > 0) {
-		lines.push('');
-		lines.push('**Per-Model Token Limits:**');
-		for (const m of tokenModelLimits) {
-			const parts = [];
-			if (m.dailyInputTokenLimit > 0) parts.push(`In:${fmtTok(m.dailyInputTokenLimit)}`);
-			if (m.dailyOutputTokenLimit > 0) parts.push(`Out:${fmtTok(m.dailyOutputTokenLimit)}`);
-			if (m.dailyTokenLimit > 0) parts.push(`Day:${fmtTok(m.dailyTokenLimit)}`);
-			if (m.monthlyTokenLimit > 0) parts.push(`Month:${fmtTok(m.monthlyTokenLimit)}`);
-			lines.push(`- \`${m.model}\`: ${parts.join(' / ')}`);
-		}
-	}
-
-	lines.push('');
-	lines.push('_Per-user limits bervariasi per API key. Klik tombol untuk cek usage spesifik._');
 
 	return new EmbedBuilder()
 		.setTitle('🔍 Cari Usage User')
@@ -2646,9 +2615,126 @@ function buildSearchRow() {
 	return new ActionRowBuilder().addComponents(
 		new ButtonBuilder()
 			.setCustomId('ranking_search_user')
-			.setLabel('🔍 Cari Usage User')
+			.setLabel('Cari Usage User')
+			.setEmoji('🔍')
 			.setStyle(ButtonStyle.Primary),
+		new ButtonBuilder()
+			.setCustomId('ranking_see_model_limits')
+			.setLabel('See Model Limit')
+			.setEmoji('🎯')
+			.setStyle(ButtonStyle.Secondary),
 	);
+}
+
+// Format one global model limit row (used by the panel "See Model Limit" handler).
+function fmtGlobalModelLimitRow(r) {
+	const parts = [];
+	if (r.promptLimit > 0) parts.push(r.promptLimit + ' prompt / 30m');
+	if (r.dailyTokenLimit > 0) parts.push(r.dailyTokenLimit.toLocaleString() + ' daily tok');
+	if (r.monthlyTokenLimit > 0) parts.push(r.monthlyTokenLimit.toLocaleString() + ' monthly tok');
+	if (r.dailyInputTokenLimit > 0) parts.push(r.dailyInputTokenLimit.toLocaleString() + ' daily in');
+	if (r.dailyOutputTokenLimit > 0) parts.push(r.dailyOutputTokenLimit.toLocaleString() + ' daily out');
+	const limit = parts.length ? parts.join(', ') : 'Unlimited';
+	const tag = '`' + r.model + '`';
+	if (r.isPattern) {
+		const count = r.matchCount || 0;
+		const sample = (r.matchedIds || []).slice(0, 5).map((m) => '`' + m + '`').join(', ');
+		const more = count > 5 ? ' +' + (count - 5) + ' lainnya' : '';
+		return '🧩 ' + tag + ' → ' + count + ' model · ' + limit + (sample ? '\n   ' + sample + more : '\n   _belum ada model di catalog yang cocok_');
+	}
+	return '🎯 ' + tag + ' · ' + limit;
+}
+
+async function buildSeeModelLimitsEmbed(filter) {
+	let rows = [];
+	try {
+		const r = await proxyInternal('/admin/settings/model-limits');
+		rows = (r && r.data) || [];
+	} catch (err) {
+		return { error: 'Gagal mengambil model limits: ' + (err.message || 'Unknown error') };
+	}
+
+	const exacts = rows.filter((r) => !r.isPattern);
+	const patterns = rows.filter((r) => r.isPattern);
+	let chosen;
+	let filterLabel;
+	if (filter === 'exact') { chosen = exacts; filterLabel = 'Exact Override'; }
+	else if (filter === 'pattern') { chosen = patterns; filterLabel = 'Pattern / Batch'; }
+	else { chosen = rows; filterLabel = 'Semua Override'; }
+
+	if (rows.length === 0) {
+		return { embed: new EmbedBuilder()
+			.setTitle('🎯 See Model Limit')
+			.setDescription('ℹ️ Belum ada model override global. Tambah dari dashboard **Settings > Model Limits**.')
+			.setColor(0x5865f2) };
+	}
+
+	if (chosen.length === 0) {
+		return { embed: new EmbedBuilder()
+			.setTitle('🎯 See Model Limit · ' + filterLabel)
+			.setDescription('ℹ️ Tidak ada entry untuk filter ini.\n\nExact: ' + exacts.length + ' · Pattern: ' + patterns.length)
+			.setColor(0x5865f2) };
+	}
+
+	const desc = [
+		'**Filter:** ' + filterLabel + '  ·  Exact: ' + exacts.length + ' · Pattern: ' + patterns.length,
+		'',
+		chosen.slice(0, 15).map(fmtGlobalModelLimitRow).join('\n\n'),
+		chosen.length > 15 ? '_...dan ' + (chosen.length - 15) + ' entry lainnya_' : '',
+		'',
+		'_Pattern (🧩) = substring match ke semua model di catalog. Match count = berapa model di catalog yang substring mengandung pattern._',
+	].filter(Boolean).join('\n');
+
+	return { embed: new EmbedBuilder()
+		.setTitle('🎯 See Model Limit · ' + filterLabel)
+		.setDescription(desc)
+		.setColor(0x5865f2)
+		.setFooter({ text: 'Ganti filter lewat dropdown di bawah.' })
+		.setTimestamp() };
+}
+
+function buildSeeModelLimitsRow(currentFilter) {
+	const menu = new StringSelectMenuBuilder()
+		.setCustomId('ranking_model_limit_filter')
+		.setPlaceholder('Filter: ' + (
+			currentFilter === 'exact' ? 'Exact Override' :
+			currentFilter === 'pattern' ? 'Pattern / Batch' :
+			'Semua'
+		))
+		.addOptions([
+			{ label: 'Semua', value: 'all', default: !currentFilter || currentFilter === 'all', description: 'Tampilkan semua override (exact + pattern)' },
+			{ label: 'Exact Override', value: 'exact', default: currentFilter === 'exact', description: 'Override per model (1 entry = 1 model)' },
+			{ label: 'Pattern / Batch', value: 'pattern', default: currentFilter === 'pattern', description: 'Override via substring (1 entry = banyak model)' },
+		]);
+	return new ActionRowBuilder().addComponents(menu);
+}
+
+async function handleRankingSeeModelLimits(interaction) {
+	await interaction.deferReply({ ephemeral: true });
+	const filter = interaction.customId.split(':')[1] || 'all';
+	const out = await buildSeeModelLimitsEmbed(filter);
+	if (out.error) {
+		await interaction.editReply({ content: '❌ ' + out.error });
+		return;
+	}
+	await interaction.editReply({
+		embeds: [out.embed],
+		components: [buildSeeModelLimitsRow(filter)],
+	});
+}
+
+async function handleRankingModelLimitFilter(interaction) {
+	await interaction.deferUpdate();
+	const filter = interaction.values[0] || 'all';
+	const out = await buildSeeModelLimitsEmbed(filter);
+	if (out.error) {
+		await interaction.editReply({ content: '❌ ' + out.error });
+		return;
+	}
+	await interaction.editReply({
+		embeds: [out.embed],
+		components: [buildSeeModelLimitsRow(filter)],
+	});
 }
 
 // ─── Monthly Recap panel ────────────────────────────────────────────────────
@@ -3493,146 +3579,7 @@ async function handleRankingSearchModal(interaction) {
 
 	await interaction.editReply({
 		embeds: [embed],
-		components: [
-			new ActionRowBuilder().addComponents(
-				new ButtonBuilder()
-					.setCustomId(`usage_model_overrides:${discordUserId}`)
-					.setLabel('Override per model')
-					.setStyle(ButtonStyle.Secondary)
-					.setEmoji('🎯'),
-				new ButtonBuilder()
-					.setCustomId(`usage_pattern_overrides:${discordUserId}`)
-					.setLabel('Pattern / Batch')
-					.setStyle(ButtonStyle.Secondary)
-					.setEmoji('🧩'),
-			),
-		],
 	});
-}
-
-function fmtModelLimitLine(r, defaultWindow, opts) {
-	opts = opts || {};
-	const parts = [];
-	if (r.promptLimit > 0) parts.push(r.promptLimit + ' prompt / ' + defaultWindow);
-	if (r.dailyTokenLimit > 0) parts.push(r.dailyTokenLimit.toLocaleString() + ' daily tok');
-	if (r.monthlyTokenLimit > 0) parts.push(r.monthlyTokenLimit.toLocaleString() + ' monthly tok');
-	if (r.dailyInputTokenLimit > 0) parts.push(r.dailyInputTokenLimit.toLocaleString() + ' daily in');
-	if (r.dailyOutputTokenLimit > 0) parts.push(r.dailyOutputTokenLimit.toLocaleString() + ' daily out');
-	const limit = parts.length ? parts.join(', ') : 'Unlimited';
-	const scopeTag = opts.showScope ? '**' + r.scopeLabel + '**' : '';
-	const modelTag = '`' + r.model + '`';
-	let sample = '';
-	if (r.matchedSampleIds && r.matchedSampleIds.length) {
-		const s = r.matchedSampleIds.slice(0, 5).map((m) => '`' + m + '`').join(', ');
-		sample = '\n   _Sample:_ ' + s + (r.matchCount > 5 ? ' +' + (r.matchCount - 5) : '');
-	}
-	return (scopeTag ? scopeTag + ' · ' : '') + modelTag + ' - ' + limit + sample;
-}
-
-async function fetchModelOverrides(discordUserId) {
-	const data = await proxyInternal('/admin/internal/stats/user-detail/' + discordUserId + '/model-overrides');
-	const keyId = data.keyId;
-	const defaultWindow = data.defaultWindow;
-	const keyLimits = data.keyLimits || [];
-	const globalLimits = data.globalLimits || [];
-	const all = [
-		...keyLimits.map((r) => Object.assign({}, r, { scopeLabel: 'Key' })),
-		...globalLimits.map((r) => Object.assign({}, r, { scopeLabel: 'Global' })),
-	];
-	return { keyId: keyId, defaultWindow: defaultWindow, all: all };
-}
-
-async function handleUsageModelOverrides(interaction) {
-	const discordUserId = interaction.customId.split(':')[1];
-	await interaction.deferReply({ ephemeral: true });
-
-	let payload;
-	try {
-		payload = await fetchModelOverrides(discordUserId);
-	} catch (err) {
-		await interaction.editReply({ content: '❌ Gagal mengambil model overrides: ' + (err.message || 'Unknown error') });
-		return;
-	}
-	const keyId = payload.keyId;
-	const defaultWindow = payload.defaultWindow;
-	const all = payload.all;
-
-	if (!all.length) {
-		await interaction.editReply({ content: 'ℹ️ Tidak ada model override untuk user `' + discordUserId + '` (key #' + keyId + ').\n\nTambah dari dashboard **Settings > Model Limits** (per model atau pattern/batch).' });
-		return;
-	}
-
-	const exacts = all.filter((r) => !r.isPattern);
-	const patterns = all.filter((r) => r.isPattern);
-
-	const sections = [];
-	if (exacts.length) {
-		sections.push('**🎯 Override per model (' + exacts.length + ')**');
-		sections.push(exacts.slice(0, 12).map((r) => fmtModelLimitLine(r, defaultWindow, { showScope: true })).join('\n\n'));
-		if (exacts.length > 12) sections.push('_...dan ' + (exacts.length - 12) + ' exact lainnya_');
-	}
-	if (patterns.length) {
-		sections.push('\n**🧩 Pattern / Batch (' + patterns.length + ')** - auto-apply via substring');
-		sections.push(patterns.slice(0, 8).map((r) => fmtModelLimitLine(r, defaultWindow, { showScope: true })).join('\n\n'));
-		if (patterns.length > 8) sections.push('_...dan ' + (patterns.length - 8) + ' pattern lainnya_');
-	}
-
-	const embed = new EmbedBuilder()
-		.setTitle('Model Overrides · Key #' + keyId)
-		.setDescription(sections.join('\n'))
-		.setColor(0x5865f2)
-		.setFooter({ text: 'Pattern (🧩) = substring match ke semua model di catalog. Priority: Key Exact > Key Pattern > Global Exact > Global Pattern.' })
-		.setTimestamp();
-
-	await interaction.editReply({ embeds: [embed] });
-}
-
-async function handleUsagePatternOverrides(interaction) {
-	const discordUserId = interaction.customId.split(':')[1];
-	await interaction.deferReply({ ephemeral: true });
-
-	let payload;
-	try {
-		payload = await fetchModelOverrides(discordUserId);
-	} catch (err) {
-		await interaction.editReply({ content: '❌ Gagal mengambil pattern overrides: ' + (err.message || 'Unknown error') });
-		return;
-	}
-	const keyId = payload.keyId;
-	const defaultWindow = payload.defaultWindow;
-	const all = payload.all;
-
-	if (!all.length) {
-		await interaction.editReply({ content: 'ℹ️ Tidak ada model override untuk user `' + discordUserId + '` (key #' + keyId + ').' });
-		return;
-	}
-
-	const patterns = all.filter((r) => r.isPattern);
-	const exacts = all.filter((r) => !r.isPattern);
-
-	if (!patterns.length) {
-		await interaction.editReply({ content: 'ℹ️ Tidak ada **Pattern / Batch** override untuk user `' + discordUserId + '`.\n\nAda ' + exacts.length + ' override per-model (lihat tombol **Override per model**).' });
-		return;
-	}
-
-	const totalMatch = patterns.reduce((s, r) => s + (r.matchCount || 0), 0);
-
-	const lines = patterns.slice(0, 12).map((r) => fmtModelLimitLine(r, defaultWindow, { showScope: true }));
-	if (patterns.length > 12) lines.push('_...dan ' + (patterns.length - 12) + ' pattern lainnya_');
-
-	const embed = new EmbedBuilder()
-		.setTitle('🧩 Pattern / Batch · Key #' + keyId)
-		.setDescription([
-			'Total pattern aktif: **' + patterns.length + '**',
-			'Total model yang ter-cover: **' + totalMatch + '**',
-			'',
-			...lines,
-		].join('\n'))
-		.setColor(0xfbbf24)
-		.setFooter({ text: 'Pattern = substring case-insensitive. Berlaku untuk model yang mengandung teks pattern di catalog.' })
-		.setTimestamp();
-
-	await interaction.editReply({ embeds: [embed] });
 }
 
 client.once('clientReady', async () => {
@@ -3900,36 +3847,6 @@ client.once('clientReady', async () => {
 
 client.on('interactionCreate', async (interaction) => {
 	try {
-		// ─── Usage Model Overrides Button ────────────────────────────────────
-		if (interaction.isButton() && interaction.customId.startsWith('usage_model_overrides:')) {
-			if (REQUIRED_ROLE_ID && !interaction.member.roles.cache.has(REQUIRED_ROLE_ID)) {
-				const role = interaction.guild.roles.cache.get(REQUIRED_ROLE_ID);
-				const roleName = role ? role.name : 'Required Role';
-				await interaction.reply({
-					content: `Anda memerlukan role **${roleName}** untuk menggunakan fitur ini.`,
-					ephemeral: true,
-				});
-				return;
-			}
-			await handleUsageModelOverrides(interaction);
-			return;
-		}
-
-		// ─── Usage Pattern / Batch Overrides Button ──────────────────────────
-		if (interaction.isButton() && interaction.customId.startsWith('usage_pattern_overrides:')) {
-			if (REQUIRED_ROLE_ID && !interaction.member.roles.cache.has(REQUIRED_ROLE_ID)) {
-				const role = interaction.guild.roles.cache.get(REQUIRED_ROLE_ID);
-				const roleName = role ? role.name : 'Required Role';
-				await interaction.reply({
-					content: `Anda memerlukan role **${roleName}** untuk menggunakan fitur ini.`,
-					ephemeral: true,
-				});
-				return;
-			}
-			await handleUsagePatternOverrides(interaction);
-			return;
-		}
-
 		// ─── Ranking Search Button ───────────────────────────────────────────
 		if (interaction.isButton() && interaction.customId === 'ranking_search_user') {
 			// Role-gate: require REQUIRED_ROLE_ID
@@ -3949,6 +3866,30 @@ client.on('interactionCreate', async (interaction) => {
 		// ─── Ranking Search Modal Submit ─────────────────────────────────────
 		if (interaction.isModalSubmit() && interaction.customId === 'ranking_search_user_modal') {
 			await handleRankingSearchModal(interaction);
+			return;
+		}
+
+		// ─── Ranking See Model Limit Button ──────────────────────────────────
+		if (interaction.isButton() && (interaction.customId === 'ranking_see_model_limits' || interaction.customId.startsWith('ranking_see_model_limits:'))) {
+			if (REQUIRED_ROLE_ID && !interaction.member.roles.cache.has(REQUIRED_ROLE_ID)) {
+				const role = interaction.guild.roles.cache.get(REQUIRED_ROLE_ID);
+				const roleName = role ? role.name : 'Required Role';
+				await interaction.reply({ content: 'Anda memerlukan role **' + roleName + '** untuk menggunakan fitur ini.', ephemeral: true });
+				return;
+			}
+			await handleRankingSeeModelLimits(interaction);
+			return;
+		}
+
+		// ─── Ranking Model Limit Filter Select ──────────────────────────────
+		if (interaction.isStringSelectMenu() && interaction.customId === 'ranking_model_limit_filter') {
+			if (REQUIRED_ROLE_ID && !interaction.member.roles.cache.has(REQUIRED_ROLE_ID)) {
+				const role = interaction.guild.roles.cache.get(REQUIRED_ROLE_ID);
+				const roleName = role ? role.name : 'Required Role';
+				await interaction.reply({ content: 'Anda memerlukan role **' + roleName + '** untuk menggunakan fitur ini.', ephemeral: true });
+				return;
+			}
+			await handleRankingModelLimitFilter(interaction);
 			return;
 		}
 

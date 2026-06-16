@@ -5,6 +5,7 @@ import { eq, and, sql } from "drizzle-orm";
 import { maskKey } from "../../utils/crypto.js";
 import { refreshModelCatalog, getModelCatalogResponse } from "../../utils/model-catalog.js";
 import { configCache, apiKeyCache } from "../../utils/cache.js";
+import { enrichModelLimitsWithCatalog } from "../../utils/model-limits-enrich.js";
 
 const settings = new Hono();
 
@@ -141,29 +142,52 @@ settings.put("/password", async (c) => {
 settings.get("/settings/model-limits", async (c) => {
   const rows = await db.select().from(modelLimits)
     .where(and(eq(modelLimits.scope, "global"), eq(modelLimits.scopeId, 0)));
-  return c.json({ data: rows });
+  const data = await enrichModelLimitsWithCatalog(rows);
+  return c.json({ data });
+});
+
+// GET /admin/settings/model-catalog/match?pattern=X
+// Returns catalog model IDs that contain the (case-insensitive) substring.
+// Used by the dashboard for the new pattern autocomplete preview.
+settings.get("/settings/model-catalog/match", async (c) => {
+  const pattern = (c.req.query("pattern") || "").toLowerCase().trim();
+  try {
+    const catalog = await getModelCatalogResponse();
+    const all: Array<{ id: string }> = (catalog as any)?.data || [];
+    const matched = pattern
+      ? all.filter(m => (m.id || "").toLowerCase().includes(pattern))
+      : all;
+    return c.json({ data: matched.map(m => m.id), total: matched.length, totalAll: all.length });
+  } catch (err: any) {
+    return c.json({ data: [], total: 0, totalAll: 0, error: err?.message || "catalog error" }, 200);
+  }
 });
 
 settings.put("/settings/model-limits", async (c) => {
-  const body = await c.req.json<{ model: string; promptLimit?: number; dailyTokenLimit?: number; monthlyTokenLimit?: number; dailyInputTokenLimit?: number; dailyOutputTokenLimit?: number }>();
+  const body = await c.req.json<{ model: string; promptLimit?: number; dailyTokenLimit?: number; monthlyTokenLimit?: number; dailyInputTokenLimit?: number; dailyOutputTokenLimit?: number; isPattern?: boolean }>();
   if (!body.model || body.model.trim() === "") return c.json({ error: "model is required" }, 400);
   const modelName = body.model.trim();
+  const isPattern = !!body.isPattern;
   const limit = Math.max(0, body.promptLimit || 0);
   const dailyTokenLimit = Math.max(0, body.dailyTokenLimit || 0);
   const monthlyTokenLimit = Math.max(0, body.monthlyTokenLimit || 0);
   const dailyInputTokenLimit = Math.max(0, body.dailyInputTokenLimit || 0);
   const dailyOutputTokenLimit = Math.max(0, body.dailyOutputTokenLimit || 0);
 
+  // For exact (non-pattern), still allow any string (legacy compat). For pattern,
+  // we accept any substring — the matcher runs case-insensitive includes() at lookup.
+
   // Upsert: delete existing then insert
   await db.delete(modelLimits).where(and(
     eq(modelLimits.scope, "global"),
     eq(modelLimits.scopeId, 0),
     eq(modelLimits.model, modelName),
+    eq(modelLimits.isPattern, isPattern),
   ));
 
   if (limit > 0 || dailyTokenLimit > 0 || monthlyTokenLimit > 0 || dailyInputTokenLimit > 0 || dailyOutputTokenLimit > 0) {
     await db.insert(modelLimits).values({
-      scope: "global", scopeId: 0, model: modelName, 
+      scope: "global", scopeId: 0, model: modelName, isPattern,
       promptLimit: limit,
       dailyTokenLimit,
       monthlyTokenLimit,
@@ -172,7 +196,7 @@ settings.put("/settings/model-limits", async (c) => {
     });
   }
 
-  return c.json({ success: true, model: modelName, promptLimit: limit, dailyTokenLimit, monthlyTokenLimit, dailyInputTokenLimit, dailyOutputTokenLimit });
+  return c.json({ success: true, model: modelName, isPattern, promptLimit: limit, dailyTokenLimit, monthlyTokenLimit, dailyInputTokenLimit, dailyOutputTokenLimit });
 });
 
 settings.delete("/settings/model-limits/:model", async (c) => {

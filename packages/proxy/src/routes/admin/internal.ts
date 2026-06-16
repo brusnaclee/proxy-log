@@ -752,6 +752,7 @@ internal.get("/internal/stats/user-detail/:discordUserId/model-overrides", async
     catalogIds = ((catalog as any)?.data || []).map((m: { id: string }) => m.id).filter(Boolean);
   } catch { /* catalog optional */ }
 
+  // Cap matched sample IDs at 8 for the Discord embed (smaller surface)
   const enrich = (rows: typeof keyRows, scope: "key" | "global") =>
     rows.map((r) => {
       const pat = (r.model || "").toLowerCase();
