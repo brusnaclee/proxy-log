@@ -970,24 +970,27 @@ function buildSectionItems(d: RecapHtmlData): SlideItem[] {
       const cmp = s.comparison || {};
       const fav = topModelFromStats(s);
       const growthPct = cmp.requestsDeltaPercent || 0;
+      const fallbackTiles = [
+        { key: "rank", icon: "🏆", label: "Peringkat", value: d.rank.requests ? "#" + d.rank.requests : "—", sub: "dari semua developer", size: "hero" as const },
+        { key: "requests", icon: "🚀", label: "Request", value: fmtNum(n(s, "totals.requests")), sub: "bulan ini", size: "sm" as const },
+        { key: "tokens", icon: "🪙", label: "Token", value: fmtNum(n(s, "totals.totalTokens")), sub: fmtNum(n(s, "totals.inputTokens")) + " in / " + fmtNum(n(s, "totals.outputTokens")) + " out", size: "sm" as const },
+        { key: "growth", icon: cmp.hasPrev && growthPct < 0 ? "📉" : "📈", label: "vs bulan lalu", value: cmp.hasPrev ? ((growthPct >= 0 ? "+" : "") + growthPct + "%") : "NEW", sub: cmp.hasPrev ? "pertumbuhan request" : "bulan pertama", size: "sm" as const },
+        { key: "favModel", icon: "🤖", label: "Model favorit", value: fav?.model ? truncateModel(String(fav.model)) : "—", sub: fav?.requests ? fmtNum(fav.requests) + " req" : "belum ada", size: "sm" as const },
+        { key: "latency", icon: "⏱️", label: "Avg respond", value: fmtLatency(n(s, "latency.avgMs")), sub: "request sukses", size: "sm" as const },
+      ];
       const cardMetaRaw = d.cardMeta || {
         wallpaper: null,
         wallpapers: [],
         defaultThemeId: 0,
-        tiles: [
-          { key: "rank", icon: "🏆", label: "Peringkat", value: d.rank.requests ? "#" + d.rank.requests : "—", sub: "dari semua developer", size: "hero" as const },
-          { key: "requests", icon: "🚀", label: "Request", value: fmtNum(n(s, "totals.requests")), sub: "bulan ini", size: "sm" as const },
-          { key: "tokens", icon: "🪙", label: "Token", value: fmtNum(n(s, "totals.totalTokens")), sub: fmtNum(n(s, "totals.inputTokens")) + " in / " + fmtNum(n(s, "totals.outputTokens")) + " out", size: "sm" as const },
-          { key: "growth", icon: cmp.hasPrev && growthPct < 0 ? "📉" : "📈", label: "vs bulan lalu", value: cmp.hasPrev ? ((growthPct >= 0 ? "+" : "") + growthPct + "%") : "NEW", sub: cmp.hasPrev ? "pertumbuhan request" : "bulan pertama", size: "sm" as const },
-          { key: "favModel", icon: "🤖", label: "Model favorit", value: fav?.model ? truncateModel(String(fav.model)) : "—", sub: fav?.requests ? fmtNum(fav.requests) + " req" : "belum ada", size: "sm" as const },
-          { key: "latency", icon: "⏱️", label: "Avg respond", value: fmtLatency(n(s, "latency.avgMs")), sub: "request sukses", size: "sm" as const },
-        ],
+        tiles: fallbackTiles,
         quote: persona.subtitle || "Bulan yang produktif! Terus gas ya.",
         badge: (nv.badges && nv.badges[0]) ? { icon: nv.badges[0].icon, title: nv.badges[0].title } : null,
         badgeUnique: (nv.badges && nv.badges[1]) ? { icon: nv.badges[1].icon, title: nv.badges[1].title } : null,
       };
-      // Patch cached card tiles (older generates stored empty favModel).
-      const cardMeta = { ...cardMetaRaw, tiles: [...cardMetaRaw.tiles] };
+      const cardMeta = {
+        ...cardMetaRaw,
+        tiles: Array.isArray(cardMetaRaw.tiles) && cardMetaRaw.tiles.length ? [...cardMetaRaw.tiles] : [...fallbackTiles],
+      };
       if (fav?.model) {
         const emptyFav = (v: string) => !v || v === "—" || v === "belum ada";
         cardMeta.tiles = cardMeta.tiles.map((t) => {
@@ -1216,13 +1219,15 @@ const RECAP_JS = `
   } else {
     document.body.classList.add('fonts-ready');
   }
-  // Reveal on scroll
+  // Reveal on scroll — also show first slide immediately so a JS error later
+  // doesn't leave the whole deck invisible.
   var io = new IntersectionObserver(function(es){
     es.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('in'); 
       if(e.target.classList.contains('bar')) {}
       countUp(e.target); io.unobserve(e.target);} });
   }, {threshold:0.25});
   document.querySelectorAll('.reveal,.pop,.bar').forEach(function(el){ io.observe(el); });
+  document.querySelectorAll('.slide:first-child .reveal,.slide:first-child .pop').forEach(function(el){ el.classList.add('in'); });
 
   // Assign varied entrance directions per slide so it's not all centered fade.
   (function(){
@@ -1499,7 +1504,7 @@ const RECAP_JS = `
   }
   // Pause animated wallpaper when card is off-screen (saves GPU on desktop).
   if(card && cardWall){
-    if(/\.gif(\?|$)/i.test(cardWall.src||'')) cardWall.classList.add('wc-wall--gif');
+    if(/\\.gif(\\?|$)/i.test(cardWall.src||'')) cardWall.classList.add('wc-wall--gif');
     var wallIo=new IntersectionObserver(function(es){
       es.forEach(function(e){ cardWall.classList.toggle('paused', !e.isIntersecting); });
     },{threshold:0.08});
