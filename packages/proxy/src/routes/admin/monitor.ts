@@ -16,6 +16,81 @@ import {
 
 const monitor = new Hono();
 
+function normalizeProviderBase(endpoint: string): string {
+  return String(endpoint || "").trim().replace(/\/$/, "");
+}
+
+function buildModelListAuthHeaders(apiKey: string, endpointType: string): Record<string, string> {
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (!apiKey) return headers;
+  if (endpointType === "anthropic") {
+    headers["x-api-key"] = apiKey;
+    headers["anthropic-version"] = "2023-06-01";
+    headers.Authorization = `Bearer ${apiKey}`;
+  } else {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+  return headers;
+}
+
+function buildProbeRequest(
+  baseUrl: string,
+  endpointType: string,
+  modelId: string,
+  apiKey: string,
+): { url: string; init: RequestInit } {
+  const base = normalizeProviderBase(baseUrl);
+  if (endpointType === "anthropic") {
+    const messagesUrl = base.endsWith("/v1") ? `${base}/messages` : `${base}/v1/messages`;
+    return {
+      url: messagesUrl,
+      init: {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: modelId,
+          max_tokens: 8,
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      },
+    };
+  }
+
+  const chatUrl = base.endsWith("/v1")
+    ? `${base}/chat/completions`
+    : `${base}/v1/chat/completions`;
+  return {
+    url: chatUrl,
+    init: {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: modelId,
+        messages: [{ role: "user", content: "test" }],
+        max_tokens: 1,
+        temperature: 0,
+      }),
+    },
+  };
+}
+
+async function getProviderProbeKey(providerId: number, legacyApiKey: string | null): Promise<string | null> {
+  const keys = await db
+    .select()
+    .from(providerApiKeys)
+    .where(sql`${providerApiKeys.providerId} = ${providerId} AND ${providerApiKeys.isActive} = true AND ${providerApiKeys.isLimited} = false`)
+    .orderBy(providerApiKeys.id);
+  if (keys.length > 0) return keys[0].apiKey;
+  return legacyApiKey || null;
+}
+
 // Auth helper for bot pushing stats
 const checkInternal = (c: any) => {
   if (!isInternalRequest(c)) {
@@ -322,24 +397,40 @@ monitor.post("/monitor/sweep", async (c) => {
       await db.delete(modelMonitor);
       await resetAllTestStates();
       const activeProviders = await db.select().from(providers).where(eq(providers.isActive, true)).orderBy(sql`${providers.priority} DESC`);
-      const allModels: Array<{ modelId: string; providerName: string; providerId: number; baseUrl: string; apiKey: string }> = [];
+      const allModels: Array<{ modelId: string; providerName: string; providerId: number; baseUrl: string; apiKey: string; endpointType: string }> = [];
 
       for (const prov of activeProviders) {
-        const keys = await db.select().from(providerApiKeys).where(sql`${providerApiKeys.providerId} = ${prov.id} AND ${providerApiKeys.isActive} = true AND ${providerApiKeys.isLimited} = false`).orderBy(providerApiKeys.id);
-        if (keys.length === 0) continue;
-        const urls = [`${prov.endpoint}/v1/models`, `${prov.endpoint}/models`];
-        if (prov.endpoint.endsWith("/v1")) urls.unshift(`${prov.endpoint}/models`);
+        const probeKey = await getProviderProbeKey(prov.id, prov.apiKey);
+        if (!probeKey) continue;
+
+        const endpointType = prov.endpointType || "openai";
+        const base = normalizeProviderBase(prov.endpoint);
+        const urls = [`${base}/v1/models`, `${base}/models`];
+        if (base.endsWith("/v1")) urls.unshift(`${base}/models`);
+
         for (const url of urls) {
           try {
             const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 8000);
-            const res = await fetch(url, { headers: { "Authorization": `Bearer ${keys[0].apiKey}` }, signal: controller.signal });
+            const timeout = setTimeout(() => controller.abort(), 600000);
+            const res = await fetch(url, {
+              headers: buildModelListAuthHeaders(probeKey, endpointType),
+              signal: controller.signal,
+            });
             clearTimeout(timeout);
             if (!res.ok) continue;
             const json = await res.json() as any;
             const models = Array.isArray(json?.data) ? json.data : [];
             if (models.length === 0) continue;
-            for (const m of models) allModels.push({ modelId: m.id, providerName: prov.name, providerId: prov.id, baseUrl: prov.endpoint, apiKey: keys[0].apiKey });
+            for (const m of models) {
+              allModels.push({
+                modelId: m.id,
+                providerName: prov.name,
+                providerId: prov.id,
+                baseUrl: prov.endpoint,
+                apiKey: probeKey,
+                endpointType,
+              });
+            }
             break;
           } catch { continue; }
         }
@@ -349,7 +440,14 @@ monitor.post("/monitor/sweep", async (c) => {
         for (const cm of customModelsList) {
           const alreadyHas = allModels.some(m => m.modelId === cm.modelId && m.providerId === prov.id);
           if (!alreadyHas) {
-            allModels.push({ modelId: cm.modelId, providerName: prov.name, providerId: prov.id, baseUrl: prov.endpoint, apiKey: keys[0]?.apiKey || '' });
+            allModels.push({
+              modelId: cm.modelId,
+              providerName: prov.name,
+              providerId: prov.id,
+              baseUrl: prov.endpoint,
+              apiKey: probeKey,
+              endpointType,
+            });
           }
         }
       }
@@ -357,22 +455,23 @@ monitor.post("/monitor/sweep", async (c) => {
       sweepProgress.total = allModels.length;
       for (const m of allModels) {
         let tested = false;
-        const keys = await db.select().from(providerApiKeys).where(sql`${providerApiKeys.providerId} = ${m.providerId} AND ${providerApiKeys.isActive} = true AND ${providerApiKeys.isLimited} = false`).orderBy(providerApiKeys.id);
-        for (const key of keys) {
-          try {
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 15000);
-            const start = Date.now();
-            const res = await fetch(`${m.baseUrl}/chat/completions`, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key.apiKey}` }, body: JSON.stringify({ model: m.modelId, messages: [{ role: "user", content: "test" }], max_tokens: 1, temperature: 0 }), signal: controller.signal });
-            clearTimeout(timeout);
-            const ms = Date.now() - start;
-            await upsertModelStatus({ modelId: m.modelId, provider: m.providerName, isOnline: res.ok, latencyMs: ms, httpStatus: res.status, errorMessage: res.ok ? null : `HTTP ${res.status}`, baseUrl: m.baseUrl });
-            sweepProgress.tested++;
-            if (res.ok) sweepProgress.online++; else if (res.status === 429) sweepProgress.rateLimited++; else sweepProgress.offline++;
-            tested = true;
-            break;
-          } catch { continue; }
-        }
+        const probeKey = await getProviderProbeKey(m.providerId, m.apiKey);
+        if (!probeKey) continue;
+
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 600000);
+          const start = Date.now();
+          const probe = buildProbeRequest(m.baseUrl, m.endpointType, m.modelId, probeKey);
+          const res = await fetch(probe.url, { ...probe.init, signal: controller.signal });
+          clearTimeout(timeout);
+          const ms = Date.now() - start;
+          await upsertModelStatus({ modelId: m.modelId, provider: m.providerName, isOnline: res.ok, latencyMs: ms, httpStatus: res.status, errorMessage: res.ok ? null : `HTTP ${res.status}`, baseUrl: m.baseUrl });
+          sweepProgress.tested++;
+          if (res.ok) sweepProgress.online++; else if (res.status === 429) sweepProgress.rateLimited++; else sweepProgress.offline++;
+          tested = true;
+        } catch { /* fall through */ }
+
         if (!tested) {
           await upsertModelStatus({ modelId: m.modelId, provider: m.providerName, isOnline: false, latencyMs: 0, httpStatus: 0, errorMessage: "Network error", baseUrl: m.baseUrl });
           sweepProgress.tested++;

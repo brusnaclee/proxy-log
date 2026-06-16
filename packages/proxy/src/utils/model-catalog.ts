@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { dirname } from "path";
 import { db } from "../db/index.js";
-import { providers, modelMonitor, providerApiKeys, modelMetadata } from "../db/schema.js";
+import { providers, modelMonitor, providerApiKeys, modelMetadata, customModels } from "../db/schema.js";
 import { eq, and, desc, sql, asc } from "drizzle-orm";
 import { sanitizeProviderApiKey } from "./crypto.js";
 import { getFallbackMetadata } from "./model-metadata-fallback.js";
@@ -122,7 +122,28 @@ async function persistToDisk() {
   await writeFile(CACHE_FILE_PATH, JSON.stringify(cache, null, 2), "utf8");
 }
 
-async function fetchModelsFromUpstream(url: string, apiKey: string, providerId: number): Promise<ModelRecord[]> {
+function buildUpstreamAuthHeaders(apiKey: string, endpointType: string): Record<string, string> {
+  const headers: Record<string, string> = { Accept: "application/json" };
+  const cleanKey = sanitizeProviderApiKey(apiKey);
+  if (!cleanKey) return headers;
+
+  if (endpointType === "anthropic") {
+    headers["x-api-key"] = cleanKey;
+    headers["anthropic-version"] = "2023-06-01";
+    // Some Anthropic-compatible gateways (e.g. AeroLink) also accept Bearer on /v1/models.
+    headers.Authorization = "Bearer " + cleanKey;
+  } else {
+    headers.Authorization = "Bearer " + cleanKey;
+  }
+  return headers;
+}
+
+async function fetchModelsFromUpstream(
+  url: string,
+  apiKey: string,
+  providerId: number,
+  endpointType = "openai",
+): Promise<ModelRecord[]> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   const cleanKey = sanitizeProviderApiKey(apiKey);
@@ -132,8 +153,7 @@ async function fetchModelsFromUpstream(url: string, apiKey: string, providerId: 
 
     for (const key of authAttempts) {
       try {
-        const headers: Record<string, string> = { Accept: "application/json" };
-        if (key) headers.Authorization = "Bearer " + key;
+        const headers = buildUpstreamAuthHeaders(key, endpointType);
 
         const res = await fetch(url, {
           method: "GET",
@@ -162,6 +182,31 @@ async function fetchModelsFromUpstream(url: string, apiKey: string, providerId: 
     throw new Error(lastError);
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+async function injectCustomModelsForProvider(
+  provider: { id: number; name: string },
+  allModels: ModelRecord[],
+  modelProviderMap: Record<string, number[]>,
+) {
+  const rows = await db
+    .select()
+    .from(customModels)
+    .where(and(eq(customModels.providerId, provider.id), eq(customModels.isActive, true)));
+
+  for (const cm of rows) {
+    const existing = allModels.find((x) => x.id === cm.modelId && x.provider_id === provider.id);
+    if (!existing) {
+      allModels.push({
+        id: cm.modelId,
+        object: "model",
+        created: Math.floor(cm.createdAt.getTime() / 1000),
+        owned_by: provider.name,
+        provider_id: provider.id,
+      });
+    }
+    appendProviderToMap(modelProviderMap, cm.modelId, provider.id);
   }
 }
 
@@ -204,7 +249,12 @@ export async function refreshModelCatalog(): Promise<void> {
       let success = false;
       for (const url of candidates) {
         try {
-          const models = await fetchModelsFromUpstream(url, provider.apiKey, provider.id);
+          const models = await fetchModelsFromUpstream(
+            url,
+            provider.apiKey,
+            provider.id,
+            provider.endpointType || "openai",
+          );
           for (const m of models) {
             const existing = allModels.find((x) => x.id === m.id && x.provider_id === provider.id);
             if (!existing) {
@@ -221,6 +271,9 @@ export async function refreshModelCatalog(): Promise<void> {
       if (!success) {
         console.error("Failed to fetch models from provider " + provider.name + ": ", lastError);
       }
+
+      // Always merge custom models so they appear even when /v1/models fetch fails.
+      await injectCustomModelsForProvider(provider, allModels, modelProviderMap);
     }
 
     cache.models = allModels;
@@ -266,15 +319,19 @@ export async function getModelCatalogResponse() {
   // Load metadata for enrichment
   const metadataMap = await getModelMetadataMap();
 
-  // Build provider ID ? name map for upstream provider resolution
+  // Build provider ID -> name map (all active providers, not just catalog hits)
   const providerIdToName = new Map<number, string>();
-  const allProviderIds = new Set<number>();
-  for (const providerIds of Object.values(cache.modelProviderMap)) {
-    for (const pid of providerIds) allProviderIds.add(pid);
+  const activeProviders = await getActiveProviders();
+  for (const p of activeProviders) {
+    providerIdToName.set(p.id, p.name);
   }
-  for (const pid of allProviderIds) {
-    const p = await resolveProviderById(pid);
-    if (p) providerIdToName.set(pid, p.name);
+  for (const providerIds of Object.values(cache.modelProviderMap)) {
+    for (const pid of providerIds) {
+      if (!providerIdToName.has(pid)) {
+        const p = await resolveProviderById(pid);
+        if (p) providerIdToName.set(pid, p.name);
+      }
+    }
   }
 
   // Deduplicate by model id for public listing (first occurrence wins for display)
@@ -368,7 +425,6 @@ export async function getModelCatalogResponse() {
   }
 
   // Add custom models from database
-  const { customModels } = await import("../db/schema.js");
   const activeCustomModels = await db.select().from(customModels).where(eq(customModels.isActive, true));
   for (const cm of activeCustomModels) {
     const providerName = providerIdToName.get(cm.providerId) || "unknown";
@@ -571,15 +627,23 @@ export async function getProviderForModel(modelId: string): Promise<any | null> 
     : [];
 
   if (resolvedCandidates.length === 0 && candidateIds.length === 0) {
-    // No catalog match ? check custom models table
+    // No catalog match — check custom models table (match bare id after prefix strip)
     const { customModels } = await import("../db/schema.js");
-    const customModel = (await db.select().from(customModels)
-      .where(eq(customModels.modelId, modelId))
-      .where(eq(customModels.isActive, true)))[0];
+    let customModel = (await db.select().from(customModels)
+      .where(and(eq(customModels.modelId, upstreamModel), eq(customModels.isActive, true))))[0];
+
+    if (!customModel && modelId !== upstreamModel) {
+      customModel = (await db.select().from(customModels)
+        .where(and(eq(customModels.modelId, modelId), eq(customModels.isActive, true))))[0];
+    }
 
     if (customModel) {
       const customProvider = await resolveProviderById(customModel.providerId);
-      if (customProvider) return customProvider;
+      if (customProvider) {
+        if (!forcedProviderName || customProvider.name === forcedProviderName) {
+          return customProvider;
+        }
+      }
     }
 
     // Fall back to any active provider

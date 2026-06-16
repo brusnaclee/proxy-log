@@ -4,6 +4,9 @@ import { sql, and, eq, gte, type SQL } from "drizzle-orm";
 import { COUNTED_LOG_SQL } from "./counting.js";
 import { stripProviderPrefix } from "./model-catalog.js";
 
+/** Type alias for a model_limits row pulled from Drizzle. */
+type ModelLimitRow = typeof modelLimits.$inferSelect;
+
 export function parseRateLimitWindow(windowStr: string | null | undefined): number {
   if (!windowStr) return 0;
   const match = windowStr.trim().toLowerCase().match(/^(\d+)([smhd])$/);
@@ -75,6 +78,70 @@ export function getModelMatchCondition(normalizedModel: string): SQL {
 }
 
 /**
+ * Find the active model limit override for a (key, normalizedModel) pair.
+ * Priority: keyExact > keyPattern > globalExact > globalPattern.
+ * Returns null if no override applies (caller falls back to per-key default,
+ * then global default).
+ */
+export async function findActiveOverride(
+  apiKeyId: number,
+  normalizedModel: string,
+): Promise<ModelLimitRow | null> {
+  const lower = normalizedModel.toLowerCase();
+  // Pull all key + global overrides once, then prioritize in JS (cheap, few rows).
+  const candidates = await db.select().from(modelLimits).where(
+    sql`(${modelLimits.scope} = 'key' AND ${modelLimits.scopeId} = ${apiKeyId})
+        OR (${modelLimits.scope} = 'global' AND ${modelLimits.scopeId} = 0)`
+  );
+
+  const isExact = (m: ModelLimitRow) =>
+    !m.isPattern && (m.model === normalizedModel || m.model.toLowerCase() === lower);
+  const isPattern = (m: ModelLimitRow) =>
+    !!m.isPattern && lower.includes(m.model.toLowerCase());
+
+  const keyEx = candidates.find(m => m.scope === 'key' && m.promptLimit > 0 && isExact(m));
+  if (keyEx) return keyEx;
+  const keyPat = candidates.find(m => m.scope === 'key' && m.promptLimit > 0 && isPattern(m));
+  if (keyPat) return keyPat;
+  const gEx = candidates.find(m => m.scope === 'global' && m.promptLimit > 0 && isExact(m));
+  if (gEx) return gEx;
+  const gPat = candidates.find(m => m.scope === 'global' && m.promptLimit > 0 && isPattern(m));
+  if (gPat) return gPat;
+  return null;
+}
+
+/**
+ * Transaction-aware variant of {@link findActiveOverride} for use inside
+ * Drizzle transactions (e.g. the auto-routing block in proxy.ts).
+ */
+export async function findActiveOverrideInTx(
+  tx: { select: typeof db.select },
+  apiKeyId: number,
+  normalizedModel: string,
+): Promise<ModelLimitRow | null> {
+  const lower = normalizedModel.toLowerCase();
+  const candidates = await tx.select().from(modelLimits).where(
+    sql`(${modelLimits.scope} = 'key' AND ${modelLimits.scopeId} = ${apiKeyId})
+        OR (${modelLimits.scope} = 'global' AND ${modelLimits.scopeId} = 0)`
+  );
+
+  const isExact = (m: ModelLimitRow) =>
+    !m.isPattern && (m.model === normalizedModel || m.model.toLowerCase() === lower);
+  const isPattern = (m: ModelLimitRow) =>
+    !!m.isPattern && lower.includes(m.model.toLowerCase());
+
+  const keyEx = candidates.find(m => m.scope === 'key' && m.promptLimit > 0 && isExact(m));
+  if (keyEx) return keyEx;
+  const keyPat = candidates.find(m => m.scope === 'key' && m.promptLimit > 0 && isPattern(m));
+  if (keyPat) return keyPat;
+  const gEx = candidates.find(m => m.scope === 'global' && m.promptLimit > 0 && isExact(m));
+  if (gEx) return gEx;
+  const gPat = candidates.find(m => m.scope === 'global' && m.promptLimit > 0 && isPattern(m));
+  if (gPat) return gPat;
+  return null;
+}
+
+/**
  * Count user prompts for an API key within a time window.
  * Uses a fixed window that starts on the first request and lasts for `windowStr`.
  */
@@ -136,33 +203,15 @@ export async function checkModelPromptLimit(
   // Normalize model name so "tokito/ag/claude-opus-4-6" matches "ag/claude-opus-4-6" etc.
   const normalizedModel = await normalizeModelForLimit(model);
 
-  // 1. Per-key model override — match any variant that normalizes to the same base
-  const keyOverride = (await db.select().from(modelLimits)
-    .where(and(
-      eq(modelLimits.scope, "key"),
-      eq(modelLimits.scopeId, apiKeyId),
-      sql`(${modelLimits.model} = ${normalizedModel} OR ${modelLimits.model} LIKE ${'%/' + normalizedModel} OR ${modelLimits.model} LIKE ${'auto (' + normalizedModel + ')%'} OR ${modelLimits.model} LIKE ${'auto (%/' + normalizedModel + ')%'})`,
-    )))[0];
-
-  // 2. Global model override — same normalized matching
-  const globalOverride = (await db.select().from(modelLimits)
-    .where(and(
-      eq(modelLimits.scope, "global"),
-      eq(modelLimits.scopeId, 0),
-      sql`(${modelLimits.model} = ${normalizedModel} OR ${modelLimits.model} LIKE ${'%/' + normalizedModel} OR ${modelLimits.model} LIKE ${'auto (' + normalizedModel + ')%'} OR ${modelLimits.model} LIKE ${'auto (%/' + normalizedModel + ')%'})`,
-    )))[0];
+  // Resolve the highest-priority override (key exact > key pattern > global exact > global pattern).
+  const activeOverride = await findActiveOverride(apiKeyId, normalizedModel);
 
   let effectiveLimit = 0;
-  let activeOverride = null;
-  
-  if (keyOverride && keyOverride.promptLimit > 0) {
-    effectiveLimit = keyOverride.promptLimit;
-    activeOverride = keyOverride;
+
+  if (activeOverride && activeOverride.promptLimit > 0) {
+    effectiveLimit = activeOverride.promptLimit;
   } else if (perKeyDefaultLimit > 0) {
     effectiveLimit = perKeyDefaultLimit;
-  } else if (globalOverride && globalOverride.promptLimit > 0) {
-    effectiveLimit = globalOverride.promptLimit;
-    activeOverride = globalOverride;
   } else {
     effectiveLimit = globalDefaultLimit;
   }
@@ -226,22 +275,9 @@ export async function getWindowResetMs(apiKeyId: number, windowMs: number, model
   if (model) {
     const normalizedModel = await normalizeModelForLimit(model);
 
-    // Model specific limit — match any variant that normalizes to the same base
-    const keyOverride = (await db.select().from(modelLimits)
-      .where(and(
-        eq(modelLimits.scope, "key"),
-        eq(modelLimits.scopeId, apiKeyId),
-        sql`(${modelLimits.model} = ${normalizedModel} OR ${modelLimits.model} LIKE ${'%/' + normalizedModel} OR ${modelLimits.model} LIKE ${'auto (' + normalizedModel + ')%'} OR ${modelLimits.model} LIKE ${'auto (%/' + normalizedModel + ')%'})`,
-      )))[0];
-
-    const globalOverride = (await db.select().from(modelLimits)
-      .where(and(
-        eq(modelLimits.scope, "global"),
-        eq(modelLimits.scopeId, 0),
-        sql`(${modelLimits.model} = ${normalizedModel} OR ${modelLimits.model} LIKE ${'%/' + normalizedModel} OR ${modelLimits.model} LIKE ${'auto (' + normalizedModel + ')%'} OR ${modelLimits.model} LIKE ${'auto (%/' + normalizedModel + ')%'})`,
-      )))[0];
-      
-    const activeOverride = (keyOverride && keyOverride.promptLimit > 0) ? keyOverride : (globalOverride && globalOverride.promptLimit > 0) ? globalOverride : null;
+    // Model specific limit — match any variant that normalizes to the same base,
+    // including pattern matches (substring, case-insensitive).
+    const activeOverride = await findActiveOverride(apiKeyId, normalizedModel);
     
     if (activeOverride && activeOverride.promptWindowStart) {
       const windowStartMs = Date.parse(activeOverride.promptWindowStart.replace(" ", "T") + "Z");

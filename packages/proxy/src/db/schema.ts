@@ -1,4 +1,4 @@
-﻿import { sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import { index, integer, pgTable, text, boolean, serial, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 
 // ─── Admin Configuration ───────────────────────────────────────────────────────
@@ -283,6 +283,7 @@ export const modelLimits = pgTable('model_limits', {
 	monthlyTokenLimit: integer('monthly_token_limit').default(0),
 	dailyInputTokenLimit: integer('daily_input_token_limit').default(0),
 	dailyOutputTokenLimit: integer('daily_output_token_limit').default(0),
+	isPattern: boolean('is_pattern').notNull().default(false),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
 }, (table) => ({
 	scopeModelIdx: index('idx_model_limits_scope_model').on(table.scope, table.scopeId, table.model),

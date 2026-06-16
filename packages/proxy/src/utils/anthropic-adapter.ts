@@ -80,11 +80,17 @@ export function convertRequestToAnthropic(openai: OpenAIRequest): AnthropicReque
       }
       if (msg.tool_calls) {
         for (const tc of msg.tool_calls) {
+          let input: any = {};
+          try {
+            input = JSON.parse(tc.function.arguments || "{}");
+          } catch {
+            input = {};
+          }
           blocks.push({
             type: "tool_use",
             id: tc.id,
             name: tc.function.name,
-            input: JSON.parse(tc.function.arguments || "{}"),
+            input,
           });
         }
       }
@@ -384,4 +390,48 @@ export function createStreamState(model: string): StreamState {
     currentToolIndex: 0,
     hasContent: false,
   };
+}
+
+/** Build final upstream URL for Anthropic providers: {base}/v1/messages */
+export function resolveAnthropicUpstreamUrl(endpoint: string): string {
+  const upstreamBase = String(endpoint || "").trim().replace(/\/$/, "");
+  if (upstreamBase.endsWith("/v1")) {
+    return `${upstreamBase}/messages`;
+  }
+  return `${upstreamBase}/v1/messages`;
+}
+
+/** Upstream headers for Anthropic — never forwards client Authorization. */
+export function buildAnthropicUpstreamHeaders(
+  apiKey: string,
+  extraHeaders?: Record<string, string>,
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-api-key": apiKey,
+    "anthropic-version": "2023-06-01",
+  };
+
+  if (extraHeaders) {
+    for (const [key, value] of Object.entries(extraHeaders)) {
+      const lower = key.toLowerCase();
+      if (
+        lower === "authorization" ||
+        lower === "host" ||
+        lower === "content-length" ||
+        lower === "content-encoding" ||
+        lower === "transfer-encoding"
+      ) {
+        continue;
+      }
+      if (lower === "content-type") continue;
+      headers[key] = value;
+    }
+  }
+
+  return headers;
+}
+
+export function prepareAnthropicUpstreamBody(openaiBody: OpenAIRequest): string {
+  return JSON.stringify(convertRequestToAnthropic(openaiBody));
 }

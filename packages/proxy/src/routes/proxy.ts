@@ -1,4 +1,4 @@
-﻿import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import * as zlib from 'zlib';
 import { db } from '../db/index.js';
@@ -15,10 +15,12 @@ import {
 	requestLogs,
 } from '../db/schema.js';
 import {
-	convertRequestToAnthropic,
 	convertResponseToOpenAI,
 	convertStreamEvent,
 	createStreamState,
+	resolveAnthropicUpstreamUrl,
+	buildAnthropicUpstreamHeaders,
+	prepareAnthropicUpstreamBody,
 } from '../utils/anthropic-adapter.js';
 import {
 	buildCachedRoundTripResponse,
@@ -68,6 +70,8 @@ import {
 import {
 	checkModelPromptLimit,
 	checkPromptLimit,
+	findActiveOverride,
+	findActiveOverrideInTx,
 	getWindowResetMs,
 	parseRateLimitWindow,
 	normalizeModelForLimit,
@@ -403,12 +407,24 @@ async function fetchWithKeyRotation(
 			clientSignal,
 		);
 
-		if (response.status === 429 || response.status === 401) {
-			// Rate limited or Invalid Key — mark this key and try the next one
+		if (response.status === 401) {
+			// Invalid key — mark and try the next one.
 			console.warn(
-				`[key-rotation] Key ${keyResult.keyId} for provider ${providerId} returned ${response.status}, marking as limited/invalid`,
+				`[key-rotation] Key ${keyResult.keyId} for provider ${providerId} returned 401, marking as invalid`,
 			);
 			await markKeyAsLimited(keyResult.keyId);
+			try {
+				await response.body?.cancel();
+			} catch {}
+			continue;
+		}
+
+		if (response.status === 429) {
+			// Rate limited — try next key if available, but do not permanently
+			// disable the key (quota may reset shortly).
+			console.warn(
+				`[key-rotation] Key ${keyResult.keyId} for provider ${providerId} returned 429, trying next key`,
+			);
 			try {
 				await response.body?.cancel();
 			} catch {}
@@ -1441,14 +1457,19 @@ proxy.all('/*', async (c) => {
 				continue;
 			}
 
-			const upstreamBase = providerRow.endpoint.replace(/\/$/, '');
-			let upstreamPath = forwardPath; // use forwardPath (may be converted from /v1/responses)
-			if (upstreamBase.endsWith('/v1') && upstreamPath.startsWith('/v1/')) {
-				upstreamPath = upstreamPath.slice(3);
-			} else if (upstreamBase.endsWith('/v1') && upstreamPath === '/v1') {
-				upstreamPath = '';
-			}
-			const upstreamUrl = `${upstreamBase}${upstreamPath}`;
+			const isAnthropicAuto = providerRow.endpointType === 'anthropic';
+			const upstreamUrl = isAnthropicAuto
+				? resolveAnthropicUpstreamUrl(providerRow.endpoint)
+				: (() => {
+					const upstreamBase = providerRow.endpoint.replace(/\/$/, '');
+					let upstreamPath = forwardPath;
+					if (upstreamBase.endsWith('/v1') && upstreamPath.startsWith('/v1/')) {
+						upstreamPath = upstreamPath.slice(3);
+					} else if (upstreamBase.endsWith('/v1') && upstreamPath === '/v1') {
+						upstreamPath = '';
+					}
+					return `${upstreamBase}${upstreamPath}`;
+				})();
 
 			const upstreamHeaders: Record<string, string> = { ...baseHeaders };
 			// Use key rotation for auto-model trials too
@@ -1459,7 +1480,9 @@ proxy.all('/*', async (c) => {
 				);
 				continue;
 			}
-			upstreamHeaders['Authorization'] = `Bearer ${trialKeyResult.apiKey}`;
+			if (!isAnthropicAuto) {
+				upstreamHeaders['Authorization'] = `Bearer ${trialKeyResult.apiKey}`;
+			}
 			if (contentType) upstreamHeaders['Content-Type'] = contentType;
 
 			// Check per-model prompt limit for this candidate before sending request.
@@ -1554,17 +1577,19 @@ proxy.all('/*', async (c) => {
 				model: candidate.modelId,
 				stream: wantedStream,
 			};
-			const trialBodyBytes = new TextEncoder().encode(
-				JSON.stringify(trialBody),
-			);
+			const trialBodyPayload = isAnthropicAuto
+				? prepareAnthropicUpstreamBody(trialBody)
+				: new TextEncoder().encode(JSON.stringify(trialBody));
 
 			try {
 				const trialResponse = await fetchUpstreamWithRetry(
 					upstreamUrl,
 					{
 						method: c.req.method,
-						headers: upstreamHeaders,
-						body: trialBodyBytes as any,
+						headers: isAnthropicAuto
+							? buildAnthropicUpstreamHeaders(trialKeyResult.apiKey, upstreamHeaders)
+							: upstreamHeaders,
+						body: trialBodyPayload as any,
 					},
 					wantedStream,
 					c.req.raw.signal,
@@ -1717,13 +1742,9 @@ proxy.all('/*', async (c) => {
 										if (!autoGlobalWindowStartMs || autoNowMs >= autoGlobalWindowStartMs + autoGlobalWindowMs) {
 											await tx.update(apiKeys).set({ promptWindowStart: autoNowStr }).where(eq(apiKeys.id, keyRecord.id));
 										}
-										// Per-model window start
-										const autoKeyOverride = await tx.select().from(modelLimits)
-											.where(and(eq(modelLimits.scope, 'key'), eq(modelLimits.scopeId, keyRecord.id), eq(modelLimits.model, candidate.modelId))).then((r: any[]) => r[0]);
-										const autoGlobalOverride = await tx.select().from(modelLimits)
-											.where(and(eq(modelLimits.scope, 'global'), eq(modelLimits.scopeId, 0), eq(modelLimits.model, candidate.modelId))).then((r: any[]) => r[0]);
-										const autoActiveOverride = autoKeyOverride && autoKeyOverride.promptLimit > 0 ? autoKeyOverride
-											: autoGlobalOverride && autoGlobalOverride.promptLimit > 0 ? autoGlobalOverride : null;
+										// Per-model window start — use pattern-aware helper so substring
+										// overrides like "claude" also match the candidate model.
+										const autoActiveOverride = await findActiveOverrideInTx(tx, keyRecord.id, candidate.modelId);
 										if (autoActiveOverride) {
 											const autoModelWindowStr = keyRecord.perModelPromptLimitWindow || config.globalPerModelPromptLimitWindow || '30m';
 											const autoModelWindowMs = parseRateLimitWindow(autoModelWindowStr);
@@ -1879,13 +1900,8 @@ proxy.all('/*', async (c) => {
 						if (!autoGlobalWindowStartMs || autoNowMs2 >= autoGlobalWindowStartMs + autoGlobalWindowMs) {
 							await tx.update(apiKeys).set({ promptWindowStart: autoNowStr2 }).where(eq(apiKeys.id, keyRecord.id));
 						}
-						// Per-model window start
-						const autoKeyOverride2 = await tx.select().from(modelLimits)
-							.where(and(eq(modelLimits.scope, 'key'), eq(modelLimits.scopeId, keyRecord.id), eq(modelLimits.model, candidate.modelId))).then((r: any[]) => r[0]);
-						const autoGlobalOverride2 = await tx.select().from(modelLimits)
-							.where(and(eq(modelLimits.scope, 'global'), eq(modelLimits.scopeId, 0), eq(modelLimits.model, candidate.modelId))).then((r: any[]) => r[0]);
-						const autoActiveOverride2 = autoKeyOverride2 && autoKeyOverride2.promptLimit > 0 ? autoKeyOverride2
-							: autoGlobalOverride2 && autoGlobalOverride2.promptLimit > 0 ? autoGlobalOverride2 : null;
+						// Per-model window start — pattern-aware
+						const autoActiveOverride2 = await findActiveOverrideInTx(tx, keyRecord.id, candidate.modelId);
 						if (autoActiveOverride2) {
 							const autoModelWindowStr2 = keyRecord.perModelPromptLimitWindow || config.globalPerModelPromptLimitWindow || '30m';
 							const autoModelWindowMs2 = parseRateLimitWindow(autoModelWindowStr2);
@@ -2010,10 +2026,15 @@ proxy.all('/*', async (c) => {
 			);
 		}
 		const upstreamBase2 = targetProvider2.endpoint.replace(/\/$/, '');
-		let upstreamPath2 = forwardPath; // use forwardPath (may be converted from /v1/responses)
-		if (upstreamBase2.endsWith('/v1') && upstreamPath2.startsWith('/v1/'))
-			upstreamPath2 = upstreamPath2.slice(3);
-		const upstreamUrl2 = `${upstreamBase2}${upstreamPath2}`;
+		const isAnthropicTitleGen = targetProvider2.endpointType === 'anthropic';
+		let upstreamUrl2 = isAnthropicTitleGen
+			? resolveAnthropicUpstreamUrl(targetProvider2.endpoint)
+			: (() => {
+				let upstreamPath2 = forwardPath;
+				if (upstreamBase2.endsWith('/v1') && upstreamPath2.startsWith('/v1/'))
+					upstreamPath2 = upstreamPath2.slice(3);
+				return `${upstreamBase2}${upstreamPath2}`;
+			})();
 		const upstreamHeaders2: Record<string, string> = {};
 		const blocked2 = new Set([
 			'host',
@@ -2032,23 +2053,47 @@ proxy.all('/*', async (c) => {
 		upstreamHeaders2['x-forwarded-for'] = clientIp;
 		if (contentType) upstreamHeaders2['Content-Type'] = contentType;
 		try {
+			const titleGenBody = isAnthropicTitleGen
+				? prepareAnthropicUpstreamBody(requestBody)
+				: (requestBodyBytes as BodyInit);
 			const { response: resp } = await fetchWithKeyRotation(
 				targetProvider2.id,
 				upstreamUrl2,
 				(apiKey) => {
-					const headers = {
-						...upstreamHeaders2,
-						Authorization: `Bearer ${apiKey}`,
-					};
+					if (isAnthropicTitleGen) {
+						return {
+							method: c.req.method,
+							headers: buildAnthropicUpstreamHeaders(apiKey, upstreamHeaders2),
+							body: titleGenBody,
+						};
+					}
 					return {
 						method: c.req.method,
-						headers,
+						headers: {
+							...upstreamHeaders2,
+							Authorization: `Bearer ${apiKey}`,
+						},
 						body: requestBodyBytes as any,
 					};
 				},
 				requestBody?.stream === true,
 				c.req.raw.signal,
 			);
+			if (isAnthropicTitleGen && !requestBody?.stream && resp.ok) {
+				const raw = await resp.text();
+				try {
+					const openaiResponse = convertResponseToOpenAI(JSON.parse(raw));
+					return new Response(JSON.stringify(openaiResponse), {
+						status: resp.status,
+						headers: { 'Content-Type': 'application/json' },
+					});
+				} catch {
+					return new Response(raw, {
+						status: resp.status,
+						headers: { 'Content-Type': 'application/json' },
+					});
+				}
+			}
 			return new Response(resp.body, {
 				status: resp.status,
 				headers: resp.headers,
@@ -2238,29 +2283,7 @@ proxy.all('/*', async (c) => {
 	// Otherwise let through - may push slightly over, blocked on NEXT request.
 	{
 		const normalizedModelForToken = await normalizeModelForLimit(model);
-		const modelOverride =
-			(await db
-				.select()
-				.from(modelLimits)
-				.where(
-					and(
-						eq(modelLimits.scope, 'key'),
-						eq(modelLimits.scopeId, keyRecord.id),
-						sql`(${modelLimits.model} = ${normalizedModelForToken} OR ${modelLimits.model} LIKE ${'%/' + normalizedModelForToken} OR ${modelLimits.model} LIKE ${'auto (' + normalizedModelForToken + ')%'} OR ${modelLimits.model} LIKE ${'auto (%/' + normalizedModelForToken + ')%'})`,
-					),
-				)
-				.then((r) => r[0])) ||
-			(await db
-				.select()
-				.from(modelLimits)
-				.where(
-					and(
-						eq(modelLimits.scope, 'global'),
-						eq(modelLimits.scopeId, 0),
-						sql`(${modelLimits.model} = ${normalizedModelForToken} OR ${modelLimits.model} LIKE ${'%/' + normalizedModelForToken} OR ${modelLimits.model} LIKE ${'auto (' + normalizedModelForToken + ')%'} OR ${modelLimits.model} LIKE ${'auto (%/' + normalizedModelForToken + ')%'})`,
-					),
-				)
-				.then((r) => r[0]));
+		const modelOverride = await findActiveOverride(keyRecord.id, normalizedModelForToken);
 
 		const wibOffset = 7 * 60 * 60 * 1000;
 		const wibNow = new Date(Date.now() + wibOffset);
@@ -2659,38 +2682,9 @@ proxy.all('/*', async (c) => {
 						.where(eq(apiKeys.id, keyRecord.id));
 				}
 
-				// Model limit tracking — use normalized model name for matching
+				// Model limit tracking — use pattern-aware helper inside the tx.
 				const normalizedPersistModel = await normalizeModelForLimit(model);
-				const keyOverride = await tx
-					.select()
-					.from(modelLimits)
-					.where(
-						and(
-							eq(modelLimits.scope, 'key'),
-							eq(modelLimits.scopeId, keyRecord.id),
-							sql`(${modelLimits.model} = ${normalizedPersistModel} OR ${modelLimits.model} LIKE ${'%/' + normalizedPersistModel} OR ${modelLimits.model} LIKE ${'auto (' + normalizedPersistModel + ')%'} OR ${modelLimits.model} LIKE ${'auto (%/' + normalizedPersistModel + ')%'})`,
-						),
-					)
-					.then((r: any[]) => r[0]);
-
-				const globalOverride = await tx
-					.select()
-					.from(modelLimits)
-					.where(
-						and(
-							eq(modelLimits.scope, 'global'),
-							eq(modelLimits.scopeId, 0),
-							sql`(${modelLimits.model} = ${normalizedPersistModel} OR ${modelLimits.model} LIKE ${'%/' + normalizedPersistModel} OR ${modelLimits.model} LIKE ${'auto (' + normalizedPersistModel + ')%'} OR ${modelLimits.model} LIKE ${'auto (%/' + normalizedPersistModel + ')%'})`,
-						),
-					)
-					.then((r: any[]) => r[0]);
-
-				const activeOverride =
-					keyOverride && keyOverride.promptLimit > 0
-						? keyOverride
-						: globalOverride && globalOverride.promptLimit > 0
-							? globalOverride
-							: null;
+				const activeOverride = await findActiveOverrideInTx(tx, keyRecord.id, normalizedPersistModel);
 
 				if (activeOverride) {
 					const modelWindowStr =
@@ -2798,15 +2792,8 @@ proxy.all('/*', async (c) => {
 	let actualUpstreamPath = upstreamPath;
 
 	if (isAnthropicProvider) {
-		// Convert OpenAI request to Anthropic format
-		const openaiBody = requestBody;
-		const anthropicBody = convertRequestToAnthropic(openaiBody);
-		anthropicRequestBody = JSON.stringify(anthropicBody);
-
-		// Redirect path to /v1/messages for Anthropic
-		actualUpstreamPath = '/v1/messages';
-		const upstreamBase = targetProvider.endpoint.replace(/\/$/, '');
-		actualUpstreamUrl = `${upstreamBase}${actualUpstreamPath}`;
+		anthropicRequestBody = prepareAnthropicUpstreamBody(requestBody);
+		actualUpstreamUrl = resolveAnthropicUpstreamUrl(targetProvider.endpoint);
 	} else if (isYouComProvider) {
 		// Convert OpenAI request to you.com Agents format.
 		// `upstreamModel` is the bare id after prefix strip (e.g. "express").
@@ -2867,12 +2854,16 @@ proxy.all('/*', async (c) => {
 					? actualUpstreamUrl
 					: upstreamUrl,
 				(apiKey) => {
-					const headers = { ...upstreamHeaders };
 					if (isAnthropicProvider) {
-						headers['x-api-key'] = apiKey;
-						headers['anthropic-version'] = '2023-06-01';
-						delete headers['Authorization'];
-					} else if (isYouComProvider) {
+						return {
+							method: c.req.method,
+							headers: buildAnthropicUpstreamHeaders(apiKey, upstreamHeaders),
+							body: anthropicRequestBody!,
+						};
+					}
+
+					const headers = { ...upstreamHeaders };
+					if (isYouComProvider) {
 						// you.com's gateway rejects a duplicated/conflicting
 						// Content-Type (the client's lowercase "content-type" plus
 						// our capitalized one merge into "application/json,
