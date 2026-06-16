@@ -61,6 +61,19 @@ function truncateModel(name: string, max = 14): string {
   return s.slice(0, max - 1) + "…";
 }
 
+/** Resolve top model from stats (object or legacy array shape). */
+export function topModelFromStats(stats: any): { model: string; requests: number } | null {
+  const m = stats?.models;
+  if (!m) return null;
+  if (Array.isArray(m) && m[0]?.model) return m[0];
+  if (m.top?.[0]?.model) return m.top[0];
+  if (m.favorite) {
+    const req = m.top?.find((x: any) => x.model === m.favorite)?.requests ?? m.top?.[0]?.requests ?? 0;
+    return { model: m.favorite, requests: req };
+  }
+  return null;
+}
+
 /** True when URL is cross-origin relative to the recap public base. */
 function isExternalUrl(url: string, base: string): boolean {
   if (!url || !/^https?:\/\//i.test(url)) return false;
@@ -253,10 +266,9 @@ async function resolveWallpapers(
 function buildTiles(stats: any): CardTile[] {
   const totals = stats?.totals || {};
   const rank = stats?.rank || {};
-  const models = Array.isArray(stats?.models) ? stats.models : [];
   const cmp = stats?.comparison || {};
   const latency = stats?.latency || {};
-  const fav = models[0];
+  const fav = topModelFromStats(stats);
 
   const growthPct = cmp.requestsDeltaPercent || 0;
   const growthValue = cmp.hasPrev

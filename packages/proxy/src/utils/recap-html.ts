@@ -194,6 +194,35 @@ function truncateModel(name: string, max = 14): string {
   return s.slice(0, max - 1) + "…";
 }
 
+function topModelFromStats(stats: any): { model: string; requests: number } | null {
+  const m = stats?.models;
+  if (!m) return null;
+  if (Array.isArray(m) && m[0]?.model) return m[0];
+  if (m.top?.[0]?.model) return m.top[0];
+  if (m.favorite) {
+    const req = m.top?.find((x: any) => x.model === m.favorite)?.requests ?? m.top?.[0]?.requests ?? 0;
+    return { model: m.favorite, requests: req };
+  }
+  return null;
+}
+
+const WEEKDAY_ID_FULL = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+
+function restWeekdayFromStats(s: any): string | null {
+  if (s?.extras?.restWeekday) return s.extras.restWeekday;
+  const perDay = s?.activity?.perDay;
+  if (!Array.isArray(perDay) || !perDay.length) return null;
+  const wdCount = [0, 0, 0, 0, 0, 0, 0];
+  for (const d of perDay) {
+    const dt = new Date(String(d.day) + "T00:00:00Z");
+    if (!isNaN(dt.getTime())) wdCount[dt.getUTCDay()] += Number(d.requests) || 0;
+  }
+  let restIdx = -1;
+  let restVal = Infinity;
+  wdCount.forEach((v, i) => { if (v < restVal) { restVal = v; restIdx = i; } });
+  return restIdx >= 0 ? WEEKDAY_ID_FULL[restIdx] : null;
+}
+
 /** Micro-dollars -> human dollar string (e.g. 1234567 -> "$1.23"). */
 function fmtMoney(micro: number): string {
   const usd = (Number(micro) || 0) / 1_000_000;
@@ -405,8 +434,9 @@ background:var(--card);border:1px solid var(--line);border-radius:18px;padding:1
 .wrapcard{position:relative;width:100%;max-width:380px;aspect-ratio:1/1.55;border-radius:28px;overflow:hidden;
 border:1px solid rgba(255,255,255,.28);box-shadow:0 30px 80px rgba(0,0,0,.55),inset 0 0 0 1px rgba(255,255,255,.06);isolation:isolate;background:#0b0b14}
 .wc-wall{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;
-transform:scale(1.06);animation:wcPan 18s ease-in-out infinite alternate;will-change:transform}
-.wc-wall.paused{animation-play-state:paused}
+transform:scale(1.06);animation:wcPan 18s ease-in-out infinite alternate}
+.wc-wall.paused,.wc-wall--gif{animation-play-state:paused}
+.wc-wall--gif{transform:scale(1.06)}
 @keyframes wcPan{0%{transform:scale(1.06) translate(0,0)}100%{transform:scale(1.12) translate(-2%,-2%)}}
 .wc-fallback{position:absolute;inset:0;z-index:0;background:linear-gradient(160deg,var(--wc-a,#7c3aed),var(--wc-b,#ec4899));background-size:220% 220%;animation:wcflow 7s ease infinite}
 @keyframes wcflow{0%,100%{background-position:0 50%}50%{background-position:100% 50%}}
@@ -483,6 +513,8 @@ scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.3) transparent}
 .wc-themes-hint{font-size:11px;color:var(--muted);text-align:center}
 .wc-themes.wc-locked{opacity:.45;pointer-events:none;filter:saturate(.4)}
 @media(max-width:420px){.wrapcard{aspect-ratio:1/1.65}.wc-mosaic--stats{grid-template-rows:minmax(76px,auto) minmax(68px,auto) minmax(64px,auto)}
+.wc-glass,.wc-tile{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+.wc-tile{background:rgba(0,0,0,.32)!important}
 .wc-mosaic{gap:7px}.wc-stack{padding:10px 10px 12px;gap:6px}.wc-foot{font-size:11px;padding:10px 4px 2px}.wc-id .av{width:38px;height:38px}.wc-tile.hero .tv{font-size:clamp(28px,7vw,42px)}.wc-tile{padding:9px 11px 11px}.wc-tile.hero .ti{width:22px;height:22px;top:8px;right:10px}.wc-tile.sm .ti{width:16px;height:16px;top:8px;right:10px}.wc-themes-wrap{flex-direction:column;align-items:stretch}.btns{flex-direction:column;width:100%;max-width:380px}}
 /* Snap mode: html2canvas-compatible flat rendering for downloads. Kills
    background-clip:text and backdrop-filter so text + glass survive capture. */
@@ -733,6 +765,7 @@ function buildSectionItems(d: RecapHtmlData): SlideItem[] {
         <div class="kicker reveal">Jam Sibuk</div>
         <div class="big reveal">${hr >= 0 ? hr + ":00" : "-"}</div>
         ${s.activity?.favoriteWeekday ? chipHtml("calendar-dots", `Paling rajin hari ${s.activity.favoriteWeekday}`) : ""}
+        ${s.extras?.restWeekday || restWeekdayFromStats(s) ? chipHtml("coffee", `Hari tersantai: ${s.extras?.restWeekday || restWeekdayFromStats(s)}`) : ""}
         ${s.activity?.mostProductiveHour ? chipHtml("lightning", `Jam paling produktif: ${n(s, "activity.mostProductiveHour.hour")}:00 WIB`) : ""}
         ${s.activity?.mostActiveDay ? chipHtml("flame", `Hari paling aktif: ${s.activity.mostActiveDay.day} (${fmtNum(n(s, "activity.mostActiveDay.requests"))} req)`) : ""}
         ${(n(s, "activity.weekendRequests") + n(s, "activity.weekdayRequests")) > 0 ? chipHtml("calendar-dots", `Weekday ${fmtNum(n(s, "activity.weekdayRequests"))} vs Weekend ${fmtNum(n(s, "activity.weekendRequests"))}`) : ""}
@@ -838,13 +871,13 @@ function buildSectionItems(d: RecapHtmlData): SlideItem[] {
     },
 
     rest: () => {
-      const rest = s.activity?.mostRestedWeekday;
+      const rest = restWeekdayFromStats(s) || s.activity?.mostRestedWeekday;
       const quiet = s.activity?.quietestActiveDay;
       if (!rest && !quiet) return null;
       return section("rest", `
         <div class="kicker reveal">Hari Santai</div>
-        <div class="headline reveal">${rest ? `Kamu Libur Tiap ${escapeHtml(rest)}` : "Hari Tersepi"}</div>
-        ${rest ? chipHtml("coffee", `Paling sering libur: ${rest}`) : ""}
+        <div class="headline reveal">${rest ? `${escapeHtml(rest)} Hari Tersantai` : "Hari Tersepi"}</div>
+        ${rest ? chipHtml("coffee", `${rest} = hari paling jarang ngoding — wajar butuh liburan`) : ""}
         ${quiet ? chipHtml("moon-stars", `Paling sepi: ${quiet.day} (${fmtNum(n(s, "activity.quietestActiveDay.requests"))} req)`) : ""}
         ${s.activity?.firstActiveDay ? chipHtml("rocket", `Mulai aktif: ${s.activity.firstActiveDay}`) : ""}
         <div class="caption reveal">Semua orang butuh rebahan. 🌴</div>
@@ -935,10 +968,9 @@ function buildSectionItems(d: RecapHtmlData): SlideItem[] {
     card: () => {
       const persona = nv.persona || {};
       const cmp = s.comparison || {};
-      const models = Array.isArray(s.models) ? s.models : [];
-      const fav = models[0];
+      const fav = topModelFromStats(s);
       const growthPct = cmp.requestsDeltaPercent || 0;
-      const cardMeta = d.cardMeta || {
+      const cardMetaRaw = d.cardMeta || {
         wallpaper: null,
         wallpapers: [],
         defaultThemeId: 0,
@@ -954,6 +986,20 @@ function buildSectionItems(d: RecapHtmlData): SlideItem[] {
         badge: (nv.badges && nv.badges[0]) ? { icon: nv.badges[0].icon, title: nv.badges[0].title } : null,
         badgeUnique: (nv.badges && nv.badges[1]) ? { icon: nv.badges[1].icon, title: nv.badges[1].title } : null,
       };
+      // Patch cached card tiles (older generates stored empty favModel).
+      const cardMeta = { ...cardMetaRaw, tiles: [...cardMetaRaw.tiles] };
+      if (fav?.model) {
+        const emptyFav = (v: string) => !v || v === "—" || v === "belum ada";
+        cardMeta.tiles = cardMeta.tiles.map((t) => {
+          if (t.key !== "favModel") return t;
+          if (!emptyFav(t.value) && !emptyFav(t.sub || "")) return t;
+          return {
+            ...t,
+            value: truncateModel(String(fav.model)),
+            sub: fav.requests ? fmtNum(fav.requests) + " req" : "top model",
+          };
+        });
+      }
       const initialWallpaper = cardMeta.wallpapers[0] || cardMeta.wallpaper || "";
       const mosaicClass = "wc-mosaic wc-mosaic--stats";
       const tilesFinal = cardMeta.tiles.map((t) => {
@@ -1453,6 +1499,7 @@ const RECAP_JS = `
   }
   // Pause animated wallpaper when card is off-screen (saves GPU on desktop).
   if(card && cardWall){
+    if(/\.gif(\?|$)/i.test(cardWall.src||'')) cardWall.classList.add('wc-wall--gif');
     var wallIo=new IntersectionObserver(function(es){
       es.forEach(function(e){ cardWall.classList.toggle('paused', !e.isIntersecting); });
     },{threshold:0.08});
