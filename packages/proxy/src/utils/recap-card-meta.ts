@@ -31,6 +31,7 @@ export interface CardMeta {
   tiles: CardTile[];
   quote: string;
   badge: CardBadge | null;
+  badgeUnique: CardBadge | null;
 }
 
 /** Stable per-user seed for theme + tile ordering variation. */
@@ -49,6 +50,19 @@ function fmtNum(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1).replace(/\.0$/, "") + "M";
   if (n >= 1_000) return (n / 1_000).toFixed(n % 1_000 === 0 ? 0 : 1).replace(/\.0$/, "") + "K";
   return String(Math.round(n));
+}
+
+function fmtLatency(ms: number): string {
+  ms = Math.round(Number(ms) || 0);
+  if (ms <= 0) return "—";
+  if (ms >= 1000) return (ms / 1000).toFixed(1).replace(/\.0$/, "") + "s";
+  return ms + "ms";
+}
+
+function truncateModel(name: string, max = 14): string {
+  const s = String(name || "").trim();
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1) + "…";
 }
 
 /** True when URL is cross-origin relative to the recap public base. */
@@ -237,102 +251,71 @@ async function resolveWallpapers(seedId: string, stats: any, base: string, count
   return out;
 }
 
-/** Build the nested tile plan for the card. */
-function buildTiles(stats: any, seed: number): CardTile[] {
+/** Build the nested tile plan for the card (fixed 6-tile layout). */
+function buildTiles(stats: any): CardTile[] {
   const totals = stats?.totals || {};
   const rank = stats?.rank || {};
-  const activity = stats?.activity || {};
-  const tools = stats?.tools || {};
   const models = Array.isArray(stats?.models) ? stats.models : [];
   const cmp = stats?.comparison || {};
-  const cost = stats?.cost || {};
-  const ide = stats?.ide || {};
+  const latency = stats?.latency || {};
+  const fav = models[0];
 
-  const out: CardTile[] = [];
+  const growthPct = cmp.requestsDeltaPercent || 0;
+  const growthValue = cmp.hasPrev
+    ? ((growthPct >= 0 ? "+" : "") + growthPct + "%")
+    : "NEW";
+  const growthSub = cmp.hasPrev ? "pertumbuhan request" : "bulan pertama";
 
-  // Always: requests (hero)
-  out.push({
-    key: "requests",
-    icon: "🚀",
-    label: "Request",
-    value: fmtNum(totals.requests || 0),
-    sub: stats?.extras?.achievements?.[0]?.title || "Bulan ini",
-    size: "hero",
-  });
-
-  // Always: rank
-  out.push({
-    key: "rank",
-    icon: "🏆",
-    label: "Peringkat",
-    value: rank.requests ? "#" + rank.requests : "—",
-    sub: "dari semua developer",
-    size: "sm",
-  });
-
-  // Always: tokens
-  out.push({
-    key: "tokens",
-    icon: "🪙",
-    label: "Token",
-    value: fmtNum(totals.totalTokens || 0),
-    sub: fmtNum(totals.inputTokens || 0) + " in / " + fmtNum(totals.outputTokens || 0) + " out",
-    size: "sm",
-  });
-
-  // Pick 2-3 of these based on what data is interesting.
-  const candidates: CardTile[] = [];
-  if (activity.longestStreak) candidates.push({
-    key: "streak", icon: "🔥", label: "Streak", value: String(activity.longestStreak) + " hari",
-    sub: "terpanjang", size: "sm",
-  });
-  if (activity.activeDays) candidates.push({
-    key: "active", icon: "📅", label: "Hari aktif", value: String(activity.activeDays),
-    sub: activity.favoriteWeekday ? `paling rajin: ${activity.favoriteWeekday}` : "sepanjang bulan",
-    size: "sm",
-  });
-  if (tools.totalToolCalls) candidates.push({
-    key: "tools", icon: "🛠️", label: "Tool calls", value: fmtNum(tools.totalToolCalls),
-    sub: (tools.toolTurnPercent || 0) + "% turn", size: "sm",
-  });
-  if (ide.favorite) candidates.push({
-    key: "ide", icon: "💻", label: "IDE", value: String(ide.favorite),
-    sub: "tempat ngoding", size: "sm",
-  });
-  if (cost.totalMicro) candidates.push({
-    key: "cost", icon: "💸", label: "Estimasi biaya", value: "$" + (cost.totalMicro / 1_000_000).toFixed(2),
-    sub: cost.mostExpensiveModel?.model ? `termahal: ${cost.mostExpensiveModel.model}` : "bulan ini",
-    size: "sm",
-  });
-  if (models[0]?.model) candidates.push({
-    key: "favModel", icon: "🤖", label: "Model favorit", value: String(models[0].model),
-    sub: fmtNum(models[0].requests) + " request", size: "sm",
-  });
-  if (cmp.hasPrev) candidates.push({
-    key: "growth",
-    icon: (cmp.requestsDeltaPercent || 0) >= 0 ? "📈" : "📉",
-    label: "vs bulan lalu",
-    value: ((cmp.requestsDeltaPercent || 0) >= 0 ? "+" : "") + (cmp.requestsDeltaPercent || 0) + "%",
-    sub: "pertumbuhan request",
-    size: "sm",
-  });
-  if (activity.mostActiveHour?.hour != null) candidates.push({
-    key: "hour",
-    icon: "⏰",
-    label: "Jam favorit",
-    value: String(activity.mostActiveHour.hour).padStart(2, "0") + ":00",
-    sub: "paling produktif",
-    size: "sm",
-  });
-
-  // Shuffle candidates by seed, then add 1 wide tile (hero + rank + tokens + extra wide).
-  const order = candidates.map((_, i) => i).sort((a, b) => ((a * 7 + seed) % 13) - ((b * 11 + seed) % 13));
-  for (let i = 0; i < Math.min(1, order.length); i++) {
-    const picked = { ...candidates[order[i]], size: "wide" as const };
-    out.push(picked);
-  }
-
-  return out.slice(0, 4);
+  return [
+    {
+      key: "rank",
+      icon: "🏆",
+      label: "Peringkat",
+      value: rank.requests ? "#" + rank.requests : "—",
+      sub: "dari semua developer",
+      size: "hero",
+    },
+    {
+      key: "requests",
+      icon: "🚀",
+      label: "Request",
+      value: fmtNum(totals.requests || 0),
+      sub: "bulan ini",
+      size: "sm",
+    },
+    {
+      key: "tokens",
+      icon: "🪙",
+      label: "Token",
+      value: fmtNum(totals.totalTokens || 0),
+      sub: fmtNum(totals.inputTokens || 0) + " in / " + fmtNum(totals.outputTokens || 0) + " out",
+      size: "sm",
+    },
+    {
+      key: "growth",
+      icon: cmp.hasPrev && growthPct < 0 ? "📉" : "📈",
+      label: "vs bulan lalu",
+      value: growthValue,
+      sub: growthSub,
+      size: "sm",
+    },
+    {
+      key: "favModel",
+      icon: "🤖",
+      label: "Model favorit",
+      value: fav?.model ? truncateModel(String(fav.model)) : "—",
+      sub: fav?.requests ? fmtNum(fav.requests) + " req" : "belum ada",
+      size: "sm",
+    },
+    {
+      key: "latency",
+      icon: "⏱️",
+      label: "Avg respond",
+      value: fmtLatency(latency.avgMs),
+      sub: "request sukses",
+      size: "sm",
+    },
+  ];
 }
 
 /** Build the "top fun fact" string for the quote card. */
@@ -344,12 +327,36 @@ function buildQuote(stats: any, narrative: any): string {
   return "Bulan yang produktif! Terus gas ya.";
 }
 
-/** Pick a single best badge for the chip (or null). */
+/** Pick primary badge (left chip). */
 function buildBadge(narrative: any, stats: any): CardBadge | null {
   const badges = (narrative?.badges && narrative.badges.length ? narrative.badges : stats?.extras?.achievements) as Array<{ icon: string; title: string; desc: string }> | undefined;
   if (!badges || !badges.length) return null;
   const b = badges[0];
   return { icon: b.icon, title: b.title };
+}
+
+/** Pick unique secondary badge (right chip). */
+function buildSecondaryBadge(narrative: any, stats: any, seed: number): CardBadge | null {
+  const narrativeBadges = (narrative?.badges || []) as Array<{ icon: string; title: string }>;
+  if (narrativeBadges.length > 1) {
+    return { icon: narrativeBadges[1].icon, title: narrativeBadges[1].title };
+  }
+  const achievements = (stats?.extras?.achievements || []) as Array<{ icon: string; title: string }>;
+  if (achievements.length > 1) {
+    return { icon: achievements[1].icon, title: achievements[1].title };
+  }
+  const rank = stats?.rank?.requests || 0;
+  const persona = narrative?.persona?.title;
+  if (rank === 1) return { icon: "👑", title: "Raja Bulan Ini" };
+  if (rank > 0 && rank <= 3) return { icon: "🏆", title: "Top 3 Developer" };
+  if (rank > 0 && rank <= 10) return { icon: "⭐", title: "Top 10 Club" };
+  if (persona) return { icon: "🎯", title: String(persona).slice(0, 24) };
+  const fallbacks: CardBadge[] = [
+    { icon: "🔥", title: "On Fire" },
+    { icon: "💡", title: "Idea Machine" },
+    { icon: "⚡", title: "Speed Demon" },
+  ];
+  return fallbacks[seed % fallbacks.length];
 }
 
 /** Resolve full card meta (wallpapers + tiles + quote + badge). */
@@ -361,9 +368,10 @@ export async function resolveCardMeta(
 ): Promise<CardMeta> {
   const seed = seedFromStr(seedId);
   const wallpapers = await resolveWallpapers(seedId, stats, base, 40);
-  const tiles = buildTiles(stats, seed);
+  const tiles = buildTiles(stats);
   const quote = buildQuote(stats, narrative);
   const badge = buildBadge(narrative, stats);
+  const badgeUnique = buildSecondaryBadge(narrative, stats, seed);
   return {
     wallpaper: wallpapers[0] || null,
     wallpapers,
@@ -371,5 +379,6 @@ export async function resolveCardMeta(
     tiles,
     quote,
     badge,
+    badgeUnique,
   };
 }

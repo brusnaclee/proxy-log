@@ -42,6 +42,7 @@ export interface RecapHtmlData {
     tiles: Array<{ key: string; icon: string; label: string; value: string; sub?: string; size: "hero" | "sm" | "wide" | "quote" }>;
     quote: string;
     badge: { icon: string; title: string } | null;
+    badgeUnique?: { icon: string; title: string } | null;
   } | null;
 }
 
@@ -112,12 +113,17 @@ function iconHtml(emojiOrName: string, size = 16, cls = "b2-ic-sm"): string {
   return svg || escapeHtml(emojiOrName);
 }
 
-/** Explicit grid-area for deterministic card mosaic layout. */
-function tileGridArea(key: string, size: string): string {
-  if (size === "hero" || key === "requests") return "hero";
-  if (key === "rank") return "rank";
-  if (key === "tokens") return "tokens";
-  return "extra";
+/** Explicit grid-area for fixed 6-tile stats mosaic. */
+function tileGridArea(key: string): string {
+  const areas: Record<string, string> = {
+    rank: "rank",
+    requests: "requests",
+    tokens: "tokens",
+    growth: "growth",
+    favModel: "favModel",
+    latency: "latency",
+  };
+  return areas[key] || key;
 }
 
 export interface LayoutHints {
@@ -173,6 +179,19 @@ function fmtNum(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1).replace(/\.0$/, "") + "M";
   if (n >= 1_000) return (n / 1_000).toFixed(n % 1_000 === 0 ? 0 : 1).replace(/\.0$/, "") + "K";
   return String(Math.round(n));
+}
+
+function fmtLatency(ms: number): string {
+  ms = Math.round(Number(ms) || 0);
+  if (ms <= 0) return "—";
+  if (ms >= 1000) return (ms / 1000).toFixed(1).replace(/\.0$/, "") + "s";
+  return ms + "ms";
+}
+
+function truncateModel(name: string, max = 14): string {
+  const s = String(name || "").trim();
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1) + "…";
 }
 
 /** Micro-dollars -> human dollar string (e.g. 1234567 -> "$1.23"). */
@@ -402,24 +421,29 @@ box-shadow:none;padding:10px 12px}
 .wc-id .av{width:42px;height:42px;border-radius:50%;object-fit:cover;border:2px solid rgba(255,255,255,.7);flex:0 0 auto;box-shadow:0 6px 18px rgba(0,0,0,.4)}
 .wc-id .name{font-family:var(--font-display),system-ui,sans-serif;font-size:16px;font-weight:900;line-height:1.05;letter-spacing:-.01em;color:var(--wc-text,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .wc-id .persona{font-family:var(--font-label),system-ui,sans-serif;font-size:11px;font-weight:800;color:var(--wc-muted,rgba(255,255,255,.85));text-transform:uppercase;letter-spacing:.08em;margin-top:1px}
-.wc-mosaic{display:grid;grid-template-columns:1fr 1fr;gap:9px;align-items:stretch}
-.wc-mosaic--3{grid-template-rows:minmax(84px,auto) minmax(84px,auto) minmax(72px,auto);
-grid-template-areas:"hero hero" "hero hero" "rank tokens"}
-.wc-mosaic--4{grid-template-rows:minmax(84px,auto) minmax(84px,auto) minmax(72px,auto) minmax(56px,auto);
-grid-template-areas:"hero hero" "hero hero" "rank tokens" "extra extra"}
-.wc-tile.hero,.wc-area-hero{grid-area:hero}
+.wc-mosaic{display:grid;gap:9px;align-items:stretch}
+.wc-mosaic--stats{grid-template-columns:repeat(6,1fr);
+grid-template-rows:minmax(84px,auto) minmax(72px,auto) minmax(64px,auto);
+grid-template-areas:
+  "rank rank rank rank rank rank"
+  "requests requests requests tokens tokens tokens"
+  "growth growth favModel favModel latency latency"}
 .wc-area-rank{grid-area:rank}
+.wc-area-requests{grid-area:requests}
 .wc-area-tokens{grid-area:tokens}
-.wc-area-extra{grid-area:extra}
+.wc-area-growth{grid-area:growth}
+.wc-area-favModel{grid-area:favModel}
+.wc-area-latency{grid-area:latency}
 .wc-tile{position:relative;display:flex;flex-direction:column;justify-content:flex-start;overflow:hidden;padding:10px 12px 12px;gap:3px;min-height:72px;
 background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.16);border-radius:14px;
 backdrop-filter:blur(12px) saturate(110%);-webkit-backdrop-filter:blur(12px) saturate(110%)}
 .wc-tile.hero{padding:12px 14px;gap:4px;min-height:0;justify-content:flex-end}
-.wc-tile.wide,.wc-area-extra{flex-direction:row;align-items:center;gap:10px;min-height:56px}
+.wc-tile.sm .tv{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
 .wc-tile .ti{width:20px;height:20px;line-height:1;flex:0 0 auto}
 .wc-tile.hero .ti{width:30px;height:30px}
-.wc-tile.wide .ti{width:24px;height:24px}
 .wc-tile.sm{padding-top:12px}
+.wc-tile.sm .tv{font-size:clamp(17px,4.5vw,24px)}
+.wc-tile.sm .tl{font-size:9px}
 /* Rainbow stat numbers — solid white until webfonts ready, then gradient clip */
 .wc-tile .tv{font-family:var(--font-display),system-ui,sans-serif;font-weight:900;line-height:1;font-size:clamp(20px,5.2vw,27px);
 letter-spacing:-.02em;color:#fff;-webkit-text-fill-color:#fff;text-shadow:0 0 1px rgba(0,0,0,.45),0 1px 2px rgba(0,0,0,.35)}
@@ -433,15 +457,15 @@ animation:tvRainbow 6s linear infinite}
 .wc-tile.hero .tl{font-size:12px;margin-top:6px}
 .wc-tile .ts{font-size:10px;color:var(--wc-muted,rgba(255,255,255,.7));margin-top:2px;line-height:1.25;max-width:100%;
 display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden}
-.wc-tile.wide .tx{display:flex;flex-direction:column;min-width:0}
-.wc-tile.wide .tv{font-size:clamp(15px,3.8vw,19px)}
-.wc-tile.wide .tl{margin-top:0}
 .wc-tile .tglow{position:absolute;right:-30%;bottom:-30%;width:120px;height:120px;border-radius:50%;
 background:radial-gradient(closest-side,var(--wc-a,#fff),transparent 70%);opacity:.18;pointer-events:none}
 .wc-quote{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;min-height:48px;background:rgba(0,0,0,.25);border-color:rgba(255,255,255,.12);font-size:12px}
 .wc-quote .qi{width:20px;height:20px;line-height:1;flex:0 0 auto;color:var(--wc-muted,rgba(255,255,255,.75));position:static;opacity:1}
 .wc-quote .qx{font-family:var(--font-body),system-ui,sans-serif;font-size:12.5px;font-weight:600;line-height:1.35;color:var(--wc-text,#fff);font-style:italic}
-.wc-badge{display:inline-flex;align-items:center;gap:8px;align-self:flex-start;padding:6px 11px;border-radius:999px;background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.18)}
+.wc-badge{display:inline-flex;align-items:center;gap:8px;padding:6px 11px;border-radius:999px;background:rgba(0,0,0,.3);border-color:rgba(255,255,255,.18);max-width:48%;min-width:0}
+.wc-badges{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%}
+.wc-badge-primary{align-self:flex-start}
+.wc-badge-unique{margin-left:auto;align-self:flex-end}
 .wc-badge .bi{width:18px;height:18px;line-height:1;position:static;opacity:1;color:var(--wc-muted,rgba(255,255,255,.9))}
 .wc-badge .bt{font-family:var(--font-label),system-ui,sans-serif;font-size:12px;font-weight:800;letter-spacing:.02em;text-transform:uppercase}
 .wc-foot{display:flex;justify-content:space-between;align-items:center;padding:10px 6px 4px;font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--wc-muted,rgba(255,255,255,.9))}
@@ -458,9 +482,8 @@ scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.3) transparent}
 .wc-sw.on{border-color:#fff;transform:scale(1.18);box-shadow:0 0 0 2px rgba(0,0,0,.4)}
 .wc-themes-hint{font-size:11px;color:var(--muted);text-align:center}
 .wc-themes.wc-locked{opacity:.45;pointer-events:none;filter:saturate(.4)}
-@media(max-width:420px){.wrapcard{aspect-ratio:1/1.65}.wc-mosaic--3{grid-template-rows:minmax(76px,auto) minmax(76px,auto) minmax(68px,auto)}
-.wc-mosaic--4{grid-template-rows:minmax(76px,auto) minmax(76px,auto) minmax(68px,auto) minmax(52px,auto)}
-.wc-mosaic{gap:7px}.wc-stack{padding:10px 10px 12px;gap:6px}.wc-foot{font-size:11px;padding:10px 4px 2px}.wc-id .av{width:38px;height:38px}.wc-tile.hero .tv{font-size:clamp(28px,7vw,42px)}.wc-tile{padding:9px 11px 11px}.wc-tile.hero .ti{width:22px;height:22px;top:8px;right:10px}.wc-tile.sm .ti,.wc-tile.wide .ti{width:16px;height:16px;top:8px;right:10px}.wc-themes-wrap{flex-direction:column;align-items:stretch}.btns{flex-direction:column;width:100%;max-width:380px}}
+@media(max-width:420px){.wrapcard{aspect-ratio:1/1.65}.wc-mosaic--stats{grid-template-rows:minmax(76px,auto) minmax(68px,auto) minmax(64px,auto)}
+.wc-mosaic{gap:7px}.wc-stack{padding:10px 10px 12px;gap:6px}.wc-foot{font-size:11px;padding:10px 4px 2px}.wc-id .av{width:38px;height:38px}.wc-tile.hero .tv{font-size:clamp(28px,7vw,42px)}.wc-tile{padding:9px 11px 11px}.wc-tile.hero .ti{width:22px;height:22px;top:8px;right:10px}.wc-tile.sm .ti{width:16px;height:16px;top:8px;right:10px}.wc-themes-wrap{flex-direction:column;align-items:stretch}.btns{flex-direction:column;width:100%;max-width:380px}}
 /* Snap mode: html2canvas-compatible flat rendering for downloads. Kills
    background-clip:text and backdrop-filter so text + glass survive capture. */
 body.wc-snap .wc-tile .tv{visibility:hidden!important;animation:none!important}
@@ -482,8 +505,10 @@ body.wc-snap .wc-tile.hero{padding:12px 14px;gap:4px}
 body.wc-snap .wc-tile .ts{font-size:9px;line-height:1.2;margin-top:1px;-webkit-line-clamp:2;line-clamp:2}
 body.wc-snap .wc-tile.hero .ts{font-size:10px;line-height:1.2;margin-top:2px}
 body.wc-snap .wc-tile .tl{margin-top:3px}
-body.wc-snap .wc-tile.sm{min-height:68px;padding:8px 10px 10px}
-body.wc-snap .wc-tile.wide{min-height:52px;padding:8px 12px}
+body.wc-snap .wc-tile.sm{min-height:64px;padding:8px 10px 10px}
+body.wc-snap .wc-tile.sm .tv{font-size:clamp(15px,3.8vw,20px)}
+body.wc-snap .wc-tile.sm .tl{font-size:8px}
+body.wc-snap .wc-badges .wc-badge{max-width:46%}
 @media(prefers-reduced-motion:reduce){.wc-wall,.wc-fallback{animation:none}.wc-tile .tv{animation:none}}
 .confetti{position:fixed;inset:0;pointer-events:none;z-index:40;overflow:hidden}
 .confetti i{position:absolute;top:-20px;width:10px;height:14px;opacity:.9;animation:fall linear forwards}
@@ -909,31 +934,44 @@ function buildSectionItems(d: RecapHtmlData): SlideItem[] {
 
     card: () => {
       const persona = nv.persona || {};
+      const cmp = s.comparison || {};
+      const models = Array.isArray(s.models) ? s.models : [];
+      const fav = models[0];
+      const growthPct = cmp.requestsDeltaPercent || 0;
       const cardMeta = d.cardMeta || {
         wallpaper: null,
         wallpapers: [],
         defaultThemeId: 0,
         tiles: [
-          { key: "requests", icon: "💬", label: "Request", value: fmtNum(n(s, "totals.requests")), sub: "Bulan ini", size: "hero" },
-          { key: "rank", icon: "📈", label: "Peringkat", value: d.rank.requests ? "#" + d.rank.requests : "—", sub: "dari semua developer", size: "sm" },
-          { key: "tokens", icon: "🪙", label: "Token", value: fmtNum(n(s, "totals.totalTokens")), sub: "Input + output", size: "sm" },
+          { key: "rank", icon: "🏆", label: "Peringkat", value: d.rank.requests ? "#" + d.rank.requests : "—", sub: "dari semua developer", size: "hero" as const },
+          { key: "requests", icon: "🚀", label: "Request", value: fmtNum(n(s, "totals.requests")), sub: "bulan ini", size: "sm" as const },
+          { key: "tokens", icon: "🪙", label: "Token", value: fmtNum(n(s, "totals.totalTokens")), sub: fmtNum(n(s, "totals.inputTokens")) + " in / " + fmtNum(n(s, "totals.outputTokens")) + " out", size: "sm" as const },
+          { key: "growth", icon: cmp.hasPrev && growthPct < 0 ? "📉" : "📈", label: "vs bulan lalu", value: cmp.hasPrev ? ((growthPct >= 0 ? "+" : "") + growthPct + "%") : "NEW", sub: cmp.hasPrev ? "pertumbuhan request" : "bulan pertama", size: "sm" as const },
+          { key: "favModel", icon: "🤖", label: "Model favorit", value: fav?.model ? truncateModel(String(fav.model)) : "—", sub: fav?.requests ? fmtNum(fav.requests) + " req" : "belum ada", size: "sm" as const },
+          { key: "latency", icon: "⏱️", label: "Avg respond", value: fmtLatency(n(s, "latency.avgMs")), sub: "request sukses", size: "sm" as const },
         ],
         quote: persona.subtitle || "Bulan yang produktif! Terus gas ya.",
         badge: (nv.badges && nv.badges[0]) ? { icon: nv.badges[0].icon, title: nv.badges[0].title } : null,
+        badgeUnique: (nv.badges && nv.badges[1]) ? { icon: nv.badges[1].icon, title: nv.badges[1].title } : null,
       };
       const initialWallpaper = cardMeta.wallpapers[0] || cardMeta.wallpaper || "";
-      const hasExtraTile = cardMeta.tiles.some((t) => t.key !== "requests" && t.key !== "rank" && t.key !== "tokens");
-      const mosaicClass = hasExtraTile ? "wc-mosaic wc-mosaic--4" : "wc-mosaic wc-mosaic--3";
+      const mosaicClass = "wc-mosaic wc-mosaic--stats";
       const tilesFinal = cardMeta.tiles.map((t) => {
         const sub = t.sub ? `<div class="ts">${escapeHtml(t.sub)}</div>` : "";
         const ti = iconHtml(t.icon, t.size === "hero" ? 22 : 16, "ti");
-        const area = tileGridArea(t.key, t.size);
+        const area = tileGridArea(t.key);
         const areaCls = `wc-area-${area}`;
-        if (t.size === "wide") {
-          return `<div class="wc-tile wide ${areaCls}"><div class="tglow"></div>${ti}<div class="tx"><div class="tv">${escapeHtml(t.value)}</div><div class="tl">${escapeHtml(t.label)}</div>${sub}</div></div>`;
-        }
         return `<div class="wc-tile ${escapeHtml(t.size)} ${areaCls}"><div class="tglow"></div>${ti}<div class="tv">${escapeHtml(t.value)}</div><div class="tl">${escapeHtml(t.label)}</div>${sub}</div>`;
       }).join("");
+      const badgeLeft = cardMeta.badge
+        ? `<div class="wc-glass wc-badge wc-badge-primary">${iconHtml(cardMeta.badge.icon, 18, "bi")}<div class="bt">${escapeHtml(cardMeta.badge.title)}</div></div>`
+        : "<span></span>";
+      const badgeRight = cardMeta.badgeUnique
+        ? `<div class="wc-glass wc-badge wc-badge-unique">${iconHtml(cardMeta.badgeUnique.icon, 18, "bi")}<div class="bt">${escapeHtml(cardMeta.badgeUnique.title)}</div></div>`
+        : "";
+      const badgesRow = (cardMeta.badge || cardMeta.badgeUnique)
+        ? `<div class="wc-badges">${badgeLeft}${badgeRight}</div>`
+        : "";
       return section("card", `
         <div class="kicker reveal">Kartu Recap Kamu</div>
         <div class="wrapcard reveal" id="wrapCard"
@@ -957,7 +995,7 @@ function buildSectionItems(d: RecapHtmlData): SlideItem[] {
               <div class="qi">${phosphor("quotes", 18, "qi")}</div>
               <div class="qx">"${escapeHtml(cardMeta.quote)}"</div>
             </div>
-            ${cardMeta.badge ? `<div class="wc-glass wc-badge">${iconHtml(cardMeta.badge.icon, 18, "bi")}<div class="bt">${escapeHtml(cardMeta.badge.title)}</div></div>` : ""}
+            ${badgesRow}
             <div class="wc-foot">
               <span>Wrapped ${escapeHtml(d.monthLabel)}</span>
               <span class="brand">· Groupy</span>
