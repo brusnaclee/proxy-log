@@ -3044,6 +3044,8 @@ async function generateAndReplyRecap(interaction, targetUser, opts = {}) {
 		} else if (/fetch failed|ECONNRESET|socket hang up/i.test(err.message)) {
 			msg = 'Koneksi ke server putus saat generate recap. Coba lagi ya — biasanya berhasil di percobaan kedua 🙏';
 		} else {
+			msg = `Gagal membuat recap: ${err.message}`;
+		}
 		await interaction.editReply({ content: `⚠️ ${msg}`, embeds: [], components: [] }).catch(() => {});
 	}
 }
