@@ -214,7 +214,8 @@ body{background:var(--bg);color:var(--fg);font-family:var(--font-body),system-ui
 overflow-x:hidden}
 .deck{height:100dvh;overflow-y:scroll;scroll-snap-type:y mandatory;scroll-behavior:smooth}
 .slide{min-height:100dvh;scroll-snap-align:start;display:flex;flex-direction:column;align-items:center;
-justify-content:center;text-align:center;padding:max(24px,6vw) 20px;position:relative;gap:var(--slide-gap)}
+justify-content:center;text-align:center;padding:max(24px,6vw) 20px;position:relative;gap:var(--slide-gap);
+content-visibility:auto;contain-intrinsic-size:auto 100dvh}
 .slide::before{content:"";position:absolute;inset:0;z-index:-1;opacity:.5;
 background:radial-gradient(900px 600px at 50% 0%,rgba(124,58,237,.35),transparent 60%),
 radial-gradient(700px 500px at 100% 100%,rgba(236,72,153,.25),transparent 55%)}
@@ -386,6 +387,7 @@ background:var(--card);border:1px solid var(--line);border-radius:18px;padding:1
 border:1px solid rgba(255,255,255,.28);box-shadow:0 30px 80px rgba(0,0,0,.55),inset 0 0 0 1px rgba(255,255,255,.06);isolation:isolate;background:#0b0b14}
 .wc-wall{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;
 transform:scale(1.06);animation:wcPan 18s ease-in-out infinite alternate;will-change:transform}
+.wc-wall.paused{animation-play-state:paused}
 @keyframes wcPan{0%{transform:scale(1.06) translate(0,0)}100%{transform:scale(1.12) translate(-2%,-2%)}}
 .wc-fallback{position:absolute;inset:0;z-index:0;background:linear-gradient(160deg,var(--wc-a,#7c3aed),var(--wc-b,#ec4899));background-size:220% 220%;animation:wcflow 7s ease infinite}
 @keyframes wcflow{0%,100%{background-position:0 50%}50%{background-position:100% 50%}}
@@ -409,21 +411,22 @@ grid-template-areas:"hero hero" "hero hero" "rank tokens" "extra extra"}
 .wc-area-rank{grid-area:rank}
 .wc-area-tokens{grid-area:tokens}
 .wc-area-extra{grid-area:extra}
-.wc-tile{position:relative;display:flex;flex-direction:column;justify-content:center;overflow:hidden;padding:10px 12px 12px;gap:3px;min-height:72px;
+.wc-tile{position:relative;display:flex;flex-direction:column;justify-content:flex-start;overflow:hidden;padding:10px 12px 12px;gap:3px;min-height:72px;
 background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.16);border-radius:14px;
 backdrop-filter:blur(12px) saturate(110%);-webkit-backdrop-filter:blur(12px) saturate(110%)}
-.wc-tile.hero{padding:12px 14px;gap:4px;min-height:0}
+.wc-tile.hero{padding:12px 14px;gap:4px;min-height:0;justify-content:flex-end}
 .wc-tile.wide,.wc-area-extra{flex-direction:row;align-items:center;gap:10px;min-height:56px}
 .wc-tile .ti{width:20px;height:20px;line-height:1;flex:0 0 auto}
 .wc-tile.hero .ti{width:30px;height:30px}
 .wc-tile.wide .ti{width:24px;height:24px}
 .wc-tile.sm{padding-top:12px}
-/* Rainbow glossy animated stat number — solid white fallback + shadow for legibility */
+/* Rainbow stat numbers — solid white until webfonts ready, then gradient clip */
 .wc-tile .tv{font-family:var(--font-display),system-ui,sans-serif;font-weight:900;line-height:1;font-size:clamp(20px,5.2vw,27px);
-color:#fff;text-shadow:0 0 1px rgba(0,0,0,.45),0 1px 2px rgba(0,0,0,.35);
+letter-spacing:-.02em;color:#fff;-webkit-text-fill-color:#fff;text-shadow:0 0 1px rgba(0,0,0,.45),0 1px 2px rgba(0,0,0,.35)}
+body.fonts-ready .wc-tile .tv{color:transparent;-webkit-text-fill-color:transparent;
 background:linear-gradient(90deg,#ff4d6d,#ffd93d,#6ee7b7,#22d3ee,#a78bfa,#f472b6,#ff4d6d);
-background-size:300% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;
-animation:tvRainbow 6s linear infinite;letter-spacing:-.02em}
+background-size:300% 100%;-webkit-background-clip:text;background-clip:text;
+animation:tvRainbow 6s linear infinite}
 @keyframes tvRainbow{0%{background-position:0 0}100%{background-position:300% 0}}
 .wc-tile.hero .tv{font-size:clamp(34px,9vw,52px)}
 .wc-tile .tl{font-family:var(--font-label),system-ui,sans-serif;font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--wc-muted,rgba(255,255,255,.85));margin-top:4px}
@@ -1123,6 +1126,12 @@ const RECAP_JS = `
   try { if ('scrollRestoration' in history) history.scrollRestoration = 'manual'; } catch(e) {}
   try { window.scrollTo(0, 0); } catch(e) {}
   var rm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Enable gradient stat numbers only after display fonts are loaded.
+  if(document.fonts && document.fonts.ready){
+    document.fonts.ready.then(function(){ document.body.classList.add('fonts-ready'); });
+  } else {
+    document.body.classList.add('fonts-ready');
+  }
   // Reveal on scroll
   var io = new IntersectionObserver(function(es){
     es.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('in'); 
@@ -1348,35 +1357,68 @@ const RECAP_JS = `
   }
   if(themesWrap){
     var wallCount=Math.max(wallsData.length,1);
-    // Render 1:1 with wallsData — no duplicates. Capped at 50 to keep the
-    // picker scannable; users with more unique wallpapers can still cycle via
-    // the card wallpaper itself.
     var slotCount=Math.min(wallCount, 50);
+    var SWATCH_LAZY_INIT=12;
+    function fillSwatchBg(sw,idx){
+      if(sw.dataset.loaded) return;
+      var t=THEMES[idx%THEMES.length];
+      var wu=wallsData[idx%wallCount];
+      if(wu){
+        sw.style.backgroundImage='url("'+wu+'")';
+        sw.style.backgroundSize='cover';
+        sw.style.backgroundPosition='center';
+      } else {
+        sw.style.background='linear-gradient(135deg,'+t.a+','+t.b+')';
+      }
+      sw.dataset.loaded='1';
+      delete sw.dataset.lazy;
+    }
+    var swIo=('IntersectionObserver' in window)?new IntersectionObserver(function(es){
+      es.forEach(function(e){
+        if(e.isIntersecting && e.target.dataset.lazy){
+          fillSwatchBg(e.target, parseInt(e.target.dataset.idx||'0',10));
+          swIo.unobserve(e.target);
+        }
+      });
+    },{root:themesWrap,rootMargin:'48px'}):null;
     for(var k=0;k<slotCount;k++){
       (function(idx){
         var t=THEMES[idx%THEMES.length];
         var sw=document.createElement('button');
         sw.type='button';
         sw.className='wc-sw'+(idx===curTheme?' on':'');
-        // Background = actual live wallpaper preview (1:1 with stored).
-        var wu=wallsData[idx%wallCount];
-        if(wu){
-          sw.style.backgroundImage='url("'+wu+'")';
-          sw.style.backgroundSize='cover';
-          sw.style.backgroundPosition='center';
+        sw.dataset.idx=String(idx);
+        if(idx<SWATCH_LAZY_INIT || idx===curTheme){
+          fillSwatchBg(sw,idx);
         } else {
           sw.style.background='linear-gradient(135deg,'+t.a+','+t.b+')';
+          sw.dataset.lazy='1';
+          if(swIo) swIo.observe(sw);
         }
         sw.title='Wallpaper '+(idx+1);
         sw.setAttribute('aria-label','Wallpaper '+(idx+1));
         sw.addEventListener('click',function(){
           if(isDownloading){ setStatus('Tunggu render selesai sebelum ganti wallpaper ⏳'); return; }
+          fillSwatchBg(sw,idx);
           applyTheme(idx);
         });
         themesWrap.appendChild(sw);
       })(k);
     }
+    themesWrap.addEventListener('scroll',function(){
+      [].slice.call(themesWrap.querySelectorAll('.wc-sw[data-lazy]')).forEach(function(sw){
+        var r=sw.getBoundingClientRect(), pr=themesWrap.getBoundingClientRect();
+        if(r.top<pr.bottom+64) fillSwatchBg(sw, parseInt(sw.dataset.idx||'0',10));
+      });
+    },{passive:true});
     applyTheme(curTheme,false);
+  }
+  // Pause animated wallpaper when card is off-screen (saves GPU on desktop).
+  if(card && cardWall){
+    var wallIo=new IntersectionObserver(function(es){
+      es.forEach(function(e){ cardWall.classList.toggle('paused', !e.isIntersecting); });
+    },{threshold:0.08});
+    wallIo.observe(card);
   }
 
   // Lazy-load a script once. Bounded with a 10s timeout so a hung CDN never
@@ -1407,28 +1449,47 @@ const RECAP_JS = `
   // 7 unique colors — duplicating the first at the end here would make a
   // static PNG draw pink→pink on the long hero tile and wash everything out.
   var RAINBOW = ['#ff4d6d','#ffd93d','#6ee7b7','#22d3ee','#a78bfa','#f472b6','#fb923c'];
-  function drawRainbowTileValues(ctx, stackEl, W, H, animOffset){
-    animOffset = animOffset || 0;
-    var html2canvasScale = 2;
+  var html2canvasScale = 2;
+
+  function cacheTvRects(stackEl, scale){
+    scale = scale || html2canvasScale;
     var sr = stackEl.getBoundingClientRect();
-    var tileEls = stackEl.querySelectorAll('.wc-tile');
-    tileEls.forEach(function(tile){
+    var out = [];
+    stackEl.querySelectorAll('.wc-tile').forEach(function(tile){
       var v = tile.querySelector('.tv');
       if (!v) return;
-      var tr = tile.getBoundingClientRect();
-      if (tr.width === 0) return;
       var r = v.getBoundingClientRect();
-      var x = (tr.left - sr.left) * html2canvasScale;
-      var y = (tr.top - sr.top) * html2canvasScale;
-      var w = tr.width * html2canvasScale;
-      var h = tr.height * html2canvasScale;
-      var fs = parseFloat(getComputedStyle(v).fontSize) * html2canvasScale;
+      var fs = parseFloat(getComputedStyle(v).fontSize) * scale;
       var ff = getComputedStyle(v).fontFamily || '"Bricolage Grotesque", system-ui, sans-serif';
+      var x, y, w, h;
+      if (r.width > 0 && r.height > 0) {
+        x = (r.left - sr.left) * scale;
+        y = (r.top - sr.top) * scale;
+        w = r.width * scale;
+        h = r.height * scale;
+      } else {
+        var tr = tile.getBoundingClientRect();
+        var padTop = parseFloat(getComputedStyle(tile).paddingTop) * scale;
+        x = (tr.left - sr.left) * scale;
+        y = (tr.top - sr.top) * scale + padTop;
+        w = tr.width * scale;
+        h = Math.max(fs * 1.1, 8);
+      }
+      out.push({ text: v.textContent || '', x: x, y: y, w: w, h: h, fs: fs, ff: ff });
+    });
+    return out;
+  }
+
+  function drawRainbowTileValues(ctx, cachedRects, animOffset){
+    animOffset = animOffset || 0;
+    if (!cachedRects || !cachedRects.length) return;
+    cachedRects.forEach(function(item){
+      if (!item.w || !item.h) return;
       ctx.save();
-      ctx.font = '900 ' + fs + 'px ' + ff;
+      ctx.font = '900 ' + item.fs + 'px ' + item.ff;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      var grad = ctx.createLinearGradient(x, 0, x + w, 0);
+      var grad = ctx.createLinearGradient(item.x, 0, item.x + item.w, 0);
       var N = RAINBOW.length;
       for (var cycle = 0; cycle < 2; cycle++){
         for (var i = 0; i < N; i++){
@@ -1439,9 +1500,9 @@ const RECAP_JS = `
       }
       ctx.fillStyle = grad;
       ctx.shadowColor = 'rgba(0,0,0,0.45)';
-      ctx.shadowBlur = fs * 0.06;
-      ctx.shadowOffsetY = fs * 0.04;
-      ctx.fillText(v.textContent || '', x + w / 2, y + h / 2);
+      ctx.shadowBlur = item.fs * 0.06;
+      ctx.shadowOffsetY = item.fs * 0.04;
+      ctx.fillText(item.text, item.x + item.w / 2, item.y + item.h / 2);
       ctx.restore();
     });
   }
@@ -1508,8 +1569,9 @@ const RECAP_JS = `
       await new Promise(function(r){requestAnimationFrame(function(){requestAnimationFrame(r);});});
       if(document.fonts && document.fonts.ready) await document.fonts.ready;
       await new Promise(function(r){setTimeout(r,80);});
+      var cachedRects = cacheTvRects(stackEl, html2canvasScale);
       var base=await Promise.race([
-        window.html2canvas(stackEl,{backgroundColor:null,scale:2,useCORS:true,allowTaint:false,logging:false}),
+        window.html2canvas(stackEl,{backgroundColor:null,scale:html2canvasScale,useCORS:true,allowTaint:false,logging:false}),
         new Promise(function(_,rej){setTimeout(function(){rej(new Error('html2canvas timeout 25s'));},25000);})
       ]);
       document.body.classList.remove('wc-snap');
@@ -1520,7 +1582,7 @@ const RECAP_JS = `
       var gifOk=false;
       try{
         await loadScript('https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js');
-        await renderGif(base, stackEl);
+        await renderGif(base, cachedRects);
         gifOk=true;
       }catch(e){ gifOk=false; console.warn('GIF encode failed, falling back to PNG:', e); }
       if(!gifOk){
@@ -1539,7 +1601,7 @@ const RECAP_JS = `
             var sg=ctx.createLinearGradient(0,0,0,H);sg.addColorStop(0,t.scrim);sg.addColorStop(1,t.scrimEnd);ctx.fillStyle=sg;ctx.fillRect(0,0,W,H);
           }
           ctx.drawImage(base,0,0);
-          drawRainbowTileValues(ctx, stackEl, W, H, 0);
+          drawRainbowTileValues(ctx, cachedRects, 0);
           var a=document.createElement('a');a.href=c.toDataURL('image/png');a.download='recap-card.png';a.click();
           setStatus('Tersimpan sebagai PNG ✓');
         }catch(_){
@@ -1559,7 +1621,7 @@ const RECAP_JS = `
     }
   }
 
-  function renderGif(base, stackEl){return new Promise(function(resolve,reject){
+  function renderGif(base, cachedRects){return new Promise(function(resolve,reject){
     if(rm){
       var a=document.createElement('a');a.href=base.toDataURL('image/png');a.download='recap-card.png';a.click();return resolve();
     }
@@ -1626,7 +1688,7 @@ const RECAP_JS = `
             ctx.drawImage(base,0,0);
             // Re-draw rainbow stat numbers with a per-frame offset so the
             // gradient cycles in the GIF (matches the live tvRainbow anim).
-            drawRainbowTileValues(ctx, stackEl, W, H, f / FRAMES);
+            drawRainbowTileValues(ctx, cachedRects, f / FRAMES);
             gif.addFrame(ctx,{copy:true,delay:90});
           }
           // 45s render budget. If progress hasn't moved at all in 8s after
