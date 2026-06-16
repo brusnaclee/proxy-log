@@ -170,8 +170,12 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
   } catch { stats.race = null; }
 
   const assets = loadAssets();
-  // Interactive: fewer retries to stay responsive; background: more retries.
-  const { ok, narrative } = await generateNarrative(stats, monthLabel, assets, { retries: body.interactive ? 10 : 3 });
+  const interactive = !!body.interactive;
+  // Interactive: fewer retries + shorter timeout to keep Discord fetch alive.
+  const { ok, narrative } = await generateNarrative(stats, monthLabel, assets, {
+    retries: interactive ? 5 : 3,
+    timeoutMs: interactive ? 45_000 : 60_000,
+  });
 
   // Interactive request that couldn't get AI output -> tell the bot we're busy
   // (do NOT cache a fallback so a later attempt can still produce a real recap).
@@ -179,14 +183,17 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
     return c.json({ busy: true, error: "AI busy" }, 503);
   }
 
-  // Resolve a varied, live GIF per section: realtime search + local fallback.
+  // Resolve GIFs + card meta. Interactive skips live GIF/wallpaper search (slow
+  // external APIs) and uses local fallbacks so the bot fetch finishes reliably.
   try {
-    narrative.gifs = await resolveRecapGifs(discordUserId, stats, publicBase());
+    narrative.gifs = await resolveRecapGifs(discordUserId, stats, publicBase(), { liveSearch: !interactive });
   } catch { narrative.gifs = {}; }
 
-  // Resolve the live anime wallpaper + nested tile plan for the shareable card.
   try {
-    narrative.card = await resolveCardMeta(discordUserId, stats, narrative, publicBase());
+    narrative.card = await resolveCardMeta(discordUserId, stats, narrative, publicBase(), {
+      wallpaperCount: interactive ? 8 : 12,
+      timeBudgetMs: interactive ? 12_000 : 25_000,
+    });
   } catch { narrative.card = null; }
 
   // Persist leaderboard snapshot (top 10 each) so the web page + bot can read it.
@@ -242,7 +249,12 @@ function safeParse(s: string | null | undefined): any {
  * mood-appropriate query first, then falls back to the curated catalog. Returns
  * a map of section -> url; the web has further onerror fallbacks (local meme/SVG).
  */
-async function resolveRecapGifs(seedId: string, stats: any, base: string): Promise<Record<string, string>> {
+async function resolveRecapGifs(
+  seedId: string,
+  stats: any,
+  base: string,
+  opts: { liveSearch?: boolean } = {},
+): Promise<Record<string, string>> {
   const ratio = stats?.totals?.ioRatio ?? 0.3;
   const rank = stats?.rank?.requests || 0;
   const hr = stats?.activity?.mostActiveHour?.hour ?? 12;
@@ -269,11 +281,13 @@ async function resolveRecapGifs(seedId: string, stats: any, base: string): Promi
   const out: Record<string, string> = {};
   const sections = Object.entries(plan);
   let salt = 0;
-  // Run searches with bounded concurrency; live-validate, else local meme gif.
+  const liveSearch = opts.liveSearch !== false;
   await Promise.all(sections.map(async ([section, { q, cat }]) => {
     const s = seedFromStr(seedId) + (salt++);
     let url: string | null = null;
-    try { url = await findLiveGif(q, s); } catch { url = null; }
+    if (liveSearch) {
+      try { url = await findLiveGif(q, s); } catch { url = null; }
+    }
     if (!url) {
       // Guaranteed-live local self-hosted meme gif (absolute URL).
       const local = memeForCategory(cat as any, [], s);

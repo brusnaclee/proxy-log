@@ -430,7 +430,7 @@ export async function generateNarrative(
   stats: RecapStats,
   monthLabel: string,
   assets: RecapAsset[],
-  opts: { retries?: number } = {},
+  opts: { retries?: number; timeoutMs?: number } = {},
 ): Promise<{ ok: boolean; narrative: RecapNarrative }> {
   const fallback = templateNarrative(stats, monthLabel, assets);
   const apiKey = process.env.RECAP_API_KEY;
@@ -439,11 +439,12 @@ export async function generateNarrative(
 
   const summary = buildStatsSummary(stats, monthLabel);
   const maxAttempts = Math.max(1, opts.retries ?? 30);
+  const reqTimeoutMs = opts.timeoutMs ?? 60_000;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 60_000);
+      const timeout = setTimeout(() => controller.abort(), reqTimeoutMs);
       const res = await fetch(`${baseUrl}/v1/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },

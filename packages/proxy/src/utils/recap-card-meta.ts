@@ -41,10 +41,6 @@ function seedFromStr(s: string): number {
   return h >>> 0;
 }
 
-function pick<T>(arr: T[], seed: number, offset = 0): T {
-  return arr[(seed + offset) % arr.length];
-}
-
 function fmtNum(n: number): string {
   n = Number(n) || 0;
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1).replace(/\.0$/, "") + "M";
@@ -215,21 +211,25 @@ const EXTRA_WALLPAPER_QUERIES: string[][] = [
 ];
 
 /** Resolve up to N distinct live anime wallpaper URLs with bounded concurrency.
- *  Each query list is searched once via findLiveGif (which validates the URL).
- *  Returns whatever could be validated within a soft budget; renderer pads the
- *  remainder by cycling if needed. */
-async function resolveWallpapers(seedId: string, stats: any, base: string, count = 100): Promise<string[]> {
+ *  Stops early when `count` is reached or `budgetMs` elapses. */
+async function resolveWallpapers(
+  seedId: string,
+  stats: any,
+  base: string,
+  count = 12,
+  budgetMs = 20_000,
+): Promise<string[]> {
   const seed = seedFromStr(seedId);
   const personaLists = wallpaperQueries(stats);
   const allLists: string[][] = [...personaLists, ...EXTRA_WALLPAPER_QUERIES];
+  const deadline = Date.now() + budgetMs;
 
   const out: string[] = [];
   const seen = new Set<string>();
-  const CONCURRENCY = 8;
-  // Bail early if we already have `count` and a query returns 0 new.
+  const CONCURRENCY = 4;
   let next = 0;
   async function worker() {
-    while (out.length < count && next < allLists.length) {
+    while (out.length < count && next < allLists.length && Date.now() < deadline) {
       const myIdx = next++;
       const q = allLists[myIdx];
       let url: string | null = null;
@@ -245,8 +245,6 @@ async function resolveWallpapers(seedId: string, stats: any, base: string, count
     }
   }
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, allLists.length) }, () => worker()));
-  // No more padding to a fixed number. The renderer renders 1:1 with whatever
-  // unique URLs we found (or falls back to a single gradient if zero).
   if (out.length === 0) out.push("");
   return out;
 }
@@ -359,15 +357,23 @@ function buildSecondaryBadge(narrative: any, stats: any, seed: number): CardBadg
   return fallbacks[seed % fallbacks.length];
 }
 
+export interface ResolveCardMetaOpts {
+  wallpaperCount?: number;
+  timeBudgetMs?: number;
+}
+
 /** Resolve full card meta (wallpapers + tiles + quote + badge). */
 export async function resolveCardMeta(
   seedId: string,
   stats: any,
   narrative: any,
   base: string,
+  opts: ResolveCardMetaOpts = {},
 ): Promise<CardMeta> {
   const seed = seedFromStr(seedId);
-  const wallpapers = await resolveWallpapers(seedId, stats, base, 40);
+  const count = opts.wallpaperCount ?? 12;
+  const budgetMs = opts.timeBudgetMs ?? 20_000;
+  const wallpapers = await resolveWallpapers(seedId, stats, base, count, budgetMs);
   const tiles = buildTiles(stats);
   const quote = buildQuote(stats, narrative);
   const badge = buildBadge(narrative, stats);

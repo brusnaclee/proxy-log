@@ -131,18 +131,31 @@ async function proxyInternal(pathname, method = 'GET', body = null, opts = {}) {
 		'Content-Type': 'application/json',
 		'x-internal-secret': INTERNAL_API_SECRET,
 	};
-	const res = await fetch(`${PROXY_INTERNAL_BASE_URL}${pathname}`, {
-		method,
-		headers,
-		body: body ? JSON.stringify(body) : undefined,
-		signal: opts.signal || undefined,
-	});
-	const data = await res.json().catch(() => ({}));
-	if (!res.ok) {
-		const errMsg = typeof data.error === 'object' ? JSON.stringify(data.error) : (data.error || `Proxy internal API failed: ${res.status}`);
-		throw new Error(errMsg);
+	const maxAttempts = opts.retries ?? (method === 'POST' && pathname.includes('/recap/') ? 2 : 1);
+	let lastErr;
+	for (let attempt = 0; attempt < maxAttempts; attempt++) {
+		try {
+			const res = await fetch(`${PROXY_INTERNAL_BASE_URL}${pathname}`, {
+				method,
+				headers,
+				body: body ? JSON.stringify(body) : undefined,
+				signal: opts.signal || undefined,
+			});
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok) {
+				const errMsg = typeof data.error === 'object' ? JSON.stringify(data.error) : (data.error || `Proxy internal API failed: ${res.status}`);
+				throw new Error(errMsg);
+			}
+			return data;
+		} catch (err) {
+			lastErr = err;
+			const msg = err?.message || String(err);
+			const retryable = /fetch failed|ECONNRESET|ECONNREFUSED|socket hang up|network/i.test(msg);
+			if (!retryable || attempt >= maxAttempts - 1) throw err;
+			await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+		}
 	}
-	return data;
+	throw lastErr;
 }
 
 async function provisionApiKeyForVerifiedUser(
@@ -3028,9 +3041,9 @@ async function generateAndReplyRecap(interaction, targetUser, opts = {}) {
 			msg = 'Server lagi sibuk, coba lagi nanti ya 🙏';
 		} else if (/not found/i.test(err.message)) {
 			msg = self ? 'Kamu belum punya API key. Verifikasi dulu untuk dapat recap ya!' : 'User tersebut tidak punya API key / data recap.';
+		} else if (/fetch failed|ECONNRESET|socket hang up/i.test(err.message)) {
+			msg = 'Koneksi ke server putus saat generate recap. Coba lagi ya — biasanya berhasil di percobaan kedua 🙏';
 		} else {
-			msg = `Gagal membuat recap: ${err.message}`;
-		}
 		await interaction.editReply({ content: `⚠️ ${msg}`, embeds: [], components: [] }).catch(() => {});
 	}
 }
@@ -3212,6 +3225,8 @@ async function runDailyRecapJob(opts = {}) {
 				yearMonth,
 			});
 			ok++;
+			// Avoid hammering proxy while each regen can take 60–90s of outbound fetches.
+			await new Promise((r) => setTimeout(r, 2000));
 		} catch (err) {
 			fail++;
 			if (errors.length < 5) errors.push(`${u.discordUserId}: ${err.message}`);
