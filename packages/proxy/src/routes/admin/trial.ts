@@ -11,6 +11,10 @@ import {
 } from "../../utils/trial-config.js";
 import { listGpyCatalogModels } from "../../utils/trial-routing.js";
 import { queueTrialNotification } from "../../utils/trial-notify.js";
+import {
+  countUserTrials,
+  findActiveTrialByDiscordUser,
+} from "../../utils/trial-scheduler.js";
 
 const trial = new Hono();
 
@@ -352,5 +356,3 @@ export async function isUserPhantomMember(discordUserId: string, requiredRoleId:
   const [key] = await db.select().from(apiKeys).where(and(eq(apiKeys.discordUserId, discordUserId), eq(apiKeys.isTrial, false))).limit(1);
   return !!key && key.isActive;
 }
-
-export { findTrialByApiKeyId };
