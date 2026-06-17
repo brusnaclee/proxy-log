@@ -43,6 +43,50 @@ export async function initializeDatabase() {
 		console.warn('⚠️ model_limits idempotent migration warning:', err?.message || err);
 	}
 
+	// Trial mode schema (idempotent)
+	try {
+		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_enabled boolean NOT NULL DEFAULT false`);
+		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_access_mode text NOT NULL DEFAULT 'groupy_members'`);
+		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_required_role_id text DEFAULT '1354682641961582632'`);
+		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_default_duration_days integer NOT NULL DEFAULT 30`);
+		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_max_per_account integer NOT NULL DEFAULT 1`);
+		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_daily_token_limit integer NOT NULL DEFAULT 1000000`);
+		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_prompt_limit integer NOT NULL DEFAULT 50`);
+		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_prompt_limit_window text NOT NULL DEFAULT '5h'`);
+		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_model_selection_mode text NOT NULL DEFAULT 'all_gpy'`);
+		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_model_whitelist text NOT NULL DEFAULT '[]'`);
+		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_panel_message_id text`);
+		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_embed_config text NOT NULL DEFAULT '{}'`);
+		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_dm_templates text NOT NULL DEFAULT '{}'`);
+		await pool.query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS is_trial boolean NOT NULL DEFAULT false`);
+		await pool.query(`
+			CREATE TABLE IF NOT EXISTS trial_users (
+				id SERIAL PRIMARY KEY,
+				discord_user_id TEXT NOT NULL,
+				discord_username TEXT,
+				api_key_id INTEGER NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+				claimed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+				expires_at TIMESTAMP NOT NULL,
+				ended_at TIMESTAMP,
+				end_reason TEXT,
+				override_days INTEGER,
+				override_max_trials INTEGER,
+				override_daily_token_limit INTEGER,
+				override_prompt_limit INTEGER,
+				override_prompt_limit_window TEXT,
+				suspended BOOLEAN NOT NULL DEFAULT false,
+				last_notified_at TIMESTAMP,
+				created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+				updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+			)
+		`);
+		await pool.query(`CREATE INDEX IF NOT EXISTS idx_trial_users_discord ON trial_users (discord_user_id)`);
+		await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_trial_users_api_key ON trial_users (api_key_id)`);
+		console.log('✅ Applied idempotent trial migrations');
+	} catch (err: any) {
+		console.warn('⚠️ trial idempotent migration warning:', err?.message || err);
+	}
+
 	// Push schema using drizzle-kit push equivalent at runtime:
 	// We rely on drizzle-kit push:pg being run before first start.
 	// But we still seed defaults below.

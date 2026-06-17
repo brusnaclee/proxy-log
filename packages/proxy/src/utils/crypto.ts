@@ -8,6 +8,11 @@ export function generateApiKey(): string {
   return `sk-proxy-${random}`;
 }
 
+export function generateTrialApiKey(): string {
+  const random = randomBytes(24).toString("base64url");
+  return `trial_${random}`;
+}
+
 /**
  * Get the first 8 characters of a key for display purposes
  */

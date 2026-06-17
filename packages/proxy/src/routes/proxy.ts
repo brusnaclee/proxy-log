@@ -38,6 +38,7 @@ import {
 } from '../utils/counting.js';
 import {
 	generateApiKey,
+	generateTrialApiKey,
 	generateFingerprint,
 	generateSessionId,
 	getKeyPrefix,
@@ -90,8 +91,26 @@ import {
 	makeAccumulator,
 	resolveBillableTokens,
 } from '../utils/token-extractor.js';
+import {
+	buildTrialModelCandidates,
+	isRetryableUpstreamStatus,
+} from '../utils/trial-routing.js';
+import { isGpyProviderOrModel } from '../utils/trial-config.js';
+import { queueTrialNotification } from '../utils/trial-notify.js';
 
 const proxy = new Hono();
+
+async function notifyTrialLimitIfNeeded(
+	keyRecord: { id: number; isTrial: boolean },
+	message: string,
+): Promise<void> {
+	if (!keyRecord.isTrial) return;
+	try {
+		await queueTrialNotification(keyRecord.id, 'limit_reached', { message });
+	} catch (err) {
+		console.error('[trial] Failed to queue limit notification:', err);
+	}
+}
 
 type ContextEvent = 'new_session' | 'append' | 'compact' | 'switch';
 
@@ -1046,9 +1065,9 @@ proxy.all('/*', async (c) => {
 			deviceCount.count >= keyRecord.maxDevices &&
 			!existingDevice
 		) {
-			if (keyRecord.provisionedBy === 'discord-bot') {
+			if (keyRecord.provisionedBy === 'discord-bot' || keyRecord.isTrial || keyRecord.provisionedBy === 'trial-bot') {
 				// Generate a fresh active key, remove old device, queue DM+thread notification
-				const rotatedKey = generateApiKey();
+				const rotatedKey = keyRecord.isTrial ? generateTrialApiKey() : generateApiKey();
 				const newKeyPrefix = getKeyPrefix(rotatedKey);
 
 				// Remove all old devices for this key so the new device can register cleanly
@@ -1081,7 +1100,7 @@ proxy.all('/*', async (c) => {
 				// Store pending notification for bot to pick up and send
 				const proxyEndpoint = `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || '3000'}`}/v1`;
 				const notification = {
-					type: 'new_device_detected',
+					type: keyRecord.isTrial ? 'trial_key_rotated' : 'new_device_detected',
 					discordUserId: keyRecord.discordUserId,
 					newKey: rotatedKey,
 					endpoint: proxyEndpoint,
@@ -1331,10 +1350,12 @@ proxy.all('/*', async (c) => {
 				const resetMs = await getWindowResetMs(keyRecord.id, windowMs);
 				const resetMins = Math.ceil(resetMs / 60000);
 				const isKeyOverride = (keyRecord.promptLimit || 0) > 0;
+				const limitMsg = `All model limit reached${isKeyOverride ? ' (key override)' : ''}: ${plCheck.used}/${effectivePromptLimit} prompts used in this ${effectivePromptLimitWindow} window. Resets in ~${resetMins} minute(s).`;
+				await notifyTrialLimitIfNeeded(keyRecord, limitMsg);
 				return c.json(
 					{
 						error: {
-							message: `All model limit reached${isKeyOverride ? ' (key override)' : ''}: ${plCheck.used}/${effectivePromptLimit} prompts used in this ${effectivePromptLimitWindow} window. Resets in ~${resetMins} minute(s).`,
+							message: limitMsg,
 							type: 'rate_limit_error',
 							code: 'prompt_limit_exceeded',
 						},
@@ -1356,6 +1377,10 @@ proxy.all('/*', async (c) => {
 	if (model === 'auto') {
 		let onlineModels = await getOnlineModelsByLatency();
 		onlineModels = onlineModels.filter((m) => isAutoCompatible(m.modelId));
+		if (keyRecord.isTrial) {
+			const gpyOnly = onlineModels.filter((m) => isGpyProviderOrModel(m.provider, m.modelId));
+			if (gpyOnly.length > 0) onlineModels = gpyOnly;
+		}
 
 		if (onlineModels.length === 0) {
 			return c.json(
@@ -1954,6 +1979,19 @@ proxy.all('/*', async (c) => {
 		);
 	}
 
+	if (keyRecord.isTrial && !isGpyProviderOrModel(targetProvider.name, model)) {
+		return c.json(
+			{
+				error: {
+					message: `Trial users may only use gpy provider models. Requested: "${model}"`,
+					type: 'access_error',
+					code: 'trial_model_not_allowed',
+				},
+			},
+			403,
+		);
+	}
+
 	// Strip provider prefix for upstream request: "tokito/glm/glm-5.1" -> "glm/glm-5.1"
 	const upstreamModel = await stripProviderPrefix(model);
 
@@ -1967,7 +2005,8 @@ proxy.all('/*', async (c) => {
 
 	// ─── 8a. Model Monitor Check ─────────────────────────────────────────
 	// Block only when monitor has data for this model AND none of the latest checks are online.
-	if (upstreamModel && upstreamModel !== 'unknown') {
+	// Trial users bypass offline gate (upstream retry handles failures).
+	if (!keyRecord.isTrial && upstreamModel && upstreamModel !== 'unknown') {
 		const monitorRows = await db
 			.select()
 			.from(modelMonitor)
@@ -2258,10 +2297,12 @@ proxy.all('/*', async (c) => {
 				const resetMs = await getWindowResetMs(keyRecord.id, windowMs);
 				const resetMins = Math.ceil(resetMs / 60000);
 				const isKeyOverride = (keyRecord.promptLimit || 0) > 0;
+				const limitMsg = `All model limit reached${isKeyOverride ? ' (key override)' : ''}: ${plCheck.used}/${effectivePromptLimit} prompts used in this ${effectivePromptLimitWindow} window. Resets in ~${resetMins} minute(s).`;
+				await notifyTrialLimitIfNeeded(keyRecord, limitMsg);
 				return c.json(
 					{
 						error: {
-							message: `All model limit reached${isKeyOverride ? ' (key override)' : ''}: ${plCheck.used}/${effectivePromptLimit} prompts used in this ${effectivePromptLimitWindow} window. Resets in ~${resetMins} minute(s).`,
+							message: limitMsg,
 							type: 'rate_limit_error',
 							code: 'prompt_limit_exceeded',
 						},
@@ -2336,10 +2377,12 @@ proxy.all('/*', async (c) => {
 				.where(whereClause)
 				.then((r) => r[0]);
 			if (du && du.total >= globalDailyTokenLimit) {
+				const limitMsg = `Daily token limit reached: ${du.total.toLocaleString()}/${globalDailyTokenLimit.toLocaleString()} tokens today. Resets tomorrow.`;
+				await notifyTrialLimitIfNeeded(keyRecord, limitMsg);
 				return c.json(
 					{
 						error: {
-							message: `Daily token limit reached: ${du.total.toLocaleString()}/${globalDailyTokenLimit.toLocaleString()} tokens today. Resets tomorrow.`,
+							message: limitMsg,
 							type: 'rate_limit_error',
 							code: 'daily_token_limit_exceeded',
 						},
@@ -2847,28 +2890,74 @@ proxy.all('/*', async (c) => {
 	}
 
 	try {
-		const { response: upstreamResponse, keyId: usedKeyId } =
-			await fetchWithKeyRotation(
-				targetProvider.id,
-				isAnthropicProvider || isYouComProvider
-					? actualUpstreamUrl
-					: upstreamUrl,
+		let upstreamResponse: Response;
+		let usedKeyId: number;
+		const trialModelsToTry =
+			keyRecord.isTrial && model !== 'auto'
+				? [...(await buildTrialModelCandidates(config, model)), '__auto__']
+				: [model];
+
+		let fetchSucceeded = false;
+		for (let ti = 0; ti < trialModelsToTry.length; ti++) {
+			let attemptModel = trialModelsToTry[ti];
+			if (attemptModel === '__auto__') {
+				let onlineModels = await getOnlineModelsByLatency();
+				onlineModels = onlineModels.filter((m) => isAutoCompatible(m.modelId));
+				if (onlineModels.length === 0) continue;
+				const pick = onlineModels[0];
+				attemptModel = pick.provider ? `${pick.provider}/${pick.modelId}` : pick.modelId;
+			}
+
+			let attemptProvider = targetProvider;
+			let attemptUpstreamModel = upstreamModel;
+			let attemptUpstreamUrl = upstreamUrl;
+			let attemptAnthropicBody = anthropicRequestBody;
+			let attemptYoucomBody = youcomRequestBody;
+			let attemptActualUrl = isAnthropicProvider || isYouComProvider ? actualUpstreamUrl : upstreamUrl;
+			let attemptIsAnthropic = isAnthropicProvider;
+			let attemptIsYoucom = isYouComProvider;
+
+			if (keyRecord.isTrial && model !== 'auto' && attemptModel !== model) {
+				const tp = await getProviderForModel(attemptModel);
+				if (!tp) continue;
+				if (attemptModel !== '__auto__' && !isGpyProviderOrModel(tp.name, attemptModel)) continue;
+				attemptProvider = tp;
+				attemptUpstreamModel = await stripProviderPrefix(attemptModel);
+				if (requestBody) requestBody.model = attemptUpstreamModel;
+				requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
+				const base = attemptProvider.endpoint.replace(/\/$/, '');
+				let pathPart = forwardPath;
+				if (base.endsWith('/v1') && pathPart.startsWith('/v1/')) pathPart = pathPart.slice(3);
+				else if (base.endsWith('/v1') && pathPart === '/v1') pathPart = '';
+				attemptUpstreamUrl = `${base}${pathPart}`;
+				attemptIsAnthropic = attemptProvider.endpointType === 'anthropic';
+				attemptIsYoucom = attemptProvider.endpointType === 'youcom';
+				if (attemptIsAnthropic) {
+					attemptAnthropicBody = prepareAnthropicUpstreamBody(requestBody);
+					attemptActualUrl = resolveAnthropicUpstreamUrl(attemptProvider.endpoint);
+				} else if (attemptIsYoucom) {
+					const yc = convertRequestToYouCom(requestBody, attemptUpstreamModel);
+					attemptYoucomBody = JSON.stringify(yc.request);
+					attemptActualUrl = `${base}/v1/agents/runs`;
+				} else {
+					attemptActualUrl = attemptUpstreamUrl;
+				}
+			}
+
+			const result = await fetchWithKeyRotation(
+				attemptProvider.id,
+				attemptIsAnthropic || attemptIsYoucom ? attemptActualUrl : attemptUpstreamUrl,
 				(apiKey) => {
-					if (isAnthropicProvider) {
+					if (attemptIsAnthropic) {
 						return {
 							method: c.req.method,
 							headers: buildAnthropicUpstreamHeaders(apiKey, upstreamHeaders),
-							body: anthropicRequestBody!,
+							body: attemptAnthropicBody!,
 						};
 					}
 
 					const headers = { ...upstreamHeaders };
-					if (isYouComProvider) {
-						// you.com's gateway rejects a duplicated/conflicting
-						// Content-Type (the client's lowercase "content-type" plus
-						// our capitalized one merge into "application/json,
-						// application/json"), which makes it treat the JSON body as
-						// a raw string. Send a clean, minimal header set.
+					if (attemptIsYoucom) {
 						delete headers['content-type'];
 						delete headers['accept'];
 						headers['Content-Type'] = 'application/json';
@@ -2879,17 +2968,31 @@ proxy.all('/*', async (c) => {
 					return {
 						method: c.req.method,
 						headers,
-						body: isAnthropicProvider
-							? anthropicRequestBody!
-							: isYouComProvider
-								? youcomRequestBody!
+						body: attemptIsAnthropic
+							? attemptAnthropicBody!
+							: attemptIsYoucom
+								? attemptYoucomBody!
 								: (requestBodyBytes as any),
 					};
 				},
-				// you.com agents API is non-streaming; we fake-stream client-side.
-				isYouComProvider ? false : isStreaming,
+				attemptIsYoucom ? false : isStreaming,
 				c.req.raw.signal,
 			);
+
+			upstreamResponse = result.response;
+			usedKeyId = result.keyId;
+			if (upstreamResponse.ok || !isRetryableUpstreamStatus(upstreamResponse.status)) {
+				if (keyRecord.isTrial && attemptModel !== model && upstreamResponse.ok) {
+					model = attemptModel;
+				}
+				fetchSucceeded = true;
+				break;
+			}
+		}
+
+		if (!fetchSucceeded) {
+			throw new Error('All trial upstream attempts failed');
+		}
 
 		const latencyMs = Date.now() - startTime;
 		const statusCode = upstreamResponse.status;

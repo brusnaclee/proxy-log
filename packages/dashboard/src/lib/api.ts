@@ -83,6 +83,7 @@ export interface ApiKeyListItem {
   keyMasked: string;
   idePolicy: string;
   isActive: boolean;
+  isTrial?: boolean;
   maxDevices: number;
   devicePolicy: string;
   ipPolicy: string;
@@ -566,4 +567,83 @@ export const quotaGuard = {
     request<{ success: boolean }>("/quota-guard/scheduler", { method: "PUT", body: JSON.stringify(data) }),
   setProviderExcluded: (provider: string, excluded: boolean) =>
     request<{ success: boolean; excludedProviders: string[] }>("/quota-guard/provider", { method: "PUT", body: JSON.stringify({ provider, excluded }) }),
+};
+
+// ─── Trial Mode ────────────────────────────────────────────────────────────────
+export interface TrialEmbedConfig {
+  title?: string;
+  description?: string;
+  color?: number;
+  footer?: string;
+  buttonLabel?: string;
+}
+
+export interface TrialDmTemplates {
+  limitReached?: string;
+  expired?: string;
+  terminated?: string;
+  keyRotated?: string;
+  claimed?: string;
+}
+
+export interface TrialSettings {
+  trialEnabled: boolean;
+  trialAccessMode: "all_members" | "groupy_members";
+  trialRequiredRoleId: string;
+  trialDefaultDurationDays: number;
+  trialMaxPerAccount: number;
+  trialDailyTokenLimit: number;
+  trialPromptLimit: number;
+  trialPromptLimitWindow: string;
+  trialModelSelectionMode: "all_gpy" | "whitelist";
+  trialModelWhitelist: string[];
+  trialPanelMessageId: string | null;
+  trialEmbedConfig: TrialEmbedConfig;
+  trialDmTemplates: TrialDmTemplates;
+  gpyModels: string[];
+}
+
+export interface TrialUserRow {
+  id: number;
+  discordUserId: string;
+  discordUsername: string | null;
+  apiKeyId: number;
+  keyPrefix: string;
+  keyName: string;
+  isActive: boolean;
+  claimedAt: string;
+  expiresAt: string;
+  endedAt: string | null;
+  endReason: string | null;
+  suspended: boolean;
+  status: string;
+  overrideDays: number | null;
+  overrideMaxTrials: number | null;
+  overrideDailyTokenLimit: number | null;
+  overridePromptLimit: number | null;
+  overridePromptLimitWindow: string | null;
+}
+
+export const trialSettings = {
+  get: () => request<TrialSettings>("/settings/trial"),
+  update: (data: Partial<TrialSettings>) =>
+    request<TrialSettings & { success: boolean }>("/settings/trial", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  listUsers: () => request<{ data: TrialUserRow[] }>("/trial/users"),
+  userAction: (data: {
+    action: string;
+    discordUserId: string;
+    days?: number;
+    reason?: string;
+    overrideDailyTokenLimit?: number;
+    overridePromptLimit?: number;
+    overridePromptLimitWindow?: string;
+    overrideMaxTrials?: number;
+  }) =>
+    request<{ success: boolean; message?: string; expiresAt?: string }>("/trial/users/action", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
 };

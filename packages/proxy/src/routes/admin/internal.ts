@@ -1,7 +1,7 @@
 ﻿import { Hono } from "hono";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { adminConfig, allowedDevices, allowedIdes, apiKeys, devices, requestLogs, modelLimits, providers } from "../../db/schema.js";
+import { adminConfig, allowedDevices, allowedIdes, apiKeys, devices, requestLogs, modelLimits, providers, trialUsers } from "../../db/schema.js";
 import { generateApiKey, getKeyPrefix, sha256 } from "../../utils/crypto.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
@@ -30,6 +30,26 @@ type UserBody = {
 
 async function findKeyByDiscordUser(discordUserId: string) {
   return (await db.select().from(apiKeys).where(eq(apiKeys.discordUserId, discordUserId)))[0];
+}
+
+async function findBestKeyForDiscordUser(discordUserId: string, targetUserId?: string) {
+  const keys = await db.select().from(apiKeys).where(eq(apiKeys.discordUserId, discordUserId));
+  if (keys.length === 0) return null;
+
+  const now = new Date();
+  const activeTrials = await db.select().from(trialUsers).where(eq(trialUsers.discordUserId, discordUserId));
+  const activeTrialKeyIds = new Set(
+    activeTrials.filter((t) => !t.endedAt && !t.suspended && t.expiresAt > now).map((t) => t.apiKeyId),
+  );
+
+  // Prefer active trial key when viewing self or trial user
+  const trialKey = keys.find((k) => activeTrialKeyIds.has(k.id));
+  if (trialKey) return trialKey;
+
+  const memberKey = keys.find((k) => !k.isTrial && k.isActive);
+  if (memberKey) return memberKey;
+
+  return keys[0];
 }
 
 async function getUserStats(apiKeyId: number) {
@@ -542,7 +562,7 @@ internal.get("/internal/stats/ranking", async (c) => {
 internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   const { input: umInput, output: umOutput } = getTokenMultipliers();
   const discordUserId = c.req.param("discordUserId");
-  const key = await findKeyByDiscordUser(discordUserId);
+  const key = await findBestKeyForDiscordUser(discordUserId);
   if (!key) return c.json({ error: "User not found" }, 404);
 
   const keyId = key.id;
@@ -688,10 +708,32 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   nextMonthWib.setUTCHours(0, 0, 0, 0);
   const monthlyResetAt = new Date(nextMonthWib.getTime() - wibOffset).toISOString();
 
+  const trialRow = (await db.select().from(trialUsers).where(eq(trialUsers.apiKeyId, keyId)).limit(1))[0] || null;
+  let trialInfo: Record<string, any> | null = null;
+  if (trialRow || key.isTrial) {
+    const now = new Date();
+    const active = trialRow && !trialRow.endedAt && !trialRow.suspended && trialRow.expiresAt > now;
+    trialInfo = {
+      isTrial: true,
+      status: trialRow?.suspended ? "suspended" : active ? "active" : (trialRow?.endedAt ? trialRow.endReason || "ended" : "expired"),
+      expiresAt: trialRow?.expiresAt || null,
+      endedAt: trialRow?.endedAt || null,
+      endReason: trialRow?.endReason || null,
+    };
+  } else {
+    trialInfo = { isTrial: false };
+  }
+
+  const effectiveDailyTokenLimit = (key.dailyTokenLimit && key.dailyTokenLimit > 0)
+    ? key.dailyTokenLimit
+    : (key.isTrial ? 0 : (config?.globalDailyTokenLimit || 0));
+
   return c.json({
     discordUserId: key.discordUserId,
     discordUsername: key.discordUsername || key.name,
     isActive: key.isActive,
+    isTrial: key.isTrial,
+    trial: trialInfo,
     keyPrefix: key.keyPrefix,
     key: key.key,
     promptLimit: globalLimit,
@@ -702,7 +744,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     modelUsage,
     perModelPromptLimit: perModelLimitFallback,
     perModelPromptLimitWindow: perModelWindowFallback,
-    dailyTokenLimit: config?.globalDailyTokenLimit || 0,
+    dailyTokenLimit: effectiveDailyTokenLimit,
     monthlyTokenLimit: config?.globalMonthlyTokenLimit || 0,
     dailyInputTokenLimit: (key.dailyInputTokenLimit && key.dailyInputTokenLimit > 0) ? key.dailyInputTokenLimit : (config?.globalDailyInputTokenLimit || 0),
     dailyOutputTokenLimit: (key.dailyOutputTokenLimit && key.dailyOutputTokenLimit > 0) ? key.dailyOutputTokenLimit : (config?.globalDailyOutputTokenLimit || 0),
@@ -888,6 +930,89 @@ internal.get("/internal/models/details", async (c) => {
   });
 
   return c.json({ object: "list", data: enriched });
+});
+
+// ─── Trial Mode (bot integration) ────────────────────────────────────────────
+internal.get("/internal/trial-panel-config", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+  const { getTrialPanelConfigForBot } = await import("./trial.js");
+  const config = await getTrialPanelConfigForBot();
+  if (!config) return c.json({ error: "Admin config missing" }, 500);
+  return c.json(config);
+});
+
+internal.post("/internal/trial-panel-message-id", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+  const body = await c.req.json<{ messageId?: string | null }>();
+  const [config] = await db.select().from(adminConfig);
+  if (!config) return c.json({ error: "Admin config missing" }, 500);
+  await db.update(adminConfig).set({
+    trialPanelMessageId: body.messageId || null,
+    updatedAt: new Date(),
+  }).where(eq(adminConfig.id, config.id));
+  return c.json({ success: true });
+});
+
+internal.post("/internal/claim-trial", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+  const body = await c.req.json<{ discordUserId: string; discordUsername?: string; hasRequiredRole?: boolean }>();
+  if (!body.discordUserId) return c.json({ error: "discordUserId required" }, 400);
+  const { claimTrialForUser } = await import("./trial.js");
+  const result = await claimTrialForUser(body);
+  if ("error" in result && !("success" in result)) {
+    return c.json(result, result.status || 400);
+  }
+  return c.json(result);
+});
+
+internal.get("/internal/trial-status/:discordUserId", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+  const { getTrialStatusForUser } = await import("./trial.js");
+  return c.json(await getTrialStatusForUser(c.req.param("discordUserId")));
+});
+
+internal.post("/internal/admin-trial-action", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+  const body = await c.req.json<any>();
+  const { adminTrialAction } = await import("./trial.js");
+  const result = await adminTrialAction(body);
+  if ("error" in result && !("success" in result)) {
+    return c.json(result, result.status || 400);
+  }
+  return c.json(result);
+});
+
+internal.get("/internal/trial-models", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+  const [config] = await db.select().from(adminConfig);
+  if (!config) return c.json({ error: "Admin config missing" }, 500);
+  const { listGpyCatalogModels } = await import("../../utils/trial-routing.js");
+  const gpyModels = await listGpyCatalogModels(config);
+  return c.json({
+    mode: config.trialModelSelectionMode || "all_gpy",
+    whitelist: JSON.parse(config.trialModelWhitelist || "[]"),
+    gpyModels,
+  });
+});
+
+internal.get("/internal/user-key-type/:discordUserId", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+  const discordUserId = c.req.param("discordUserId");
+  const key = await findBestKeyForDiscordUser(discordUserId);
+  if (!key) return c.json({ found: false });
+  return c.json({
+    found: true,
+    isTrial: key.isTrial,
+    isActive: key.isActive,
+    discordUserId,
+  });
 });
 
 export default internal;

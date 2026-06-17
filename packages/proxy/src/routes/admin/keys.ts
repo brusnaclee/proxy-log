@@ -70,7 +70,7 @@ keys.get("/keys", async (c) => {
       discordUserId: key.discordUserId,
       discordUsername: key.discordUsername,
       provisionedBy: key.provisionedBy,
-      isActive: key.isActive, maxDevices: key.maxDevices, devicePolicy: key.devicePolicy,
+      isActive: key.isActive, isTrial: key.isTrial || false, maxDevices: key.maxDevices, devicePolicy: key.devicePolicy,
       ipPolicy: key.ipPolicy, idePolicy: key.idePolicy, 
       dailyTokenLimit: key.dailyTokenLimit || 0, monthlyTokenLimit: key.monthlyTokenLimit,
       dailyInputTokenLimit: key.dailyInputTokenLimit || 0, dailyOutputTokenLimit: key.dailyOutputTokenLimit || 0,

@@ -28,6 +28,19 @@ export const adminConfig = pgTable('admin_config', {
 	geminiApiKey: text('gemini_api_key').default(''),
 	verifAutoEnabled: boolean('verif_auto_enabled').default(false),
 	tokitoApiKey: text('tokito_api_key').default(''),
+	trialEnabled: boolean('trial_enabled').notNull().default(false),
+	trialAccessMode: text('trial_access_mode').notNull().default('groupy_members'),
+	trialRequiredRoleId: text('trial_required_role_id').default('1354682641961582632'),
+	trialDefaultDurationDays: integer('trial_default_duration_days').notNull().default(30),
+	trialMaxPerAccount: integer('trial_max_per_account').notNull().default(1),
+	trialDailyTokenLimit: integer('trial_daily_token_limit').notNull().default(1_000_000),
+	trialPromptLimit: integer('trial_prompt_limit').notNull().default(50),
+	trialPromptLimitWindow: text('trial_prompt_limit_window').notNull().default('5h'),
+	trialModelSelectionMode: text('trial_model_selection_mode').notNull().default('all_gpy'),
+	trialModelWhitelist: text('trial_model_whitelist').notNull().default('[]'),
+	trialPanelMessageId: text('trial_panel_message_id'),
+	trialEmbedConfig: text('trial_embed_config').notNull().default('{}'),
+	trialDmTemplates: text('trial_dm_templates').notNull().default('{}'),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
 	updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
@@ -59,6 +72,7 @@ export const apiKeys = pgTable('api_keys', {
 	dailyInputTokenLimit: integer('daily_input_token_limit').default(0),
 	dailyOutputTokenLimit: integer('daily_output_token_limit').default(0),
 	pendingNotification: text('pending_notification'),
+	isTrial: boolean('is_trial').notNull().default(false),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
 	updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
@@ -393,8 +407,33 @@ export const recapTestimonials = pgTable('recap_testimonials', {
 	ymIdx: index('idx_recap_testi_ym').on(table.yearMonth),
 }));
 
+// ─── Trial Users ───────────────────────────────────────────────────────────────
+export const trialUsers = pgTable('trial_users', {
+	id: serial('id').primaryKey(),
+	discordUserId: text('discord_user_id').notNull(),
+	discordUsername: text('discord_username'),
+	apiKeyId: integer('api_key_id').notNull().references(() => apiKeys.id, { onDelete: 'cascade' }),
+	claimedAt: timestamp('claimed_at').notNull().defaultNow(),
+	expiresAt: timestamp('expires_at').notNull(),
+	endedAt: timestamp('ended_at'),
+	endReason: text('end_reason'),
+	overrideDays: integer('override_days'),
+	overrideMaxTrials: integer('override_max_trials'),
+	overrideDailyTokenLimit: integer('override_daily_token_limit'),
+	overridePromptLimit: integer('override_prompt_limit'),
+	overridePromptLimitWindow: text('override_prompt_limit_window'),
+	suspended: boolean('suspended').notNull().default(false),
+	lastNotifiedAt: timestamp('last_notified_at'),
+	createdAt: timestamp('created_at').notNull().defaultNow(),
+	updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => ({
+	userIdx: index('idx_trial_users_discord').on(table.discordUserId),
+	apiKeyIdx: uniqueIndex('idx_trial_users_api_key').on(table.apiKeyId),
+}));
+
 // ─── Type exports ──────────────────────────────────────────────────────────────
 export type AdminConfig = typeof adminConfig.$inferSelect;
+export type TrialUser = typeof trialUsers.$inferSelect;
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type AllowedDevice = typeof allowedDevices.$inferSelect;
 export type AllowedIde = typeof allowedIdes.$inferSelect;
@@ -425,3 +464,4 @@ export type NewModelLimit = typeof modelLimits.$inferInsert;
 export type NewCleanupState = typeof cleanupState.$inferInsert;
 export type NewMonthlyStats = typeof monthlyStats.$inferInsert;
 export type NewModelMetadata = typeof modelMetadata.$inferInsert;
+export type NewTrialUser = typeof trialUsers.$inferInsert;

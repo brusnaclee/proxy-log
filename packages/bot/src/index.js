@@ -85,6 +85,7 @@ const VERIFIED_USERS_PATH = path.join(AGVERIF_DATA_DIR, 'verified_users.json');
 const SETUP_STATE_PATH = path.join(AGVERIF_DATA_DIR, 'setup_state.json');
 const RANKING_STATE_PATH = path.join(AGVERIF_DATA_DIR, 'ranking_state.json');
 const RANKING_REFRESH_INTERVAL_MS = 60 * 1000; // 1 menit
+const TRIAL_CLAIM_BUTTON = 'trial_claim';
 
 // ─── Monthly Recap (Wrapped) ────────────────────────────────────────────────
 const RECAP_STATE_PATH = path.join(AGVERIF_DATA_DIR, 'recap_state.json');
@@ -2600,8 +2601,8 @@ async function buildSearchEmbed() {
 	};
 
 	const lines = [
-		'Klik tombol di bawah untuk mencari data penggunaan API seorang user.',
-		'Masukkan **Discord User ID** saat diminta.',
+		'Klik tombol **Lihat Usage Saya** untuk melihat penggunaan API Anda langsung (tanpa input ID).',
+		'Setelah itu, gunakan **Cari Usage User Lain** jika ingin cek user lain.',
 		'',
 		'**Global Prompt Limits:**',
 		`- Prompt Limit: ${fmt(limits.globalPromptLimit, 'req')} (${limits.globalPromptLimitWindow || '1d'})`,
@@ -2624,11 +2625,11 @@ async function buildSearchEmbed() {
 		.setColor(0x57f287);
 }
 
-function buildSearchRow() {
-	return new ActionRowBuilder().addComponents(
+function buildSearchRow(includeOther = false) {
+	const buttons = [
 		new ButtonBuilder()
 			.setCustomId('ranking_search_user')
-			.setLabel('Cari Usage User')
+			.setLabel('Lihat Usage Saya')
 			.setEmoji('🔍')
 			.setStyle(ButtonStyle.Primary),
 		new ButtonBuilder()
@@ -2636,7 +2637,17 @@ function buildSearchRow() {
 			.setLabel('See Model Limit')
 			.setEmoji('🎯')
 			.setStyle(ButtonStyle.Secondary),
-	);
+	];
+	if (includeOther) {
+		buttons.push(
+			new ButtonBuilder()
+				.setCustomId('ranking_search_user_other')
+				.setLabel('Cari Usage User Lain')
+				.setEmoji('👥')
+				.setStyle(ButtonStyle.Secondary),
+		);
+	}
+	return new ActionRowBuilder().addComponents(...buttons);
 }
 
 // Format one global model limit row (used by the panel "See Model Limit" handler).
@@ -3487,11 +3498,321 @@ async function ensureRankingMessages() {
 	await refreshRankingEmbeds().catch((e) => console.error('[ranking] Initial refresh failed:', e.message));
 }
 
+// ─── Trial Panel ─────────────────────────────────────────────────────────────
+function buildTrialPanelEmbed(cfg) {
+	const embedCfg = cfg?.trialEmbedConfig || {};
+	const title = embedCfg.title || '🎁 Trial API Access — Klaim Sekarang!';
+	const description = embedCfg.description || 'Klik tombol di bawah untuk klaim trial API proxy Groupy.';
+	const color = embedCfg.color || 0x57f287;
+	const footer = embedCfg.footer || 'Groupy Proxy Trial';
+	return new EmbedBuilder()
+		.setTitle(title)
+		.setDescription(description)
+		.setColor(color)
+		.setFooter({ text: footer })
+		.setTimestamp();
+}
+
+function buildTrialPanelRow(cfg) {
+	const label = cfg?.trialEmbedConfig?.buttonLabel || 'Klaim Trial API';
+	return new ActionRowBuilder().addComponents(
+		new ButtonBuilder()
+			.setCustomId(TRIAL_CLAIM_BUTTON)
+			.setLabel(label)
+			.setEmoji('🎁')
+			.setStyle(ButtonStyle.Success),
+	);
+}
+
+async function ensureTrialPanelMessage() {
+	if (!TOKITO_CHANNEL_ID) return;
+	let cfg;
+	try {
+		cfg = await proxyInternal('/admin/internal/trial-panel-config');
+	} catch (err) {
+		console.error('[trial] Failed to load trial config:', err.message);
+		return;
+	}
+
+	const channel = await client.channels.fetch(TOKITO_CHANNEL_ID).catch(() => null);
+	if (!channel || !channel.isTextBased()) return;
+
+	const panelId = cfg.trialPanelMessageId;
+	let existing = null;
+	if (panelId) {
+		existing = await channel.messages.fetch(panelId).catch(() => null);
+	}
+
+	if (!cfg.trialEnabled) {
+		if (existing && existing.author?.id === client.user.id) {
+			await existing.delete().catch(() => {});
+		}
+		if (panelId) {
+			await proxyInternal('/admin/internal/trial-panel-message-id', 'POST', { messageId: null });
+		}
+		return;
+	}
+
+	const payload = {
+		embeds: [buildTrialPanelEmbed(cfg)],
+		components: [buildTrialPanelRow(cfg)],
+	};
+
+	if (existing && existing.author?.id === client.user.id) {
+		await existing.edit(payload);
+		return;
+	}
+
+	const recent = await channel.messages.fetch({ limit: 30 });
+	for (const msg of recent.values()) {
+		if (
+			msg.author?.id === client.user.id &&
+			msg.components?.some((row) =>
+				row.components?.some((c) => c.customId === TRIAL_CLAIM_BUTTON),
+			)
+		) {
+			await msg.delete().catch(() => {});
+		}
+	}
+
+	const sent = await channel.send(payload);
+	await proxyInternal('/admin/internal/trial-panel-message-id', 'POST', {
+		messageId: sent.id,
+	});
+}
+
+async function handleTrialClaimButton(interaction) {
+	await interaction.deferReply({ ephemeral: true });
+	let cfg;
+	try {
+		cfg = await proxyInternal('/admin/internal/trial-panel-config');
+	} catch (err) {
+		await interaction.editReply({ content: `❌ Gagal memuat config trial: ${err.message}` });
+		return;
+	}
+
+	if (!cfg.trialEnabled) {
+		await interaction.editReply({ content: '❌ Mode trial sedang **nonaktif**.' });
+		return;
+	}
+
+	const accessMode = cfg.trialAccessMode || 'groupy_members';
+	const requiredRoleId = cfg.trialRequiredRoleId || REQUIRED_ROLE_ID;
+	let hasRequiredRole = true;
+	if (accessMode === 'groupy_members') {
+		hasRequiredRole = interaction.member?.roles?.cache?.has(requiredRoleId);
+		if (!hasRequiredRole) {
+			const role = interaction.guild?.roles?.cache?.get(requiredRoleId);
+			const roleName = role ? role.name : requiredRoleId;
+			await interaction.editReply({
+				content: `❌ Anda memerlukan role **${roleName}** (<@&${requiredRoleId}>) untuk klaim trial.`,
+			});
+			return;
+		}
+	}
+
+	try {
+		const result = await proxyInternal('/admin/internal/claim-trial', 'POST', {
+			discordUserId: interaction.user.id,
+			discordUsername: interaction.user.username,
+			hasRequiredRole,
+		});
+
+		const models = (result.rules?.models || []).slice(0, 15).map((m) => `\`${m}\``).join('\n');
+		const rulesText =
+			`**Endpoint:** \`${result.endpoint}\`\n` +
+			`**Authorization:** \`Bearer ${result.apiKey}\`\n\n` +
+			`**Rules Trial:**\n` +
+			`• Durasi: **${result.durationDays} hari** (sampai <t:${Math.floor(new Date(result.expiresAt).getTime() / 1000)}:F>)\n` +
+			`• Token harian: **${(result.rules?.dailyTokenLimit || 0).toLocaleString()}**\n` +
+			`• Prompt: **${result.rules?.promptLimit}/${result.rules?.promptLimitWindow || '5h'}**\n` +
+			`• Provider: **gpy** saja\n\n` +
+			`**Model tersedia:**\n${models || '_lihat /v1/models_'}`;
+
+		await interaction.editReply({
+			content: `✅ Trial berhasil diklaim!\n\n${rulesText}\n\n_Kredensial juga dikirim via DM jika DM terbuka._`,
+		});
+
+		try {
+			await sendDMToUser(
+				interaction.user.id,
+				'🎁 Trial API Aktif',
+				rulesText,
+				0x57f287,
+			);
+		} catch {}
+	} catch (err) {
+		const msg = err.message || 'Unknown error';
+		if (msg.includes('trial_already_used') || msg.includes('409')) {
+			await interaction.editReply({ content: '❌ Anda sudah pernah klaim trial. Satu akun hanya bisa trial sesuai limit yang berlaku.' });
+		} else if (msg.includes('trial_already_active')) {
+			await interaction.editReply({ content: '❌ Anda masih punya trial aktif.' });
+		} else {
+			await interaction.editReply({ content: `❌ Gagal klaim trial: ${msg}` });
+		}
+	}
+}
+
+function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
+	const {
+		discordUsername, isActive, keyPrefix, today, month, promptLimit, promptLimitWindow,
+		promptUsed, modelUsage, perModelPromptLimit, perModelPromptLimitWindow,
+		dailyTokenLimit, monthlyTokenLimit, dailyTokensUsed, monthlyTokensUsed,
+		dailyInputTokenLimit, dailyOutputTokenLimit, dailyInputUsed, dailyOutputUsed,
+		isTrial, trial,
+	} = data;
+	const displayName = discordUsername || `User ${discordUserId}`;
+
+	function formatResetTime(isoStr) {
+		if (!isoStr) return '';
+		const unix = Math.floor(new Date(isoStr).getTime() / 1000);
+		return ` — Resets <t:${unix}:t> (<t:${unix}:R>)`;
+	}
+
+	const globalLimitStr = promptLimit > 0
+		? `**${promptUsed} / ${promptLimit}** req (${promptLimitWindow})` + (promptUsed >= promptLimit ? ' 🔴' : '') + formatResetTime(data.promptResetAt)
+		: '**Unlimited**';
+
+	let modelLimitStr = '';
+	if (modelUsage && modelUsage.length > 0) {
+		const activeModels = modelUsage.filter((m) => m.used > 0 || m.limit > 0);
+		if (activeModels.length > 0) {
+			modelLimitStr = activeModels.map((m) =>
+				`- \`${m.model}\`: **${m.used} / ${m.limit > 0 ? m.limit : '∞'}**` + (m.limit > 0 && m.used >= m.limit ? ' 🔴' : '') + formatResetTime(m.resetAt),
+			).join('\n');
+		} else {
+			modelLimitStr = perModelPromptLimit > 0 ? `Default: **${perModelPromptLimit}** req (${perModelPromptLimitWindow})` : '**Unlimited**';
+		}
+	} else {
+		modelLimitStr = perModelPromptLimit > 0 ? `Default: **${perModelPromptLimit}** req (${perModelPromptLimitWindow})` : '**Unlimited**';
+	}
+
+	const dailyTokenStr = dailyTokenLimit > 0
+		? `**${formatTokens(dailyTokensUsed)} / ${formatTokens(dailyTokenLimit)}**` + (dailyTokensUsed >= dailyTokenLimit ? ' 🔴' : '') + formatResetTime(data.dailyResetAt)
+		: `**${formatTokens(dailyTokensUsed)} / Unlimited**` + formatResetTime(data.dailyResetAt);
+	const monthlyTokenStr = monthlyTokenLimit > 0
+		? `**${formatTokens(monthlyTokensUsed)} / ${formatTokens(monthlyTokenLimit)}**` + (monthlyTokensUsed >= monthlyTokenLimit ? ' 🔴' : '') + formatResetTime(data.monthlyResetAt)
+		: `**${formatTokens(monthlyTokensUsed)} / Unlimited**` + formatResetTime(data.monthlyResetAt);
+	const dailyInputStr = dailyInputTokenLimit > 0
+		? `**${formatTokens(dailyInputUsed)} / ${formatTokens(dailyInputTokenLimit)}**` + (dailyInputUsed >= dailyInputTokenLimit ? ' 🔴' : '') + formatResetTime(data.dailyResetAt)
+		: `**${formatTokens(dailyInputUsed)} / Unlimited**` + formatResetTime(data.dailyResetAt);
+	const dailyOutputStr = dailyOutputTokenLimit > 0
+		? `**${formatTokens(dailyOutputUsed)} / ${formatTokens(dailyOutputTokenLimit)}**` + (dailyOutputUsed >= dailyOutputTokenLimit ? ' 🔴' : '') + formatResetTime(data.dailyResetAt)
+		: `**${formatTokens(dailyOutputUsed)} / Unlimited**` + formatResetTime(data.dailyResetAt);
+
+	const isSelf = viewerUserId === discordUserId;
+	const keyDisplay = isSelf ? (data.key || `${keyPrefix}...`) : '[HIDDEN]';
+
+	let trialBlock = '';
+	if (isTrial || trial?.isTrial) {
+		const exp = trial?.expiresAt ? `<t:${Math.floor(new Date(trial.expiresAt).getTime() / 1000)}:F>` : '—';
+		trialBlock = `\n\n**🎁 Status Trial:** ${trial?.status || 'active'}\n**Berakhir:** ${exp}`;
+	}
+
+	function periodField(p) {
+		const lines = [
+			`📨 Requests: **${p.requests.toLocaleString()}**`,
+			`🔢 Total Tokens: **${formatTokens(p.tokens)}**`,
+			`📥 Input: **${formatTokens(p.promptTokens)}**`,
+			`📤 Output: **${formatTokens(p.completionTokens)}**`,
+			`💰 Est. Cost: **${formatCostMicro(p.estimatedCost)}**`,
+		];
+		if (p.topModels && p.topModels.length > 0) {
+			lines.push('\n**Top Models:**');
+			p.topModels.forEach((m) => {
+				lines.push(`\`${m.model}\` (${m.requests.toLocaleString()} req, ${formatTokens(m.tokens)} tok)`);
+			});
+		}
+		return lines.join('\n');
+	}
+
+	const embed = new EmbedBuilder()
+		.setTitle(`📊 Usage: ${displayName}`)
+		.setDescription(
+			`Discord ID: \`${discordUserId}\`\nAPI Key: \`${keyDisplay}\`\nStatus: ${isActive ? '🟢 Active' : '🔴 Inactive'}${trialBlock}\n\n` +
+			`**🎯 Prompt Limits**\nGlobal: ${globalLimitStr}\nPer-Model:\n${modelLimitStr}\n` +
+			`-# ℹ️ Tool follow-ups hanya dihitung 1x prompt per turn.\n\n` +
+			`**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}\nBulanan: ${monthlyTokenStr}`,
+		)
+		.setColor(isActive ? 0x57f287 : 0xff6b6b)
+		.addFields(
+			{ name: '📅 Hari Ini', value: periodField(today), inline: true },
+			{ name: '📆 Bulan Ini', value: periodField(month), inline: true },
+		)
+		.setTimestamp();
+
+	return embed;
+}
+
+async function canTrialUserViewTarget(callerId, targetId, targetData, guild) {
+	let callerTrial = false;
+	try {
+		const callerKey = await proxyInternal(`/admin/internal/user-key-type/${callerId}`);
+		callerTrial = callerKey?.isTrial === true;
+	} catch {}
+
+	if (!callerTrial) return { ok: true };
+
+	if (targetData?.isTrial || targetData?.trial?.isTrial) return { ok: true };
+
+	if (REQUIRED_ROLE_ID && guild) {
+		try {
+			const member = await guild.members.fetch(targetId);
+			if (member.roles.cache.has(REQUIRED_ROLE_ID)) {
+				const role = guild.roles.cache.get(REQUIRED_ROLE_ID);
+				return {
+					ok: false,
+					message: `❌ Anda tidak punya akses untuk melihat user ini. Anda memerlukan role **${role?.name || REQUIRED_ROLE_ID}** (<@&${REQUIRED_ROLE_ID}>).`,
+				};
+			}
+		} catch {}
+	}
+	return { ok: true };
+}
+
+async function handleShowMyUsage(interaction) {
+	await interaction.deferReply({ ephemeral: true });
+	const discordUserId = interaction.user.id;
+
+	let data;
+	try {
+		data = await proxyInternal(`/admin/internal/stats/user-detail/${discordUserId}`);
+	} catch (err) {
+		const msg = err.message || '';
+		if (msg.includes('404') || msg.includes('not found')) {
+			await interaction.editReply({
+				content: `❌ Anda belum memiliki API key.\n\n• Klaim **trial** lewat embed trial di channel ini, atau\n• Verifikasi member di <#${AGVERIF_CHANNEL_ID}>.`,
+			});
+			return;
+		}
+		await interaction.editReply({ content: `❌ Gagal mengambil data: ${msg}` });
+		return;
+	}
+
+	if (!data.isActive) {
+		await interaction.editReply({
+			content: '❌ API key Anda **nonaktif/disabled**. Hubungi admin jika ini tidak seharusnya.',
+		});
+		return;
+	}
+
+	const embed = buildUsageDetailEmbed(data, discordUserId, discordUserId);
+	const showOther = data.isTrial || data.trial?.isTrial || true;
+	await interaction.editReply({
+		embeds: [embed],
+		components: [buildSearchRow(showOther)],
+	});
+}
+
 // ─── Handle Search User Interaction ───────────────────────────────────────────
 async function handleRankingSearchButton(interaction) {
+	await handleShowMyUsage(interaction);
+}
+
+async function handleRankingSearchOtherButton(interaction) {
 	const modal = new ModalBuilder()
-		.setCustomId('ranking_search_user_modal')
-		.setTitle('🔍 Cari Usage User');
+		.setCustomId('ranking_search_user_other_modal')
+		.setTitle('👥 Cari Usage User Lain');
 
 	const input = new TextInputBuilder()
 		.setCustomId('discord_user_id')
@@ -3516,87 +3837,21 @@ async function handleRankingSearchModal(interaction) {
 	} catch (err) {
 		const msg = err.message || 'Unknown error';
 		if (msg.includes('User not found') || msg.includes('404')) {
-			await interaction.editReply({ content: `❌ User dengan ID \`${discordUserId}\` tidak ditemukan atau belum memiliki API key.\n\nJika Anda belum terdaftar, silakan verifikasi terlebih dahulu di <#1507648903900565514>.` });
+			await interaction.editReply({ content: `❌ User \`${discordUserId}\` tidak ditemukan atau belum punya API key.` });
 		} else {
 			await interaction.editReply({ content: `❌ Gagal mengambil data: ${msg}` });
 		}
 		return;
 	}
 
-	const { discordUsername, isActive, keyPrefix, today, month, promptLimit, promptLimitWindow, promptUsed, promptResetMins, modelUsage, perModelPromptLimit, perModelPromptLimitWindow, dailyTokenLimit, monthlyTokenLimit, dailyTokensUsed, monthlyTokensUsed, dailyInputTokenLimit, dailyOutputTokenLimit, dailyInputUsed, dailyOutputUsed } = data;
-	const displayName = discordUsername || `User ${discordUserId}`;
-
-	function periodField(p) {
-		const lines = [
-			`📨 Requests: **${p.requests.toLocaleString()}**`,
-			`🔢 Total Tokens: **${formatTokens(p.tokens)}**`,
-			`📥 Input: **${formatTokens(p.promptTokens)}**`,
-			`📤 Output: **${formatTokens(p.completionTokens)}**`,
-			// Context tokens removed
-			`💰 Est. Cost: **${formatCostMicro(p.estimatedCost)}**`,
-		];
-		if (p.topModels && p.topModels.length > 0) {
-			lines.push(`\n**Top Models:**`);
-			p.topModels.forEach((m) => {
-				lines.push(`\`${m.model}\` (${m.requests.toLocaleString()} req, ${formatTokens(m.tokens)} tok)`);
-			});
-		}
-		return lines.join('\n');
+	const access = await canTrialUserViewTarget(interaction.user.id, discordUserId, data, interaction.guild);
+	if (!access.ok) {
+		await interaction.editReply({ content: access.message });
+		return;
 	}
 
-	function formatResetTime(isoStr) {
-		if (!isoStr) return '';
-		const unix = Math.floor(new Date(isoStr).getTime() / 1000);
-		return ` — Resets <t:${unix}:t> (<t:${unix}:R>)`;
-	}
-
-	const globalLimitStr = promptLimit > 0 
-		? `**${promptUsed} / ${promptLimit}** req (${promptLimitWindow})` + (promptUsed >= promptLimit ? ' 🔴' : '') + formatResetTime(data.promptResetAt)
-		: '**Unlimited**';
-
-	let modelLimitStr = '';
-	if (modelUsage && modelUsage.length > 0) {
-		const activeModels = modelUsage.filter((m) => m.used > 0 || m.limit > 0);
-		if (activeModels.length > 0) {
-			modelLimitStr = activeModels.map(m => 
-				`- \`${m.model}\`: **${m.used} / ${m.limit > 0 ? m.limit : '∞'}**` + (m.limit > 0 && m.used >= m.limit ? ' 🔴' : '') + formatResetTime(m.resetAt)
-			).join('\n');
-		} else {
-			modelLimitStr = perModelPromptLimit > 0 ? `Default: **${perModelPromptLimit}** req (${perModelPromptLimitWindow})` : '**Unlimited**';
-		}
-	} else {
-		modelLimitStr = perModelPromptLimit > 0 ? `Default: **${perModelPromptLimit}** req (${perModelPromptLimitWindow})` : '**Unlimited**';
-	}
-
-	const dailyTokenStr = dailyTokenLimit > 0
-		? `**${formatTokens(dailyTokensUsed)} / ${formatTokens(dailyTokenLimit)}**` + (dailyTokensUsed >= dailyTokenLimit ? ' 🔴' : '') + formatResetTime(data.dailyResetAt)
-		: `**${formatTokens(dailyTokensUsed)} / Unlimited**` + formatResetTime(data.dailyResetAt);
-	const monthlyTokenStr = monthlyTokenLimit > 0
-		? `**${formatTokens(monthlyTokensUsed)} / ${formatTokens(monthlyTokenLimit)}**` + (monthlyTokensUsed >= monthlyTokenLimit ? ' 🔴' : '') + formatResetTime(data.monthlyResetAt)
-		: `**${formatTokens(monthlyTokensUsed)} / Unlimited**` + formatResetTime(data.monthlyResetAt);
-	const dailyInputStr = dailyInputTokenLimit > 0
-		? `**${formatTokens(dailyInputUsed)} / ${formatTokens(dailyInputTokenLimit)}**` + (dailyInputUsed >= dailyInputTokenLimit ? ' 🔴' : '') + formatResetTime(data.dailyResetAt)
-		: `**${formatTokens(dailyInputUsed)} / Unlimited**` + formatResetTime(data.dailyResetAt);
-	const dailyOutputStr = dailyOutputTokenLimit > 0
-		? `**${formatTokens(dailyOutputUsed)} / ${formatTokens(dailyOutputTokenLimit)}**` + (dailyOutputUsed >= dailyOutputTokenLimit ? ' 🔴' : '') + formatResetTime(data.dailyResetAt)
-		: `**${formatTokens(dailyOutputUsed)} / Unlimited**` + formatResetTime(data.dailyResetAt);
-
-	const isSelf = interaction.user.id === discordUserId;
-	const keyDisplay = isSelf ? (data.key || `${keyPrefix}...`) : '[HIDDEN]';
-
-	const embed = new EmbedBuilder()
-		.setTitle(`📊 Usage: ${displayName}`)
-		.setDescription(`Discord ID: \`${discordUserId}\`\nAPI Key: \`${keyDisplay}\`\nStatus: ${isActive ? '🟢 Active' : '🔴 Inactive'}\n\n**🎯 Prompt Limits**\nGlobal: ${globalLimitStr}\nPer-Model:\n${modelLimitStr}\n-# ℹ️ Tool follow-ups (tool calls, sub-agent) hanya dihitung 1x prompt per turn. Jika hitungan prompt terasa tidak sesuai, hubungi admin untuk koreksi.\n\n**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}\nBulanan: ${monthlyTokenStr}`)
-		.setColor(isActive ? 0x57f287 : 0xff6b6b)
-		.addFields(
-			{ name: '📅 Hari Ini', value: periodField(today), inline: true },
-			{ name: '📆 Bulan Ini', value: periodField(month), inline: true },
-		)
-		.setTimestamp();
-
-	await interaction.editReply({
-		embeds: [embed],
-	});
+	const embed = buildUsageDetailEmbed(data, discordUserId, interaction.user.id);
+	await interaction.editReply({ embeds: [embed], components: [buildSearchRow(true)] });
 }
 
 client.once('clientReady', async () => {
@@ -3694,6 +3949,7 @@ client.once('clientReady', async () => {
 	}
 
 	await ensureRankingMessages();
+	await ensureTrialPanelMessage().catch((e) => console.error('[trial] panel error:', e.message));
 	await setupVerificationButton();
 	startPhotoCheckInterval();
 	startRoleSyncInterval();
@@ -3726,6 +3982,12 @@ client.once('clientReady', async () => {
 			console.error('[ranking] Refresh error:', err.message),
 		);
 	}, RANKING_REFRESH_INTERVAL_MS);
+
+	setInterval(() => {
+		ensureTrialPanelMessage().catch((err) =>
+			console.error('[trial] panel refresh error:', err.message),
+		);
+	}, 60 * 1000);
 
 	if (TOKITO_API_KEY) {
 		console.log(`[tokito] Monitor active. Panel Channel ID: ${TOKITO_CHANNEL_ID}`);
@@ -3763,8 +4025,40 @@ client.once('clientReady', async () => {
 			const data = await proxyInternal('/admin/internal/pending-notifications');
 			const notifications = data?.notifications || [];
 			for (const notif of notifications) {
-				if (!notif.discordUserId || !notif.newKey) continue;
+				if (!notif.discordUserId) continue;
 				try {
+					if (notif.type?.startsWith('trial_')) {
+						let dmText = '';
+						let title = 'Trial Notification';
+						let color = 0xf59e0b;
+						if (notif.type === 'trial_claimed') {
+							title = '🎁 Trial API Aktif';
+							color = 0x57f287;
+							dmText =
+								notif.dmTemplate?.replace(/\{(\w+)\}/g, (_, k) => notif[k] || '') ||
+								`Trial aktif!\n\nEndpoint: \`${notif.endpoint}\`\nKey: \`${notif.apiKey}\``;
+						} else if (notif.type === 'trial_key_rotated') {
+							title = '🔄 Trial Key Di-rotate';
+							dmText =
+								`⚠️ Key trial di-rotate karena device baru terdeteksi.\n\n**Endpoint:** \`${notif.endpoint}\`\n**Key baru:** \`${notif.newKey}\``;
+						} else if (notif.type === 'trial_limit_reached') {
+							title = '⚠️ Limit Trial Tercapai';
+							dmText = notif.message || 'Limit harian/bulanan trial Anda sudah tercapai.';
+						} else if (notif.type === 'trial_expired') {
+							title = '⏰ Trial Berakhir';
+							dmText = 'Masa trial API Anda sudah habis.';
+						} else if (notif.type === 'trial_terminated') {
+							title = '🚫 Trial Dihentikan';
+							dmText = `Trial dihentikan. ${notif.reason ? `Alasan: ${notif.reason}` : ''}`;
+						}
+						if (dmText) await sendDMToUser(notif.discordUserId, title, dmText, color);
+						if (notif.keyId) {
+							await proxyInternal(`/admin/internal/clear-notification/${notif.keyId}`, 'POST');
+						}
+						continue;
+					}
+
+					if (!notif.newKey) continue;
 					if (notif.type === 'admin_bulk_rotate') {
 						const dmText =
 							`🔄 **API Key Di-rotate (Admin)**\n\n` +
@@ -3866,21 +4160,27 @@ client.on('interactionCreate', async (interaction) => {
 	try {
 		// ─── Ranking Search Button ───────────────────────────────────────────
 		if (interaction.isButton() && interaction.customId === 'ranking_search_user') {
-			// Role-gate: require REQUIRED_ROLE_ID
-			if (REQUIRED_ROLE_ID && !interaction.member.roles.cache.has(REQUIRED_ROLE_ID)) {
-				const role = interaction.guild.roles.cache.get(REQUIRED_ROLE_ID);
-				const roleName = role ? role.name : 'Required Role';
-				await interaction.reply({
-					content: `Anda memerlukan role **${roleName}** untuk menggunakan fitur ini.`,
-					ephemeral: true,
-				});
-				return;
-			}
 			await handleRankingSearchButton(interaction);
 			return;
 		}
 
+		if (interaction.isButton() && interaction.customId === 'ranking_search_user_other') {
+			await handleRankingSearchOtherButton(interaction);
+			return;
+		}
+
+		// ─── Trial Claim Button ────────────────────────────────────────────────
+		if (interaction.isButton() && interaction.customId === TRIAL_CLAIM_BUTTON) {
+			await handleTrialClaimButton(interaction);
+			return;
+		}
+
 		// ─── Ranking Search Modal Submit ─────────────────────────────────────
+		if (interaction.isModalSubmit() && interaction.customId === 'ranking_search_user_other_modal') {
+			await handleRankingSearchModal(interaction);
+			return;
+		}
+
 		if (interaction.isModalSubmit() && interaction.customId === 'ranking_search_user_modal') {
 			await handleRankingSearchModal(interaction);
 			return;

@@ -128,7 +128,16 @@ export default function KeysPage() {
                     className="border-b border-border/30 hover:bg-accent/30 cursor-pointer transition-colors"
                     onClick={() => navigate(`/keys/${k.id}-${k.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').substring(0, 40)}`)}
                   >
-                    <td className="py-3 px-4 font-medium text-sm">{k.name}</td>
+                    <td className="py-3 px-4 font-medium text-sm">
+                      <span className="inline-flex items-center gap-2">
+                        {k.name}
+                        {k.isTrial && (
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-amber-500/50 text-amber-500">
+                            Trial
+                          </Badge>
+                        )}
+                      </span>
+                    </td>
                     <td className="py-3 px-4 hide-mobile">
                       <code className="text-xs bg-accent/50 px-2 py-1 rounded font-mono">
                         {k.keyMasked}

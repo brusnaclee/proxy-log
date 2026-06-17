@@ -18,11 +18,13 @@ import internalRoutes from "./routes/admin/internal.js";
 import monitorRoutes from "./routes/admin/monitor.js";
 import buglogRoutes from "./routes/admin/buglog.js";
 import quotaGuardRoutes from "./routes/admin/quota-guard.js";
+import trialRoutes from "./routes/admin/trial.js";
 import recapRoutes from "./routes/admin/recap.js";
 import recapWebRoutes from "./routes/recap-web.js";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { initializeModelCatalogScheduler, initializeMetadataEnrichmentScheduler } from "./utils/model-catalog.js";
 import { initializeQuotaGuardScheduler } from "./utils/quota-guard.js";
+import { initializeTrialScheduler } from "./utils/trial-scheduler.js";
 import { runTranscriptCleanup, run3MonthCleanup } from "./utils/cleanup.js";
 
 // Load environment from root .env regardless of current working directory.
@@ -74,6 +76,7 @@ app.route("/admin", monitorRoutes);
 app.route("/admin", buglogRoutes);
 app.route("/admin", quotaGuardRoutes);
 app.route("/admin", recapRoutes);
+app.route("/admin", trialRoutes);
 
 // ─── Proxy Routes (catch-all for /v1/*) ─────────────────────────────────────────
 app.route("/v1", proxyRoutes);
@@ -112,6 +115,7 @@ async function main() {
   await initializeModelCatalogScheduler();
   initializeMetadataEnrichmentScheduler();
   initializeQuotaGuardScheduler();
+  initializeTrialScheduler();
 
   // Check every 3 hours if yesterday's data needs cleanup
   // Only clears YESTERDAY's heavy fields, NEVER touches today's data
