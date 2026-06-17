@@ -266,6 +266,7 @@ export interface LogEntry {
   id: number;
   apiKeyId: number;
   apiKeyName: string;
+  isTrial?: boolean;
   userAgentRaw?: string | null;
   osDetected?: string | null;
   clientName?: string | null;

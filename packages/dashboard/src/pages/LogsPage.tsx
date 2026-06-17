@@ -338,7 +338,16 @@ export default function LogsPage() {
                       return (
                         <tr key={log.id || i} className="border-b border-border/30 hover:bg-accent/30 transition-colors">
                           <td className="py-2 px-3 text-xs text-muted-foreground font-mono whitespace-nowrap">{formatDate(log.createdAt)}</td>
-                          <td className="py-2 px-3 text-xs">{log.apiKeyName || "-"}</td>
+                          <td className="py-2 px-3 text-xs">
+                            <div className="flex items-center gap-1">
+                              <span>{log.apiKeyName || "-"}</span>
+                              {log.isTrial && (
+                                <Badge variant="outline" className="text-[10px] border-purple-500/50 text-purple-400">
+                                  Trial
+                                </Badge>
+                              )}
+                            </div>
+                          </td>
                           <td className="py-2 px-3 text-xs">
                             <div>{log.ideDetected || "-"}</div>
                             <div className="text-[10px] text-muted-foreground">{log.provider || "unknown"}</div>

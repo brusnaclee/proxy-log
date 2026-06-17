@@ -1,6 +1,7 @@
 ﻿import { useEffect, useState, useCallback } from "react";
 import { stats } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { formatNumber, formatCost, formatChartPeriod } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
@@ -339,7 +340,12 @@ export default function AnalyticsPage() {
                   <tr key={i} className="border-b border-border/30 hover:bg-accent/30">
                     <td className="py-2 px-4 text-xs text-muted-foreground font-bold">{i + 1}</td>
                     <td className="py-2 px-4 text-xs">
-                      <div className="font-medium truncate max-w-[160px]">{u.displayName || u.discordUsername || 'Unknown'}</div>
+                      <div className="flex items-center gap-1">
+                        <div className="font-medium truncate max-w-[160px]">{u.displayName || u.discordUsername || 'Unknown'}</div>
+                        {u.isTrial && (
+                          <Badge variant="outline" className="text-[10px] border-purple-500/50 text-purple-400">Trial</Badge>
+                        )}
+                      </div>
                       {(u.displayName || u.discordUsername) !== u.keyName && <div className="text-[10px] text-muted-foreground truncate max-w-[160px]">{u.keyName || 'Unknown Key'}</div>}
                     </td>
                     <td className="py-2 px-4 text-right font-mono text-xs font-semibold">{formatNumber(u.requests || 0)}</td>
@@ -375,7 +381,12 @@ export default function AnalyticsPage() {
                   <tr key={i} className="border-b border-border/30 hover:bg-accent/30">
                     <td className="py-2 px-4 text-xs text-muted-foreground font-bold">{i + 1}</td>
                     <td className="py-2 px-4 text-xs">
-                      <div className="font-medium truncate max-w-[160px]">{u.displayName || u.discordUsername || 'Unknown'}</div>
+                      <div className="flex items-center gap-1">
+                        <div className="font-medium truncate max-w-[160px]">{u.displayName || u.discordUsername || 'Unknown'}</div>
+                        {u.isTrial && (
+                          <Badge variant="outline" className="text-[10px] border-purple-500/50 text-purple-400">Trial</Badge>
+                        )}
+                      </div>
                       {(u.displayName || u.discordUsername) !== u.keyName && <div className="text-[10px] text-muted-foreground truncate max-w-[160px]">{u.keyName || 'Unknown Key'}</div>}
                     </td>
                     <td className="py-2 px-4 text-right font-mono text-xs font-semibold">{formatNumber(u.tokens || 0)}</td>

@@ -82,7 +82,8 @@ function mapTrialUserRow(t: typeof trialUsers.$inferSelect, key: typeof apiKeys.
   if (!t.endedAt && !t.suspended && t.expiresAt > now && key.isActive) status = "active";
   else if (t.suspended) status = "suspended";
   else if (!t.endedAt && t.expiresAt <= now) status = "expired";
-  else if (t.endReason === "admin_terminated") status = "terminated";
+    else if (t.endReason === "admin_terminated") status = "terminated";
+    else if (t.endReason === "admin_grant_retry") status = "unclaimed";
 
   return {
     id: t.id,
@@ -260,7 +261,7 @@ export async function claimTrialForUser(body: {
     dailyTokenLimit: String(dailyLimit),
     promptLimit: String(promptLimit),
     promptWindow,
-    modelList: gpyModels.slice(0, 20).map((m) => `• \`${m}\``).join("\n") || "• (lihat /v1/models)",
+    modelList: gpyModels.slice(0, 30).map((m) => `• \`${m}\``).join("\n") || "• (lihat /v1/models)",
     dmTemplate: dmTemplates.claimed || "",
   });
 
@@ -367,11 +368,16 @@ export async function adminTrialAction(body: {
   }
 
   if (body.action === "grant_retry") {
-    // Allow user another trial by bumping override max
+    // Full reset: mark previous row as unclaim so user can re-claim from scratch.
     await db.update(trialUsers).set({
+      endedAt: now,
+      endReason: "admin_grant_retry",
+      suspended: false,
       overrideMaxTrials: (trialRow.overrideMaxTrials || 0) + 1,
       updatedAt: now,
     }).where(eq(trialUsers.id, trialRow.id));
+    // Disable the previous key so quota resets cleanly on next claim.
+    await db.update(apiKeys).set({ isActive: false, updatedAt: now }).where(eq(apiKeys.id, trialRow.apiKeyId));
     return { success: true, message: "User may claim trial again" };
   }
 

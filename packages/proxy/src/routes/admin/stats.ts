@@ -509,6 +509,7 @@ stats.get("/stats/top-users", async (c) => {
           name: apiKeys.name,
           discordUserId: apiKeys.discordUserId,
           discordUsername: apiKeys.discordUsername,
+          isTrial: apiKeys.isTrial,
         }).from(apiKeys).where(eq(apiKeys.id, r.apiKeyId!)))[0];
 
         const displayName = key?.discordUsername
@@ -526,6 +527,7 @@ stats.get("/stats/top-users", async (c) => {
           keyName: key?.name || `Key #${r.apiKeyId}`,
           displayName,
           discordUserId: key?.discordUserId || null,
+          isTrial: key?.isTrial ?? false,
           requests: Number(r.requests) || 0,
           turns: Number(r.requests) || 0,
           tokens,

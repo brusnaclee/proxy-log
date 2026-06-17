@@ -38,6 +38,7 @@ function getTurnKey(row: any): string {
 function mapTimelineRow(row: any) {
   return {
     ...row,
+    isTrial: row.apiKeyIsTrial ?? false,
     toolsUsed: parseToolJson(row.toolsUsed),
     transcript: parseTranscriptSnapshot(row.transcriptSnapshot),
   };
@@ -129,6 +130,7 @@ logs.get("/logs", async (c) => {
     id: requestLogs.id,
     apiKeyId: requestLogs.apiKeyId,
     apiKeyName: requestLogs.apiKeyName,
+    apiKeyIsTrial: apiKeys.isTrial,
     ipAddress: requestLogs.ipAddress,
     deviceFingerprint: requestLogs.deviceFingerprint,
     ideDetected: requestLogs.ideDetected,
@@ -154,8 +156,10 @@ logs.get("/logs", async (c) => {
     errorMessage: requestLogs.errorMessage,
     estimatedCost: requestLogs.estimatedCost,
     createdAt: requestLogs.createdAt,
-  }).from(requestLogs).where(whereClause)
-    .orderBy(desc(requestLogs.createdAt)).limit(limit).offset(offset);
+  }).from(requestLogs)
+  .leftJoin(apiKeys, eq(requestLogs.apiKeyId, apiKeys.id))
+  .where(whereClause)
+  .orderBy(desc(requestLogs.createdAt)).limit(limit).offset(offset);
 
   const totalResult = (await db.select({ count: sql<number>`count(*)` }).from(requestLogs).where(whereClause))[0];
   const total = totalResult?.count || 0;
@@ -213,6 +217,7 @@ logs.get("/logs/sessions/:sessionId", async (c) => {
     id: requestLogs.id,
     apiKeyId: requestLogs.apiKeyId,
     apiKeyName: requestLogs.apiKeyName,
+    apiKeyIsTrial: apiKeys.isTrial,
     ipAddress: requestLogs.ipAddress,
     deviceFingerprint: requestLogs.deviceFingerprint,
     ideDetected: requestLogs.ideDetected,
@@ -240,9 +245,10 @@ logs.get("/logs/sessions/:sessionId", async (c) => {
     estimatedCost: requestLogs.estimatedCost,
     createdAt: requestLogs.createdAt,
   }).from(requestLogs)
-    .where(eq(requestLogs.sessionId, sessionId))
-    .orderBy(requestLogs.createdAt)
-    .limit(500);
+  .leftJoin(apiKeys, eq(requestLogs.apiKeyId, apiKeys.id))
+  .where(eq(requestLogs.sessionId, sessionId))
+  .orderBy(requestLogs.createdAt)
+  .limit(500);
 
   const mappedTimeline = timeline.map((row: any) => mapTimelineRow(row));
   const collapsedTimeline = collapseTimelineRows(timeline);

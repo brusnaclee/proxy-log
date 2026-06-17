@@ -2497,6 +2497,97 @@ async function startPhotoCheckInterval() {
 const ROLE_SYNC_JEDA_SETELAH_SELESAI_MS = 60 * 1000; // 60 detik jeda setelah semua user dicek, baru cycle berikutnya
 
 /** Satu cycle: cek semua verifiedUsers berturut-turut (tanpa jeda), bersihkan yang sudah tidak punya role. Setelah selesai, jeda 60 detik lalu cycle lagi. */
+async function fetchAllActiveNonTrialKeys() {
+	const data = await proxyInternal('/admin/internal/keys');
+	if (!Array.isArray(data)) return [];
+	return data.filter((k) => k.isActive && !k.isTrial);
+}
+
+async function runDailyInactiveMemberCleanup() {
+	console.log('[daily-cleanup] starting inactive-member sweep');
+	const channel = await client.channels.fetch(AGVERIF_CHANNEL_ID).catch(() => null);
+	if (!channel?.guild) {
+		console.warn('[daily-cleanup] agverif channel not found, skipping');
+		return;
+	}
+	const guild = channel.guild;
+
+	const keys = await fetchAllActiveNonTrialKeys();
+	const candidates = keys.filter(
+		(k) => k.discordUserId && k.provisionedBy === 'discord-bot',
+	);
+	console.log(`[daily-cleanup] scanning ${candidates.length} agverif-provisioned keys`);
+
+	const cleaned = [];
+	for (const key of candidates) {
+		const userId = key.discordUserId;
+		let member = null;
+		try {
+			member = await guild.members.fetch({ user: userId, force: true });
+		} catch (_) { /* user left guild */ }
+
+		const isVerified = member?.roles.cache.has(VERIFIED_ROLE_ID);
+		const isPhantom = member?.roles.cache.has(REQUIRED_ROLE_ID);
+
+		if (!member || !isPhantom) {
+			const verifiedData = client.agverifData.verifiedUsers[userId];
+			if (verifiedData?.threadId) {
+				const thread = await client.channels.fetch(verifiedData.threadId).catch(() => null);
+				if (thread?.isThread()) {
+					await thread.delete('Phantom role hilang — daily cleanup').catch((err) => {
+						if (err.code !== 10003) console.error('[daily-cleanup] thread delete failed:', err);
+					});
+				}
+				await removeThreadFromData(verifiedData.threadId).catch(() => {});
+			}
+			await removeVerifiedUser(userId).catch(() => {});
+
+			if (member && isVerified) {
+				await member.roles.remove(VERIFIED_ROLE_ID, 'Phantom role hilang — daily cleanup').catch((err) => {
+					console.error('[daily-cleanup] role remove failed:', err);
+				});
+			}
+
+			try {
+				await revokeApiKeyForUser(userId, 'Phantom role hilang — daily cleanup');
+			} catch (err) {
+				console.error('[daily-cleanup] revoke failed:', err);
+			}
+
+			await sendDMToUser(
+				userId,
+				'API Key Dinonaktifkan',
+				'API key Phantom Anda telah dinonaktifkan karena role Phantom sudah tidak ada di akun Anda.\n\n' +
+					'Thread verifikasi Anda juga telah dihapus. Jika ini kesalahan, hubungi admin.',
+				0xff6b6b,
+			).catch((err) => console.error('[daily-cleanup] DM failed:', err));
+
+			cleaned.push({ userId, keyId: key.id, username: key.discordUsername || userId });
+		}
+	}
+
+	console.log(`[daily-cleanup] done. cleaned ${cleaned.length} members: ${cleaned.map((c) => c.username).join(', ') || '(none)'}`);
+}
+
+function scheduleDailyInactiveMemberCleanup() {
+	function msUntilMidnightWib() {
+		const now = new Date();
+		const wib = 7 * 60 * 60000;
+		const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
+		const wibDate = new Date(utcMs + wib);
+		wibDate.setHours(24, 0, 0, 0);
+		return wibDate.getTime() - wib - now.getTime();
+	}
+	function scheduleNext() {
+		setTimeout(async () => {
+			try { await runDailyInactiveMemberCleanup(); }
+			catch (err) { console.error('[daily-cleanup] error:', err); }
+			scheduleNext();
+		}, msUntilMidnightWib());
+	}
+	scheduleNext();
+}
+
 async function runRoleSyncCheck() {
 	try {
 		const channel = await client.channels
@@ -3902,17 +3993,12 @@ async function handleTrialClaimButton(interaction) {
 			`**Model tersedia:**\n${models || '_lihat /v1/models_'}`;
 
 		await interaction.editReply({
-			content: `✅ Trial berhasil diklaim!\n\n${rulesText}\n\n_Kredensial juga dikirim via DM jika DM terbuka._`,
+			content: `✅ Trial berhasil diklaim! Kredensial sudah dikirim via DM.`,
 		});
 
-		try {
-			await sendDMToUser(
-				interaction.user.id,
-				'🎁 Trial API Aktif',
-				rulesText,
-				0x57f287,
-			);
-		} catch {}
+		// DM is sent via pending notification queue (processPendingNotifications)
+		// to keep template rendering centralized. Direct sendDMToUser would
+		// produce a duplicate DM ~30s later.
 	} catch (err) {
 		const msg = err.message || 'Unknown error';
 		if (msg.includes('trial_already_used') || msg.includes('409')) {
@@ -4290,6 +4376,9 @@ client.once('clientReady', async () => {
 
 		// Midnight reset: reset retry counts at 00:00 Asia/Jakarta
 		scheduleMidnightReset();
+
+		// Daily inactive-member cleanup (00:00 WIB)
+		scheduleDailyInactiveMemberCleanup();
 	}
 
 	console.log('Antigravity Verification Bot is ready!');
@@ -4312,9 +4401,22 @@ client.once('clientReady', async () => {
 						if (notif.type === 'trial_claimed') {
 							title = '🎁 Trial API Aktif';
 							color = 0x57f287;
+							const modelBlock = (notif.modelList || '').toString().trim();
+							const modelSection = modelBlock && !/lihat \/v1\/models/.test(modelBlock)
+								? `**Model tersedia:**\n${modelBlock}\n\n`
+								: '';
 							dmText =
 								notif.dmTemplate?.replace(/\{(\w+)\}/g, (_, k) => notif[k] || '') ||
-								`Trial aktif!\n\nEndpoint: \`${notif.endpoint}\`\nKey: \`${notif.apiKey}\``;
+								`🎁 **Trial API Aktif**\n\n` +
+								`**Endpoint:** \`${notif.endpoint || ''}\`\n` +
+								`**Authorization:** \`Bearer ${notif.apiKey || ''}\`\n\n` +
+								`**Rules:**\n` +
+								`• Durasi: ${notif.durationDays || '?'} hari (sampai ${notif.expiresAt || '—'})\n` +
+								`• Token harian: ${(Number(notif.dailyTokenLimit) || 0).toLocaleString()}\n` +
+								`• Prompt: ${notif.promptLimit || '?'}/${notif.promptWindow || '5h'}\n` +
+								`• Model: hanya **gpy**\n\n` +
+								modelSection +
+								`Kredensial juga sudah dikirim ke channel trial.`;
 						} else if (notif.type === 'trial_key_rotated') {
 							title = '🔄 Trial Key Di-rotate';
 							dmText =

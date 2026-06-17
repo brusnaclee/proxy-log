@@ -469,7 +469,16 @@ export default function OverviewPage() {
                     <td className="py-2 px-3 text-xs text-muted-foreground font-mono">
                       {log.createdAt ? formatRelativeTime(log.createdAt) : "just now"}
                     </td>
-                    <td className="py-2 px-3 text-xs">{log.apiKeyName || " - "}</td>
+                    <td className="py-2 px-3 text-xs">
+                      <div className="flex items-center gap-1">
+                        <span>{log.apiKeyName || " - "}</span>
+                        {log.isTrial && (
+                          <Badge variant="outline" className="text-[10px] border-purple-500/50 text-purple-400">
+                            Trial
+                          </Badge>
+                        )}
+                      </div>
+                    </td>
                     <td className="py-2 px-3">
                       <code className="text-xs bg-accent/50 px-1.5 py-0.5 rounded">{log.model || " - "}</code>
                     </td>

@@ -429,7 +429,18 @@ export default function TrialSettingsPage() {
                       <div className="text-xs text-muted-foreground font-mono">{u.discordUserId}</div>
                     </td>
                     <td className="py-2 px-4">
-                      <Badge variant={u.status === "active" ? "default" : "secondary"}>{u.status}</Badge>
+                      <Badge
+                        variant={
+                          u.status === "active"
+                            ? "default"
+                            : u.status === "unclaimed"
+                              ? "outline"
+                              : "secondary"
+                        }
+                        className={u.status === "unclaimed" ? "border-amber-500/50 text-amber-400" : undefined}
+                      >
+                        {u.status}
+                      </Badge>
                     </td>
                     <td className="py-2 px-4 text-xs">{new Date(u.expiresAt).toLocaleString()}</td>
                     <td className="py-2 px-4 font-mono text-xs">{u.keyPrefix}…</td>
