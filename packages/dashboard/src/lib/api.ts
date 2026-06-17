@@ -632,6 +632,8 @@ export const trialSettings = {
       body: JSON.stringify(data),
     }),
   listUsers: () => request<{ data: TrialUserRow[] }>("/trial/users"),
+  getUser: (id: number) => request<TrialUserRow>(`/trial/users/${id}`),
+  getUserByKey: (apiKeyId: number) => request<TrialUserRow>(`/trial/users/key/${apiKeyId}`),
   userAction: (data: {
     action: string;
     discordUserId: string;

@@ -1,6 +1,6 @@
 ﻿import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { keys, logs, stats, type ApiKeyDetail, type KeyPeriodStats, type LogEntry, type SessionDetailResponse, type ModelLimitEntry, globalSettings } from "@/lib/api";
+import { keys, logs, stats, trialSettings, type ApiKeyDetail, type KeyPeriodStats, type LogEntry, type SessionDetailResponse, type ModelLimitEntry, type TrialUserRow, globalSettings } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatDate, formatNumber, formatRelativeTime, copyToClipboard, formatCost } from "@/lib/utils";
-import { ArrowLeft, Copy, Check, RotateCw, Trash2, Shield, ShieldOff, X, Download, DollarSign } from "lucide-react";
+import { ArrowLeft, Copy, Check, RotateCw, Trash2, Shield, ShieldOff, X, Download, DollarSign, Gift } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
   DialogDescription, DialogFooter, DialogTrigger
@@ -84,6 +84,7 @@ export default function KeyDetailPage() {
   const [newKeyModelOverrideDailyInputTokenLimit, setNewKeyModelOverrideDailyInputTokenLimit] = useState(0);
   const [newKeyModelOverrideDailyOutputTokenLimit, setNewKeyModelOverrideDailyOutputTokenLimit] = useState(0);
   const [keyModelMatchPreview, setKeyModelMatchPreview] = useState<{ ids: string[]; total: number }>({ ids: [], total: 0 });
+  const [trialInfo, setTrialInfo] = useState<TrialUserRow | null>(null);
 
   useEffect(() => {
     if (id) loadAll();
@@ -146,6 +147,16 @@ export default function KeyDetailPage() {
       setEditDailyInputTokenLimit(k.dailyInputTokenLimit);
       setEditDailyOutputTokenLimit(k.dailyOutputTokenLimit);
       setStatusText("");
+      if (k.isTrial) {
+        try {
+          const t = await trialSettings.getUserByKey(parseInt(id));
+          setTrialInfo(t);
+        } catch {
+          setTrialInfo(null);
+        }
+      } else {
+        setTrialInfo(null);
+      }
     } catch (err) {
       console.error("[KeyDetail] Failed to load key data:", err);
     }
@@ -225,6 +236,17 @@ export default function KeyDetailPage() {
     const res = await keys.rotate(parseInt(id));
     setRotatedKey(res.key);
     loadAll();
+  };
+
+  const runTrialAction = async (action: string, extra: Record<string, unknown> = {}) => {
+    if (!trialInfo) return;
+    try {
+      await trialSettings.userAction({ action, discordUserId: trialInfo.discordUserId, ...extra });
+      setStatusText(`Trial action "${action}" applied.`);
+      await loadAll();
+    } catch (error: any) {
+      setStatusText(error?.message || "Trial action failed.");
+    }
   };
 
   const handleBlockDevice = async (fingerprint: string) => {
@@ -388,6 +410,11 @@ export default function KeyDetailPage() {
             <Badge variant={keyData.isActive ? "success" : "secondary"}>
               {keyData.isActive ? "Active" : "Disabled"}
             </Badge>
+            {keyData.isTrial && (
+              <Badge variant="outline" className="gap-1 border-purple-500/50 text-purple-400">
+                <Gift className="h-3 w-3" /> Trial
+              </Badge>
+            )}
           </div>
           <p className="text-sm text-muted-foreground mt-1">
             <code className="font-mono">{keyData.keyMasked}</code>
@@ -403,6 +430,58 @@ export default function KeyDetailPage() {
           </Button>
         </div>
       </div>
+
+      {trialInfo && (
+        <Card className="border-purple-500/30 bg-purple-500/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Gift className="h-4 w-4 text-purple-400" /> Trial User
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+              <div>
+                <p className="text-xs text-muted-foreground">Discord User</p>
+                <p className="font-medium">{trialInfo.discordUsername || trialInfo.discordUserId}</p>
+                <p className="text-xs font-mono text-muted-foreground">{trialInfo.discordUserId}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Status</p>
+                <Badge variant={trialInfo.status === "active" ? "default" : "secondary"}>{trialInfo.status}</Badge>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Claimed</p>
+                <p>{formatDate(trialInfo.claimedAt)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Expires</p>
+                <p>{formatDate(trialInfo.expiresAt)}</p>
+              </div>
+            </div>
+            {(trialInfo.overrideDailyTokenLimit || trialInfo.overridePromptLimit || trialInfo.overrideDays) && (
+              <div className="text-xs text-muted-foreground border-t border-border/40 pt-2">
+                Overrides:
+                {trialInfo.overrideDays != null && ` duration ${trialInfo.overrideDays}d`}
+                {trialInfo.overrideDailyTokenLimit != null && ` · daily tokens ${trialInfo.overrideDailyTokenLimit.toLocaleString()}`}
+                {trialInfo.overridePromptLimit != null && ` · prompt ${trialInfo.overridePromptLimit}/${trialInfo.overridePromptLimitWindow || "5h"}`}
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2 pt-1">
+              {trialInfo.status === "active" && (
+                <>
+                  <Button size="sm" variant="outline" onClick={() => void runTrialAction("extend", { days: 7 })}>+7 days</Button>
+                  <Button size="sm" variant="outline" onClick={() => void runTrialAction("suspend")}>Suspend</Button>
+                  <Button size="sm" variant="destructive" onClick={() => void runTrialAction("terminate", { reason: "Admin" })}>End Trial</Button>
+                </>
+              )}
+              {trialInfo.status !== "active" && (
+                <Button size="sm" variant="outline" onClick={() => void runTrialAction("grant_retry")}>Grant Retry</Button>
+              )}
+              <Button size="sm" variant="ghost" onClick={() => navigate("/trial")}>Back to Trial Settings</Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Stats Cards with period filter */}
       <div className="space-y-3">

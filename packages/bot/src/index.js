@@ -159,6 +159,87 @@ async function proxyInternal(pathname, method = 'GET', body = null, opts = {}) {
 	throw lastErr;
 }
 
+let trialModelsCache = { gpyModels: [], mode: 'all_gpy', whitelist: [], fetchedAt: 0 };
+
+async function getTrialModelsCached() {
+	const TTL = 5 * 60 * 1000;
+	if (trialModelsCache.fetchedAt && Date.now() - trialModelsCache.fetchedAt < TTL) {
+		return trialModelsCache;
+	}
+	try {
+		const data = await proxyInternal('/admin/internal/trial-models');
+		trialModelsCache = {
+			gpyModels: data.gpyModels || [],
+			mode: data.mode || 'all_gpy',
+			whitelist: data.whitelist || [],
+			fetchedAt: Date.now(),
+		};
+		return trialModelsCache;
+	} catch {
+		return { gpyModels: [], mode: 'all_gpy', whitelist: [], fetchedAt: Date.now() };
+	}
+}
+
+async function getMemberToolAccess(member) {
+	if (!member) {
+		return {
+			isPhantom: false,
+			hasTrialRole: false,
+			isTrialUser: false,
+			hasPhantomKey: false,
+			mode: 'none',
+			canUseTools: false,
+			trialRoleId: '1354682641961582632',
+			trialCfg: null,
+		};
+	}
+	let trialCfg = null;
+	try {
+		trialCfg = await proxyInternal('/admin/internal/trial-panel-config');
+	} catch { /* ignore */ }
+	const trialRoleId = trialCfg?.trialRequiredRoleId || '1354682641961582632';
+	const isPhantom = !!(REQUIRED_ROLE_ID && member.roles?.cache?.has(REQUIRED_ROLE_ID));
+	const hasTrialRole = !!(trialRoleId && member.roles?.cache?.has(trialRoleId));
+	let keyType = null;
+	try {
+		keyType = await proxyInternal(`/admin/internal/user-key-type/${member.id}`);
+	} catch { /* ignore */ }
+	const isTrialUser = keyType?.isTrial === true;
+	const mode = isPhantom ? 'phantom' : (hasTrialRole ? 'trial' : 'none');
+	return {
+		isPhantom,
+		hasTrialRole,
+		isTrialUser,
+		hasPhantomKey: keyType?.hasPhantomKey === true,
+		mode,
+		canUseTools: !!(isPhantom || hasTrialRole),
+		trialRoleId,
+		trialCfg,
+	};
+}
+
+function toolAccessDeniedMessage(access) {
+	return (
+		`Anda memerlukan role **The Phantom** atau **role trial Groupy** (<@&${access?.trialRoleId || '1354682641961582632'}>) untuk menggunakan fitur ini.`
+	);
+}
+
+function entryMatchesTrialModel(entry, trialCache) {
+	const provider = (entry.provider || '').toLowerCase();
+	const modelId = entry.modelId || '';
+	if (modelId === 'auto') return false;
+	if (provider !== 'gpy' && !modelId.toLowerCase().startsWith('gpy/')) return false;
+	const fullId = modelId.includes('/') ? modelId : `${provider}/${modelId}`;
+	const candidates = [fullId, modelId, modelId.split('/').pop()].filter(Boolean);
+	if (trialCache.mode === 'whitelist' && trialCache.whitelist?.length) {
+		return trialCache.whitelist.some((w) => {
+			const wNorm = String(w);
+			return candidates.some((id) => id === wNorm || id.endsWith('/' + wNorm.split('/').pop()));
+		});
+	}
+	return true;
+}
+
 async function provisionApiKeyForVerifiedUser(
 	userId,
 	username,
@@ -1705,7 +1786,7 @@ async function refreshPanelToBottom() {
 	}
 }
 
-function createTokitoSession(userId, kind) {
+function createTokitoSession(userId, kind, access = null) {
 	// Cleanup previous sessions for this user to prevent memory leak
 	for (const [key, sess] of tokitoSessions.entries()) {
 		if (sess.userId === userId) {
@@ -1714,14 +1795,17 @@ function createTokitoSession(userId, kind) {
 	}
 
 	const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+	const trialMode = access?.mode === 'trial' && !access?.isPhantom;
 	const session = {
 		id,
 		userId,
 		kind,
 		page: 0,
-		upstreamProvider: 'all',
+		upstreamProvider: trialMode ? 'gpy' : 'all',
 		modelVendor: 'all',
 		sortMode: 'status_online_first',
+		trialMode,
+		trialCache: null,
 	};
 	tokitoSessions.set(id, session);
 	return session;
@@ -1813,17 +1897,21 @@ function buildTokitoRows(
 	];
 }
 
-function listModels(kind, upstreamProvider, modelVendor, sortMode) {
+function listModels(kind, upstreamProvider, modelVendor, sortMode, session = null) {
 	let items = [...runtime.modelEntries];
 
-	// Add auto model as a special entry at the beginning
-	const autoEntry = {
-		modelId: 'auto',
-		provider: 'proxy',
-		baseUrl: '',
-		apiKey: '',
-	};
-	items.unshift(autoEntry);
+	if (session?.trialMode) {
+		const cache = session.trialCache || trialModelsCache;
+		items = items.filter((e) => entryMatchesTrialModel(e, cache));
+	} else {
+		const autoEntry = {
+			modelId: 'auto',
+			provider: 'proxy',
+			baseUrl: '',
+			apiKey: '',
+		};
+		items.unshift(autoEntry);
+	}
 
 	if (upstreamProvider !== 'all') {
 		items = items.filter((e) => e.provider === upstreamProvider || e.modelId === 'auto');
@@ -1872,7 +1960,7 @@ function listModels(kind, upstreamProvider, modelVendor, sortMode) {
 
 function buildTokitoEmbed(kind, session) {
 	const pageSize = kind === 'details' ? 5 : TOKITO_PAGE_SIZE;
-	const entries = listModels(kind, session.upstreamProvider, session.modelVendor, session.sortMode);
+	const entries = listModels(kind, session.upstreamProvider, session.modelVendor, session.sortMode, session);
 	const totalPages = Math.max(1, Math.ceil(entries.length / pageSize));
 	const page = Math.max(0, Math.min(session.page, totalPages - 1));
 	session.page = page;
@@ -1981,6 +2069,10 @@ function buildTokitoEmbed(kind, session) {
 				inline: true,
 			},
 		);
+
+	if (session.trialMode) {
+		embed.setFooter({ text: 'Trial mode — model gpy saja' });
+	}
 
 	const components = buildTokitoRows(
 		kind,
@@ -2650,7 +2742,25 @@ function buildSearchRow(includeOther = false) {
 	return new ActionRowBuilder().addComponents(...buttons);
 }
 
-// Format one global model limit row (used by the panel "See Model Limit" handler).
+function buildUsageDetailRow(includeOther = false) {
+	const buttons = [
+		new ButtonBuilder()
+			.setCustomId('ranking_see_model_limits')
+			.setLabel('See Model Limit')
+			.setEmoji('🎯')
+			.setStyle(ButtonStyle.Secondary),
+	];
+	if (includeOther) {
+		buttons.push(
+			new ButtonBuilder()
+				.setCustomId('ranking_search_user_other')
+				.setLabel('Cari Usage User Lain')
+				.setEmoji('👥')
+				.setStyle(ButtonStyle.Secondary),
+		);
+	}
+	return new ActionRowBuilder().addComponents(...buttons);
+}
 function fmtGlobalModelLimitRow(r) {
 	const parts = [];
 	if (r.promptLimit > 0) parts.push(r.promptLimit + ' prompt / 30m');
@@ -2669,7 +2779,44 @@ function fmtGlobalModelLimitRow(r) {
 	return '🎯 ' + tag + ' · ' + limit;
 }
 
-async function buildSeeModelLimitsEmbed(filter) {
+async function buildTrialLimitsEmbed() {
+	let cfg;
+	try {
+		cfg = await proxyInternal('/admin/internal/trial-panel-config');
+	} catch (err) {
+		return { error: 'Gagal memuat config trial: ' + (err.message || 'Unknown error') };
+	}
+	const models = await getTrialModelsCached();
+	const modelLines = (models.gpyModels || []).slice(0, 25).map((m) => `• \`${m}\``).join('\n');
+	const desc = [
+		'**🎁 Trial Limits** _(provider gpy saja)_',
+		'',
+		`• **Prompt:** ${cfg.trialPromptLimit ?? 50} req / ${cfg.trialPromptLimitWindow || '5h'}`,
+		`• **Token harian:** ${(cfg.trialDailyTokenLimit ?? 0).toLocaleString()}`,
+		`• **Durasi default:** ${cfg.trialDefaultDurationDays ?? 30} hari`,
+		`• **Max klaim/akun:** ${cfg.trialMaxPerAccount ?? 1}`,
+		`• **Mode model:** ${cfg.trialModelSelectionMode === 'whitelist' ? 'Whitelist' : 'Semua gpy'}`,
+		'',
+		'**Model tersedia:**',
+		modelLines || '_Belum ada model gpy di catalog_',
+		(models.gpyModels || []).length > 25 ? `_...dan ${models.gpyModels.length - 25} model lainnya_` : '',
+	].filter(Boolean).join('\n');
+	return {
+		embed: new EmbedBuilder()
+			.setTitle('🎯 See Model Limit — Trial')
+			.setDescription(desc)
+			.setColor(0x57f287)
+			.setFooter({ text: 'Limit trial terpisah dari limit global Phantom.' })
+			.setTimestamp(),
+		isTrial: true,
+	};
+}
+
+async function buildSeeModelLimitsEmbed(filter, access = null) {
+	if (access?.mode === 'trial' && !access?.isPhantom) {
+		return buildTrialLimitsEmbed();
+	}
+
 	let rows = [];
 	try {
 		const r = await proxyInternal('/admin/settings/model-limits');
@@ -2735,29 +2882,39 @@ function buildSeeModelLimitsRow(currentFilter) {
 
 async function handleRankingSeeModelLimits(interaction) {
 	await interaction.deferReply({ ephemeral: true });
+	const access = await getMemberToolAccess(interaction.member);
+	if (!access.canUseTools) {
+		await interaction.editReply({ content: toolAccessDeniedMessage(access) });
+		return;
+	}
 	const filter = interaction.customId.split(':')[1] || 'all';
-	const out = await buildSeeModelLimitsEmbed(filter);
+	const out = await buildSeeModelLimitsEmbed(filter, access);
 	if (out.error) {
 		await interaction.editReply({ content: '❌ ' + out.error });
 		return;
 	}
 	await interaction.editReply({
 		embeds: [out.embed],
-		components: [buildSeeModelLimitsRow(filter)],
+		components: out.isTrial ? [] : [buildSeeModelLimitsRow(filter)],
 	});
 }
 
 async function handleRankingModelLimitFilter(interaction) {
 	await interaction.deferUpdate();
+	const access = await getMemberToolAccess(interaction.member);
+	if (!access.canUseTools) {
+		await interaction.editReply({ content: toolAccessDeniedMessage(access), embeds: [], components: [] });
+		return;
+	}
 	const filter = interaction.values[0] || 'all';
-	const out = await buildSeeModelLimitsEmbed(filter);
+	const out = await buildSeeModelLimitsEmbed(filter, access);
 	if (out.error) {
 		await interaction.editReply({ content: '❌ ' + out.error });
 		return;
 	}
 	await interaction.editReply({
 		embeds: [out.embed],
-		components: [buildSeeModelLimitsRow(filter)],
+		components: out.isTrial ? [] : [buildSeeModelLimitsRow(filter)],
 	});
 }
 
@@ -3379,7 +3536,8 @@ async function refreshRankingEmbeds() {
 					if (item.discordUserId && item.discordUsername === item.discordUserId) {
 						name = `<@${item.discordUserId}>`;
 					}
-					return `**${name}** — **${item.requests.toLocaleString()}** req`;
+					const suffix = item.isTrial ? ' 🎁' : '';
+					return `**${name}**${suffix} — **${item.requests.toLocaleString()}** req`;
 				},
 			);
 			await msg.edit({ embeds: [embed] });
@@ -3400,7 +3558,8 @@ async function refreshRankingEmbeds() {
 					if (item.discordUserId && item.discordUsername === item.discordUserId) {
 						name = `<@${item.discordUserId}>`;
 					}
-					return `**${name}** — ${formatTokens(item.tokens)} tok (📥 ${formatTokens(item.promptTokens || 0)} / 📤 ${formatTokens(item.completionTokens || 0)})`;
+					const suffix = item.isTrial ? ' 🎁' : '';
+					return `**${name}**${suffix} — ${formatTokens(item.tokens)} tok (📥 ${formatTokens(item.promptTokens || 0)} / 📤 ${formatTokens(item.completionTokens || 0)})`;
 				},
 			);
 			await msg.edit({ embeds: [embed] });
@@ -3673,6 +3832,14 @@ async function handleTrialClaimButton(interaction) {
 		}
 	}
 
+	const access = await getMemberToolAccess(interaction.member);
+	if (access.isPhantom || access.hasPhantomKey) {
+		await interaction.editReply({
+			content: `❌ Member **Phantom** tidak bisa klaim trial. Verifikasi di <#${AGVERIF_CHANNEL_ID}> jika belum punya akses penuh.`,
+		});
+		return;
+	}
+
 	try {
 		const result = await proxyInternal('/admin/internal/claim-trial', 'POST', {
 			discordUserId: interaction.user.id,
@@ -3709,6 +3876,10 @@ async function handleTrialClaimButton(interaction) {
 			await interaction.editReply({ content: '❌ Anda sudah pernah klaim trial. Satu akun hanya bisa trial sesuai limit yang berlaku.' });
 		} else if (msg.includes('trial_already_active')) {
 			await interaction.editReply({ content: '❌ Anda masih punya trial aktif.' });
+		} else if (msg.includes('phantom_member')) {
+			await interaction.editReply({
+				content: `❌ Member **Phantom** tidak bisa klaim trial. Verifikasi di <#${AGVERIF_CHANNEL_ID}> jika belum punya akses penuh.`,
+			});
 		} else {
 			await interaction.editReply({ content: `❌ Gagal klaim trial: ${msg}` });
 		}
@@ -3788,13 +3959,20 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 		return lines.join('\n');
 	}
 
+	const trialUser = isTrial || trial?.isTrial;
+	const limitSection = trialUser
+		? `**🎁 Trial Limits**\nPrompt: ${globalLimitStr}\nPer-Model (gpy):\n${modelLimitStr}\n` +
+			`-# ℹ️ Tool follow-ups hanya dihitung 1x prompt per turn.\n\n` +
+			`**🔢 Token Limits (Trial)**\nTotal Harian: ${dailyTokenStr}`
+		: `**🎯 Prompt Limits**\nGlobal: ${globalLimitStr}\nPer-Model:\n${modelLimitStr}\n` +
+			`-# ℹ️ Tool follow-ups hanya dihitung 1x prompt per turn.\n\n` +
+			`**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}\nBulanan: ${monthlyTokenStr}`;
+
 	const embed = new EmbedBuilder()
 		.setTitle(`📊 Usage: ${displayName}`)
 		.setDescription(
 			`Discord ID: \`${discordUserId}\`\nAPI Key: \`${keyDisplay}\`\nStatus: ${isActive ? '🟢 Active' : '🔴 Inactive'}${trialBlock}\n\n` +
-			`**🎯 Prompt Limits**\nGlobal: ${globalLimitStr}\nPer-Model:\n${modelLimitStr}\n` +
-			`-# ℹ️ Tool follow-ups hanya dihitung 1x prompt per turn.\n\n` +
-			`**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}\nBulanan: ${monthlyTokenStr}`,
+			limitSection,
 		)
 		.setColor(isActive ? 0x57f287 : 0xff6b6b)
 		.addFields(
@@ -3817,19 +3995,10 @@ async function canTrialUserViewTarget(callerId, targetId, targetData, guild) {
 
 	if (targetData?.isTrial || targetData?.trial?.isTrial) return { ok: true };
 
-	if (REQUIRED_ROLE_ID && guild) {
-		try {
-			const member = await guild.members.fetch(targetId);
-			if (member.roles.cache.has(REQUIRED_ROLE_ID)) {
-				const role = guild.roles.cache.get(REQUIRED_ROLE_ID);
-				return {
-					ok: false,
-					message: `❌ Anda tidak punya akses untuk melihat user ini. Anda memerlukan role **${role?.name || REQUIRED_ROLE_ID}** (<@&${REQUIRED_ROLE_ID}>).`,
-				};
-			}
-		} catch {}
-	}
-	return { ok: true };
+	return {
+		ok: false,
+		message: '❌ Sebagai user trial, Anda hanya bisa melihat usage user trial lain.',
+	};
 }
 
 async function handleShowMyUsage(interaction) {
@@ -3859,10 +4028,9 @@ async function handleShowMyUsage(interaction) {
 	}
 
 	const embed = buildUsageDetailEmbed(data, discordUserId, discordUserId);
-	const showOther = data.isTrial || data.trial?.isTrial || true;
 	await interaction.editReply({
 		embeds: [embed],
-		components: [buildSearchRow(showOther)],
+		components: [buildUsageDetailRow(true)],
 	});
 }
 
@@ -3872,6 +4040,11 @@ async function handleRankingSearchButton(interaction) {
 }
 
 async function handleRankingSearchOtherButton(interaction) {
+	const access = await getMemberToolAccess(interaction.member);
+	if (!access.canUseTools) {
+		await interaction.reply({ content: toolAccessDeniedMessage(access), ephemeral: true });
+		return;
+	}
 	const modal = new ModalBuilder()
 		.setCustomId('ranking_search_user_other_modal')
 		.setTitle('👥 Cari Usage User Lain');
@@ -3913,7 +4086,7 @@ async function handleRankingSearchModal(interaction) {
 	}
 
 	const embed = buildUsageDetailEmbed(data, discordUserId, interaction.user.id);
-	await interaction.editReply({ embeds: [embed], components: [buildSearchRow(true)] });
+	await interaction.editReply({ embeds: [embed], components: [buildUsageDetailRow(false)] });
 }
 
 client.once('clientReady', async () => {
@@ -4250,24 +4423,12 @@ client.on('interactionCreate', async (interaction) => {
 
 		// ─── Ranking See Model Limit Button ──────────────────────────────────
 		if (interaction.isButton() && (interaction.customId === 'ranking_see_model_limits' || interaction.customId.startsWith('ranking_see_model_limits:'))) {
-			if (REQUIRED_ROLE_ID && !interaction.member.roles.cache.has(REQUIRED_ROLE_ID)) {
-				const role = interaction.guild.roles.cache.get(REQUIRED_ROLE_ID);
-				const roleName = role ? role.name : 'Required Role';
-				await interaction.reply({ content: 'Anda memerlukan role **' + roleName + '** untuk menggunakan fitur ini.', ephemeral: true });
-				return;
-			}
 			await handleRankingSeeModelLimits(interaction);
 			return;
 		}
 
 		// ─── Ranking Model Limit Filter Select ──────────────────────────────
 		if (interaction.isStringSelectMenu() && interaction.customId === 'ranking_model_limit_filter') {
-			if (REQUIRED_ROLE_ID && !interaction.member.roles.cache.has(REQUIRED_ROLE_ID)) {
-				const role = interaction.guild.roles.cache.get(REQUIRED_ROLE_ID);
-				const roleName = role ? role.name : 'Required Role';
-				await interaction.reply({ content: 'Anda memerlukan role **' + roleName + '** untuk menggunakan fitur ini.', ephemeral: true });
-				return;
-			}
 			await handleRankingModelLimitFilter(interaction);
 			return;
 		}
@@ -4690,12 +4851,10 @@ client.on('interactionCreate', async (interaction) => {
 				interaction.customId === PANEL_LATENCY ||
 				interaction.customId === PANEL_DETAILS
 			) {
-				// Role-gate: require REQUIRED_ROLE_ID
-				if (REQUIRED_ROLE_ID && !interaction.member.roles.cache.has(REQUIRED_ROLE_ID)) {
-					const role = interaction.guild.roles.cache.get(REQUIRED_ROLE_ID);
-					const roleName = role ? role.name : 'Required Role';
+				const access = await getMemberToolAccess(interaction.member);
+				if (!access.canUseTools) {
 					await interaction.reply({
-						content: `Anda memerlukan role **${roleName}** untuk menggunakan fitur ini.`,
+						content: toolAccessDeniedMessage(access),
 						ephemeral: true,
 					});
 					return;
@@ -4722,7 +4881,10 @@ client.on('interactionCreate', async (interaction) => {
 					}
 				}
 				
-				const session = createTokitoSession(interaction.user.id, kind);
+				const session = createTokitoSession(interaction.user.id, kind, access);
+				if (session.trialMode) {
+					session.trialCache = await getTrialModelsCached();
+				}
 				// Store interaction for message deletion on expiry
 				session.interaction = interaction;
 				const { embed, components } = buildTokitoEmbed(kind, session);

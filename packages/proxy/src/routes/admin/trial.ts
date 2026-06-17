@@ -71,37 +71,71 @@ trial.get("/trial/users", async (c) => {
     .innerJoin(apiKeys, eq(trialUsers.apiKeyId, apiKeys.id))
     .orderBy(desc(trialUsers.claimedAt));
 
-  const now = new Date();
-  const data = rows.map(({ trial: t, key }) => {
-    let status = "ended";
-    if (!t.endedAt && !t.suspended && t.expiresAt > now && key.isActive) status = "active";
-    else if (t.suspended) status = "suspended";
-    else if (!t.endedAt && t.expiresAt <= now) status = "expired";
-    else if (t.endReason === "admin_terminated") status = "terminated";
-
-    return {
-      id: t.id,
-      discordUserId: t.discordUserId,
-      discordUsername: t.discordUsername,
-      apiKeyId: t.apiKeyId,
-      keyPrefix: key.keyPrefix,
-      keyName: key.name,
-      isActive: key.isActive,
-      claimedAt: t.claimedAt,
-      expiresAt: t.expiresAt,
-      endedAt: t.endedAt,
-      endReason: t.endReason,
-      suspended: t.suspended,
-      status,
-      overrideDays: t.overrideDays,
-      overrideMaxTrials: t.overrideMaxTrials,
-      overrideDailyTokenLimit: t.overrideDailyTokenLimit,
-      overridePromptLimit: t.overridePromptLimit,
-      overridePromptLimitWindow: t.overridePromptLimitWindow,
-    };
-  });
+  const data = rows.map(({ trial: t, key }) => mapTrialUserRow(t, key));
 
   return c.json({ data });
+});
+
+function mapTrialUserRow(t: typeof trialUsers.$inferSelect, key: typeof apiKeys.$inferSelect) {
+  const now = new Date();
+  let status = "ended";
+  if (!t.endedAt && !t.suspended && t.expiresAt > now && key.isActive) status = "active";
+  else if (t.suspended) status = "suspended";
+  else if (!t.endedAt && t.expiresAt <= now) status = "expired";
+  else if (t.endReason === "admin_terminated") status = "terminated";
+
+  return {
+    id: t.id,
+    discordUserId: t.discordUserId,
+    discordUsername: t.discordUsername,
+    apiKeyId: t.apiKeyId,
+    keyPrefix: key.keyPrefix,
+    keyName: key.name,
+    isActive: key.isActive,
+    claimedAt: t.claimedAt,
+    expiresAt: t.expiresAt,
+    endedAt: t.endedAt,
+    endReason: t.endReason,
+    suspended: t.suspended,
+    status,
+    overrideDays: t.overrideDays,
+    overrideMaxTrials: t.overrideMaxTrials,
+    overrideDailyTokenLimit: t.overrideDailyTokenLimit,
+    overridePromptLimit: t.overridePromptLimit,
+    overridePromptLimitWindow: t.overridePromptLimitWindow,
+  };
+}
+
+trial.get("/trial/users/key/:apiKeyId", async (c) => {
+  const apiKeyId = parseInt(c.req.param("apiKeyId"));
+  if (!Number.isFinite(apiKeyId)) return c.json({ error: "Invalid api key id" }, 400);
+
+  const rows = await db
+    .select({ trial: trialUsers, key: apiKeys })
+    .from(trialUsers)
+    .innerJoin(apiKeys, eq(trialUsers.apiKeyId, apiKeys.id))
+    .where(eq(trialUsers.apiKeyId, apiKeyId))
+    .limit(1);
+
+  const row = rows[0];
+  if (!row) return c.json({ error: "Trial user not found" }, 404);
+  return c.json(mapTrialUserRow(row.trial, row.key));
+});
+
+trial.get("/trial/users/:id", async (c) => {
+  const id = parseInt(c.req.param("id"));
+  if (!Number.isFinite(id)) return c.json({ error: "Invalid id" }, 400);
+
+  const rows = await db
+    .select({ trial: trialUsers, key: apiKeys })
+    .from(trialUsers)
+    .innerJoin(apiKeys, eq(trialUsers.apiKeyId, apiKeys.id))
+    .where(eq(trialUsers.id, id))
+    .limit(1);
+
+  const row = rows[0];
+  if (!row) return c.json({ error: "Trial user not found" }, 404);
+  return c.json(mapTrialUserRow(row.trial, row.key));
 });
 
 trial.post("/trial/users/action", async (c) => {
@@ -151,6 +185,25 @@ export async function claimTrialForUser(body: {
     return { error: "trial_already_used", maxPerAccount, status: 409 as const };
   }
 
+  const [phantomKey] = await db
+    .select()
+    .from(apiKeys)
+    .where(
+      and(
+        eq(apiKeys.discordUserId, body.discordUserId),
+        eq(apiKeys.isTrial, false),
+        eq(apiKeys.isActive, true),
+      ),
+    )
+    .limit(1);
+  if (phantomKey) {
+    return {
+      error: "phantom_member",
+      status: 403 as const,
+      agverifChannelId: config.agverifChannelId || null,
+    };
+  }
+
   const durationDays = config.trialDefaultDurationDays ?? 30;
   const expiresAt = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000);
   const dailyLimit = config.trialDailyTokenLimit ?? 1_000_000;
@@ -178,6 +231,10 @@ export async function claimTrialForUser(body: {
       dailyTokenLimit: dailyLimit,
       promptLimit,
       promptLimitWindow: promptWindow,
+      dailyInputTokenLimit: 0,
+      dailyOutputTokenLimit: 0,
+      monthlyTokenLimit: 0,
+      perModelPromptLimit: 0,
     })
     .returning();
 

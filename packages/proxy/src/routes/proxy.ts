@@ -1335,7 +1335,9 @@ proxy.all('/*', async (c) => {
 		const effectivePromptLimit =
 			keyRecord.promptLimit && keyRecord.promptLimit > 0
 				? keyRecord.promptLimit
-				: config.globalPromptLimit;
+				: keyRecord.isTrial
+					? 0
+					: config.globalPromptLimit;
 		const effectivePromptLimitWindow =
 			keyRecord.promptLimitWindow || config.globalPromptLimitWindow || '30m';
 
@@ -2217,10 +2219,8 @@ proxy.all('/*', async (c) => {
 	// ΓöÇΓöÇΓöÇ 10. Prompt & Model Limit Checks ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 	//
 	// Per-model limit: checked for EVERY request (not just new prompts).
-	// This ensures that retries after hitting the limit are also blocked.
-	// The count comes from request_logs WHERE is_counted_request=1, so only
-	// real user prompts are counted ΓÇö not IDE retries or tool follow-ups.
-	{
+	// Trial keys use global prompt limit only — skip per-model global overrides.
+	if (!keyRecord.isTrial) {
 		const mlCheck = await checkModelPromptLimit(
 			keyRecord.id,
 			model,
@@ -2237,7 +2237,6 @@ proxy.all('/*', async (c) => {
 			const windowMs = parseRateLimitWindow(windowStr);
 			const resetMs = await getWindowResetMs(keyRecord.id, windowMs, model);
 			const resetMins = Math.ceil(resetMs / 60000);
-			// Check how many prompts remain globally (across all models)
 			const globalLimit =
 				(keyRecord.promptLimit && keyRecord.promptLimit > 0
 					? keyRecord.promptLimit
@@ -2282,7 +2281,9 @@ proxy.all('/*', async (c) => {
 		const effectivePromptLimit =
 			keyRecord.promptLimit && keyRecord.promptLimit > 0
 				? keyRecord.promptLimit
-				: config.globalPromptLimit;
+				: keyRecord.isTrial
+					? 0
+					: config.globalPromptLimit;
 		const effectivePromptLimitWindow =
 			keyRecord.promptLimitWindow || config.globalPromptLimitWindow || '30m';
 
@@ -2361,7 +2362,9 @@ proxy.all('/*', async (c) => {
 		const globalDailyTokenLimit =
 			keyRecord.dailyTokenLimit && keyRecord.dailyTokenLimit > 0
 				? keyRecord.dailyTokenLimit
-				: config.globalDailyTokenLimit || 0;
+				: keyRecord.isTrial
+					? 0
+					: config.globalDailyTokenLimit || 0;
 		if (globalDailyTokenLimit > 0) {
 			const dw = new Date(wibNow);
 			dw.setUTCHours(0, 0, 0, 0);
@@ -2392,7 +2395,8 @@ proxy.all('/*', async (c) => {
 			}
 		}
 
-		// Daily Input Token Limit (per-key override or global)
+		// Daily Input Token Limit (per-key override or global) — skip for trial keys
+		if (!keyRecord.isTrial) {
 		const dailyInputLimit =
 			keyRecord.dailyInputTokenLimit && keyRecord.dailyInputTokenLimit > 0
 				? keyRecord.dailyInputTokenLimit
@@ -2487,9 +2491,10 @@ proxy.all('/*', async (c) => {
 				);
 			}
 		}
+		} // end !keyRecord.isTrial global input/output/monthly limits
 
 		// Model Specific Token Limits
-		if (modelOverride) {
+		if (!keyRecord.isTrial && modelOverride) {
 			const {
 				dailyTokenLimit: overrideDailyToken,
 				monthlyTokenLimit: overrideMonthlyToken,

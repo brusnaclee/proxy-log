@@ -11,6 +11,7 @@ import { configCache } from "../../utils/cache.js";
 import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, sanitizeRows } from "../../utils/counting.js";
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
+import { listGpyCatalogModels } from "../../utils/trial-routing.js";
 
 const internal = new Hono();
 
@@ -472,13 +473,14 @@ internal.get("/internal/stats/ranking", async (c) => {
     const result = [];
     for (const row of rows as any[]) {
       if (!row.apiKeyId) continue;
-      const [key] = await db.select({ discordUserId: apiKeys.discordUserId, discordUsername: apiKeys.discordUsername, name: apiKeys.name })
+      const [key] = await db.select({ discordUserId: apiKeys.discordUserId, discordUsername: apiKeys.discordUsername, name: apiKeys.name, isTrial: apiKeys.isTrial })
         .from(apiKeys).where(eq(apiKeys.id, row.apiKeyId));
       if (!key) continue;
       result.push({
         discordUserId: key.discordUserId,
         discordUsername: key.discordUsername || key.name,
         keyName: key.name,
+        isTrial: key.isTrial || false,
         requests: row.requests,
         tokens: row.tokens,
         estimatedCost: 0,
@@ -503,7 +505,7 @@ internal.get("/internal/stats/ranking", async (c) => {
     const result = [];
     for (const row of rows as any[]) {
       if (!row.apiKeyId) continue;
-      const [key] = await db.select({ discordUserId: apiKeys.discordUserId, discordUsername: apiKeys.discordUsername, name: apiKeys.name })
+      const [key] = await db.select({ discordUserId: apiKeys.discordUserId, discordUsername: apiKeys.discordUsername, name: apiKeys.name, isTrial: apiKeys.isTrial })
         .from(apiKeys).where(eq(apiKeys.id, row.apiKeyId));
       if (!key) continue;
 
@@ -513,6 +515,7 @@ internal.get("/internal/stats/ranking", async (c) => {
         discordUserId: key.discordUserId,
         discordUsername: key.discordUsername || key.name,
         keyName: key.name,
+        isTrial: key.isTrial || false,
         requests: row.requests,
         tokens: row.tokens,
         promptTokens: row.promptTokens,
@@ -641,8 +644,13 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
 
   const [config] = await db.select().from(adminConfig);
 
-  const globalLimit = key.promptLimit && key.promptLimit > 0 ? key.promptLimit : config?.globalPromptLimit || 0;
-  const globalWindow = key.promptLimitWindow || config?.globalPromptLimitWindow || "30m";
+  const isTrialKey = key.isTrial;
+  const globalLimit = isTrialKey
+    ? (key.promptLimit || 0)
+    : (key.promptLimit && key.promptLimit > 0 ? key.promptLimit : config?.globalPromptLimit || 0);
+  const globalWindow = isTrialKey
+    ? (key.promptLimitWindow || "5h")
+    : (key.promptLimitWindow || config?.globalPromptLimitWindow || "30m");
   let globalUsed = 0;
   let globalResetMins = 0;
   let promptResetAt: string | null = null;
@@ -656,34 +664,58 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     promptResetAt = resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null;
   }
 
-  const activeModelLimits = await db.select().from(modelLimits).where(eq(modelLimits.scope, 'global'));
-  const perModelLimitFallback = key.perModelPromptLimit && key.perModelPromptLimit > 0 ? key.perModelPromptLimit : config?.globalPerModelPromptLimit || 0;
-  const perModelWindowFallback = key.perModelPromptLimitWindow || config?.globalPerModelPromptLimitWindow || "30m";
+  const activeModelLimits = isTrialKey
+    ? []
+    : await db.select().from(modelLimits).where(eq(modelLimits.scope, 'global'));
+  const perModelLimitFallback = isTrialKey
+    ? 0
+    : (key.perModelPromptLimit && key.perModelPromptLimit > 0 ? key.perModelPromptLimit : config?.globalPerModelPromptLimit || 0);
+  const perModelWindowFallback = isTrialKey
+    ? (key.promptLimitWindow || "5h")
+    : (key.perModelPromptLimitWindow || config?.globalPerModelPromptLimitWindow || "30m");
 
-  const modelUsage = [];
+  let modelUsage = [];
   for (const tm of todayModels) {
     if (!tm.model) continue;
     const mlCheck = await checkModelPromptLimit(
       key.id,
       tm.model,
-      key.perModelPromptLimit || 0,
-      key.perModelPromptLimitWindow || null,
-      config?.globalPerModelPromptLimit || 0,
-      config?.globalPerModelPromptLimitWindow || "30m"
+      isTrialKey ? 0 : (key.perModelPromptLimit || 0),
+      isTrialKey ? null : (key.perModelPromptLimitWindow || null),
+      isTrialKey ? 0 : (config?.globalPerModelPromptLimit || 0),
+      isTrialKey ? "5h" : (config?.globalPerModelPromptLimitWindow || "30m")
     );
-    const windowStr = key.perModelPromptLimitWindow || config?.globalPerModelPromptLimitWindow || "30m";
+    const windowStr = isTrialKey
+      ? globalWindow
+      : (key.perModelPromptLimitWindow || config?.globalPerModelPromptLimitWindow || "30m");
     const windowMs = parseRateLimitWindow(windowStr);
     const resetMs = await getWindowResetMs(key.id, windowMs, tm.model);
     modelUsage.push({
       model: tm.model,
       used: mlCheck.used,
-      limit: mlCheck.effectiveLimit,
+      limit: isTrialKey ? 0 : mlCheck.effectiveLimit,
       resetMins: Math.ceil(resetMs / 60000),
       resetAt: resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null,
       window: windowStr
     });
   }
 
+  if (isTrialKey && config) {
+    const gpyModels = await listGpyCatalogModels(config);
+    const usageByModel = new Map(modelUsage.map((m) => [m.model, m]));
+    modelUsage = gpyModels.map((modelId) => {
+      const short = modelId.includes("/") ? modelId.split("/").pop()! : modelId;
+      const existing = usageByModel.get(modelId) || usageByModel.get(short);
+      return existing || {
+        model: modelId,
+        used: 0,
+        limit: 0,
+        resetMins: 0,
+        resetAt: null,
+        window: globalWindow,
+      };
+    });
+  } else {
   for (const am of activeModelLimits) {
     if (!modelUsage.find(m => m.model === am.model)) {
       modelUsage.push({
@@ -695,6 +727,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
         window: perModelWindowFallback
       });
     }
+  }
   }
 
   // Calculate daily and monthly token reset times
@@ -727,7 +760,16 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
 
   const effectiveDailyTokenLimit = (key.dailyTokenLimit && key.dailyTokenLimit > 0)
     ? key.dailyTokenLimit
-    : (key.isTrial ? 0 : (config?.globalDailyTokenLimit || 0));
+    : (key.isTrial ? (config?.trialDailyTokenLimit ?? 0) : (config?.globalDailyTokenLimit || 0));
+
+  const trialLimits = key.isTrial && config ? {
+    dailyTokenLimit: effectiveDailyTokenLimit,
+    promptLimit: globalLimit,
+    promptLimitWindow: globalWindow,
+    models: await listGpyCatalogModels(config),
+    durationDays: config.trialDefaultDurationDays ?? 30,
+    maxPerAccount: config.trialMaxPerAccount ?? 1,
+  } : null;
 
   return c.json({
     discordUserId: key.discordUserId,
@@ -735,6 +777,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     isActive: key.isActive,
     isTrial: key.isTrial,
     trial: trialInfo,
+    trialLimits,
     keyPrefix: key.keyPrefix,
     key: key.key,
     promptLimit: globalLimit,
@@ -746,9 +789,9 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     perModelPromptLimit: perModelLimitFallback,
     perModelPromptLimitWindow: perModelWindowFallback,
     dailyTokenLimit: effectiveDailyTokenLimit,
-    monthlyTokenLimit: config?.globalMonthlyTokenLimit || 0,
-    dailyInputTokenLimit: (key.dailyInputTokenLimit && key.dailyInputTokenLimit > 0) ? key.dailyInputTokenLimit : (config?.globalDailyInputTokenLimit || 0),
-    dailyOutputTokenLimit: (key.dailyOutputTokenLimit && key.dailyOutputTokenLimit > 0) ? key.dailyOutputTokenLimit : (config?.globalDailyOutputTokenLimit || 0),
+    monthlyTokenLimit: key.isTrial ? 0 : (config?.globalMonthlyTokenLimit || 0),
+    dailyInputTokenLimit: key.isTrial ? 0 : ((key.dailyInputTokenLimit && key.dailyInputTokenLimit > 0) ? key.dailyInputTokenLimit : (config?.globalDailyInputTokenLimit || 0)),
+    dailyOutputTokenLimit: key.isTrial ? 0 : ((key.dailyOutputTokenLimit && key.dailyOutputTokenLimit > 0) ? key.dailyOutputTokenLimit : (config?.globalDailyOutputTokenLimit || 0)),
     dailyTokensUsed: todayStats?.tokens || 0,
     monthlyTokensUsed: monthStats?.tokens || 0,
     dailyInputUsed: todayStats?.promptTokens || 0,
@@ -1009,9 +1052,15 @@ internal.get("/internal/user-key-type/:discordUserId", async (c) => {
   const discordUserId = c.req.param("discordUserId");
   const key = await findBestKeyForDiscordUser(discordUserId);
   if (!key) return c.json({ found: false });
+  const [phantomKey] = await db
+    .select({ id: apiKeys.id })
+    .from(apiKeys)
+    .where(and(eq(apiKeys.discordUserId, discordUserId), eq(apiKeys.isTrial, false), eq(apiKeys.isActive, true)))
+    .limit(1);
   return c.json({
     found: true,
     isTrial: key.isTrial,
+    hasPhantomKey: !!phantomKey,
     isActive: key.isActive,
     discordUserId,
   });

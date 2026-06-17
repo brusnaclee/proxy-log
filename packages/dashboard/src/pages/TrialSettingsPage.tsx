@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   trialSettings,
   type TrialDmTemplates,
@@ -12,7 +13,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Gift, Loader2, RefreshCw, Save } from "lucide-react";
+import { Gift, Loader2, RefreshCw, Save, ExternalLink } from "lucide-react";
+
+function keyDetailPath(u: TrialUserRow) {
+  const slug = (u.keyName || "trial").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").substring(0, 40);
+  return `/keys/${u.apiKeyId}-${slug}`;
+}
 
 const DURATION_OPTIONS = [7, 14, 30, 60, 90];
 const PROMPT_WINDOWS = ["1h", "3h", "5h", "12h", "24h"];
@@ -51,6 +57,7 @@ function EmbedPreview({ embed, buttonLabel }: { embed: TrialEmbedConfig; buttonL
 }
 
 export default function TrialSettingsPage() {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -412,7 +419,11 @@ export default function TrialSettingsPage() {
               </thead>
               <tbody>
                 {users.map((u) => (
-                  <tr key={u.id} className="border-b border-border/30">
+                  <tr
+                    key={u.id}
+                    className="border-b border-border/30 cursor-pointer hover:bg-muted/40 transition-colors"
+                    onClick={() => navigate(keyDetailPath(u))}
+                  >
                     <td className="py-2 px-4">
                       <div className="font-medium">{u.discordUsername || u.discordUserId}</div>
                       <div className="text-xs text-muted-foreground font-mono">{u.discordUserId}</div>
@@ -422,7 +433,10 @@ export default function TrialSettingsPage() {
                     </td>
                     <td className="py-2 px-4 text-xs">{new Date(u.expiresAt).toLocaleString()}</td>
                     <td className="py-2 px-4 font-mono text-xs">{u.keyPrefix}…</td>
-                    <td className="py-2 px-4 text-right space-x-1">
+                    <td className="py-2 px-4 text-right space-x-1" onClick={(e) => e.stopPropagation()}>
+                      <Button size="sm" variant="ghost" onClick={() => navigate(keyDetailPath(u))} title="View detail">
+                        <ExternalLink className="h-3 w-3" />
+                      </Button>
                       {u.status === "active" && (
                         <>
                           <Button size="sm" variant="outline" onClick={() => void runAction(u.discordUserId, "extend", { days: 7 })}>
