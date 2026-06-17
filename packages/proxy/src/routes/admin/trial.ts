@@ -180,10 +180,21 @@ export async function claimTrialForUser(body: {
     return { error: "trial_already_active", status: 409 as const };
   }
 
+  // Compute effective maxPerAccount: pick the highest overrideMaxTrials across
+  // existing rows (grant_retry bumps it) so retries still work even when the
+  // user already used their default trial allotment.
+  const overrideRows = await db
+    .select({ overrideMaxTrials: trialUsers.overrideMaxTrials })
+    .from(trialUsers)
+    .where(eq(trialUsers.discordUserId, body.discordUserId));
+  const maxOverride = overrideRows.reduce(
+    (m, r) => Math.max(m, r.overrideMaxTrials || 0),
+    0,
+  );
+  const effectiveMax = (config.trialMaxPerAccount ?? 1) + maxOverride;
   const trialCount = await countUserTrials(body.discordUserId);
-  const maxPerAccount = config.trialMaxPerAccount ?? 1;
-  if (trialCount >= maxPerAccount) {
-    return { error: "trial_already_used", maxPerAccount, status: 409 as const };
+  if (trialCount >= effectiveMax) {
+    return { error: "trial_already_used", maxPerAccount: effectiveMax, status: 409 as const };
   }
 
   const [phantomKey] = await db

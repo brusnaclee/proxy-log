@@ -1,4 +1,4 @@
-import { and, eq, isNull, lt, sql } from "drizzle-orm";
+import { and, eq, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { apiKeys, trialUsers } from "../db/schema.js";
 import { queueTrialNotification } from "./trial-notify.js";
@@ -37,11 +37,18 @@ export function initializeTrialScheduler(): void {
 }
 
 export async function countUserTrials(discordUserId: string): Promise<number> {
-  const rows = await db
-    .select({ count: sql<number>`count(*)` })
-    .from(trialUsers)
-    .where(eq(trialUsers.discordUserId, discordUserId));
-  return Number(rows[0]?.count || 0);
+	// Only count rows that still represent an active/expired trial, not ones that
+	// were "unclaim" via admin grant_retry (endedAt set, endReason = admin_grant_retry).
+	const rows = await db
+		.select({ count: sql<number>`count(*)` })
+		.from(trialUsers)
+		.where(
+			and(
+				eq(trialUsers.discordUserId, discordUserId),
+				or(isNull(trialUsers.endedAt), ne(trialUsers.endReason, "admin_grant_retry")),
+			),
+		);
+	return Number(rows[0]?.count || 0);
 }
 
 export async function findActiveTrialByDiscordUser(discordUserId: string) {
