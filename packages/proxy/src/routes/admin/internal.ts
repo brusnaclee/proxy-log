@@ -1062,9 +1062,12 @@ internal.get("/internal/trial-models", async (c) => {
 internal.get("/internal/audit", async (c) => {
   const authErr = checkInternal(c);
   if (authErr) return authErr;
+  return c.json(auditSnapshot());
+});
+
+export async function auditSnapshot() {
   const checks: Array<{ name: string; status: 'ok' | 'fail' | 'warn'; detail: any }> = [];
 
-  // 1. Database reachable
   try {
     await db.execute(sql`SELECT 1 as ok`);
     checks.push({ name: 'database', status: 'ok', detail: { reachable: true } });
@@ -1072,7 +1075,6 @@ internal.get("/internal/audit", async (c) => {
     checks.push({ name: 'database', status: 'fail', detail: { error: (err as Error).message } });
   }
 
-  // 2. Model catalog reachable
   try {
     const catalog = await getModelCatalogResponse();
     const all = (catalog?.data || []) as any[];
@@ -1087,7 +1089,6 @@ internal.get("/internal/audit", async (c) => {
     checks.push({ name: 'model_catalog', status: 'fail', detail: { error: (err as Error).message } });
   }
 
-  // 3. Trial config
   try {
     const [config] = await db.select().from(adminConfig);
     checks.push({
@@ -1105,7 +1106,6 @@ internal.get("/internal/audit", async (c) => {
     checks.push({ name: 'trial_config', status: 'fail', detail: { error: (err as Error).message } });
   }
 
-  // 4. Trial users breakdown
   try {
     const allTrials = await db.select().from(trialUsers);
     const now = new Date();
@@ -1122,7 +1122,6 @@ internal.get("/internal/audit", async (c) => {
     checks.push({ name: 'trial_users', status: 'fail', detail: { error: (err as Error).message } });
   }
 
-  // 5. Active API keys
   try {
     const allKeys = await db
       .select({ id: apiKeys.id, isTrial: apiKeys.isTrial, isActive: apiKeys.isActive })
@@ -1140,8 +1139,8 @@ internal.get("/internal/audit", async (c) => {
   const overall = checks.every((c) => c.status === 'ok')
     ? 'ok'
     : (checks.some((c) => c.status === 'fail') ? 'fail' : 'warn');
-  return c.json({ overall, checks, timestamp: new Date().toISOString() });
-});
+  return { overall, checks, timestamp: new Date().toISOString() };
+}
 
 internal.get("/internal/user-key-type/:discordUserId", async (c) => {
   const authErr = checkInternal(c);

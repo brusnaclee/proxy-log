@@ -15,6 +15,7 @@ import keysRoutes from "./routes/admin/keys.js";
 import logsRoutes from "./routes/admin/logs.js";
 import statsRoutes from "./routes/admin/stats.js";
 import internalRoutes from "./routes/admin/internal.js";
+import internalAuditRoute from "./routes/internal-audit.js";
 import monitorRoutes from "./routes/admin/monitor.js";
 import buglogRoutes from "./routes/admin/buglog.js";
 import quotaGuardRoutes from "./routes/admin/quota-guard.js";
@@ -77,6 +78,9 @@ app.route("/admin", buglogRoutes);
 app.route("/admin", quotaGuardRoutes);
 app.route("/admin", recapRoutes);
 app.route("/admin", trialRoutes);
+
+// Service-to-service audit (no admin session required, just internal secret)
+app.route("/", internalAuditRoute);
 
 // ─── Proxy Routes (catch-all for /v1/*) ─────────────────────────────────────────
 app.route("/v1", proxyRoutes);
