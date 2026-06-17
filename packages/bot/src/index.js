@@ -2116,10 +2116,6 @@ function buildTokitoEmbed(kind, session) {
 			},
 		);
 
-	if (session.trialMode) {
-		embed.setFooter({ text: 'Trial mode — model gpy saja (status ditampilkan online)' });
-	}
-
 	const components = buildTokitoRows(
 		kind,
 		session.id,
