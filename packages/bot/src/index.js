@@ -2852,11 +2852,6 @@ function buildTutorialEmbeds(ide, kind, ctx) {
 			.setTitle(`📘 How to Use — ${ideLabel}${pages.length > 1 ? ` (${i + 1}/${pages.length})` : ''}`)
 			.setDescription(chunk)
 			.setColor(0x5865f2)
-			.setFooter({
-				text: kind === 'trial'
-					? 'Mode trial — hanya model gpy'
-					: 'Mode Phantom — semua model tersedia',
-			})
 			.setTimestamp(),
 	}));
 }
@@ -4992,20 +4987,33 @@ client.on('interactionCreate', async (interaction) => {
 			const targetUserId = parts[1];
 			const kind = parts[2];
 			if (interaction.user.id !== targetUserId) {
-				await interaction.reply({ content: '❌ Tombol ini bukan untukmu.', ephemeral: true });
+				try {
+					await interaction.reply({ content: '❌ Tombol ini bukan untukmu.', ephemeral: true });
+				} catch {}
 				return;
 			}
 			const kindLabel = kind === 'trial' ? 'Trial' : 'Phantom';
-			await interaction.reply({
-				embeds: [
-					new EmbedBuilder()
-						.setTitle('📘 Pilih IDE')
-						.setDescription(`Pilih IDE untuk lihat tutorial setup **${kindLabel} API key** di bawah ini.`)
-						.setColor(0x5865f2),
-				],
-				components: buildHowToPicker(targetUserId, kindLabel),
-				ephemeral: true,
-			});
+			try {
+				await interaction.reply({
+					embeds: [
+						new EmbedBuilder()
+							.setTitle('📘 Pilih IDE')
+							.setDescription(`Pilih IDE untuk lihat tutorial setup **${kindLabel} API key** di bawah ini.`)
+							.setColor(0x5865f2),
+					],
+					components: buildHowToPicker(targetUserId, kindLabel),
+					ephemeral: true,
+				});
+			} catch (err) {
+				console.error('[howto] picker error:', err);
+				try {
+					if (interaction.deferred || interaction.replied) {
+						await interaction.followUp({ content: `❌ Gagal tampilkan picker: ${err.message || 'unknown'}`, ephemeral: true });
+					} else {
+						await interaction.reply({ content: `❌ Gagal tampilkan picker: ${err.message || 'unknown'}`, ephemeral: true });
+					}
+				} catch {}
+			}
 			return;
 		}
 
@@ -5017,27 +5025,38 @@ client.on('interactionCreate', async (interaction) => {
 				await interaction.reply({ content: '❌ Menu ini bukan untukmu.', ephemeral: true });
 				return;
 			}
-			const kind = await lookupKindForUser(targetUserId);
-			const ctx = await getTutorialContextForUser(targetUserId, kind);
-			const embeds = buildTutorialEmbeds(ide, kind, ctx);
-			const components = [];
-			if (embeds.length > 1) {
-				components.push(
-					new ActionRowBuilder().addComponents(
-						new ButtonBuilder()
-							.setCustomId(`${TUTORIAL_PAGE_PREFIX}${targetUserId}:${ide}:prev`)
-							.setLabel('◀ Prev')
-							.setStyle(ButtonStyle.Secondary),
-						new ButtonBuilder()
-							.setCustomId(`${TUTORIAL_PAGE_PREFIX}${targetUserId}:${ide}:next`)
-							.setLabel('Next ▶')
-							.setStyle(ButtonStyle.Secondary),
-					),
-				);
+			try {
+				const kind = await lookupKindForUser(targetUserId);
+				const ctx = await getTutorialContextForUser(targetUserId, kind);
+				const embeds = buildTutorialEmbeds(ide, kind, ctx);
+				const components = [];
+				if (embeds.length > 1) {
+					components.push(
+						new ActionRowBuilder().addComponents(
+							new ButtonBuilder()
+								.setCustomId(`${TUTORIAL_PAGE_PREFIX}${targetUserId}:${ide}:prev`)
+								.setLabel('◀ Prev')
+								.setStyle(ButtonStyle.Secondary),
+							new ButtonBuilder()
+								.setCustomId(`${TUTORIAL_PAGE_PREFIX}${targetUserId}:${ide}:next`)
+								.setLabel('Next ▶')
+								.setStyle(ButtonStyle.Secondary),
+						),
+					);
+				}
+				if (!client.tutorialPages) client.tutorialPages = new Map();
+				client.tutorialPages.set(`${targetUserId}:${ide}`, { embeds, page: 0 });
+				await interaction.update({ embeds: [embeds[0].embed], components });
+			} catch (err) {
+				console.error('[howto] render error:', err);
+				try {
+					await interaction.update({
+						content: `❌ Gagal render tutorial: ${err.message || 'unknown'}. Silakan coba lagi dari DM.`,
+						embeds: [],
+						components: [],
+					});
+				} catch {}
 			}
-			await interaction.update({ embeds: [embeds[0].embed], components });
-			if (!client.tutorialPages) client.tutorialPages = new Map();
-			client.tutorialPages.set(`${targetUserId}:${ide}`, { embeds, page: 0 });
 			return;
 		}
 
@@ -5051,17 +5070,25 @@ client.on('interactionCreate', async (interaction) => {
 			}
 			const state = client.tutorialPages?.get(`${targetUserId}:${ide}`);
 			if (!state) {
-				await interaction.update({
-					content: 'Sesi tutorial kadaluarsa. Silakan buka ulang dari DM.',
-					embeds: [],
-					components: [],
-				});
+				try {
+					await interaction.update({
+						content: 'Sesi tutorial kadaluarsa. Silakan buka ulang dari DM (klik tombol "How to Use" lagi).',
+						embeds: [],
+						components: [],
+					});
+				} catch {
+					await interaction.followUp({ content: 'Sesi tutorial kadaluarsa. Silakan buka ulang dari DM.', ephemeral: true });
+				}
 				return;
 			}
 			state.page = dir === 'next'
 				? Math.min(state.page + 1, state.embeds.length - 1)
 				: Math.max(state.page - 1, 0);
-			await interaction.update({ embeds: [state.embeds[state.page].embed] });
+			try {
+				await interaction.update({ embeds: [state.embeds[state.page].embed] });
+			} catch (err) {
+				console.error('[howto] pagination error:', err);
+			}
 			return;
 		}
 
