@@ -108,6 +108,7 @@ export function buildTrialSettingsResponse(config: AdminConfig, gpyModels: strin
     trialEmbedConfig: { ...embed, description: embedDescription },
     trialDmTemplates: dmTemplates,
     gpyModels,
+    configUpdatedAt: config.updatedAt ? new Date(config.updatedAt).toISOString() : null,
   };
 }
 

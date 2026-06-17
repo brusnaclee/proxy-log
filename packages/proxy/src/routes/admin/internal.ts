@@ -7,6 +7,7 @@ import { getModelRates } from "../../utils/cost-calculator.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
 import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindowResetMs } from "../../utils/rate-limit.js";
 import { isInternalRequest } from "../../middleware/session.js";
+import { configCache } from "../../utils/cache.js";
 import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, sanitizeRows } from "../../utils/counting.js";
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
@@ -952,6 +953,7 @@ internal.post("/internal/trial-panel-message-id", async (c) => {
     trialPanelMessageId: body.messageId || null,
     updatedAt: new Date(),
   }).where(eq(adminConfig.id, config.id));
+  configCache.invalidate("admin_config");
   return c.json({ success: true });
 });
 

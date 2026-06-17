@@ -3524,61 +3524,127 @@ function buildTrialPanelRow(cfg) {
 	);
 }
 
+function isTrialPanelMessage(msg) {
+	if (!msg || msg.author?.id !== client.user.id) return false;
+	return msg.components?.some((row) =>
+		row.components?.some((c) => c.customId === TRIAL_CLAIM_BUTTON),
+	);
+}
+
+async function saveTrialPanelMessageId(messageId) {
+	await proxyInternal('/admin/internal/trial-panel-message-id', 'POST', {
+		messageId: messageId || null,
+	});
+}
+
+let trialPanelSyncRunning = false;
+
 async function ensureTrialPanelMessage() {
 	if (!TOKITO_CHANNEL_ID) return;
-	let cfg;
+	if (trialPanelSyncRunning) return;
+	trialPanelSyncRunning = true;
+
 	try {
-		cfg = await proxyInternal('/admin/internal/trial-panel-config');
-	} catch (err) {
-		console.error('[trial] Failed to load trial config:', err.message);
-		return;
-	}
-
-	const channel = await client.channels.fetch(TOKITO_CHANNEL_ID).catch(() => null);
-	if (!channel || !channel.isTextBased()) return;
-
-	const panelId = cfg.trialPanelMessageId;
-	let existing = null;
-	if (panelId) {
-		existing = await channel.messages.fetch(panelId).catch(() => null);
-	}
-
-	if (!cfg.trialEnabled) {
-		if (existing && existing.author?.id === client.user.id) {
-			await existing.delete().catch(() => {});
+		let cfg;
+		try {
+			cfg = await proxyInternal('/admin/internal/trial-panel-config');
+		} catch (err) {
+			console.error('[trial] Failed to load trial config:', err.message);
+			return;
 		}
-		if (panelId) {
-			await proxyInternal('/admin/internal/trial-panel-message-id', 'POST', { messageId: null });
+
+		if (cfg.configUpdatedAt) {
+			lastTrialConfigUpdatedAt = cfg.configUpdatedAt;
 		}
-		return;
-	}
 
-	const payload = {
-		embeds: [buildTrialPanelEmbed(cfg)],
-		components: [buildTrialPanelRow(cfg)],
-	};
+		const channel = await client.channels.fetch(TOKITO_CHANNEL_ID).catch((err) => {
+			console.error('[trial] Failed to fetch channel:', err.message);
+			return null;
+		});
+		if (!channel || !channel.isTextBased()) return;
 
-	if (existing && existing.author?.id === client.user.id) {
-		await existing.edit(payload);
-		return;
-	}
+		const recent = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+		const trialPanels = recent
+			? [...recent.values()].filter(isTrialPanelMessage)
+			: [];
 
-	const recent = await channel.messages.fetch({ limit: 30 });
-	for (const msg of recent.values()) {
-		if (
-			msg.author?.id === client.user.id &&
-			msg.components?.some((row) =>
-				row.components?.some((c) => c.customId === TRIAL_CLAIM_BUTTON),
-			)
-		) {
+		const panelPayload = {
+			embeds: [buildTrialPanelEmbed(cfg)],
+			components: [buildTrialPanelRow(cfg)],
+		};
+
+		if (!cfg.trialEnabled) {
+			for (const msg of trialPanels) {
+				await msg.delete().catch(() => {});
+			}
+			if (cfg.trialPanelMessageId) {
+				const saved = await channel.messages.fetch(cfg.trialPanelMessageId).catch(() => null);
+				if (saved && saved.author?.id === client.user.id) {
+					await saved.delete().catch(() => {});
+				}
+				await saveTrialPanelMessageId(null);
+			}
+			return;
+		}
+
+		let currentPanel = null;
+		const savedId = cfg.trialPanelMessageId;
+
+		if (savedId) {
+			const byId =
+				recent?.get(savedId) ||
+				(await channel.messages.fetch(savedId).catch(() => null));
+			if (isTrialPanelMessage(byId)) {
+				currentPanel = byId;
+			} else if (!byId) {
+				await saveTrialPanelMessageId(null);
+			} else if (byId.author?.id === client.user.id) {
+				currentPanel = byId;
+			}
+		}
+
+		if (!currentPanel && trialPanels.length > 0) {
+			currentPanel = trialPanels.sort(
+				(a, b) => b.createdTimestamp - a.createdTimestamp,
+			)[0];
+		}
+
+		if (currentPanel) {
+			const edited = await currentPanel.edit(panelPayload).catch((err) => {
+				console.warn('[trial] Panel edit failed, will recreate:', err.message);
+				return null;
+			});
+			if (edited) {
+				for (const msg of trialPanels) {
+					if (msg.id !== currentPanel.id) await msg.delete().catch(() => {});
+				}
+				if (savedId !== currentPanel.id) {
+					await saveTrialPanelMessageId(currentPanel.id);
+				}
+				return;
+			}
+			currentPanel = null;
+		}
+
+		for (const msg of trialPanels) {
 			await msg.delete().catch(() => {});
 		}
-	}
 
-	const sent = await channel.send(payload);
-	await proxyInternal('/admin/internal/trial-panel-message-id', 'POST', {
-		messageId: sent.id,
-	});
+		const sent = await channel.send(panelPayload).catch((err) => {
+			console.error('[trial] Failed to send panel:', err.message);
+			return null;
+		});
+		if (sent) {
+			await saveTrialPanelMessageId(sent.id);
+			console.log('[trial] Created trial panel message:', sent.id);
+		}
+	} finally {
+		trialPanelSyncRunning = false;
+	}
+}
+
+async function refreshTrialPanelIfNeeded() {
+	await ensureTrialPanelMessage();
 }
 
 async function handleTrialClaimButton(interaction) {
@@ -3949,7 +4015,7 @@ client.once('clientReady', async () => {
 	}
 
 	await ensureRankingMessages();
-	await ensureTrialPanelMessage().catch((e) => console.error('[trial] panel error:', e.message));
+	await refreshTrialPanelIfNeeded().catch((e) => console.error('[trial] panel error:', e.message));
 	await setupVerificationButton();
 	startPhotoCheckInterval();
 	startRoleSyncInterval();
@@ -3984,10 +4050,10 @@ client.once('clientReady', async () => {
 	}, RANKING_REFRESH_INTERVAL_MS);
 
 	setInterval(() => {
-		ensureTrialPanelMessage().catch((err) =>
+		refreshTrialPanelIfNeeded().catch((err) =>
 			console.error('[trial] panel refresh error:', err.message),
 		);
-	}, 60 * 1000);
+	}, 30 * 1000);
 
 	if (TOKITO_API_KEY) {
 		console.log(`[tokito] Monitor active. Panel Channel ID: ${TOKITO_CHANNEL_ID}`);
