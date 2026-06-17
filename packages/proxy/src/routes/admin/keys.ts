@@ -35,6 +35,7 @@ keys.get("/keys", async (c) => {
   const result = [];
 
   for (const key of allKeys) {
+    const tmOpts = key.isTrial ? { isTrial: true as const } : undefined;
     const _now = new Date();
     const _wibOffset = 7 * 60 * 60 * 1000;
     const _wibNow = new Date(_now.getTime() + _wibOffset);
@@ -44,7 +45,7 @@ keys.get("/keys", async (c) => {
     const todayWhere = and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${todayUtcDate}`, VALID_LOG_SQL)!;
     const todayStats = (await db.select({
       count: turnCountSql(todayWhere),
-      tokens: turnTotalTokensSql(todayWhere),
+      tokens: turnTotalTokensSql(todayWhere, tmOpts),
       cost: sql<number>`COALESCE(SUM(estimated_cost), 0)`,
     })
       .from(requestLogs).where(todayWhere))[0];
@@ -55,13 +56,13 @@ keys.get("/keys", async (c) => {
         FROM request_logs WHERE api_key_id = ${key.id} AND created_at >= ${todayUtcDate} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
         GROUP BY model, turn_id)
       GROUP BY model
-    `)).rows as any[], ['promptTokens', 'completionTokens']));
+    `)).rows as any[], ['promptTokens', 'completionTokens']), tmOpts);
     const todayCost = calculateBreakdownCosts(todayBreakdown as any).totalCost;
     const deviceCount = (await db.select({ count: sql<number>`count(*)` }).from(devices).where(eq(devices.apiKeyId, key.id)))[0];
     const totalWhere = and(eq(requestLogs.apiKeyId, key.id), VALID_LOG_SQL)!;
     const totalStats = (await db.select({
       count: turnCountSql(totalWhere),
-      tokens: turnTotalTokensSql(totalWhere),
+      tokens: turnTotalTokensSql(totalWhere, tmOpts),
     })
       .from(requestLogs).where(totalWhere))[0];
 
@@ -125,6 +126,8 @@ keys.get("/keys/:id", async (c) => {
       : null;
   const analyticsDateFilter = analyticsSince ? sql`AND created_at >= ${analyticsSince}` : sql``;
 
+  const tmOpts = key.isTrial ? { isTrial: true as const } : undefined;
+
   const buildPeriodStats = async (since?: Date) => {
     const whereClause = since
       ? and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${since}`, VALID_LOG_SQL)!
@@ -132,9 +135,9 @@ keys.get("/keys/:id", async (c) => {
 
     const s = (await db.select({
       turns:            turnCountSql(whereClause),
-      tokens:           turnTotalTokensSql(whereClause),
-      promptTokens:     turnPromptTokensSql(whereClause),
-      completionTokens: turnCompletionTokensSql(whereClause),
+      tokens:           turnTotalTokensSql(whereClause, tmOpts),
+      promptTokens:     turnPromptTokensSql(whereClause, tmOpts),
+      completionTokens: turnCompletionTokensSql(whereClause, tmOpts),
       contextTokens:    sql<number>`0`,
       estimatedCost:    sql<number>`COALESCE(SUM(estimated_cost), 0)`,
     }).from(requestLogs).where(whereClause))[0];
@@ -153,7 +156,7 @@ keys.get("/keys/:id", async (c) => {
         GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
       )
       GROUP BY model
-    `)).rows as any[], ['promptTokens', 'completionTokens']));
+    `)).rows as any[], ['promptTokens', 'completionTokens']), tmOpts);
     const costs = calculateBreakdownCosts(breakdown as any);
     return {
       requests:         s?.turns           || 0,
@@ -176,7 +179,7 @@ keys.get("/keys/:id", async (c) => {
 
   const deviceCount = (await db.select({ count: sql<number>`count(*)` }).from(devices).where(eq(devices.apiKeyId, key.id)))[0];
 
-  const { input: tmInput, output: tmOutput } = getTokenMultipliers();
+  const { input: tmInput, output: tmOutput } = getTokenMultipliers(tmOpts);
 
   const topModels = sanitizeRows((await db.execute(sql`
     SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta * ${tmInput} + sum_c * ${tmOutput}), 0) as tokens, 0 as "estimatedCost"

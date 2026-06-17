@@ -1,5 +1,5 @@
 import { sql, type SQL } from "drizzle-orm";
-import { getTokenMultipliers } from "./token-multiplier.js";
+import { getTokenMultipliers, type TokenMultiplierOpts } from "./token-multiplier.js";
 
 /**
  * PostgreSQL returns bigint/numeric columns as strings.
@@ -54,20 +54,20 @@ export function turnCountSql(whereCondition: SQL | undefined): SQL<number> {
  * context_delta_tokens = new tokens added since last request (user message + tool results).
  * Excludes system prompt and conversation history.
  */
-export function turnPromptTokensSql(whereCondition: SQL | undefined): SQL<number> {
-  const { input } = getTokenMultipliers();
+export function turnPromptTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
+  const { input } = getTokenMultipliers(opts);
   return sql<number>`COALESCE((SELECT SUM(sum_delta) * ${input} FROM (SELECT SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
 }
 
 /** Turn-based completion tokens: SUM(completion) per turn, then SUM across turns */
-export function turnCompletionTokensSql(whereCondition: SQL | undefined): SQL<number> {
-  const { output } = getTokenMultipliers();
+export function turnCompletionTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
+  const { output } = getTokenMultipliers(opts);
   return sql<number>`COALESCE((SELECT SUM(sum_c) * ${output} FROM (SELECT SUM(completion_tokens) as sum_c FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
 }
 
 /** Turn-based total tokens: (input + output) per turn, then SUM */
-export function turnTotalTokensSql(whereCondition: SQL | undefined): SQL<number> {
-  const { input, output } = getTokenMultipliers();
+export function turnTotalTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
+  const { input, output } = getTokenMultipliers(opts);
   return sql<number>`COALESCE((SELECT SUM(sum_delta * ${input} + sum_c * ${output}) FROM (SELECT SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
 }
 

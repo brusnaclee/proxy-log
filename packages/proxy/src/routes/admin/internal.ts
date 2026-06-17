@@ -477,6 +477,11 @@ internal.get("/internal/stats/ranking", async (c) => {
       const [key] = await db.select({ discordUserId: apiKeys.discordUserId, discordUsername: apiKeys.discordUsername, name: apiKeys.name, isTrial: apiKeys.isTrial })
         .from(apiKeys).where(eq(apiKeys.id, row.apiKeyId));
       if (!key) continue;
+      if (key.isTrial) {
+        const whereClause = and(eq(requestLogs.apiKeyId, row.apiKeyId), sql`created_at >= ${since}`, COUNTED_LOG_SQL);
+        const [raw] = await db.select({ tokens: turnTotalTokensSql(whereClause, { isTrial: true }) }).from(requestLogs).where(whereClause);
+        row.tokens = raw?.tokens ?? row.tokens;
+      }
       result.push({
         discordUserId: key.discordUserId,
         discordUsername: key.discordUsername || key.name,
@@ -509,6 +514,18 @@ internal.get("/internal/stats/ranking", async (c) => {
       const [key] = await db.select({ discordUserId: apiKeys.discordUserId, discordUsername: apiKeys.discordUsername, name: apiKeys.name, isTrial: apiKeys.isTrial })
         .from(apiKeys).where(eq(apiKeys.id, row.apiKeyId));
       if (!key) continue;
+
+      if (key.isTrial) {
+        const whereClause = and(eq(requestLogs.apiKeyId, row.apiKeyId), sql`created_at >= ${since}`, BILLABLE_LOG_SQL);
+        const [raw] = await db.select({
+          tokens: turnTotalTokensSql(whereClause, { isTrial: true }),
+          promptTokens: turnPromptTokensSql(whereClause, { isTrial: true }),
+          completionTokens: turnCompletionTokensSql(whereClause, { isTrial: true }),
+        }).from(requestLogs).where(whereClause);
+        row.tokens = raw?.tokens ?? row.tokens;
+        row.promptTokens = raw?.promptTokens ?? row.promptTokens;
+        row.completionTokens = raw?.completionTokens ?? row.completionTokens;
+      }
 
         const estimatedCost = Math.round((row.promptTokens || 0) * 1.5 + (row.completionTokens || 0) * 6.0);
 
@@ -565,10 +582,12 @@ internal.get("/internal/stats/ranking", async (c) => {
 });
 
 internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
-  const { input: umInput, output: umOutput } = getTokenMultipliers();
   const discordUserId = c.req.param("discordUserId");
   const key = await findBestKeyForDiscordUser(discordUserId);
   if (!key) return c.json({ error: "User not found" }, 404);
+
+  const tmOpts = key.isTrial ? { isTrial: true as const } : undefined;
+  const { input: umInput, output: umOutput } = getTokenMultipliers(tmOpts);
 
   const keyId = key.id;
   const now = new Date();
@@ -604,9 +623,9 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     const whereClause = and(eq(requestLogs.apiKeyId, keyId), sql`created_at >= ${since}`, VALID_LOG_SQL);
     const s = (await db.select({
       requests: turnCountSql(whereClause),
-      tokens: turnTotalTokensSql(whereClause),
-      promptTokens: turnPromptTokensSql(whereClause),
-      completionTokens: turnCompletionTokensSql(whereClause),
+      tokens: turnTotalTokensSql(whereClause, tmOpts),
+      promptTokens: turnPromptTokensSql(whereClause, tmOpts),
+      completionTokens: turnCompletionTokensSql(whereClause, tmOpts),
       contextTokens: sql<number>`0`,
     })
     .from(requestLogs)

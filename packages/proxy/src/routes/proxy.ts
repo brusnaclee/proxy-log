@@ -112,6 +112,11 @@ async function notifyTrialLimitIfNeeded(
 	}
 }
 
+/** Trial keys count raw upstream tokens; regular keys use INPUT/OUTPUT_TOKEN_MULTIPLIER env. */
+function tokenCountOpts(keyRecord: { isTrial: boolean }) {
+	return keyRecord.isTrial ? { isTrial: true as const } : undefined;
+}
+
 type ContextEvent = 'new_session' | 'append' | 'compact' | 'switch';
 
 // In-memory cache of the last user message hash per session.
@@ -1539,7 +1544,8 @@ proxy.all('/*', async (c) => {
 					mw.setUTCHours(0, 0, 0, 0);
 					const ms = new Date(mw.getTime() - wibOffset);
 					const mu = await db.select({ total: turnTotalTokensSql(
-						and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms}`, BILLABLE_LOG_SQL)
+						and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms}`, BILLABLE_LOG_SQL),
+						tokenCountOpts(keyRecord),
 					) }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms}`, BILLABLE_LOG_SQL)).then((r: any[]) => r[0]);
 					if (mu && mu.total >= keyRecord.monthlyTokenLimit) {
 						tried.push(`${candidate.provider}/${candidate.modelId} (monthly token limit)`);
@@ -1548,13 +1554,14 @@ proxy.all('/*', async (c) => {
 				}
 
 				// Daily token limit
-				const globalDailyTokenLimit = keyRecord.dailyTokenLimit && keyRecord.dailyTokenLimit > 0 ? keyRecord.dailyTokenLimit : config.globalDailyTokenLimit || 0;
+				const globalDailyTokenLimit = resolveKeyDailyTokenLimit(keyRecord, config);
 				if (globalDailyTokenLimit > 0) {
 					const dw = new Date(wibNow);
 					dw.setUTCHours(0, 0, 0, 0);
 					const ds = new Date(dw.getTime() - wibOffset);
 					const du = await db.select({ total: turnTotalTokensSql(
-						and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)
+						and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL),
+						tokenCountOpts(keyRecord),
 					) }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).then((r: any[]) => r[0]);
 					if (du && du.total >= globalDailyTokenLimit) {
 						tried.push(`${candidate.provider}/${candidate.modelId} (daily token limit)`);
@@ -1562,14 +1569,15 @@ proxy.all('/*', async (c) => {
 					}
 				}
 
-				// Daily Input Token Limit
-				const dailyInputLimit = keyRecord.dailyInputTokenLimit && keyRecord.dailyInputTokenLimit > 0 ? keyRecord.dailyInputTokenLimit : config.globalDailyInputTokenLimit || 0;
+				// Daily Input Token Limit (skip for trial)
+				const dailyInputLimit = !keyRecord.isTrial && (keyRecord.dailyInputTokenLimit && keyRecord.dailyInputTokenLimit > 0 ? keyRecord.dailyInputTokenLimit : config.globalDailyInputTokenLimit || 0);
 				if (dailyInputLimit > 0) {
 					const dw = new Date(wibNow);
 					dw.setUTCHours(0, 0, 0, 0);
 					const ds = new Date(dw.getTime() - wibOffset);
 					const di = await db.select({ total: turnPromptTokensSql(
-						and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)
+						and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL),
+						tokenCountOpts(keyRecord),
 					) }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).then((r: any[]) => r[0]);
 					if (di && di.total >= dailyInputLimit) {
 						tried.push(`${candidate.provider}/${candidate.modelId} (daily input token limit)`);
@@ -1577,14 +1585,15 @@ proxy.all('/*', async (c) => {
 					}
 				}
 
-				// Daily Output Token Limit
-				const dailyOutputLimit = keyRecord.dailyOutputTokenLimit && keyRecord.dailyOutputTokenLimit > 0 ? keyRecord.dailyOutputTokenLimit : config.globalDailyOutputTokenLimit || 0;
+				// Daily Output Token Limit (skip for trial)
+				const dailyOutputLimit = !keyRecord.isTrial && (keyRecord.dailyOutputTokenLimit && keyRecord.dailyOutputTokenLimit > 0 ? keyRecord.dailyOutputTokenLimit : config.globalDailyOutputTokenLimit || 0);
 				if (dailyOutputLimit > 0) {
 					const dw = new Date(wibNow);
 					dw.setUTCHours(0, 0, 0, 0);
 					const ds = new Date(dw.getTime() - wibOffset);
 					const do_ = await db.select({ total: turnCompletionTokensSql(
-						and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)
+						and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL),
+						tokenCountOpts(keyRecord),
 					) }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).then((r: any[]) => r[0]);
 					if (do_ && do_.total >= dailyOutputLimit) {
 						tried.push(`${candidate.provider}/${candidate.modelId} (daily output token limit)`);
@@ -2331,7 +2340,7 @@ proxy.all('/*', async (c) => {
 				BILLABLE_LOG_SQL,
 			);
 			const mu = await db
-				.select({ total: turnTotalTokensSql(whereClause) })
+				.select({ total: turnTotalTokensSql(whereClause, tokenCountOpts(keyRecord)) })
 				.from(requestLogs)
 				.where(whereClause)
 				.then((r) => r[0]);
@@ -2360,7 +2369,7 @@ proxy.all('/*', async (c) => {
 				BILLABLE_LOG_SQL,
 			);
 			const du = await db
-				.select({ total: turnTotalTokensSql(whereClause) })
+				.select({ total: turnTotalTokensSql(whereClause, tokenCountOpts(keyRecord)) })
 				.from(requestLogs)
 				.where(whereClause)
 				.then((r) => r[0]);
@@ -2396,7 +2405,7 @@ proxy.all('/*', async (c) => {
 				BILLABLE_LOG_SQL,
 			);
 			const du = await db
-				.select({ total: turnPromptTokensSql(whereClause) })
+				.select({ total: turnPromptTokensSql(whereClause, tokenCountOpts(keyRecord)) })
 				.from(requestLogs)
 				.where(whereClause)
 				.then((r) => r[0]);
@@ -2429,7 +2438,7 @@ proxy.all('/*', async (c) => {
 				BILLABLE_LOG_SQL,
 			);
 			const du = await db
-				.select({ total: turnCompletionTokensSql(whereClause) })
+				.select({ total: turnCompletionTokensSql(whereClause, tokenCountOpts(keyRecord)) })
 				.from(requestLogs)
 				.where(whereClause)
 				.then((r) => r[0]);
@@ -2459,7 +2468,7 @@ proxy.all('/*', async (c) => {
 				BILLABLE_LOG_SQL,
 			);
 			const mu2 = await db
-				.select({ total: turnTotalTokensSql(whereClause) })
+				.select({ total: turnTotalTokensSql(whereClause, tokenCountOpts(keyRecord)) })
 				.from(requestLogs)
 				.where(whereClause)
 				.then((r) => r[0]);
@@ -2503,7 +2512,7 @@ proxy.all('/*', async (c) => {
 					BILLABLE_LOG_SQL,
 				);
 				const du = await db
-					.select({ total: turnTotalTokensSql(whereClause) })
+					.select({ total: turnTotalTokensSql(whereClause, tokenCountOpts(keyRecord)) })
 					.from(requestLogs)
 					.where(whereClause)
 					.then((r) => r[0]);
@@ -2529,7 +2538,7 @@ proxy.all('/*', async (c) => {
 					BILLABLE_LOG_SQL,
 				);
 				const mu = await db
-					.select({ total: turnTotalTokensSql(whereClause) })
+					.select({ total: turnTotalTokensSql(whereClause, tokenCountOpts(keyRecord)) })
 					.from(requestLogs)
 					.where(whereClause)
 					.then((r) => r[0]);
@@ -2555,7 +2564,7 @@ proxy.all('/*', async (c) => {
 					BILLABLE_LOG_SQL,
 				);
 				const du = await db
-					.select({ total: turnPromptTokensSql(whereClause) })
+					.select({ total: turnPromptTokensSql(whereClause, tokenCountOpts(keyRecord)) })
 					.from(requestLogs)
 					.where(whereClause)
 					.then((r) => r[0]);
@@ -2581,7 +2590,7 @@ proxy.all('/*', async (c) => {
 					BILLABLE_LOG_SQL,
 				);
 				const du = await db
-					.select({ total: turnCompletionTokensSql(whereClause) })
+					.select({ total: turnCompletionTokensSql(whereClause, tokenCountOpts(keyRecord)) })
 					.from(requestLogs)
 					.where(whereClause)
 					.then((r) => r[0]);

@@ -12,7 +12,11 @@
  *
  * Because this is applied at read time, raw stored columns are never mutated.
  * Changing the env back to 1 (or unsetting it) restores original numbers.
+ *
+ * Trial API keys always use 1× (raw upstream counts) — multipliers never apply.
  */
+
+export type TokenMultiplierOpts = { isTrial?: boolean };
 
 /** Normalize an env multiplier value: unset/invalid/<=0 -> 1. */
 function normalizeMultiplier(raw: string | undefined): number {
@@ -23,7 +27,8 @@ function normalizeMultiplier(raw: string | undefined): number {
 }
 
 /** Read the current input/output token multipliers from the environment. */
-export function getTokenMultipliers(): { input: number; output: number } {
+export function getTokenMultipliers(opts?: TokenMultiplierOpts): { input: number; output: number } {
+  if (opts?.isTrial) return { input: 1, output: 1 };
   return {
     input: normalizeMultiplier(process.env.INPUT_TOKEN_MULTIPLIER),
     output: normalizeMultiplier(process.env.OUTPUT_TOKEN_MULTIPLIER),
@@ -35,8 +40,8 @@ export function getTokenMultipliers(): { input: number; output: number } {
  * Expects numeric `promptTokens` / `completionTokens` (already sanitized).
  * Recomputes `tokens` as the scaled sum when the field exists.
  */
-export function applyTokenMultiplier<T extends Record<string, any>>(row: T): T {
-  const { input, output } = getTokenMultipliers();
+export function applyTokenMultiplier<T extends Record<string, any>>(row: T, opts?: TokenMultiplierOpts): T {
+  const { input, output } = getTokenMultipliers(opts);
   if (input === 1 && output === 1) return row;
 
   if (typeof row.promptTokens === "number") {
@@ -58,6 +63,6 @@ export function applyTokenMultiplier<T extends Record<string, any>>(row: T): T {
 }
 
 /** Scale an array of breakdown rows in place. */
-export function applyTokenMultiplierRows<T extends Record<string, any>>(rows: T[]): T[] {
-  return rows.map((r) => applyTokenMultiplier(r));
+export function applyTokenMultiplierRows<T extends Record<string, any>>(rows: T[], opts?: TokenMultiplierOpts): T[] {
+  return rows.map((r) => applyTokenMultiplier(r, opts));
 }
