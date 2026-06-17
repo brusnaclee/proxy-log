@@ -47,6 +47,16 @@ export const FALLBACK_METADATA: FallbackMetadata[] = [
   { modelId: "ag/gpt-oss-120b-medium", displayName: "GPT-OSS 120B Medium", description: "Open-source GPT 120B via AG — medium compute", contextLength: 128_000, maxOutputTokens: 16_384, inputPricePerMtok: usd(0.90), outputPricePerMtok: usd(0.90), inputModalities: ["text"], outputModalities: ["text"], supportedFeatures: ["tools"] },
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // gpy/webnet — Kiro combo gateway (passthrough pricing with Kiro multiplier)
+  // ═══════════════════════════════════════════════════════════════════════════
+  { modelId: "gpy/webnet/claude-sonnet-4.5", displayName: "Claude Sonnet 4.5 (Kiro)", description: "Anthropic Claude Sonnet 4.5 via Kiro combo gateway", contextLength: 200_000, maxOutputTokens: 8_192, inputPricePerMtok: usd(3.90), outputPricePerMtok: usd(19.50), inputModalities: ["text", "image"], outputModalities: ["text"], supportedFeatures: ["tools", "vision", "structured_outputs"] },
+  { modelId: "gpy/webnet/claude-haiku-4.5", displayName: "Claude Haiku 4.5 (Kiro)", description: "Anthropic Claude Haiku 4.5 via Kiro combo gateway", contextLength: 200_000, maxOutputTokens: 8_192, inputPricePerMtok: usd(1.20), outputPricePerMtok: usd(6.00), inputModalities: ["text", "image"], outputModalities: ["text"], supportedFeatures: ["tools", "vision"] },
+  { modelId: "gpy/webnet/deepseek-3.2", displayName: "DeepSeek 3.2 (Kiro)", description: "DeepSeek V3.2 via Kiro combo gateway", contextLength: 128_000, maxOutputTokens: 8_192, inputPricePerMtok: usd(0.34), outputPricePerMtok: usd(1.70), inputModalities: ["text"], outputModalities: ["text"], supportedFeatures: ["tools", "reasoning"] },
+  { modelId: "gpy/webnet/minimax-m2.5", displayName: "MiniMax M2.5 (Kiro)", description: "MiniMax M2.5 via Kiro combo gateway", contextLength: 200_000, maxOutputTokens: 65_536, inputPricePerMtok: usd(0.34), outputPricePerMtok: usd(1.70), inputModalities: ["text"], outputModalities: ["text"], supportedFeatures: ["tools", "reasoning", "structured_outputs"] },
+  { modelId: "gpy/webnet/glm-5", displayName: "GLM 5 (Kiro)", description: "Zhipu AI GLM-5 via Kiro combo gateway", contextLength: 200_000, maxOutputTokens: 131_072, inputPricePerMtok: usd(0.68), outputPricePerMtok: usd(3.40), inputModalities: ["text"], outputModalities: ["text"], supportedFeatures: ["tools", "reasoning", "structured_outputs"] },
+  { modelId: "gpy/webnet/qwen3-coder-next", displayName: "Qwen3 Coder Next (Kiro)", description: "Alibaba Qwen3 Coder Next via Kiro combo gateway", contextLength: 256_000, maxOutputTokens: 8_192, inputPricePerMtok: usd(0.07), outputPricePerMtok: usd(0.34), inputModalities: ["text"], outputModalities: ["text"], supportedFeatures: ["tools", "coding"] },
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // xai/ — xAI Grok models
   // ═══════════════════════════════════════════════════════════════════════════
   { modelId: "xai/grok-3", displayName: "Grok 3", description: "xAI Grok 3 — fast reasoning, 131K context", contextLength: 131_072, maxOutputTokens: 131_072, inputPricePerMtok: usd(3.00), outputPricePerMtok: usd(15.00), inputModalities: ["text"], outputModalities: ["text"], supportedFeatures: ["tools", "reasoning"] },
