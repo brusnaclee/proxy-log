@@ -87,6 +87,21 @@ const RANKING_STATE_PATH = path.join(AGVERIF_DATA_DIR, 'ranking_state.json');
 const RANKING_REFRESH_INTERVAL_MS = 60 * 1000; // 1 menit
 const TRIAL_CLAIM_BUTTON = 'trial_claim';
 
+// ─── How-to-Use tutorial ──────────────────────────────────────────────────────
+const TUTORIAL_BTN_HOWTO_PREFIX = 'howto_open';
+const TUTORIAL_MENU_IDE_PREFIX  = 'howto_ide_';
+const TUTORIAL_PAGE_PREFIX      = 'howto_page_';
+const TUTORIAL_PAGE_SIZE        = 1800;
+
+const TUTORIAL_IDES = [
+  { id: 'cline',        label: 'Cline (VS Code extension)' },
+  { id: 'codex_ide',    label: 'Codex (web / VS Code extension)' },
+  { id: 'codex_cli',    label: 'Codex CLI (terminal)' },
+  { id: 'claude_cli',   label: 'Claude Code CLI' },
+  { id: 'opencode',     label: 'OpenCode' },
+  { id: 'oai_provider', label: 'VS Code OpenAI Compat (calgan.oai-provider)' },
+];
+
 // ─── Monthly Recap (Wrapped) ────────────────────────────────────────────────
 const RECAP_STATE_PATH = path.join(AGVERIF_DATA_DIR, 'recap_state.json');
 const RECAP_DEBUG_CHANNEL_ID = process.env.RECAP_DEBUG_CHANNEL_ID || '1507648716847190088';
@@ -2503,6 +2518,406 @@ async function fetchAllActiveNonTrialKeys() {
 	return data.filter((k) => k.isActive && !k.isTrial);
 }
 
+// ─── How-to-Use tutorial content ──────────────────────────────────────────────
+function getTutorialContext(ide, kind, ctx) {
+	const endpoint = ctx.endpoint || '<PROXY_BASE>/v1';
+	const apiKey = ctx.apiKey || '<API_KEY>';
+	const models = ctx.models && ctx.models.length ? ctx.models : [];
+	const modelList = models.length
+		? models.slice(0, 4).map((m) => '`' + m + '`').join(', ')
+		: '`gpy/webnet/glm-5`';
+	const firstModel = models[0] || 'gpy/webnet/glm-5';
+	const kindLabel = kind === 'trial' ? 'Trial' : 'Phantom';
+
+	switch (ide) {
+		case 'cline': {
+			return [
+				'# Cline (VS Code)',
+				'',
+				'Cline support OpenAI-compatible secara native — tidak perlu proxy atau config file tambahan.',
+				'',
+				'1. Install extension **Cline** dari VS Code marketplace.',
+				'2. Buka Settings → cari "Cline" → **API Provider**: pilih `OpenAI Compatible`.',
+				'3. Isi field berikut:',
+				`   - **Base URL**: \`${endpoint}\``,
+				`   - **API Key**: \`${apiKey}\``,
+				`   - **Model ID**: \`${firstModel}\``,
+				'4. Save. Coba prompt di sidebar Cline untuk test koneksi.',
+				'',
+				`**Model yang bisa dicoba (${kindLabel}):**`,
+				modelList,
+				'',
+				'> Tips: ganti **Model ID** di settings Cline kapan saja untuk switch model. Model dengan `supportsToolCalling: true` paling cocok untuk agentic workflow.',
+			].join('\n');
+		}
+
+		case 'codex_ide': {
+			return [
+				'# Codex (web / VS Code extension)',
+				'',
+				'VS Code extension Codex **TIDAK** membaca setting `chatgpt.apiBase` lagi — setting itu sudah dihapus upstream. Cara set custom base URL:',
+				'',
+				'1. Edit file `~/.codex/config.toml` (user-level). Project-local `.codex/config.toml` diabaikan untuk setting provider.',
+				'2. Tambahkan block berikut:',
+				'   ```toml',
+				'   model_provider = "groupy"',
+				`   model = "${firstModel}"`,
+				'',
+				'   [model_providers.groupy]',
+				`   name = "Groupy ${kindLabel}"`,
+				`   base_url = "${endpoint}"`,
+				`   env_key = "OPENAI_API_KEY"`,
+				'   wire_api = "responses"',
+				'   ```',
+				'3. Set env var di shell yang menjalankan VS Code, lalu restart VS Code:',
+				'   ```bash',
+				`   export OPENAI_API_KEY="${apiKey}"`,
+				'   ```',
+				'4. Extension Codex akan membaca provider baru dari config.toml.',
+				'',
+				`**Model yang bisa dicoba (${kindLabel}):**`,
+				modelList,
+				'',
+				'> `wire_api = "responses"` adalah default dan satu-satunya nilai valid di Codex 2026 untuk custom provider. Proxy harus expose `/v1/responses`. Kalau proxy cuma expose `/v1/chat/completions` (umum OpenAI-compatible), pakai IDE lain (Cline, OpenCode) atau jalankan LiteLLM/ccrouter sebagai adapter.',
+			].join('\n');
+		}
+
+		case 'codex_cli': {
+			return [
+				'# Codex CLI (terminal)',
+				'',
+				'Codex CLI baca `~/.codex/config.toml`. Env var `OPENAI_BASE_URL` sudah deprecated (cuma print warning). Cara yang benar:',
+				'',
+				'1. Install Codex CLI:',
+				'   ```bash',
+				'   npm i -g @openai/codex',
+				'   # atau via installer resmi dari openai.com',
+				'   ```',
+				'2. Lokasi config persis:',
+				'   - **macOS / Linux:** `~/.codex/config.toml`',
+				'   - **Windows:** `%USERPROFILE%\\.codex\\config.toml`',
+				'   - **Custom:** set env `CODEX_HOME=/path/to/.codex` (folder harus sudah ada).',
+				'3. Tambahkan ke `config.toml` (jangan replace existing — gabung):',
+				'   ```toml',
+				'# Top-level: provider aktif + model default',
+				'   model_provider = "groupy"',
+				`   model = "${firstModel}"`,
+				'',
+				'   # Block provider custom',
+				'   [model_providers.groupy]',
+				`   name = "Groupy ${kindLabel}"`,
+				`   base_url = "${endpoint}"`,
+				`   env_key = "GROUPY_API_KEY"`,
+				'   wire_api = "responses"',
+				'   ```',
+				'   Field penting:',
+				'   - `model_provider` (top-level) = key dari `[model_providers.<id>]` block.',
+				'   - `model` (top-level) = model id persis sesuai API proxy.',
+				'   - `env_key` = nama env var yang berisi API key (dikirim sebagai Bearer).',
+				'   - `wire_api = "responses"` = default & satu-satunya valid di 2026.',
+				'4. Set env var di shell:',
+				'   ```bash',
+				`   export GROUPY_API_KEY="${apiKey}"`,
+				'   # tambahkan ke ~/.zshrc / ~/.bashrc supaya persist',
+				'   ```',
+				'5. Test:',
+				'   ```bash',
+				'   codex --provider groupy "halo, apa kabar"',
+				'   # Ganti model per-invocation',
+				`   codex --provider groupy --model <model-id> "..."`,
+				'   # Non-interactive (CI / script)',
+				`   CODEX_API_KEY="${apiKey}" codex exec "refactor fungsi ini"`,
+				'   ```',
+				'',
+				`**Model yang bisa dicoba (${kindLabel}):**`,
+				modelList,
+				'',
+				'> Tips lanjutan:',
+				'> - `approval_policy = "never"` + `sandbox_mode = "danger-full-access"` di config.toml untuk auto-run tanpa prompt (trusted env only).',
+				'> - Pakai `[profiles.<name>]` block untuk simpan preset provider berbeda.',
+				'> - `wire_api = "responses"` di 2026 strict. Kalau proxy cuma `/v1/chat/completions`, pakai adapter (LiteLLM di localhost) atau IDE lain.',
+			].join('\n');
+		}
+
+		case 'claude_cli': {
+			return [
+				'# Claude Code CLI',
+				'',
+				'Claude Code support custom backend via `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`. Anthropic dokumentasikan resmi di [code.claude.com/docs/en/quickstart](https://code.claude.com/docs/en/quickstart).',
+				'',
+				'**PENTING:** Claude Code strict ke format **Anthropic Messages** (`POST /v1/messages`). Proxy Groupy expose **OpenAI Chat Completions** (`/v1/chat/completions`). Jadi `ANTHROPIC_BASE_URL` **TIDAK bisa point langsung** ke proxy — perlu translation layer di tengah.',
+				'',
+				'**Solusi: pakai translation proxy lokal** (CCProxy, ccrouter, atau LiteLLM) yang listen di `localhost` lalu translate Anthropic Messages ↔ OpenAI Chat Completions.',
+				'',
+				'### Step-by-step (CCProxy — recommended)',
+				'',
+				'1. **Install Claude Code** (ikuti quickstart):',
+				'   ```bash',
+				'   # macOS / Linux',
+				'   curl -fsSL https://claude.ai/install.sh | sh',
+				'   # atau via npm',
+				'   npm i -g @anthropic-ai/claude-code',
+				'   # Windows (PowerShell sebagai Admin)',
+				'   irm https://claude.ai/install.ps1 | iex',
+				'   ```',
+				'',
+				'2. **Install & jalankan CCProxy** di `localhost:3456` (translation proxy background process):',
+				'   ```bash',
+				'   export PROVIDER=openai',
+				`   export OPENAI_API_KEY="${apiKey}"`,
+				`   export OPENAI_BASE_URL="${endpoint}"`,
+				`   export OPENAI_MODEL="${firstModel}"`,
+				'   ccproxy &',
+				'   ```',
+				'',
+				'3. **Buat `~/.claude/settings.json`** (PowerShell: `notepad $HOME\\.claude\\settings.json`):',
+				'   ```json',
+				'   {',
+				'     "env": {',
+				'       "ANTHROPIC_BASE_URL": "http://localhost:3456",',
+				'       "ANTHROPIC_AUTH_TOKEN": "any-non-empty-string",',
+				`       "ANTHROPIC_DEFAULT_SONNET_MODEL": "${firstModel}",`,
+				`       "ANTHROPIC_DEFAULT_HAIKU_MODEL": "${firstModel}",`,
+				`       "ANTHROPIC_DEFAULT_OPUS_MODEL": "${firstModel}",`,
+				'       "API_TIMEOUT_MS": "500000"',
+				'     },',
+				`     "model": "${firstModel}",`,
+				'     "enabledPlugins": {},',
+				'     "hasCompletedOnboarding": true',
+				'   }',
+				'   ```',
+				'   Field penting:',
+				'   - `ANTHROPIC_BASE_URL` = URL translation proxy lokal. CCProxy default: `http://localhost:3456`. Boleh include atau tanpa `/v1` (Claude Code flexible).',
+				'   - `ANTHROPIC_AUTH_TOKEN` boleh string apa aja — CCProxy pakai `OPENAI_API_KEY` yang asli untuk upstream.',
+				'   - `ANTHROPIC_DEFAULT_*_MODEL` = mapping model Anthropic ke model proxy. Pakai model yang sama untuk semua (Sonnet=Haiku=Opus=model-proxy) supaya konsisten.',
+				'   - `API_TIMEOUT_MS = 500000` (≈8 menit) — penting biar Claude Code cepat detect error API key / network, tidak hang selamanya.',
+				'   - `hasCompletedOnboarding: true` skip onboarding prompt pertama.',
+				'',
+				'4. **Test:** jalankan `claude` di terminal, ketik `hi`. Harus muncul jawaban dari model proxy.',
+				'',
+				'5. **Verifikasi `/model` picker:** ketik `/model` di dalam Claude Code. List harus menunjukkan **"Custom Sonnet model"**, **"Custom Haiku model"**, **"Custom Opus model"** dengan prefix `ag/`, `cx/`, `tokito/`, dll. — ini tanda config terbaca dengan benar. Tanda `✓` di sebelah model = default aktif.',
+				'',
+				'### Plugins hemat token (opsional, recommended)',
+				'',
+				'Tambahkan ke `enabledPlugins` di `settings.json` setelah install via marketplace resmi:',
+				'   ```json',
+				'   "enabledPlugins": {',
+				'     "caveman@claude-plugins-official": true,',
+				'     "superpowers@claude-plugins-official": true,',
+				'     "everythingclaudecode@claude-plugins-official": true',
+				'   }',
+				'   ```',
+				'   - `caveman` — gaya respons lebih ringkas, hemat token.',
+				'   - `superpowers` — unlock skills bawaan Claude Code yang lebih powerful.',
+				'   - `everythingclaudecode` — extra commands & utilities.',
+				'',
+				'### Populate model picker otomatis (opsional)',
+				'',
+				'Tambahkan env ini supaya Claude Code auto-populate picker dari gateway `/v1/models`:',
+				'   ```json',
+				'   "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1"',
+				'   ```',
+				'Cuma model dengan ID `claude-*` atau `anthropic-*` yang ditambahkan. CCProxy expose endpoint ini out of the box.',
+				'',
+				'### Alternatif one-shot: ccrouter',
+				'',
+				'Untuk test cepat tanpa install CCProxy sebagai service:',
+				'   ```bash',
+				`   ANTHROPIC_BASE_URL="${endpoint}" \\`,
+				`   ANTHROPIC_AUTH_TOKEN="anything" \\`,
+				'     ccrouter run --openai -- claude "hello"',
+				'   ```',
+				'ccrouter auto-spawn translation proxy di port random, jalankan `claude`, shutdown saat exit.',
+				'',
+				`**Model yang bisa dicoba (${kindLabel}):**`,
+				modelList,
+				'',
+				'> **Troubleshooting:** kalau `/model` picker tidak menunjukkan "Custom" model, cek: (1) CCProxy running di port 3456, (2) `ANTHROPIC_BASE_URL` benar di `settings.json`, (3) restart `claude`. `API_TIMEOUT_MS` rendah supaya error cepat kelihatan, bukan hang.',
+			].join('\n');
+		}
+
+		case 'opencode': {
+			return [
+				'# OpenCode',
+				'',
+				'OpenCode support custom OpenAI-compatible provider via `opencode.json`. Lokasi file:',
+				'',
+				'- **User-level (global):** `~/.config/opencode/opencode.json` (recommended — dipakai semua project)',
+				'- **Project-level:** `opencode.json` di root project (override per project, lebih di-utama)',
+				'- Bisa juga set `OPENCODE_CONFIG` env var ke path custom.',
+				'',
+				'1. Install OpenCode:',
+				'   ```bash',
+				'   npm i -g opencode-ai',
+				'   # atau via Homebrew / package manager lain',
+				'   ```',
+				'2. Buat/edit file config. Pilih salah satu lokasi di atas. Tambahkan:',
+				'   ```json',
+				'   {',
+				'     "$schema": "https://opencode.ai/config.json",',
+				'     "provider": {',
+				'       "groupy": {',
+				'         "npm": "@ai-sdk/openai-compatible",',
+				`         "name": "Groupy ${kindLabel}",`,
+				'         "options": {',
+				`           "baseURL": "${endpoint}",`,
+				'           "apiKey": "GROUPY_API_KEY"',
+				'         },',
+				'         "models": {',
+				...models.slice(0, 6).map((m) => `           "${m}": { "name": "${m}" },`),
+				'         }',
+				'       }',
+				'     },',
+				`     "model": "groupy/${firstModel}"`,
+				'   }',
+				'   ```',
+				'   Field penting:',
+				'   - `npm: "@ai-sdk/openai-compatible"` untuk endpoint `/v1/chat/completions` (umum OpenAI-compatible).',
+				'   - `npm: "@ai-sdk/openai"` untuk endpoint `/v1/responses` (kalau proxy expose Responses API).',
+				'   - `apiKey` di sini **nama env var** (string), bukan value. OpenCode baca env var saat runtime.',
+				'   - `baseURL` harus include `/v1` di suffix.',
+				'3. Set env var di shell:',
+				'   ```bash',
+				`   export GROUPY_API_KEY="${apiKey}"`,
+				'   # tambahkan ke ~/.zshrc / ~/.bashrc supaya persist',
+				'   ```',
+				'4. Login (sekali saja):',
+				'   ```bash',
+				'   opencode auth login',
+				'   # scroll ke "Other" → paste key (OpenCode baca dari $GROUPY_API_KEY)',
+				'   ```',
+				'5. Jalankan `opencode` di terminal. Model picker akan muncul dengan daftar model di config.',
+				'',
+				`**Model yang bisa dicoba (${kindLabel}):**`,
+				modelList,
+				'',
+				'> Tips: project-level `opencode.json` (di root project) lebih diprioritaskan dari global. Kalau konfig tidak ngefek, cek apakah ada file `opencode.json` di project root yang override. Untuk endpoint `/v1/responses`, ganti `npm: "@ai-sdk/openai"`.',
+			].join('\n');
+		}
+
+		case 'oai_provider': {
+			return [
+				'# VS Code — OpenAI Compat Provider (calgan.oai-provider)',
+				'',
+				'Extension VS Code untuk pakai OpenAI-compatible endpoint langsung di panel chat. Marketplace: https://marketplace.visualstudio.com/items?itemName=calgan.oai-provider',
+				'',
+				'1. Install extension di VS Code.',
+				'2. Buka `settings.json` (Ctrl+Shift+P → "Preferences: Open User Settings (JSON)").',
+				'3. Tambahkan konfigurasi berikut (jangan replace config kamu, gabung dengan existing):',
+				'   ```json',
+				'   "openai-compat-provider.providers": [',
+				'     {',
+				'       "id": "groupy",',
+				`       "displayName": "Groupy ${kindLabel}",`,
+				`       "baseUrl": "${endpoint}",`,
+				`       "apiKey": "${apiKey}",`,
+				'       "models": [',
+				...models.slice(0, 5).map((m) => `         { "id": "${m}", "name": "${m}", "maxInputTokens": 200000, "maxOutputTokens": 64000, "supportsToolCalling": true },`),
+				'       ]',
+				'     }',
+				'   ]',
+				'   ```',
+				'4. Save. Model akan muncul di panel chat extension.',
+				'',
+				'> Tips: `apiKey` di JSON polos (bukan `{env:VAR}`). Untuk keamanan, simpan key di VS Code SecretStorage atau pakai extension secret manager lain. Untuk model gpy full list, cek endpoint `/v1/models`.',
+			].join('\n');
+		}
+	}
+	return '_(Tutorial untuk IDE ini belum tersedia)_';
+}
+
+function paginateText(text, max) {
+	if (text.length <= max) return [text];
+	const out = [];
+	let i = 0;
+	while (i < text.length) {
+		let end = Math.min(i + max, text.length);
+		if (end < text.length) {
+			const lastNl = text.lastIndexOf('\n', end);
+			if (lastNl > i + max / 2) end = lastNl;
+		}
+		out.push(text.slice(i, end));
+		i = end;
+	}
+	return out;
+}
+
+function buildTutorialEmbeds(ide, kind, ctx) {
+	const fullText = getTutorialContext(ide, kind, ctx);
+	const pages = paginateText(fullText, TUTORIAL_PAGE_SIZE);
+	const labelMap = Object.fromEntries(TUTORIAL_IDES.map((i) => [i.id, i.label]));
+	const ideLabel = labelMap[ide] || ide;
+	return pages.map((chunk, i) => ({
+		embed: new EmbedBuilder()
+			.setTitle(`📘 How to Use — ${ideLabel}${pages.length > 1 ? ` (${i + 1}/${pages.length})` : ''}`)
+			.setDescription(chunk)
+			.setColor(0x5865f2)
+			.setFooter({
+				text: kind === 'trial'
+					? 'Mode trial — hanya model gpy'
+					: 'Mode Phantom — semua model tersedia',
+			})
+			.setTimestamp(),
+	}));
+}
+
+function buildHowToPicker(userId, kindLabel) {
+	const menu = new StringSelectMenuBuilder()
+		.setCustomId(`${TUTORIAL_MENU_IDE_PREFIX}${userId}`)
+		.setPlaceholder(`Pilih IDE untuk tutorial ${kindLabel}...`)
+		.addOptions(TUTORIAL_IDES.map((i) => ({
+			label: i.label,
+			value: i.id,
+		})));
+	return [new ActionRowBuilder().addComponents(menu)];
+}
+
+async function lookupKindForUser(userId) {
+	try {
+		const k = await proxyInternal(`/admin/internal/user-key-type/${userId}`);
+		if (k?.isTrial) return 'trial';
+	} catch {}
+	return 'phantom';
+}
+
+async function getTutorialContextForUser(userId, kind) {
+	const endpoint = process.env.PROXY_PUBLIC_BASE_URL
+		? `${process.env.PROXY_PUBLIC_BASE_URL}/v1`
+		: 'https://api.tokito.xyz/v1';
+	try {
+		if (kind === 'trial') {
+			const data = await proxyInternal('/admin/internal/trial-models');
+			return { endpoint, apiKey: 'sk-trial', models: data?.gpyModels || [] };
+		}
+		const data = await proxyInternal('/admin/internal/models/details');
+		return {
+			endpoint,
+			apiKey: 'sk-phantom',
+			models: (data?.data || []).map((m) => m.id).filter((id) => id && id !== 'auto'),
+		};
+	} catch (err) {
+		console.error('[tutorial] getTutorialContextForUser failed:', err.message);
+		return { endpoint, apiKey: '', models: [] };
+	}
+}
+
+async function sendHowToDm(userId, kind, ctx) {
+	const row = new ActionRowBuilder().addComponents(
+		new ButtonBuilder()
+			.setCustomId(`${TUTORIAL_BTN_HOWTO_PREFIX}:${userId}:${kind}`)
+			.setLabel('How to Use')
+			.setEmoji('📘')
+			.setStyle(ButtonStyle.Primary),
+	);
+	await sendDMToUser(
+		userId,
+		'📘 How to Use — Tutorial Setup',
+		`Klik tombol di bawah untuk lihat cara setup **${kind === 'trial' ? 'Trial' : 'Phantom'} API key** di IDE pilihan kamu. Tersedia tutorial untuk: Cline, Codex, Codex CLI, Claude Code CLI, OpenCode, dan extension VS Code oai_provider.`,
+		0x5865f2,
+		[row],
+	);
+}
+
 async function runDailyInactiveMemberCleanup() {
 	console.log('[daily-cleanup] starting inactive-member sweep');
 	const channel = await client.channels.fetch(AGVERIF_CHANNEL_ID).catch(() => null);
@@ -4432,6 +4847,22 @@ client.once('clientReady', async () => {
 							dmText = `Trial dihentikan. ${notif.reason ? `Alasan: ${notif.reason}` : ''}`;
 						}
 						if (dmText) await sendDMToUser(notif.discordUserId, title, dmText, color);
+						// Kirim How to Use terpisah khusus trial_claimed
+						if (notif.type === 'trial_claimed') {
+							try {
+								const models = (notif.modelList || '')
+									.split('\n')
+									.map((l) => l.replace(/^•\s*`/, '').replace(/`\s*$/, '').trim())
+									.filter(Boolean);
+								await sendHowToDm(notif.discordUserId, 'trial', {
+									endpoint: notif.endpoint,
+									apiKey: notif.apiKey,
+									models,
+								});
+							} catch (howtoErr) {
+								console.error('[trial] sendHowToDm failed:', howtoErr.message);
+							}
+						}
 						if (notif.keyId) {
 							await proxyInternal(`/admin/internal/clear-notification/${notif.keyId}`, 'POST');
 						}
@@ -4552,6 +4983,85 @@ client.on('interactionCreate', async (interaction) => {
 		// ─── Trial Claim Button ────────────────────────────────────────────────
 		if (interaction.isButton() && interaction.customId === TRIAL_CLAIM_BUTTON) {
 			await handleTrialClaimButton(interaction);
+			return;
+		}
+
+		// ─── How-to-Use: open picker ────────────────────────────────────────────
+		if (interaction.isButton() && interaction.customId.startsWith(TUTORIAL_BTN_HOWTO_PREFIX + ':')) {
+			const parts = interaction.customId.split(':');
+			const targetUserId = parts[1];
+			const kind = parts[2];
+			if (interaction.user.id !== targetUserId) {
+				await interaction.reply({ content: '❌ Tombol ini bukan untukmu.', ephemeral: true });
+				return;
+			}
+			const kindLabel = kind === 'trial' ? 'Trial' : 'Phantom';
+			await interaction.reply({
+				embeds: [
+					new EmbedBuilder()
+						.setTitle('📘 Pilih IDE')
+						.setDescription(`Pilih IDE untuk lihat tutorial setup **${kindLabel} API key** di bawah ini.`)
+						.setColor(0x5865f2),
+				],
+				components: buildHowToPicker(targetUserId, kindLabel),
+				ephemeral: true,
+			});
+			return;
+		}
+
+		// ─── How-to-Use: IDE selected, render tutorial ──────────────────────────
+		if (interaction.isStringSelectMenu() && interaction.customId.startsWith(TUTORIAL_MENU_IDE_PREFIX)) {
+			const ide = interaction.values[0];
+			const targetUserId = interaction.customId.slice(TUTORIAL_MENU_IDE_PREFIX.length);
+			if (interaction.user.id !== targetUserId) {
+				await interaction.reply({ content: '❌ Menu ini bukan untukmu.', ephemeral: true });
+				return;
+			}
+			const kind = await lookupKindForUser(targetUserId);
+			const ctx = await getTutorialContextForUser(targetUserId, kind);
+			const embeds = buildTutorialEmbeds(ide, kind, ctx);
+			const components = [];
+			if (embeds.length > 1) {
+				components.push(
+					new ActionRowBuilder().addComponents(
+						new ButtonBuilder()
+							.setCustomId(`${TUTORIAL_PAGE_PREFIX}${targetUserId}:${ide}:prev`)
+							.setLabel('◀ Prev')
+							.setStyle(ButtonStyle.Secondary),
+						new ButtonBuilder()
+							.setCustomId(`${TUTORIAL_PAGE_PREFIX}${targetUserId}:${ide}:next`)
+							.setLabel('Next ▶')
+							.setStyle(ButtonStyle.Secondary),
+					),
+				);
+			}
+			await interaction.update({ embeds: [embeds[0].embed], components });
+			if (!client.tutorialPages) client.tutorialPages = new Map();
+			client.tutorialPages.set(`${targetUserId}:${ide}`, { embeds, page: 0 });
+			return;
+		}
+
+		// ─── How-to-Use: pagination ─────────────────────────────────────────────
+		if (interaction.isButton() && interaction.customId.startsWith(TUTORIAL_PAGE_PREFIX)) {
+			const rest = interaction.customId.slice(TUTORIAL_PAGE_PREFIX.length);
+			const [targetUserId, ide, dir] = rest.split(':');
+			if (interaction.user.id !== targetUserId) {
+				await interaction.reply({ content: '❌ Tombol ini bukan untukmu.', ephemeral: true });
+				return;
+			}
+			const state = client.tutorialPages?.get(`${targetUserId}:${ide}`);
+			if (!state) {
+				await interaction.update({
+					content: 'Sesi tutorial kadaluarsa. Silakan buka ulang dari DM.',
+					embeds: [],
+					components: [],
+				});
+				return;
+			}
+			state.page = dir === 'next'
+				? Math.min(state.page + 1, state.embeds.length - 1)
+				: Math.max(state.page - 1, 0);
+			await interaction.update({ embeds: [state.embeds[state.page].embed] });
 			return;
 		}
 
@@ -5350,6 +5860,14 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 									provision.apiKey,
 									endpoint,
 								);
+								// Kirim DM How to Use terpisah
+								try {
+									const data = await proxyInternal('/admin/internal/models/details');
+									const models = (data?.data || []).map((m) => m.id).filter((id) => id && id !== 'auto');
+									await sendHowToDm(newMember.id, 'phantom', { endpoint, apiKey: provision.apiKey, models });
+								} catch (howtoErr) {
+									console.error('[agverif] sendHowToDm failed:', howtoErr.message);
+								}
 								await thread.send({
 									embeds: [
 										new EmbedBuilder()
