@@ -1976,6 +1976,36 @@ function displayLatencyForEntry(entry, session) {
 	return lt;
 }
 
+function resolveModelDetailsMeta(entry, detailsCache) {
+	const candidates = new Set([
+		entry.modelId,
+		`${entry.provider}/${entry.modelId}`,
+	]);
+	if (String(entry.modelId).startsWith('webnet/')) {
+		candidates.add(`gpy/${entry.modelId}`);
+	}
+	for (const id of candidates) {
+		const hit = detailsCache.find((m) => m.id === id);
+		if (hit && (hit.context_length || hit.name || hit.pricing)) return hit;
+	}
+	return detailsCache.find((m) =>
+		m.id === entry.modelId ||
+		m.id === `${entry.provider}/${entry.modelId}` ||
+		(m.id && m.id.endsWith('/' + entry.modelId)),
+	);
+}
+
+async function ensureModelDetailsCache() {
+	if (runtime._modelDetailsCache?.length) return;
+	try {
+		const detailsData = await proxyInternal('/admin/internal/models/details');
+		runtime._modelDetailsCache = detailsData?.data || [];
+	} catch (err) {
+		console.error('[tokito] Failed to fetch model details cache:', err.message || err);
+		runtime._modelDetailsCache = runtime._modelDetailsCache || [];
+	}
+}
+
 function buildTokitoEmbed(kind, session) {
 	const pageSize = kind === 'details' ? 5 : TOKITO_PAGE_SIZE;
 	const entries = listModels(kind, session.upstreamProvider, session.modelVendor, session.sortMode, session);
@@ -1997,13 +2027,8 @@ function buildTokitoEmbed(kind, session) {
 		const lt = displayLatencyForEntry(entry, session);
 		
 		if (kind === 'details') {
-			// Find enriched metadata from cache
 			const detailsCache = runtime._modelDetailsCache || [];
-			const meta = detailsCache.find(m =>
-				m.id === entry.modelId ||
-				m.id === `${entry.provider}/${entry.modelId}` ||
-				m.id.endsWith('/' + entry.modelId)
-			);
+			const meta = resolveModelDetailsMeta(entry, detailsCache);
 			const icon = lt?.ok ? '🟢' : (lt?.status === 429 ? '🟡' : (lt ? '🔴' : '⚪'));
 			const name = meta?.name || entry.modelId;
 			const ctx = meta?.context_length ? `${Math.round(meta.context_length / 1024)}K` : '—';
@@ -4892,7 +4917,7 @@ client.on('interactionCreate', async (interaction) => {
 				// Refresh data from proxy DB for fresh results
 				await refreshLatencyFromProxy();
 
-				// For details kind, fetch enriched model data from proxy
+				// Load enriched catalog metadata for details view (and trial gpy panel)
 				if (kind === 'details') {
 					try {
 						const detailsData = await proxyInternal('/admin/internal/models/details');
@@ -4906,6 +4931,12 @@ client.on('interactionCreate', async (interaction) => {
 				const session = createTokitoSession(interaction.user.id, kind, access);
 				if (session.trialMode) {
 					session.trialCache = await getTrialModelsCached();
+					if (kind === 'details' && (!runtime._modelDetailsCache || runtime._modelDetailsCache.length === 0)) {
+						try {
+							const detailsData = await proxyInternal('/admin/internal/models/details');
+							runtime._modelDetailsCache = detailsData?.data || [];
+						} catch { /* ignore */ }
+					}
 				}
 				// Store interaction for message deletion on expiry
 				session.interaction = interaction;
@@ -5013,6 +5044,10 @@ client.on('interactionCreate', async (interaction) => {
 				return;
 			}
 
+			if (session.kind === 'details') {
+				await ensureModelDetailsCache();
+			}
+
 			const { embed, components } = buildTokitoEmbed(session.kind, session);
 			await interaction.update({ embeds: [embed], components });
 			return;
@@ -5069,6 +5104,9 @@ client.on('interactionCreate', async (interaction) => {
 			if (sortMatch) {
 				session.sortMode = interaction.values[0] || session.sortMode;
 				session.page = 0;
+			}
+			if (session.kind === 'details') {
+				await ensureModelDetailsCache();
 			}
 			const { embed, components } = buildTokitoEmbed(session.kind, session);
 			await interaction.update({ embeds: [embed], components });

@@ -367,10 +367,9 @@ export async function getModelCatalogResponse() {
     const { provider_id: _pid, ...rest } = m;
     rest.id = publicId;
 
-    // Start from hardcoded fallback metadata (keyed by raw model id), then
-    // overlay DB-enriched metadata (from OpenRouter) which takes priority.
-    const fb = getFallbackMetadata(m.id);
-    const meta = metadataMap.get(m.id);
+    // Start from hardcoded fallback metadata, then overlay DB-enriched metadata.
+    const fb = getFallbackMetadata(m.id) || getFallbackMetadata(publicId);
+    const meta = metadataMap.get(m.id) || metadataMap.get(publicId);
 
     if (meta || fb) {
       const enriched: any = { ...rest };

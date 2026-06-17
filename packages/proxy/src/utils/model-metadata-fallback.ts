@@ -245,16 +245,36 @@ export const FALLBACK_METADATA: FallbackMetadata[] = [
 
 /**
  * Look up fallback metadata by model ID.
- * Tries exact match first, then prefix match (for versioned IDs like qwen3-max-2026-01-23).
+ * Tries exact match first, then common provider-prefix variants (e.g. webnet/* → gpy/webnet/*).
  */
-export function getFallbackMetadata(modelId: string): FallbackMetadata | undefined {
-  const exact = FALLBACK_METADATA.find(m => m.modelId === modelId);
-  if (exact) return exact;
+function buildFallbackLookupIds(modelId: string): string[] {
+  const norm = String(modelId || "").trim();
+  if (!norm) return [];
+  const ids = new Set<string>([norm]);
+  if (norm.startsWith("webnet/")) {
+    ids.add(`gpy/${norm}`);
+  }
+  const slash = norm.indexOf("/");
+  if (slash > 0) {
+    const provider = norm.slice(0, slash);
+    const rest = norm.slice(slash + 1);
+    if (provider !== "gpy" && rest.startsWith("webnet/")) {
+      ids.add(`gpy/${rest}`);
+    }
+  }
+  return [...ids];
+}
 
-  // Prefix match: "qwen-mt-turbo-2025-04-28" → match "qwen-mt-turbo"
-  for (const fb of FALLBACK_METADATA) {
-    if (modelId.startsWith(fb.modelId + "-") || modelId.startsWith(fb.modelId + "_")) {
-      return fb;
+export function getFallbackMetadata(modelId: string): FallbackMetadata | undefined {
+  for (const id of buildFallbackLookupIds(modelId)) {
+    const exact = FALLBACK_METADATA.find((m) => m.modelId === id);
+    if (exact) return exact;
+
+    // Prefix match: "qwen-mt-turbo-2025-04-28" → match "qwen-mt-turbo"
+    for (const fb of FALLBACK_METADATA) {
+      if (id.startsWith(fb.modelId + "-") || id.startsWith(fb.modelId + "_")) {
+        return fb;
+      }
     }
   }
 
