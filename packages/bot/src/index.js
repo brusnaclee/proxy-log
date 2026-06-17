@@ -3553,10 +3553,6 @@ async function ensureTrialPanelMessage() {
 			return;
 		}
 
-		if (cfg.configUpdatedAt) {
-			lastTrialConfigUpdatedAt = cfg.configUpdatedAt;
-		}
-
 		const channel = await client.channels.fetch(TOKITO_CHANNEL_ID).catch((err) => {
 			console.error('[trial] Failed to fetch channel:', err.message);
 			return null;
