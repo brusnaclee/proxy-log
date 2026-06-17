@@ -486,6 +486,18 @@ export async function getModelCatalogResponse() {
   };
 }
 
+export async function getFilteredModelCatalogResponse(opts?: { isTrial?: boolean }) {
+  const base = await getModelCatalogResponse();
+  if (!opts?.isTrial) return base;
+  return {
+    ...base,
+    data: (base?.data || []).filter((m) => {
+      const id = String(m?.id || '').toLowerCase();
+      return id.startsWith('gpy/') || id === 'auto';
+    }),
+  };
+}
+
 async function getActiveProviders() {
   return db.select().from(providers).where(eq(providers.isActive, true)).orderBy(providers.priority);
 }

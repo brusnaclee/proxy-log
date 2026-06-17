@@ -1059,6 +1059,90 @@ internal.get("/internal/trial-models", async (c) => {
   });
 });
 
+internal.get("/internal/audit", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+  const checks: Array<{ name: string; status: 'ok' | 'fail' | 'warn'; detail: any }> = [];
+
+  // 1. Database reachable
+  try {
+    await db.execute(sql`SELECT 1 as ok`);
+    checks.push({ name: 'database', status: 'ok', detail: { reachable: true } });
+  } catch (err) {
+    checks.push({ name: 'database', status: 'fail', detail: { error: (err as Error).message } });
+  }
+
+  // 2. Model catalog reachable
+  try {
+    const catalog = await getModelCatalogResponse();
+    const all = (catalog?.data || []) as any[];
+    const total = all.length;
+    const gpy = all.filter((m) => String(m.id).toLowerCase().startsWith('gpy/')).length;
+    checks.push({
+      name: 'model_catalog',
+      status: total > 0 ? 'ok' : 'warn',
+      detail: { total, gpy, fetchedAt: catalog?.cached_at },
+    });
+  } catch (err) {
+    checks.push({ name: 'model_catalog', status: 'fail', detail: { error: (err as Error).message } });
+  }
+
+  // 3. Trial config
+  try {
+    const [config] = await db.select().from(adminConfig);
+    checks.push({
+      name: 'trial_config',
+      status: config?.trialEnabled ? 'ok' : 'warn',
+      detail: {
+        enabled: !!config?.trialEnabled,
+        maxPerAccount: config?.trialMaxPerAccount,
+        dailyTokenLimit: config?.trialDailyTokenLimit,
+        promptLimit: config?.trialPromptLimit,
+        modelSelectionMode: config?.trialModelSelectionMode,
+      },
+    });
+  } catch (err) {
+    checks.push({ name: 'trial_config', status: 'fail', detail: { error: (err as Error).message } });
+  }
+
+  // 4. Trial users breakdown
+  try {
+    const allTrials = await db.select().from(trialUsers);
+    const now = new Date();
+    const breakdown = { active: 0, suspended: 0, ended: 0, unclaimed: 0 };
+    for (const t of allTrials) {
+      if (t.endReason === 'admin_grant_retry') breakdown.unclaimed++;
+      else if (t.endedAt) breakdown.ended++;
+      else if (t.suspended) breakdown.suspended++;
+      else if (t.expiresAt > now) breakdown.active++;
+      else breakdown.ended++;
+    }
+    checks.push({ name: 'trial_users', status: 'ok', detail: { total: allTrials.length, breakdown } });
+  } catch (err) {
+    checks.push({ name: 'trial_users', status: 'fail', detail: { error: (err as Error).message } });
+  }
+
+  // 5. Active API keys
+  try {
+    const allKeys = await db
+      .select({ id: apiKeys.id, isTrial: apiKeys.isTrial, isActive: apiKeys.isActive })
+      .from(apiKeys);
+    const breakdown = { phantom: 0, phantom_disabled: 0, trial: 0, trial_disabled: 0 };
+    for (const k of allKeys) {
+      if (k.isTrial) (k.isActive ? breakdown.trial++ : breakdown.trial_disabled++);
+      else (k.isActive ? breakdown.phantom++ : breakdown.phantom_disabled++);
+    }
+    checks.push({ name: 'api_keys', status: 'ok', detail: { total: allKeys.length, breakdown } });
+  } catch (err) {
+    checks.push({ name: 'api_keys', status: 'fail', detail: { error: (err as Error).message } });
+  }
+
+  const overall = checks.every((c) => c.status === 'ok')
+    ? 'ok'
+    : (checks.some((c) => c.status === 'fail') ? 'fail' : 'warn');
+  return c.json({ overall, checks, timestamp: new Date().toISOString() });
+});
+
 internal.get("/internal/user-key-type/:discordUserId", async (c) => {
   const authErr = checkInternal(c);
   if (authErr) return authErr;

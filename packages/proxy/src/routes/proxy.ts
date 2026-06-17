@@ -61,6 +61,7 @@ import {
 } from '../utils/message-analyzer.js';
 import {
 	getModelCatalogResponse,
+	getFilteredModelCatalogResponse,
 	getNextApiKey,
 	getOnlineModelsByLatency,
 	getProviderForModel,
@@ -807,18 +808,44 @@ proxy.all('/*', async (c) => {
 	const normalizedPath = path.replace(/\/+$/, '') || '/';
 
 	// Public model discovery endpoints from local cache.
+	// If a Bearer token is present, filter by the key's isTrial flag so trial
+	// users only see gpy/* models (their allowlist). Without auth, return full
+	// catalog (browsing in IDEs without API key still works).
 	if (
 		(c.req.method === 'GET' || c.req.method === 'HEAD') &&
 		(normalizedPath === '/v1' || normalizedPath === '/v1/models')
 	) {
-		const modelCatalog = await getModelCatalogResponse();
-		if (c.req.method === 'HEAD') {
+		const head = c.req.method === 'HEAD';
+		if (head) {
 			return new Response(null, {
 				status: 200,
 				headers: { 'Content-Type': 'application/json' },
 			});
 		}
-		return c.json(modelCatalog);
+
+		const authH = c.req.header('Authorization');
+		let isTrial: boolean | undefined;
+		if (authH && authH.startsWith('Bearer ')) {
+			const token = authH.replace(/^Bearer\s+/i, '').trim();
+			if (token) {
+				let rec = await db
+					.select({ id: apiKeys.id, isTrial: apiKeys.isTrial, isActive: apiKeys.isActive })
+					.from(apiKeys)
+					.where(eq(apiKeys.key, token))
+					.then((r) => r[0]);
+				if (!rec) {
+					rec = await db
+						.select({ id: apiKeys.id, isTrial: apiKeys.isTrial, isActive: apiKeys.isActive })
+						.from(apiKeys)
+						.where(eq(apiKeys.keyHash, sha256(token)))
+						.then((r) => r[0]);
+				}
+				if (rec && rec.isActive) isTrial = !!rec.isTrial;
+			}
+		}
+
+		const catalog = await getFilteredModelCatalogResponse({ isTrial });
+		return c.json(catalog);
 	}
 
 	// ΓöÇΓöÇΓöÇ 1. Extract API Key ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ

@@ -1371,6 +1371,33 @@ async function pushSingleModelStatus(entry, latencyResult) {
 }
 
 /** Refresh runtime.latency from proxy database (for fresh data on button click). */
+async function ensureGpyModelEntries() {
+	const hasGpy = runtime.modelEntries.some(
+		(e) => (e.provider || '').toLowerCase() === 'gpy',
+	);
+	if (hasGpy) return;
+	try {
+		const data = await proxyInternal('/admin/internal/trial-models');
+		const gpy = data?.gpyModels || [];
+		if (!gpy.length) return;
+		const proxyV1Base = PROXY_PUBLIC_BASE_URL.replace(/\/+$/, '') + '/v1';
+		for (const id of gpy) {
+			const slash = id.indexOf('/');
+			const provider = slash > 0 ? id.slice(0, slash) : 'gpy';
+			const modelId = slash > 0 ? id.slice(slash + 1) : id;
+			if (runtime.modelEntries.some((e) => e.modelId === modelId && (e.provider || '').toLowerCase() === provider)) {
+				continue;
+			}
+			const entry = { modelId, provider, baseUrl: proxyV1Base, apiKey: '' };
+			runtime.modelEntries.push(entry);
+			runtime.models.push(modelId);
+		}
+		console.log(`[tokito-monitor] injected ${gpy.length} gpy model entries (fallback)`);
+	} catch (err) {
+		console.error('[tokito-monitor] ensureGpyModelEntries failed:', err.message || JSON.stringify(err));
+	}
+}
+
 async function refreshLatencyFromProxy() {
 	try {
 		const result = await proxyInternal('/admin/internal/monitor/models', 'GET');
@@ -1407,6 +1434,10 @@ async function refreshLatencyFromProxy() {
 
 			console.log(`[tokito-monitor] refreshed ${newEntries.length} models from proxy DB`);
 		}
+		// Fallback: kalau provider gpy di DB tidak return gpy/ di /v1/models,
+		// inject manual list dari trial-models endpoint supaya trial user panel
+		// tetap bisa lihat model gpy.
+		await ensureGpyModelEntries();
 	} catch (err) {
 		console.error('[tokito-monitor] failed to refresh from proxy:', err.message || JSON.stringify(err));
 	}
