@@ -11,6 +11,7 @@ import { configCache } from "../../utils/cache.js";
 import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, sanitizeRows } from "../../utils/counting.js";
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
+import { resolveKeyDailyTokenLimit, resolveKeyPromptLimit } from "../../utils/trial-config.js";
 import { listGpyCatalogModels } from "../../utils/trial-routing.js";
 
 const internal = new Hono();
@@ -645,12 +646,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   const [config] = await db.select().from(adminConfig);
 
   const isTrialKey = key.isTrial;
-  const globalLimit = isTrialKey
-    ? (key.promptLimit || 0)
-    : (key.promptLimit && key.promptLimit > 0 ? key.promptLimit : config?.globalPromptLimit || 0);
-  const globalWindow = isTrialKey
-    ? (key.promptLimitWindow || "5h")
-    : (key.promptLimitWindow || config?.globalPromptLimitWindow || "30m");
+  const { limit: globalLimit, window: globalWindow } = resolveKeyPromptLimit(key, config);
   let globalUsed = 0;
   let globalResetMins = 0;
   let promptResetAt: string | null = null;
@@ -758,9 +754,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     trialInfo = { isTrial: false };
   }
 
-  const effectiveDailyTokenLimit = (key.dailyTokenLimit && key.dailyTokenLimit > 0)
-    ? key.dailyTokenLimit
-    : (key.isTrial ? (config?.trialDailyTokenLimit ?? 0) : (config?.globalDailyTokenLimit || 0));
+  const effectiveDailyTokenLimit = resolveKeyDailyTokenLimit(key, config);
 
   const trialLimits = key.isTrial && config ? {
     dailyTokenLimit: effectiveDailyTokenLimit,

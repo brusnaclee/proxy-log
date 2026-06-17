@@ -205,14 +205,19 @@ async function getMemberToolAccess(member) {
 		keyType = await proxyInternal(`/admin/internal/user-key-type/${member.id}`);
 	} catch { /* ignore */ }
 	const isTrialUser = keyType?.isTrial === true;
-	const mode = isPhantom ? 'phantom' : (hasTrialRole ? 'trial' : 'none');
+	const hasActivePhantomKey = keyType?.hasPhantomKey === true;
+	let mode = 'none';
+	if (isTrialUser) mode = 'trial';
+	else if (hasActivePhantomKey || isPhantom) mode = 'phantom';
+	else if (hasTrialRole) mode = 'trial';
 	return {
 		isPhantom,
 		hasTrialRole,
 		isTrialUser,
-		hasPhantomKey: keyType?.hasPhantomKey === true,
+		hasPhantomKey: hasActivePhantomKey,
+		hasActivePhantomKey,
 		mode,
-		canUseTools: !!(isPhantom || hasTrialRole),
+		canUseTools: !!(isPhantom || hasTrialRole || isTrialUser),
 		trialRoleId,
 		trialCfg,
 	};
@@ -1795,7 +1800,7 @@ function createTokitoSession(userId, kind, access = null) {
 	}
 
 	const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-	const trialMode = access?.mode === 'trial' && !access?.isPhantom;
+	const trialMode = access?.mode === 'trial';
 	const session = {
 		id,
 		userId,
@@ -1820,6 +1825,7 @@ function buildTokitoRows(
 	upstreamProvider,
 	modelVendor,
 	sortMode,
+	trialMode = false,
 ) {
 	const nav = new ActionRowBuilder().addComponents(
 		new ButtonBuilder()
@@ -1837,6 +1843,10 @@ function buildTokitoRows(
 			.setLabel('Close')
 			.setStyle(ButtonStyle.Danger),
 	);
+
+	if (trialMode) {
+		return [nav];
+	}
 
 	const upstreamOptions = ['all', ...new Set(runtime.modelEntries.map(e => e.provider))].slice(0, 25);
 	const upstreamMenu = new StringSelectMenuBuilder()
@@ -1958,6 +1968,14 @@ function listModels(kind, upstreamProvider, modelVendor, sortMode, session = nul
 	return items;
 }
 
+function displayLatencyForEntry(entry, session) {
+	const lt = runtime.latency.get(entryKey(entry));
+	if (session?.trialMode) {
+		return { ok: true, ms: lt?.ms ?? null, status: 200 };
+	}
+	return lt;
+}
+
 function buildTokitoEmbed(kind, session) {
 	const pageSize = kind === 'details' ? 5 : TOKITO_PAGE_SIZE;
 	const entries = listModels(kind, session.upstreamProvider, session.modelVendor, session.sortMode, session);
@@ -1975,15 +1993,12 @@ function buildTokitoEmbed(kind, session) {
 			return `🤖 \`auto\` | **Auto-select**: picks fastest online model automatically`;
 		}
 
-		const key = entryKey(entry);
 		const vendor = providerOf(entry.modelId);
-		const lt = runtime.latency.get(key);
+		const lt = displayLatencyForEntry(entry, session);
 		
 		if (kind === 'details') {
 			// Find enriched metadata from cache
 			const detailsCache = runtime._modelDetailsCache || [];
-			// Match against catalog id which may be prefixed with upstream provider
-			// (e.g. monitor entry "minimax/MiniMax-M3" -> catalog "tokito/minimax/MiniMax-M3")
 			const meta = detailsCache.find(m =>
 				m.id === entry.modelId ||
 				m.id === `${entry.provider}/${entry.modelId}` ||
@@ -2019,10 +2034,10 @@ function buildTokitoEmbed(kind, session) {
 
 	const titleStyled =
 		kind === 'status'
-			? 'Tokito API • Model Status'
+			? (session.trialMode ? 'Tokito API • Model Status (Trial / gpy)' : 'Tokito API • Model Status')
 			: kind === 'details'
-				? '📋 Model Details'
-				: 'Tokito API • Latency Benchmark';
+				? (session.trialMode ? '📋 Model Details (Trial / gpy)' : '📋 Model Details')
+				: (session.trialMode ? 'Tokito API • Latency (Trial / gpy)' : 'Tokito API • Latency Benchmark');
 	const updatedAt = runtime.lastLatencyAt;
 
 	let online = 0,
@@ -2030,11 +2045,16 @@ function buildTokitoEmbed(kind, session) {
 		timeout = 0,
 		rateLimited = 0,
 		untested = 0;
-	for (const entry of runtime.modelEntries) {
-		// Skip auto model in counts
-		if (entry.modelId === 'auto') continue;
-		const key = entryKey(entry);
-		const lt = runtime.latency.get(key);
+
+	const summaryEntries = session.trialMode
+		? listModels(kind, 'gpy', session.modelVendor, session.sortMode, session)
+		: runtime.modelEntries.filter((e) => e.modelId !== 'auto');
+
+	if (session.trialMode) {
+		online = summaryEntries.length;
+	} else {
+	for (const entry of summaryEntries) {
+		const lt = runtime.latency.get(entryKey(entry));
 		if (!lt) {
 			untested += 1;
 			continue;
@@ -2043,6 +2063,7 @@ function buildTokitoEmbed(kind, session) {
 		else if (lt.ok) online += 1;
 		else if (lt.status === 429) rateLimited += 1;
 		else down += 1;
+	}
 	}
 
 	const summaryParts = [`Online: ${online}`, `Down: ${down}`, `Timeout: ${timeout}`];
@@ -2060,7 +2081,7 @@ function buildTokitoEmbed(kind, session) {
 				inline: false,
 			},
 			{ name: 'Page', value: `${page + 1}/${totalPages}`, inline: true },
-			{ name: 'Upstream', value: session.upstreamProvider, inline: true },
+			{ name: 'Upstream', value: session.trialMode ? 'gpy (trial)' : session.upstreamProvider, inline: true },
 			{ name: 'Vendor', value: session.modelVendor, inline: true },
 			{ name: 'Sort', value: session.sortMode, inline: true },
 			{
@@ -2071,7 +2092,7 @@ function buildTokitoEmbed(kind, session) {
 		);
 
 	if (session.trialMode) {
-		embed.setFooter({ text: 'Trial mode — model gpy saja' });
+		embed.setFooter({ text: 'Trial mode — model gpy saja (status ditampilkan online)' });
 	}
 
 	const components = buildTokitoRows(
@@ -2082,6 +2103,7 @@ function buildTokitoEmbed(kind, session) {
 		session.upstreamProvider,
 		session.modelVendor,
 		session.sortMode,
+		session.trialMode,
 	);
 	return { embed, components };
 }
@@ -2813,7 +2835,7 @@ async function buildTrialLimitsEmbed() {
 }
 
 async function buildSeeModelLimitsEmbed(filter, access = null) {
-	if (access?.mode === 'trial' && !access?.isPhantom) {
+	if (access?.mode === 'trial') {
 		return buildTrialLimitsEmbed();
 	}
 
@@ -3833,9 +3855,9 @@ async function handleTrialClaimButton(interaction) {
 	}
 
 	const access = await getMemberToolAccess(interaction.member);
-	if (access.isPhantom || access.hasPhantomKey) {
+	if (access.hasPhantomKey) {
 		await interaction.editReply({
-			content: `❌ Member **Phantom** tidak bisa klaim trial. Verifikasi di <#${AGVERIF_CHANNEL_ID}> jika belum punya akses penuh.`,
+			content: '❌ Anda sudah punya API **key aktif**. Trial hanya untuk member yang **belum verif AG** atau API key-nya **disabled**.',
 		});
 		return;
 	}
@@ -3878,7 +3900,7 @@ async function handleTrialClaimButton(interaction) {
 			await interaction.editReply({ content: '❌ Anda masih punya trial aktif.' });
 		} else if (msg.includes('phantom_member')) {
 			await interaction.editReply({
-				content: `❌ Member **Phantom** tidak bisa klaim trial. Verifikasi di <#${AGVERIF_CHANNEL_ID}> jika belum punya akses penuh.`,
+				content: '❌ Anda sudah punya API **key aktif**. Trial hanya untuk member yang **belum verif AG** atau API key-nya **disabled**.',
 			});
 		} else {
 			await interaction.editReply({ content: `❌ Gagal klaim trial: ${msg}` });
@@ -5036,7 +5058,7 @@ client.on('interactionCreate', async (interaction) => {
 			}
 
 			if (upstreamMatch) {
-				session.upstreamProvider = interaction.values[0] || 'all';
+				session.upstreamProvider = session.trialMode ? 'gpy' : (interaction.values[0] || 'all');
 				session.modelVendor = 'all';
 				session.page = 0;
 			}

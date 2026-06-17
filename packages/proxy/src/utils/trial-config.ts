@@ -117,3 +117,48 @@ export function isGpyProviderOrModel(providerName: string | null | undefined, mo
   const m = (modelId || "").toLowerCase();
   return p === "gpy" || m.startsWith("gpy/") || m.startsWith("gpy:");
 }
+
+type KeyLimitFields = {
+  isTrial: boolean;
+  promptLimit?: number | null;
+  promptLimitWindow?: string | null;
+  dailyTokenLimit?: number | null;
+};
+
+/** Resolve prompt limit/window — trial keys never fall back to global Phantom limits. */
+export function resolveKeyPromptLimit(
+  key: KeyLimitFields,
+  config: AdminConfig | null | undefined,
+): { limit: number; window: string } {
+  const keyLimit = key.promptLimit || 0;
+  if (keyLimit > 0) {
+    return {
+      limit: keyLimit,
+      window:
+        key.promptLimitWindow ||
+        (key.isTrial ? config?.trialPromptLimitWindow : config?.globalPromptLimitWindow) ||
+        (key.isTrial ? "5h" : "30m"),
+    };
+  }
+  if (key.isTrial) {
+    return {
+      limit: config?.trialPromptLimit ?? 50,
+      window: config?.trialPromptLimitWindow || "5h",
+    };
+  }
+  return {
+    limit: config?.globalPromptLimit || 0,
+    window: config?.globalPromptLimitWindow || "30m",
+  };
+}
+
+/** Resolve daily token cap — trial keys never fall back to global Phantom limits. */
+export function resolveKeyDailyTokenLimit(
+  key: KeyLimitFields,
+  config: AdminConfig | null | undefined,
+): number {
+  const keyLimit = key.dailyTokenLimit || 0;
+  if (keyLimit > 0) return keyLimit;
+  if (key.isTrial) return config?.trialDailyTokenLimit ?? 1_000_000;
+  return config?.globalDailyTokenLimit || 0;
+}

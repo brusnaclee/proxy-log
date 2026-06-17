@@ -95,7 +95,7 @@ import {
 	buildTrialModelCandidates,
 	isRetryableUpstreamStatus,
 } from '../utils/trial-routing.js';
-import { isGpyProviderOrModel } from '../utils/trial-config.js';
+import { isGpyProviderOrModel, resolveKeyDailyTokenLimit, resolveKeyPromptLimit } from '../utils/trial-config.js';
 import { queueTrialNotification } from '../utils/trial-notify.js';
 
 const proxy = new Hono();
@@ -1332,16 +1332,10 @@ proxy.all('/*', async (c) => {
 	// ─── 9-pre-auto. Global Prompt Limit Check (all models, both auto & non-auto) ─
 	// This runs BEFORE the auto-model handler so auto requests are also rate-limited.
 	{
-		const effectivePromptLimit =
-			keyRecord.promptLimit && keyRecord.promptLimit > 0
-				? keyRecord.promptLimit
-				: keyRecord.isTrial
-					? 0
-					: config.globalPromptLimit;
-		const effectivePromptLimitWindow =
-			keyRecord.promptLimitWindow || config.globalPromptLimitWindow || '30m';
+		const { limit: effectivePromptLimit, window: effectivePromptLimitWindow } =
+			resolveKeyPromptLimit(keyRecord, config);
 
-		if (effectivePromptLimit && effectivePromptLimit > 0) {
+		if (effectivePromptLimit > 0) {
 			const plCheck = await checkPromptLimit(
 				keyRecord.id,
 				effectivePromptLimit,
@@ -1352,7 +1346,8 @@ proxy.all('/*', async (c) => {
 				const resetMs = await getWindowResetMs(keyRecord.id, windowMs);
 				const resetMins = Math.ceil(resetMs / 60000);
 				const isKeyOverride = (keyRecord.promptLimit || 0) > 0;
-				const limitMsg = `All model limit reached${isKeyOverride ? ' (key override)' : ''}: ${plCheck.used}/${effectivePromptLimit} prompts used in this ${effectivePromptLimitWindow} window. Resets in ~${resetMins} minute(s).`;
+				const trialTag = keyRecord.isTrial ? ' (trial)' : '';
+				const limitMsg = `All model limit reached${isKeyOverride ? ' (key override)' : ''}${trialTag}: ${plCheck.used}/${effectivePromptLimit} prompts used in this ${effectivePromptLimitWindow} window. Resets in ~${resetMins} minute(s).`;
 				await notifyTrialLimitIfNeeded(keyRecord, limitMsg);
 				return c.json(
 					{
@@ -2278,16 +2273,10 @@ proxy.all('/*', async (c) => {
 	// Global / Per-Key Prompt Limit (all models combined) ΓÇö checked for EVERY request
 	// so retries cannot bypass the limit when isNewPrompt=false.
 	{
-		const effectivePromptLimit =
-			keyRecord.promptLimit && keyRecord.promptLimit > 0
-				? keyRecord.promptLimit
-				: keyRecord.isTrial
-					? 0
-					: config.globalPromptLimit;
-		const effectivePromptLimitWindow =
-			keyRecord.promptLimitWindow || config.globalPromptLimitWindow || '30m';
+		const { limit: effectivePromptLimit, window: effectivePromptLimitWindow } =
+			resolveKeyPromptLimit(keyRecord, config);
 
-		if (effectivePromptLimit && effectivePromptLimit > 0) {
+		if (effectivePromptLimit > 0) {
 			const plCheck = await checkPromptLimit(
 				keyRecord.id,
 				effectivePromptLimit,
@@ -2298,7 +2287,8 @@ proxy.all('/*', async (c) => {
 				const resetMs = await getWindowResetMs(keyRecord.id, windowMs);
 				const resetMins = Math.ceil(resetMs / 60000);
 				const isKeyOverride = (keyRecord.promptLimit || 0) > 0;
-				const limitMsg = `All model limit reached${isKeyOverride ? ' (key override)' : ''}: ${plCheck.used}/${effectivePromptLimit} prompts used in this ${effectivePromptLimitWindow} window. Resets in ~${resetMins} minute(s).`;
+				const trialTag = keyRecord.isTrial ? ' (trial)' : '';
+				const limitMsg = `All model limit reached${isKeyOverride ? ' (key override)' : ''}${trialTag}: ${plCheck.used}/${effectivePromptLimit} prompts used in this ${effectivePromptLimitWindow} window. Resets in ~${resetMins} minute(s).`;
 				await notifyTrialLimitIfNeeded(keyRecord, limitMsg);
 				return c.json(
 					{
@@ -2359,12 +2349,7 @@ proxy.all('/*', async (c) => {
 			}
 		}
 
-		const globalDailyTokenLimit =
-			keyRecord.dailyTokenLimit && keyRecord.dailyTokenLimit > 0
-				? keyRecord.dailyTokenLimit
-				: keyRecord.isTrial
-					? 0
-					: config.globalDailyTokenLimit || 0;
+		const globalDailyTokenLimit = resolveKeyDailyTokenLimit(keyRecord, config);
 		if (globalDailyTokenLimit > 0) {
 			const dw = new Date(wibNow);
 			dw.setUTCHours(0, 0, 0, 0);

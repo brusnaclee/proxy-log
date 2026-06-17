@@ -199,6 +199,8 @@ export async function claimTrialForUser(body: {
   if (phantomKey) {
     return {
       error: "phantom_member",
+      message:
+        "You already have an active API key. Trial is only available if you have not verified AG yet, or your existing key is disabled.",
       status: 403 as const,
       agverifChannelId: config.agverifChannelId || null,
     };
