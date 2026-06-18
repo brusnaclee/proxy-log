@@ -3044,11 +3044,15 @@ proxy.all('/*', async (c) => {
 				usedKeyId = result.keyId;
 
 				if (upstreamResponse.ok) {
-					if (pickModel !== originalModel) model = pickModel;
+					if (pickModel !== originalModel) {
+						console.log(`[proxy] trial fallback: ${originalModel} -> ${pickModel} (key ${usedKeyId})`);
+						model = pickModel;
+					}
 					fetchSucceeded = true;
 					break;
 				}
 				if (!isRetryableUpstreamStatus(upstreamResponse.status)) break;
+				console.log(`[proxy] trial ${attemptModel} attempt ${attempt + 1}/5 got ${upstreamResponse.status}, retrying...`);
 				await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
 			}
 

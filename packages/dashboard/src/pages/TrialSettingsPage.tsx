@@ -396,6 +396,8 @@ export default function TrialSettingsPage() {
           <CardDescription>
             Multi-upstream support: centang upstream provider (mis. webnet, anthropic) untuk meng-allow semua model gpy di upstream tsb.
             Mode whitelist untuk pilih per-model spesifik.
+            <br />
+            <span className="text-amber-400">Default = 6 model dari upstream webnet (combo). Admin bisa tambah upstream lain di bawah.</span>
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

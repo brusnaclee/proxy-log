@@ -6,24 +6,6 @@ export function isRetryableUpstreamStatus(status: number): boolean {
   return status === 429 || status === 502 || status === 503 || status === 504 || status === 0;
 }
 
-/** Full canonical gpy model list — used as safety fallback when upstream cache is empty. */
-export const CANONICAL_GPY_MODELS = [
-  "gpy/webnet/claude-opus-4.8",
-  "gpy/webnet/claude-opus-4-turbo",
-  "gpy/webnet/claude-opus-4-6-thinking",
-  "gpy/webnet/claude-sonnet-4.5",
-  "gpy/webnet/claude-sonnet-4.6",
-  "gpy/webnet/claude-haiku-4.5",
-  "gpy/webnet/deepseek-3.2",
-  "gpy/webnet/minimax-m2.5",
-  "gpy/webnet/minimax-m2.7",
-  "gpy/webnet/minimax-m3",
-  "gpy/webnet/glm-5",
-  "gpy/webnet/glm-5.1",
-  "gpy/webnet/qwen3-coder-next",
-  "gpy/webnet/qwen3-max",
-] as const;
-
 function extractUpstream(modelId: string): string | null {
   const lower = modelId.toLowerCase();
   if (!lower.startsWith("gpy/")) return null;
@@ -52,23 +34,15 @@ export function groupModelsByUpstream(modelIds: string[]): Record<string, string
 }
 
 /**
- * Read all `gpy/*` models from the live model catalog cache. If cache is empty,
- * fall back to the canonical hardcoded list so trial users always have something
- * to pick from.
+ * Read all `gpy/*` models from the live model catalog cache. NEVER falls back
+ * to a hardcoded list — we only return models that the upstream actually exposes.
+ * If the cache is empty, this returns [].
  */
 export async function getAllGpyCatalogModels(): Promise<string[]> {
   const catalog = await getModelCatalogResponse();
   const cacheIds = (catalog?.data || []).map((m) => String(m.id));
   const gpyIds = cacheIds.filter((id) => id.toLowerCase().startsWith("gpy/"));
-  if (gpyIds.length > 0) {
-    return Array.from(new Set(gpyIds));
-  }
-  return [...CANONICAL_GPY_MODELS];
-}
-
-/** All gpy models (no upstream filter) — used for /v1/models multi-upstream display. */
-export async function getAllTrialEligibleModels(): Promise<string[]> {
-  return getAllGpyCatalogModels();
+  return Array.from(new Set(gpyIds));
 }
 
 export async function listGpyCatalogModels(config: AdminConfig): Promise<string[]> {
@@ -113,22 +87,25 @@ export async function buildTrialModelsToTry(
   config: AdminConfig,
   requestedModel: string,
 ): Promise<TrialModelsBuildResult> {
-  const canonicalGpy = await listGpyCatalogModels(config);
+  const allowed = await listGpyCatalogModels(config);
   const requested = String(requestedModel).trim();
   const reqLower = requested.toLowerCase();
 
   if (!requested || requested === "auto" || requested.startsWith("__")) {
-    return { models: [...canonicalGpy, "__auto__"] };
+    return { models: [...allowed, "__auto__"] };
   }
 
-  const inCanonical = canonicalGpy.find((m) => m.toLowerCase() === reqLower);
-  if (inCanonical) {
-    const candidates = [inCanonical, ...canonicalGpy.filter((m) => m.toLowerCase() !== reqLower)];
+  const inAllowed = allowed.find((m) => m.toLowerCase() === reqLower);
+  if (inAllowed) {
+    const candidates = [inAllowed, ...allowed.filter((m) => m.toLowerCase() !== reqLower)];
     return { models: [...candidates, "__auto__"] };
   }
 
+  // Requested model is gpy/* but not in the configured allowed set — still try it
+  // (admin may have toggled upstreams to allow it), then fall back to allowed set,
+  // then __auto__.
   if (isGpyProviderOrModel("gpy", requested)) {
-    return { models: [requested, ...canonicalGpy, "__auto__"] };
+    return { models: [requested, ...allowed, "__auto__"] };
   }
 
   return { error: "trial_model_not_allowed" };

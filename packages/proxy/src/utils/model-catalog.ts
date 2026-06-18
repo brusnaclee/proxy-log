@@ -490,30 +490,27 @@ export async function getFilteredModelCatalogResponse(opts?: { isTrial?: boolean
   const base = await getModelCatalogResponse();
   if (!opts?.isTrial) return base;
 
-  const { CANONICAL_GPY_MODELS } = await import("./trial-routing.js");
-
+  // Trial users see only `gpy/*` models + the virtual `auto`. No hardcoded
+  // fallback — if cache is empty for gpy/*, we just expose `auto` so the
+  // user can still try and hit the upstream auto-routing path.
   const filtered = (base?.data || []).filter((m) => {
     const id = String(m?.id || "").toLowerCase();
     return id.startsWith("gpy/") || id === "auto";
   });
 
-  const seen = new Set(filtered.map((m) => String(m.id).toLowerCase()));
-  for (const id of CANONICAL_GPY_MODELS) {
-    if (seen.has(id.toLowerCase())) continue;
-    const slash = id.indexOf("/");
-    const provider = slash > 0 ? id.slice(0, slash) : "gpy";
-    filtered.push({
-      id,
+  // Ensure `auto` virtual model is always present for trial users.
+  if (!filtered.some((m) => String(m.id).toLowerCase() === "auto")) {
+    filtered.unshift({
+      id: "auto",
       object: "model",
       created: Math.floor(Date.now() / 1000),
-      owned_by: provider,
-      provider,
-      upstream_provider: provider,
-      context_length: 200000,
+      owned_by: "proxy",
+      provider: "proxy",
+      upstream_provider: "proxy",
+      context_length: 262144,
       max_output_tokens: 64000,
-      supported_features: ["tools"],
+      supported_features: ["tools", "reasoning", "structured_outputs"],
     } as any);
-    seen.add(id.toLowerCase());
   }
 
   return { ...base, data: filtered };

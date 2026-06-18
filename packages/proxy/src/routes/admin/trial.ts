@@ -12,7 +12,6 @@ import {
   parseTrialUpstreams,
 } from "../../utils/trial-config.js";
 import {
-  CANONICAL_GPY_MODELS,
   groupModelsByUpstream,
   listGpyCatalogModels,
 } from "../../utils/trial-routing.js";
