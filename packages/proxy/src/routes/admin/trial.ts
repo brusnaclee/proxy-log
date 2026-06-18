@@ -168,6 +168,35 @@ trial.post("/trial/users/action", async (c) => {
   return c.json(result);
 });
 
+trial.get("/trial/history/:discordUserId", async (c) => {
+  const discordUserId = c.req.param("discordUserId");
+  if (!discordUserId) return c.json({ error: "discordUserId required" }, 400);
+
+  const rows = await db
+    .select({ trial: trialUsers, key: apiKeys })
+    .from(trialUsers)
+    .innerJoin(apiKeys, eq(trialUsers.apiKeyId, apiKeys.id))
+    .where(eq(trialUsers.discordUserId, discordUserId))
+    .orderBy(desc(trialUsers.claimedAt));
+
+  const history = rows.map(({ trial: t, key }) => ({
+    id: t.id,
+    apiKeyId: t.apiKeyId,
+    keyName: key.name,
+    keyPrefix: key.keyPrefix,
+    isActive: key.isActive,
+    claimedAt: t.claimedAt,
+    expiresAt: t.expiresAt,
+    endedAt: t.endedAt,
+    endReason: t.endReason,
+    suspended: t.suspended,
+    overrideMaxTrials: t.overrideMaxTrials,
+    overrideDays: t.overrideDays,
+  }));
+
+  return c.json({ discordUserId, count: history.length, history });
+});
+
 export default trial;
 
 export async function getTrialPanelConfigForBot() {
@@ -418,7 +447,8 @@ export async function adminTrialAction(body: {
   }
 
   if (body.action === "grant_retry") {
-    // Full reset: mark previous row as unclaim so user can re-claim from scratch.
+    // Full reset: end previous row, then auto-issue a brand new key + DM it
+    // directly to the user (no manual claim step required).
     await db.update(trialUsers).set({
       endedAt: now,
       endReason: "admin_grant_retry",
@@ -430,17 +460,76 @@ export async function adminTrialAction(body: {
     await db.update(apiKeys).set({ isActive: false, updatedAt: now }).where(eq(apiKeys.id, trialRow.apiKeyId));
 
     const [config] = await db.select().from(adminConfig);
-    const templates = parseTrialDmTemplates(config?.trialDmTemplates);
-    const upgradeText = formatTrialTemplate(templates.upgradePhantom || "", {
-      reason: "berakhir",
-      agverifChannelId: config?.agverifChannelId || "",
+    if (!config) return { error: "Admin config missing", status: 500 as const };
+
+    const durationDays = config.trialDefaultDurationDays ?? 1;
+    const expiresAt = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+    const dailyLimit = config.trialDailyTokenLimit ?? 1_000_000;
+    const promptLimit = config.trialPromptLimit ?? 50;
+    const promptWindow = config.trialPromptLimitWindow || "5h";
+
+    const { generateTrialApiKey, getKeyPrefix, sha256 } = await import("../../utils/crypto.js");
+    const username = String(trialRow.discordUsername || trialRow.discordUserId).trim();
+    const keyPlain = generateTrialApiKey();
+    const keyName = `trial-${username}-${trialRow.discordUserId.slice(-6)}-retry`;
+
+    const [insertedKey] = await db
+      .insert(apiKeys)
+      .values({
+        name: keyName,
+        key: keyPlain,
+        keyPrefix: getKeyPrefix(keyPlain),
+        keyHash: sha256(keyPlain),
+        discordUserId: trialRow.discordUserId,
+        discordUsername: trialRow.discordUsername || null,
+        provisionedBy: "trial-bot",
+        isActive: true,
+        isTrial: true,
+        maxDevices: config.globalMaxDevices ?? 1,
+        dailyTokenLimit: dailyLimit,
+        promptLimit,
+        promptLimitWindow: promptWindow,
+        dailyInputTokenLimit: 0,
+        dailyOutputTokenLimit: 0,
+        monthlyTokenLimit: 0,
+        perModelPromptLimit: 0,
+      })
+      .returning();
+
+    await db.insert(trialUsers).values({
+      discordUserId: trialRow.discordUserId,
+      discordUsername: trialRow.discordUsername || null,
+      apiKeyId: insertedKey.id,
+      expiresAt,
     });
-    await queueTrialNotification(trialRow.apiKeyId, "reclaim_available", {
-      channelId: config?.tokitoChannelId || "",
-      durationDays: String(config?.trialDefaultDurationDays ?? 1),
-      upgradePhantom: upgradeText,
+
+    const endpoint = `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`;
+    const gpyModels = await listGpyCatalogModels(config);
+    const templates = parseTrialDmTemplates(config.trialDmTemplates);
+    const modelList = gpyModels.slice(0, 30).map((m) => `• \`${m}\``).join("\n") || "• (lihat /v1/models)";
+
+    // Send the new key directly to the user via the `claimed` DM template.
+    await queueTrialNotification(insertedKey.id, "claimed", {
+      apiKey: keyPlain,
+      endpoint,
+      expiresAt: expiresAt.toISOString(),
+      expiresAtFormatted: `<t:${Math.floor(expiresAt.getTime() / 1000)}:F>`,
+      durationDays: String(durationDays),
+      dailyTokenLimit: String(dailyLimit),
+      promptLimit: String(promptLimit),
+      promptWindow,
+      modelList,
+      dmTemplate: templates.claimed || "",
     });
-    return { success: true, message: "User may claim trial again" };
+
+    return {
+      success: true,
+      message: "New trial key issued and sent to user via DM",
+      apiKey: keyPlain,
+      endpoint,
+      expiresAt: expiresAt.toISOString(),
+      durationDays,
+    };
   }
 
   if (body.action === "add_max_trials") {

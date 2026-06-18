@@ -99,6 +99,8 @@ export interface ApiKeyListItem {
   totalTokens: number;
   estimatedCost?: number;
   createdAt: string;
+  discordUserId?: string | null;
+  discordUsername?: string | null;
 }
 
 export interface KeyPeriodStats {
@@ -650,8 +652,27 @@ export const trialSettings = {
     overridePromptLimitWindow?: string;
     overrideMaxTrials?: number;
   }) =>
-    request<{ success: boolean; message?: string; expiresAt?: string }>("/trial/users/action", {
+    request<{ success: boolean; message?: string; expiresAt?: string; apiKey?: string; endpoint?: string; durationDays?: number }>("/trial/users/action", {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  getHistory: (discordUserId: string) =>
+    request<{
+      discordUserId: string;
+      count: number;
+      history: Array<{
+        id: number;
+        apiKeyId: number;
+        keyName: string;
+        keyPrefix: string;
+        isActive: boolean;
+        claimedAt: string;
+        expiresAt: string;
+        endedAt: string | null;
+        endReason: string | null;
+        suspended: boolean;
+        overrideMaxTrials: number | null;
+        overrideDays: number | null;
+      }>;
+    }>(`/trial/history/${encodeURIComponent(discordUserId)}`),
 };

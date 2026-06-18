@@ -134,7 +134,20 @@ let recapState = {
 	debugPanelMessageId: null,
 	debugLogMessageId: null,
 	pregenFiredYearMonth: null,
+	// Last date (YYYY-MM-DD WIB) we ran the daily recap regeneration. Used to
+	// make the 24h cron idempotent across bot restarts — never run twice in
+	// the same WIB day even if the process restarted.
+	lastDailyRecapDate: null,
 };
+
+/** YYYY-MM-DD in WIB (UTC+7) for the given Date. */
+function wibTodayStr(now = new Date()) {
+	const w = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+	const y = w.getUTCFullYear();
+	const m = String(w.getUTCMonth() + 1).padStart(2, '0');
+	const d = String(w.getUTCDate()).padStart(2, '0');
+	return `${y}-${m}-${d}`;
+}
 
 // ── Recap double-click lock ────────────────────────────────────────────────────
 // A user can spam "Lihat Recap Saya" / "Generate Recap-ku" buttons. Each click
@@ -5601,12 +5614,19 @@ client.once('clientReady', async () => {
 	async function maybeRunDailyRecap() {
 		try {
 			const win = await proxyInternal('/admin/internal/recap/window');
-			if (win && win.isOpen) {
-				console.log('[recap] window OPEN — running daily job');
-				await runDailyRecapJob();
-			} else {
+			if (!win || !win.isOpen) {
 				console.log('[recap] window CLOSED — skipping daily job (on-demand only)');
+				return;
 			}
+			const today = wibTodayStr();
+			if (recapState.lastDailyRecapDate === today) {
+				console.log(`[recap] already ran for ${today} — skipping (1x/day guard)`);
+				return;
+			}
+			console.log(`[recap] window OPEN — running daily job for ${today}`);
+			await runDailyRecapJob();
+			recapState.lastDailyRecapDate = today;
+			await saveRecapState().catch(() => {});
 		} catch (err) {
 			console.error('[recap] window check failed:', err.message);
 		}

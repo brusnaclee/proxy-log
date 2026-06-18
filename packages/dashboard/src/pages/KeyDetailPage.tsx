@@ -85,6 +85,22 @@ export default function KeyDetailPage() {
   const [newKeyModelOverrideDailyOutputTokenLimit, setNewKeyModelOverrideDailyOutputTokenLimit] = useState(0);
   const [keyModelMatchPreview, setKeyModelMatchPreview] = useState<{ ids: string[]; total: number }>({ ids: [], total: 0 });
   const [trialInfo, setTrialInfo] = useState<TrialUserRow | null>(null);
+  const [trialHistory, setTrialHistory] = useState<Array<{
+    id: number;
+    apiKeyId: number;
+    keyName: string;
+    keyPrefix: string;
+    isActive: boolean;
+    claimedAt: string;
+    expiresAt: string;
+    endedAt: string | null;
+    endReason: string | null;
+    suspended: boolean;
+    overrideMaxTrials: number | null;
+    overrideDays: number | null;
+  }> | null>(null);
+  const [lastIssuedKey, setLastIssuedKey] = useState<{ apiKey: string; endpoint: string; durationDays: number; expiresAt: string } | null>(null);
+  const [copiedIssued, setCopiedIssued] = useState(false);
 
   useEffect(() => {
     if (id) loadAll();
@@ -154,8 +170,19 @@ export default function KeyDetailPage() {
         } catch {
           setTrialInfo(null);
         }
+        try {
+          if (k.discordUserId) {
+            const h = await trialSettings.getHistory(k.discordUserId);
+            setTrialHistory(h.history);
+          } else {
+            setTrialHistory([]);
+          }
+        } catch {
+          setTrialHistory([]);
+        }
       } else {
         setTrialInfo(null);
+        setTrialHistory(null);
       }
     } catch (err) {
       console.error("[KeyDetail] Failed to load key data:", err);
@@ -241,8 +268,19 @@ export default function KeyDetailPage() {
   const runTrialAction = async (action: string, extra: Record<string, unknown> = {}) => {
     if (!trialInfo) return;
     try {
-      await trialSettings.userAction({ action, discordUserId: trialInfo.discordUserId, ...extra });
-      setStatusText(`Trial action "${action}" applied.`);
+      const res = await trialSettings.userAction({ action, discordUserId: trialInfo.discordUserId, ...extra });
+      if (action === "grant_retry" && (res as any).apiKey) {
+        setLastIssuedKey({
+          apiKey: (res as any).apiKey,
+          endpoint: (res as any).endpoint || "",
+          durationDays: (res as any).durationDays || 0,
+          expiresAt: (res as any).expiresAt || "",
+        });
+        setStatusText(`Trial action "${action}" applied — new key sent to user via DM.`);
+      } else {
+        setLastIssuedKey(null);
+        setStatusText(`Trial action "${action}" applied.`);
+      }
       await loadAll();
     } catch (error: any) {
       setStatusText(error?.message || "Trial action failed.");
@@ -478,6 +516,90 @@ export default function KeyDetailPage() {
                 <Button size="sm" variant="outline" onClick={() => void runTrialAction("grant_retry")}>Grant Retry</Button>
               )}
               <Button size="sm" variant="ghost" onClick={() => navigate("/trial")}>Back to Trial Settings</Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {lastIssuedKey && (
+        <Card className="border-emerald-500/40 bg-emerald-500/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2 text-emerald-400">
+              <Gift className="h-4 w-4" /> Last Issued Key (Grant Retry)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <p className="text-xs text-muted-foreground">Endpoint</p>
+                <code className="font-mono text-xs break-all">{lastIssuedKey.endpoint}</code>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">API Key</p>
+                <div className="flex items-center gap-2">
+                  <code className="font-mono text-xs break-all flex-1 bg-background/60 p-1.5 rounded border border-border/40">{lastIssuedKey.apiKey}</code>
+                  <Button size="sm" variant="outline" onClick={() => void handleCopy(lastIssuedKey.apiKey).then(() => setCopiedIssued(true)).finally(() => setTimeout(() => setCopiedIssued(false), 2000))}>
+                    {copiedIssued ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                  </Button>
+                </div>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Duration</p>
+                <p>{lastIssuedKey.durationDays} hari</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Expires</p>
+                <p>{formatDate(lastIssuedKey.expiresAt)}</p>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Key ini sudah dikirim ke user via DM template <code className="font-mono">claimed</code>. User tidak perlu claim manual.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {trialHistory && trialHistory.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Trial History ({trialHistory.length} cycle{trialHistory.length === 1 ? "" : "s"})</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-muted-foreground border-b border-border/40">
+                    <th className="py-2 pr-3 font-medium">Claimed</th>
+                    <th className="py-2 pr-3 font-medium">Expires</th>
+                    <th className="py-2 pr-3 font-medium">Ended</th>
+                    <th className="py-2 pr-3 font-medium">Status</th>
+                    <th className="py-2 pr-3 font-medium">Reason</th>
+                    <th className="py-2 pr-3 font-medium">Key</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {trialHistory.map((h) => {
+                    const status = h.endedAt
+                      ? (h.endReason || "ended")
+                      : (h.suspended ? "suspended" : "active");
+                    const isGrant = h.endReason === "admin_grant_retry";
+                    return (
+                      <tr key={h.id} className={`border-b border-border/20 ${isGrant ? "bg-amber-500/5" : ""}`}>
+                        <td className="py-2 pr-3">{formatDate(h.claimedAt)}</td>
+                        <td className="py-2 pr-3">{formatDate(h.expiresAt)}</td>
+                        <td className="py-2 pr-3">{h.endedAt ? formatDate(h.endedAt) : "—"}</td>
+                        <td className="py-2 pr-3">
+                          <Badge variant={status === "active" ? "default" : "secondary"}>{status}</Badge>
+                        </td>
+                        <td className="py-2 pr-3">{h.endReason || "—"}</td>
+                        <td className="py-2 pr-3 font-mono text-[10px] text-muted-foreground">
+                          {h.keyName} <span className="opacity-60">#{h.apiKeyId}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </CardContent>
         </Card>
