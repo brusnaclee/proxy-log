@@ -55,6 +55,7 @@ export async function initializeDatabase() {
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_prompt_limit_window text NOT NULL DEFAULT '5h'`);
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_model_selection_mode text NOT NULL DEFAULT 'all_gpy'`);
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_model_whitelist text NOT NULL DEFAULT '[]'`);
+		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_upstreams text NOT NULL DEFAULT ''`);
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_panel_message_id text`);
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_embed_config text NOT NULL DEFAULT '{}'`);
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_dm_templates text NOT NULL DEFAULT '{}'`);

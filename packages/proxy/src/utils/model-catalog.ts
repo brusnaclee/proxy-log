@@ -489,46 +489,33 @@ export async function getModelCatalogResponse() {
 export async function getFilteredModelCatalogResponse(opts?: { isTrial?: boolean }) {
   const base = await getModelCatalogResponse();
   if (!opts?.isTrial) return base;
-  // Filter dari cache; kalau tidak ada gpy di cache, fallback ke list gpy
-  // dari listGpyCatalogModels (yang juga baca cache + filter 'gpy/'). Ini
-  // menjamin trial user tetap lihat model gpy walau upstream /v1/models fetch
-  // pernah gagal (cache stale / provider down).
+
+  const { CANONICAL_GPY_MODELS } = await import("./trial-routing.js");
+
   const filtered = (base?.data || []).filter((m) => {
-    const id = String(m?.id || '').toLowerCase();
-    return id.startsWith('gpy/') || id === 'auto';
+    const id = String(m?.id || "").toLowerCase();
+    return id.startsWith("gpy/") || id === "auto";
   });
-  if (filtered.some((m) => String(m.id).toLowerCase().startsWith('gpy/'))) {
-    return { ...base, data: filtered };
+
+  const seen = new Set(filtered.map((m) => String(m.id).toLowerCase()));
+  for (const id of CANONICAL_GPY_MODELS) {
+    if (seen.has(id.toLowerCase())) continue;
+    const slash = id.indexOf("/");
+    const provider = slash > 0 ? id.slice(0, slash) : "gpy";
+    filtered.push({
+      id,
+      object: "model",
+      created: Math.floor(Date.now() / 1000),
+      owned_by: provider,
+      provider,
+      upstream_provider: provider,
+      context_length: 200000,
+      max_output_tokens: 64000,
+      supported_features: ["tools"],
+    } as any);
+    seen.add(id.toLowerCase());
   }
-  try {
-    const { listGpyCatalogModels } = await import('./trial-routing.js');
-    const { db } = await import('../db/index.js');
-    const { adminConfig } = await import('../db/schema.js');
-    const [config] = await db.select().from(adminConfig);
-    if (!config) return { ...base, data: filtered };
-    const gpyIds = await listGpyCatalogModels(config);
-    const seen = new Set(filtered.map((m) => String(m.id).toLowerCase()));
-    for (const id of gpyIds) {
-      if (seen.has(id.toLowerCase())) continue;
-      const slash = id.indexOf('/');
-      const provider = slash > 0 ? id.slice(0, slash) : 'gpy';
-      const modelId = slash > 0 ? id.slice(slash + 1) : id;
-      filtered.push({
-        id,
-        object: 'model',
-        created: Math.floor(Date.now() / 1000),
-        owned_by: provider,
-        provider,
-        upstream_provider: provider,
-        context_length: 128000,
-        max_output_tokens: 8192,
-        supported_features: ['tools'],
-      } as any);
-      seen.add(id.toLowerCase());
-    }
-  } catch (err) {
-    console.error('[model-catalog] gpy fallback failed:', (err as Error).message);
-  }
+
   return { ...base, data: filtered };
 }
 

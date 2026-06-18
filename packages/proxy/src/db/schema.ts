@@ -38,6 +38,7 @@ export const adminConfig = pgTable('admin_config', {
 	trialPromptLimitWindow: text('trial_prompt_limit_window').notNull().default('5h'),
 	trialModelSelectionMode: text('trial_model_selection_mode').notNull().default('all_gpy'),
 	trialModelWhitelist: text('trial_model_whitelist').notNull().default('[]'),
+	trialUpstreams: text('trial_upstreams').notNull().default(''),
 	trialPanelMessageId: text('trial_panel_message_id'),
 	trialEmbedConfig: text('trial_embed_config').notNull().default('{}'),
 	trialDmTemplates: text('trial_dm_templates').notNull().default('{}'),

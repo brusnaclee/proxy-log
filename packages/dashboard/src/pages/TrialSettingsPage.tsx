@@ -113,8 +113,36 @@ export default function TrialSettingsPage() {
     if (!settings) return;
     const list = settings.trialModelWhitelist || [];
     const next = list.includes(modelId) ? list.filter((m) => m !== modelId) : [...list, modelId];
-    setSettings({ ...settings, trialModelWhitelist: next });
+    setSettings({ ...settings, trialModelWhitelist: next, trialModelSelectionMode: "whitelist" });
   };
+
+  const toggleUpstream = (upstream: string) => {
+    if (!settings) return;
+    const list = settings.trialUpstreams || [];
+    const next = list.includes(upstream) ? list.filter((u) => u !== upstream) : [...list, upstream];
+    setSettings({ ...settings, trialUpstreams: next });
+  };
+
+  const toggleAllInUpstream = (upstream: string, models: string[], enable: boolean) => {
+    if (!settings) return;
+    const gpyInGroup = models.filter((m) => m.toLowerCase().startsWith("gpy/"));
+    const current = new Set(settings.trialModelWhitelist || []);
+    for (const m of gpyInGroup) {
+      if (enable) current.add(m);
+      else current.delete(m);
+    }
+    setSettings({
+      ...settings,
+      trialModelWhitelist: Array.from(current),
+      trialModelSelectionMode: "whitelist",
+    });
+  };
+
+  const upstreamGroups = Object.entries(settings?.catalogModelsByUpstream || {}).sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
+  const selectedUpstreams = settings?.trialUpstreams || [];
+  const filterByUpstream = selectedUpstreams.length > 0;
 
   const runAction = async (discordUserId: string, action: string, extra: Record<string, unknown> = {}) => {
     try {
@@ -325,12 +353,14 @@ export default function TrialSettingsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Model Whitelist (gpy)</CardTitle>
-          <CardDescription>Trial users can only use gpy provider models</CardDescription>
+          <CardTitle className="text-base">Trial Models (per upstream)</CardTitle>
+          <CardDescription>
+            Select upstream providers and individual gpy models available for trial users
+          </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex items-center gap-4">
-            <Label>Selection</Label>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap items-center gap-4">
+            <Label>Selection mode</Label>
             <select
               className="rounded-md border border-border bg-background px-3 py-2 text-sm"
               value={settings.trialModelSelectionMode}
@@ -341,32 +371,96 @@ export default function TrialSettingsPage() {
                 })
               }
             >
-              <option value="all_gpy">All gpy models</option>
+              <option value="all_gpy">All gpy models (respect upstream filter)</option>
               <option value="whitelist">Whitelist only</option>
             </select>
           </div>
-          {settings.trialModelSelectionMode === "whitelist" && (
-            <div className="flex flex-wrap gap-2 max-h-48 overflow-y-auto p-2 border rounded-md border-border/50">
-              {(settings.gpyModels || []).map((m) => {
-                const on = (settings.trialModelWhitelist || []).includes(m);
+
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">Upstream filter (optional — empty = all)</Label>
+            <div className="flex flex-wrap gap-2">
+              {upstreamGroups.map(([upstream]) => {
+                const on = selectedUpstreams.includes(upstream);
                 return (
                   <button
-                    key={m}
+                    key={upstream}
                     type="button"
-                    onClick={() => toggleModel(m)}
+                    onClick={() => toggleUpstream(upstream)}
                     className={`text-xs px-2 py-1 rounded border transition-colors ${
-                      on ? "bg-primary/20 border-primary text-primary" : "border-border text-muted-foreground"
+                      on ? "bg-emerald-500/20 border-emerald-500 text-emerald-400" : "border-border text-muted-foreground"
                     }`}
                   >
-                    {m}
+                    {upstream}
                   </button>
                 );
               })}
-              {(settings.gpyModels || []).length === 0 && (
-                <span className="text-xs text-muted-foreground">No gpy models in catalog</span>
+              {upstreamGroups.length === 0 && (
+                <span className="text-xs text-muted-foreground">No models in catalog</span>
               )}
             </div>
-          )}
+          </div>
+
+          <div className="space-y-4 max-h-[420px] overflow-y-auto pr-1">
+            {upstreamGroups.map(([upstream, models]) => {
+              if (filterByUpstream && !selectedUpstreams.includes(upstream)) return null;
+              const gpyModels = models.filter((m) => m.toLowerCase().startsWith("gpy/"));
+              const visibleModels =
+                settings.trialModelSelectionMode === "whitelist" ? gpyModels : gpyModels.length > 0 ? gpyModels : models.filter((m) => m.toLowerCase().startsWith("gpy/"));
+              if (visibleModels.length === 0) return null;
+
+              const allSelected = visibleModels.every((m) =>
+                (settings.trialModelWhitelist || []).includes(m),
+              );
+
+              return (
+                <div key={upstream} className="rounded-md border border-border/50 p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium capitalize">Upstream: {upstream}</span>
+                    {settings.trialModelSelectionMode === "whitelist" && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => toggleAllInUpstream(upstream, visibleModels, !allSelected)}
+                      >
+                        {allSelected ? "Deselect all" : "Select all"}
+                      </Button>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {visibleModels.map((m) => {
+                      const on =
+                        settings.trialModelSelectionMode === "all_gpy" ||
+                        (settings.trialModelWhitelist || []).includes(m);
+                      const clickable = settings.trialModelSelectionMode === "whitelist";
+                      return (
+                        <button
+                          key={m}
+                          type="button"
+                          disabled={!clickable}
+                          onClick={() => toggleModel(m)}
+                          className={`text-xs px-2 py-1 rounded border transition-colors ${
+                            on
+                              ? "bg-primary/20 border-primary text-primary"
+                              : "border-border text-muted-foreground"
+                          } ${!clickable ? "opacity-80 cursor-default" : "hover:border-primary/50"}`}
+                        >
+                          {m}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            Active trial models: {(settings.gpyModels || []).length} —{" "}
+            {(settings.gpyModels || []).slice(0, 5).join(", ")}
+            {(settings.gpyModels || []).length > 5 ? "…" : ""}
+          </p>
         </CardContent>
       </Card>
 

@@ -70,6 +70,13 @@ export function parseTrialModelWhitelist(raw: string | null | undefined): string
   }
 }
 
+export function parseTrialUpstreams(raw: string | null | undefined): string[] {
+  return String(raw || "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
 export function formatTrialTemplate(template: string, vars: Record<string, string>): string {
   let out = template;
   for (const [k, v] of Object.entries(vars)) {
@@ -78,10 +85,15 @@ export function formatTrialTemplate(template: string, vars: Record<string, strin
   return out;
 }
 
-export function buildTrialSettingsResponse(config: AdminConfig, gpyModels: string[] = []) {
+export function buildTrialSettingsResponse(
+  config: AdminConfig,
+  gpyModels: string[] = [],
+  catalogModelsByUpstream: Record<string, string[]> = {},
+) {
   const embed = parseTrialEmbedConfig(config.trialEmbedConfig);
   const dmTemplates = parseTrialDmTemplates(config.trialDmTemplates);
   const whitelist = parseTrialModelWhitelist(config.trialModelWhitelist);
+  const trialUpstreams = parseTrialUpstreams(config.trialUpstreams);
   const accessMode = config.trialAccessMode || "groupy_members";
   const requiredRoleId = config.trialRequiredRoleId || "1354682641961582632";
 
@@ -104,10 +116,12 @@ export function buildTrialSettingsResponse(config: AdminConfig, gpyModels: strin
     trialPromptLimitWindow: config.trialPromptLimitWindow || "5h",
     trialModelSelectionMode: config.trialModelSelectionMode || "all_gpy",
     trialModelWhitelist: whitelist,
+    trialUpstreams,
     trialPanelMessageId: config.trialPanelMessageId || null,
     trialEmbedConfig: { ...embed, description: embedDescription },
     trialDmTemplates: dmTemplates,
     gpyModels,
+    catalogModelsByUpstream,
     configUpdatedAt: config.updatedAt ? new Date(config.updatedAt).toISOString() : null,
   };
 }

@@ -598,10 +598,12 @@ export interface TrialSettings {
   trialPromptLimitWindow: string;
   trialModelSelectionMode: "all_gpy" | "whitelist";
   trialModelWhitelist: string[];
+  trialUpstreams: string[];
   trialPanelMessageId: string | null;
   trialEmbedConfig: TrialEmbedConfig;
   trialDmTemplates: TrialDmTemplates;
   gpyModels: string[];
+  catalogModelsByUpstream: Record<string, string[]>;
 }
 
 export interface TrialUserRow {

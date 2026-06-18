@@ -93,7 +93,7 @@ import {
 	resolveBillableTokens,
 } from '../utils/token-extractor.js';
 import {
-	buildTrialModelCandidates,
+	buildTrialModelsToTry,
 	isRetryableUpstreamStatus,
 } from '../utils/trial-routing.js';
 import { isGpyProviderOrModel, resolveKeyDailyTokenLimit, resolveKeyPromptLimit } from '../utils/trial-config.js';
@@ -2916,108 +2916,148 @@ proxy.all('/*', async (c) => {
 	}
 
 	try {
-		let upstreamResponse: Response;
-		let usedKeyId: number;
-		const trialModelsToTry =
-			keyRecord.isTrial && model !== 'auto'
-				? [...(await buildTrialModelCandidates(config, model)), '__auto__']
-				: [model];
+		let upstreamResponse!: Response;
+		let usedKeyId!: number;
+
+		let modelsToTry: string[];
+		if (keyRecord.isTrial && model !== 'auto') {
+			const built = await buildTrialModelsToTry(config, model);
+			if ('error' in built) {
+				return c.json(
+					{
+						error: {
+							message: `Trial users may only use gpy provider models. Requested: "${model}"`,
+							type: 'access_error',
+							code: 'trial_model_not_allowed',
+						},
+					},
+					403,
+				);
+			}
+			modelsToTry = built.models;
+		} else if (!keyRecord.isTrial && model !== 'auto') {
+			modelsToTry = [model, 'auto'];
+		} else {
+			modelsToTry = [model];
+		}
 
 		let fetchSucceeded = false;
-		for (let ti = 0; ti < trialModelsToTry.length; ti++) {
-			let attemptModel = trialModelsToTry[ti];
-			if (attemptModel === '__auto__') {
-				let onlineModels = await getOnlineModelsByLatency();
-				onlineModels = onlineModels.filter((m) => isAutoCompatible(m.modelId));
-				if (onlineModels.length === 0) continue;
-				const pick = onlineModels[0];
-				attemptModel = pick.provider ? `${pick.provider}/${pick.modelId}` : pick.modelId;
-			}
+		const originalModel = model;
 
-			let attemptProvider = targetProvider;
-			let attemptUpstreamModel = upstreamModel;
-			let attemptUpstreamUrl = upstreamUrl;
-			let attemptAnthropicBody = anthropicRequestBody;
-			let attemptYoucomBody = youcomRequestBody;
-			let attemptActualUrl = isAnthropicProvider || isYouComProvider ? actualUpstreamUrl : upstreamUrl;
-			let attemptIsAnthropic = isAnthropicProvider;
-			let attemptIsYoucom = isYouComProvider;
+		for (let ti = 0; ti < modelsToTry.length; ti++) {
+			const attemptModel = modelsToTry[ti];
 
-			if (keyRecord.isTrial && model !== 'auto' && attemptModel !== model) {
-				const tp = await getProviderForModel(attemptModel);
-				if (!tp) continue;
-				if (attemptModel !== '__auto__' && !isGpyProviderOrModel(tp.name, attemptModel)) continue;
-				attemptProvider = tp;
-				attemptUpstreamModel = await stripProviderPrefix(attemptModel);
-				if (requestBody) requestBody.model = attemptUpstreamModel;
-				requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
-				const base = attemptProvider.endpoint.replace(/\/$/, '');
-				let pathPart = forwardPath;
-				if (base.endsWith('/v1') && pathPart.startsWith('/v1/')) pathPart = pathPart.slice(3);
-				else if (base.endsWith('/v1') && pathPart === '/v1') pathPart = '';
-				attemptUpstreamUrl = `${base}${pathPart}`;
-				attemptIsAnthropic = attemptProvider.endpointType === 'anthropic';
-				attemptIsYoucom = attemptProvider.endpointType === 'youcom';
-				if (attemptIsAnthropic) {
-					attemptAnthropicBody = prepareAnthropicUpstreamBody(requestBody);
-					attemptActualUrl = resolveAnthropicUpstreamUrl(attemptProvider.endpoint);
-				} else if (attemptIsYoucom) {
-					const yc = convertRequestToYouCom(requestBody, attemptUpstreamModel);
-					attemptYoucomBody = JSON.stringify(yc.request);
-					attemptActualUrl = `${base}/v1/agents/runs`;
-				} else {
-					attemptActualUrl = attemptUpstreamUrl;
+			for (let attempt = 0; attempt < 5; attempt++) {
+				let pickModel = attemptModel;
+				if (pickModel === '__auto__' || pickModel === 'auto') {
+					let onlineModels = await getOnlineModelsByLatency();
+					onlineModels = onlineModels.filter((m) => isAutoCompatible(m.modelId));
+					if (keyRecord.isTrial) {
+						onlineModels = onlineModels.filter((m) =>
+							isGpyProviderOrModel(m.provider, m.modelId),
+						);
+					}
+					if (onlineModels.length === 0) break;
+					const pick = onlineModels[0];
+					pickModel = pick.provider ? `${pick.provider}/${pick.modelId}` : pick.modelId;
 				}
-			}
 
-			const result = await fetchWithKeyRotation(
-				attemptProvider.id,
-				attemptIsAnthropic || attemptIsYoucom ? attemptActualUrl : attemptUpstreamUrl,
-				(apiKey) => {
+				let attemptProvider = targetProvider;
+				let attemptUpstreamModel = upstreamModel;
+				let attemptUpstreamUrl = upstreamUrl;
+				let attemptAnthropicBody = anthropicRequestBody;
+				let attemptYoucomBody = youcomRequestBody;
+				let attemptActualUrl =
+					isAnthropicProvider || isYouComProvider ? actualUpstreamUrl : upstreamUrl;
+				let attemptIsAnthropic = isAnthropicProvider;
+				let attemptIsYoucom = isYouComProvider;
+
+				if (pickModel !== originalModel) {
+					const tp = await getProviderForModel(pickModel);
+					if (!tp) {
+						if (attemptModel === '__auto__' || attemptModel === 'auto') break;
+						break;
+					}
+					if (keyRecord.isTrial && !isGpyProviderOrModel(tp.name, pickModel)) {
+						if (attemptModel === '__auto__' || attemptModel === 'auto') break;
+						break;
+					}
+					attemptProvider = tp;
+					attemptUpstreamModel = await stripProviderPrefix(pickModel);
+					if (requestBody) requestBody.model = attemptUpstreamModel;
+					requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
+					const base = attemptProvider.endpoint.replace(/\/$/, '');
+					let pathPart = forwardPath;
+					if (base.endsWith('/v1') && pathPart.startsWith('/v1/')) pathPart = pathPart.slice(3);
+					else if (base.endsWith('/v1') && pathPart === '/v1') pathPart = '';
+					attemptUpstreamUrl = `${base}${pathPart}`;
+					attemptIsAnthropic = attemptProvider.endpointType === 'anthropic';
+					attemptIsYoucom = attemptProvider.endpointType === 'youcom';
 					if (attemptIsAnthropic) {
+						attemptAnthropicBody = prepareAnthropicUpstreamBody(requestBody);
+						attemptActualUrl = resolveAnthropicUpstreamUrl(attemptProvider.endpoint);
+					} else if (attemptIsYoucom) {
+						const yc = convertRequestToYouCom(requestBody, attemptUpstreamModel);
+						attemptYoucomBody = JSON.stringify(yc.request);
+						attemptActualUrl = `${base}/v1/agents/runs`;
+					} else {
+						attemptActualUrl = attemptUpstreamUrl;
+					}
+				}
+
+				const result = await fetchWithKeyRotation(
+					attemptProvider.id,
+					attemptIsAnthropic || attemptIsYoucom ? attemptActualUrl : attemptUpstreamUrl,
+					(apiKey) => {
+						if (attemptIsAnthropic) {
+							return {
+								method: c.req.method,
+								headers: buildAnthropicUpstreamHeaders(apiKey, upstreamHeaders),
+								body: attemptAnthropicBody!,
+							};
+						}
+
+						const headers = { ...upstreamHeaders };
+						if (attemptIsYoucom) {
+							delete headers['content-type'];
+							delete headers['accept'];
+							headers['Content-Type'] = 'application/json';
+							headers['Authorization'] = `Bearer ${apiKey}`;
+						} else {
+							headers['Authorization'] = `Bearer ${apiKey}`;
+						}
 						return {
 							method: c.req.method,
-							headers: buildAnthropicUpstreamHeaders(apiKey, upstreamHeaders),
-							body: attemptAnthropicBody!,
+							headers,
+							body: attemptIsAnthropic
+								? attemptAnthropicBody!
+								: attemptIsYoucom
+									? attemptYoucomBody!
+									: (requestBodyBytes as any),
 						};
-					}
+					},
+					attemptIsYoucom ? false : isStreaming,
+					c.req.raw.signal,
+				);
 
-					const headers = { ...upstreamHeaders };
-					if (attemptIsYoucom) {
-						delete headers['content-type'];
-						delete headers['accept'];
-						headers['Content-Type'] = 'application/json';
-						headers['Authorization'] = `Bearer ${apiKey}`;
-					} else {
-						headers['Authorization'] = `Bearer ${apiKey}`;
-					}
-					return {
-						method: c.req.method,
-						headers,
-						body: attemptIsAnthropic
-							? attemptAnthropicBody!
-							: attemptIsYoucom
-								? attemptYoucomBody!
-								: (requestBodyBytes as any),
-					};
-				},
-				attemptIsYoucom ? false : isStreaming,
-				c.req.raw.signal,
-			);
+				upstreamResponse = result.response;
+				usedKeyId = result.keyId;
 
-			upstreamResponse = result.response;
-			usedKeyId = result.keyId;
-			if (upstreamResponse.ok || !isRetryableUpstreamStatus(upstreamResponse.status)) {
-				if (keyRecord.isTrial && attemptModel !== model && upstreamResponse.ok) {
-					model = attemptModel;
+				if (upstreamResponse.ok) {
+					if (pickModel !== originalModel) model = pickModel;
+					fetchSucceeded = true;
+					break;
 				}
-				fetchSucceeded = true;
-				break;
+				if (!isRetryableUpstreamStatus(upstreamResponse.status)) break;
+				await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
 			}
+
+			if (fetchSucceeded) break;
+			if (attemptModel === '__auto__' || attemptModel === 'auto') break;
 		}
 
 		if (!fetchSucceeded) {
-			throw new Error('All trial upstream attempts failed');
+			throw new Error('All upstream attempts failed');
 		}
 
 		const latencyMs = Date.now() - startTime;

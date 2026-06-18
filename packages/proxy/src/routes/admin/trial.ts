@@ -8,8 +8,14 @@ import {
   parseTrialDmTemplates,
   parseTrialEmbedConfig,
   parseTrialModelWhitelist,
+  parseTrialUpstreams,
 } from "../../utils/trial-config.js";
-import { listGpyCatalogModels } from "../../utils/trial-routing.js";
+import {
+  CANONICAL_GPY_MODELS,
+  groupModelsByUpstream,
+  listGpyCatalogModels,
+} from "../../utils/trial-routing.js";
+import { getModelCatalogResponse } from "../../utils/model-catalog.js";
 import { queueTrialNotification } from "../../utils/trial-notify.js";
 import {
   countUserTrials,
@@ -18,11 +24,19 @@ import {
 
 const trial = new Hono();
 
+async function buildCatalogModelsByUpstream(): Promise<Record<string, string[]>> {
+  const catalog = await getModelCatalogResponse();
+  const allIds = (catalog?.data || []).map((m) => String(m.id));
+  const merged = Array.from(new Set([...allIds, ...CANONICAL_GPY_MODELS]));
+  return groupModelsByUpstream(merged);
+}
+
 trial.get("/settings/trial", async (c) => {
   const [config] = await db.select().from(adminConfig);
   if (!config) return c.json({ error: "Admin not configured" }, 500);
   const gpyModels = await listGpyCatalogModels(config);
-  return c.json(buildTrialSettingsResponse(config, gpyModels));
+  const catalogModelsByUpstream = await buildCatalogModelsByUpstream();
+  return c.json(buildTrialSettingsResponse(config, gpyModels, catalogModelsByUpstream));
 });
 
 trial.put("/settings/trial", async (c) => {
@@ -43,6 +57,12 @@ trial.put("/settings/trial", async (c) => {
   if (body.trialModelWhitelist !== undefined) {
     updates.trialModelWhitelist = JSON.stringify(Array.isArray(body.trialModelWhitelist) ? body.trialModelWhitelist : []);
   }
+  if (body.trialUpstreams !== undefined) {
+    const upstreams = Array.isArray(body.trialUpstreams)
+      ? body.trialUpstreams.map(String).filter(Boolean)
+      : parseTrialUpstreams(String(body.trialUpstreams || ""));
+    updates.trialUpstreams = upstreams.join(",");
+  }
   if (body.trialEmbedConfig !== undefined) {
     updates.trialEmbedConfig = JSON.stringify(body.trialEmbedConfig || {});
   }
@@ -58,7 +78,8 @@ trial.put("/settings/trial", async (c) => {
 
   const [updated] = await db.select().from(adminConfig);
   const gpyModels = await listGpyCatalogModels(updated!);
-  return c.json({ success: true, ...buildTrialSettingsResponse(updated!, gpyModels) });
+  const catalogModelsByUpstream = await buildCatalogModelsByUpstream();
+  return c.json({ success: true, ...buildTrialSettingsResponse(updated!, gpyModels, catalogModelsByUpstream) });
 });
 
 trial.get("/trial/users", async (c) => {
