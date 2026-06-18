@@ -35,7 +35,7 @@ export const DEFAULT_TRIAL_EMBED: TrialEmbedConfig = {
 
 export const DEFAULT_TRIAL_DM: TrialDmTemplates = {
   limitReached:
-    "⚠️ **Limit Trial Tercapai**\n\nLimit harian/bulanan trial Anda sudah habis. Trial berakhir: {expiresAt}\n\n{upgradePhantom}",
+    "⚠️ **Limit Trial Tercapai**\n\nLimit harian/bulanan trial Anda sudah habis. Trial berakhir: {expiresAtFormatted}\n\n{upgradePhantom}",
   expired:
     "⏰ **Trial Berakhir**\n\nMasa trial API Anda sudah habis. Terima kasih sudah mencoba!\n\n{upgradePhantom}",
   terminated:
@@ -43,13 +43,13 @@ export const DEFAULT_TRIAL_DM: TrialDmTemplates = {
   keyRotated:
     "🔄 **API Key Trial Di-rotate**\n\nKey trial Anda di-rotate karena terdeteksi penggunaan dari lebih dari 1 device.\n\n**Endpoint:** `{endpoint}`\n**Key baru:** `{apiKey}`",
   claimed:
-    "🎁 **Trial API Aktif**\n\n**Endpoint:** `{endpoint}`\n**Authorization:** `Bearer {apiKey}`\n\n**Rules:**\n• Durasi: {durationDays} hari (sampai {expiresAt})\n• Token harian: {dailyTokenLimit}\n• Prompt: {promptLimit}/{promptWindow}\n• Model: hanya **gpy**\n\n**Model tersedia:**\n{modelList}",
+    "🎁 **Trial API Aktif**\n\n**Endpoint:** `{endpoint}`\n**Authorization:** `Bearer {apiKey}`\n\n**Rules:**\n• Durasi: {durationDays} hari (berakhir {expiresAtFormatted})\n• Token harian: {dailyTokenLimit}\n• Prompt: {promptLimit}/{promptWindow}\n• Model: hanya **gpy**\n\n**Model tersedia:**\n{modelList}",
   reclaimAvailable:
     "🎁 **Trial Baru Tersedia**\n\nAdmin sudah membuka akses trial lagi untuk kamu. Silakan klaim ulang di channel <#{channelId}> dengan menekan tombol **Klaim Trial API**.\n\nDurasi baru: {durationDays} hari\n{upgradePhantom}",
   upgradePhantom:
     "🚀 **Upgrade ke Phantom Member**\n\nUntuk akses unlimited, semua model, dan token lebih besar, verifikasi AG kamu di channel <#{agverifChannelId}>.\n\nKeuntungan Phantom:\n• Akses semua model (qwen, anthropic, tokito, dll)\n• Token limit lebih besar\n• Multi-device\n• Permanen (selama role aktif)",
   extended:
-    "⏰ **Trial Diperpanjang**\n\nAdmin sudah memperpanjang trial API kamu.\n\n• Tambahan: **{days} hari**\n• Baru berakhir: {expiresAt}\n• Key tetap sama: `{apiKey}`\n\n{upgradePhantom}",
+    "⏰ **Trial Diperpanjang**\n\nAdmin sudah memperpanjang trial API kamu.\n\n• Tambahan: **{days} hari**\n• Baru berakhir: {expiresAtFormatted}\n• Key tetap sama: `{apiKey}`\n\n{upgradePhantom}",
 };
 
 export function parseTrialEmbedConfig(raw: string | null | undefined): TrialEmbedConfig {
@@ -90,6 +90,19 @@ export function formatTrialTemplate(template: string, vars: Record<string, strin
   let out = template;
   for (const [k, v] of Object.entries(vars)) {
     out = out.split(`{${k}}`).join(v);
+  }
+  // Auto-substitute Discord-friendly timestamps so templates can stay readable
+  // (admin writes "{expiresAt}" or "{expiresAtFormatted}") and the user sees a
+  // localized "<t:..:F>" token that Discord renders in their timezone.
+  if (vars.expiresAt) {
+    const unix = Math.floor(new Date(vars.expiresAt).getTime() / 1000);
+    if (Number.isFinite(unix)) {
+      out = out
+        .split("{expiresAtFormatted}").join(`<t:${unix}:F>`)
+        .split("{expiresAtRelative}").join(`<t:${unix}:R>`)
+        .split("{expiresAtTime}").join(`<t:${unix}:t>`)
+        .split("{expiresAtDate}").join(`<t:${unix}:D>`);
+    }
   }
   return out;
 }

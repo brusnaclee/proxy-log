@@ -288,6 +288,7 @@ export async function claimTrialForUser(body: {
     apiKey: keyPlain,
     endpoint,
     expiresAt: expiresAt.toISOString(),
+    expiresAtFormatted: `<t:${Math.floor(expiresAt.getTime() / 1000)}:F>`,
     durationDays: String(durationDays),
     dailyTokenLimit: String(dailyLimit),
     promptLimit: String(promptLimit),
@@ -382,6 +383,7 @@ export async function adminTrialAction(body: {
     await queueTrialNotification(trialRow.apiKeyId, "extended", {
       days: String(addDays),
       expiresAt: newExpiry.toISOString(),
+      expiresAtFormatted: `<t:${Math.floor(newExpiry.getTime() / 1000)}:F>`,
       apiKey: key?.key || "",
       endpoint: `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`,
       upgradePhantom: upgradeText,

@@ -87,6 +87,22 @@ const RANKING_STATE_PATH = path.join(AGVERIF_DATA_DIR, 'ranking_state.json');
 const RANKING_REFRESH_INTERVAL_MS = 60 * 1000; // 1 menit
 const TRIAL_CLAIM_BUTTON = 'trial_claim';
 
+// ─── Discord timestamp helper ─────────────────────────────────────────────────
+// Format any ISO/string/Date into a Discord timestamp token. Discord renders
+// the timestamp in the viewer's local timezone and live-updates it (e.g. "in
+// 3 hours" / "2 days ago"). Use these everywhere instead of raw toLocaleString
+// strings so users in different timezones see consistent info.
+function discordTime(input, style = 'F') {
+  if (!input) return '—';
+  const ms = input instanceof Date ? input.getTime() : new Date(input).getTime();
+  if (!Number.isFinite(ms)) return '—';
+  return `<t:${Math.floor(ms / 1000)}:${style}>`;
+}
+// Convenience: e.g. discordTimeRange(start, 't', end, 'R') => "<t:..:t> (<t:..:R>)"
+function discordTimeRange(inputStart, startStyle, inputEnd, endStyle) {
+  return `${discordTime(inputStart, startStyle)} (${discordTime(inputEnd, endStyle)})`;
+}
+
 // ─── How-to-Use tutorial ──────────────────────────────────────────────────────
 const TUTORIAL_BTN_HOWTO_PREFIX = 'howto_open';
 const TUTORIAL_MENU_IDE_PREFIX  = 'howto_ide_';
@@ -3253,7 +3269,7 @@ function buildRankingEmbed(title, color, todayItems, monthItems, formatItem) {
 			{ name: '📅 Hari Ini', value: todayLines.slice(0, 1000), inline: true },
 			{ name: '📆 Bulan Ini', value: monthLines.slice(0, 1000), inline: true },
 		)
-		.setFooter({ text: `🔄 Auto-refresh setiap 1 menit  •  ${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB` });
+		.setFooter({ text: `🔄 Auto-refresh setiap 1 menit  •  ${discordTime(new Date(), 'F')}` });
 }
 
 async function buildSearchEmbed() {
@@ -4005,7 +4021,7 @@ async function runDailyRecapJob(opts = {}) {
 					{ name: '🏆 Top 5 Request', value: topReq },
 					{ name: '🔗 Contoh Link', value: sampleName ? `${RECAP_PUBLIC_BASE_URL}/recap/${encodeURIComponent(sampleName)}` : '_tidak ada_' },
 				)
-				.setFooter({ text: `${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB` });
+				.setFooter({ text: discordTime(new Date(), 'F') });
 
 			// Edit existing log message if present, else create one.
 			let logMsg = recapState.debugLogMessageId
@@ -4432,7 +4448,7 @@ async function handleTrialClaimButton(interaction) {
 			`**Endpoint:** \`${result.endpoint}\`\n` +
 			`**Authorization:** \`Bearer ${result.apiKey}\`\n\n` +
 			`**Rules Trial:**\n` +
-			`• Durasi: **${result.durationDays} hari** (sampai <t:${Math.floor(new Date(result.expiresAt).getTime() / 1000)}:F>)\n` +
+			`• Durasi: **${result.durationDays} hari** (berakhir ${discordTime(result.expiresAt, 'F')})\n` +
 			`• Token harian: **${(result.rules?.dailyTokenLimit || 0).toLocaleString()}**\n` +
 			`• Prompt: **${result.rules?.promptLimit}/${result.rules?.promptLimitWindow || '5h'}**\n` +
 			`• Provider: **gpy** saja\n\n` +
@@ -4857,7 +4873,7 @@ client.once('clientReady', async () => {
 								`**Endpoint:** \`${notif.endpoint || ''}\`\n` +
 								`**Authorization:** \`Bearer ${notif.apiKey || ''}\`\n\n` +
 								`**Rules:**\n` +
-								`• Durasi: ${notif.durationDays || '?'} hari (sampai ${notif.expiresAt || '—'})\n` +
+								`• Durasi: ${notif.durationDays || '?'} hari (berakhir ${discordTime(notif.expiresAt, 'F')})\n` +
 								`• Token harian: ${(Number(notif.dailyTokenLimit) || 0).toLocaleString()}\n` +
 								`• Prompt: ${notif.promptLimit || '?'}/${notif.promptWindow || '5h'}\n` +
 								`• Model: hanya **gpy**\n\n` +
@@ -4893,7 +4909,7 @@ client.once('clientReady', async () => {
 							color = 0x57f287;
 							dmText = notif.dmTemplate
 								? notif.dmTemplate.replace(/\{(\w+)\}/g, (_, k) => notif[k] || '')
-								: `Admin sudah memperpanjang trial +${notif.days} hari. Baru berakhir: ${notif.expiresAt}`;
+								: `Admin sudah memperpanjang trial +${notif.days} hari. Baru berakhir: ${discordTime(notif.expiresAt, 'F')}`;
 						}
 						if (dmText) await sendDMToUser(notif.discordUserId, title, dmText, color);
 						// Kirim How to Use terpisah khusus trial_claimed
