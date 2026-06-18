@@ -4881,8 +4881,11 @@ client.once('clientReady', async () => {
 								`Kredensial juga sudah dikirim ke channel trial.`;
 						} else if (notif.type === 'trial_key_rotated') {
 							title = '🔄 Trial Key Di-rotate';
-							dmText =
-								`⚠️ Key trial di-rotate karena device baru terdeteksi.\n\n**Endpoint:** \`${notif.endpoint}\`\n**Key baru:** \`${notif.newKey}\``;
+							if (notif.dmTemplate) {
+								dmText = notif.dmTemplate.replace(/\{(\w+)\}/g, (_, k) => notif[k] || '');
+							} else {
+								dmText = `⚠️ Key trial di-rotate karena device baru terdeteksi.\n\n**Endpoint:** \`${notif.endpoint || ''}\`\n**Key baru:** \`${notif.newKey || ''}\``;
+							}
 						} else if (notif.type === 'trial_limit_reached') {
 							title = '⚠️ Limit Trial Tercapai';
 							dmText = notif.message || 'Limit harian/bulanan trial Anda sudah tercapai.';
