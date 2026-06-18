@@ -3001,13 +3001,12 @@ proxy.all('/*', async (c) => {
 			for (let attempt = 0; attempt < maxAttemptsPerModel; attempt++) {
 				let pickModel = attemptModel;
 				if (pickModel === '__auto__' || pickModel === 'auto') {
+					// Last-resort virtual auto. For trial users, this intentionally
+					// allows non-gpy models — the idea is the user has already
+					// failed through every configured gpy upstream and we want a
+					// response rather than a 503. Phantom users get the full pool.
 					let onlineModels = await getOnlineModelsByLatency();
 					onlineModels = onlineModels.filter((m) => isAutoCompatible(m.modelId));
-					if (keyRecord.isTrial) {
-						onlineModels = onlineModels.filter((m) =>
-							isGpyProviderOrModel(m.provider, m.modelId),
-						);
-					}
 					if (onlineModels.length === 0) break;
 					const pick = onlineModels[0];
 					pickModel = pick.provider ? `${pick.provider}/${pick.modelId}` : pick.modelId;
