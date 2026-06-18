@@ -3016,7 +3016,7 @@ proxy.all('/*', async (c) => {
 				// on to the next model instead of stalling the user. The 1h default
 				// in fetchUpstreamWithRetry is for long reasoning models on a
 				// single, healthy request — not for a fallback chain.
-				const perAttemptTimeoutMs = keyRecord.isTrial || (!keyRecord.isTrial && model !== 'auto') ? 25_000 : 0;
+				const perAttemptTimeoutMs = keyRecord.isTrial || (!keyRecord.isTrial && model !== 'auto') ? 40_000 : 0;
 				let attemptSignal = c.req.raw.signal;
 				let perAttemptController: AbortController | null = null;
 				if (perAttemptTimeoutMs > 0) {
