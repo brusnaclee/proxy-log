@@ -776,9 +776,28 @@ export async function getOnlineModelsByLatency(): Promise<Array<{
       sql`${modelMonitor.modelId} = ${latestSubquery.modelId} AND COALESCE(${modelMonitor.provider}, '') = COALESCE(${latestSubquery.provider}, '') AND ${modelMonitor.checkedAt} = ${latestSubquery.maxCheckedAt}`,
     );
 
+  // Filter out monitor rows whose prefix doesn't match any active provider. This
+  // skips "ghost" model ids left over from a removed upstream so the auto
+  // resolver doesn't pick a model that has no provider DB row.
+  const allActive = await db
+    .select({ name: providers.name, endpointType: providers.endpointType })
+    .from(providers)
+    .where(eq(providers.isActive, true));
+  const activeNames = new Set(allActive.map((p) => String(p.name || "").toLowerCase()));
+  const isResolvable = (modelId: string, provider: string | null): boolean => {
+    const id = String(modelId || "").toLowerCase();
+    const slash = id.indexOf("/");
+    if (slash > 0) {
+      const prefix = id.slice(0, slash);
+      if (activeNames.has(prefix)) return true;
+    }
+    if (provider && activeNames.has(String(provider).toLowerCase())) return true;
+    return false;
+  };
+
   return rows
     .map((r) => r.model_monitor)
-    .filter((d) => d.isOnline && d.httpStatus === 200 && d.provider)
+    .filter((d) => d.isOnline && d.httpStatus === 200 && d.provider && isResolvable(d.modelId, d.provider))
     .sort((a, b) => (a.latencyMs ?? 999999) - (b.latencyMs ?? 999999))
     .map((d) => ({
       modelId: d.modelId,
