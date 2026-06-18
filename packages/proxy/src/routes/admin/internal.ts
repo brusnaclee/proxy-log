@@ -1048,7 +1048,11 @@ internal.post("/internal/admin-trial-action", async (c) => {
 internal.post("/internal/reset-all-trials", async (c) => {
   const authErr = checkInternal(c);
   if (authErr) return authErr;
+  const result = await resetAllTrials();
+  return c.json({ success: true, ...result });
+});
 
+export async function resetAllTrials() {
   // 1. Kumpulkan semua trial apiKeyId
   const trialRows = await db.select().from(trialUsers);
   const trialKeyIds = trialRows.map((t) => t.apiKeyId);
@@ -1071,8 +1075,8 @@ internal.post("/internal/reset-all-trials", async (c) => {
   // 5. Delete trial users rows
   await db.delete(trialUsers);
 
-  return c.json({ success: true, deleted: { trialUsers: trialRows.length, apiKeys: trialKeyIds.length } });
-});
+  return { deleted: { trialUsers: trialRows.length, apiKeys: trialKeyIds.length } };
+}
 
 internal.get("/internal/trial-models", async (c) => {
   const authErr = checkInternal(c);
