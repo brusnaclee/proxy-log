@@ -3130,20 +3130,18 @@ proxy.all('/*', async (c) => {
 					fetchSucceeded = true;
 					break;
 				}
-				if (!isRetryableUpstreamStatus(upstreamResponse.status)) {
-					// Count this as a non-retryable failure for the consecutive
-					// skip-ahead logic. Only count when the model in question is
-					// a real gpy entry, not the synthetic __auto__ slot.
+				// Status 0 means our per-attempt timeout fired. Count it as a
+				// non-retryable failure for skip-ahead purposes — the user has
+				// already waited 2 minutes and we shouldn't make them wait
+				// through every other gpy model in the chain.
+				const isAbort = upstreamResponse.status === 0;
+				if (!isRetryableUpstreamStatus(upstreamResponse.status) || isAbort) {
 					if (attemptModel !== '__auto__' && attemptModel !== 'auto') {
 						consecutiveNonRetryable += 1;
 						if (consecutiveNonRetryable >= consecutiveFailuresToSkipAhead) {
 							console.log(
 								`[proxy] trial ${consecutiveNonRetryable} consecutive gpy failures, skipping ahead to __auto__`,
 							);
-							// Mark the inner loop as done; outer loop will pick the
-							// next iteration (the __auto__ entry if present) and
-							// fall through to break at the start of the next
-							// iteration's pickModel === auto check below.
 							break;
 						}
 					}
