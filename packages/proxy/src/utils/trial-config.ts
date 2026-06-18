@@ -14,6 +14,9 @@ export type TrialDmTemplates = {
   terminated?: string;
   keyRotated?: string;
   claimed?: string;
+  reclaimAvailable?: string;
+  upgradePhantom?: string;
+  extended?: string;
 };
 
 export const DEFAULT_TRIAL_EMBED: TrialEmbedConfig = {
@@ -32,15 +35,21 @@ export const DEFAULT_TRIAL_EMBED: TrialEmbedConfig = {
 
 export const DEFAULT_TRIAL_DM: TrialDmTemplates = {
   limitReached:
-    "⚠️ **Limit Trial Tercapai**\n\nLimit harian/bulanan trial Anda sudah habis. Trial berakhir: {expiresAt}",
+    "⚠️ **Limit Trial Tercapai**\n\nLimit harian/bulanan trial Anda sudah habis. Trial berakhir: {expiresAt}\n\n{upgradePhantom}",
   expired:
-    "⏰ **Trial Berakhir**\n\nMasa trial API Anda sudah habis. Hubungi admin jika ingin akses penuh.",
+    "⏰ **Trial Berakhir**\n\nMasa trial API Anda sudah habis. Terima kasih sudah mencoba!\n\n{upgradePhantom}",
   terminated:
-    "🚫 **Trial Dihentikan Admin**\n\nTrial API Anda dihentikan oleh admin.\nAlasan: {reason}",
+    "🚫 **Trial Dihentikan Admin**\n\nTrial API Anda dihentikan oleh admin.\nAlasan: {reason}\n\n{upgradePhantom}",
   keyRotated:
     "🔄 **API Key Trial Di-rotate**\n\nKey trial Anda di-rotate karena terdeteksi penggunaan dari lebih dari 1 device.\n\n**Endpoint:** `{endpoint}`\n**Key baru:** `{apiKey}`",
   claimed:
     "🎁 **Trial API Aktif**\n\n**Endpoint:** `{endpoint}`\n**Authorization:** `Bearer {apiKey}`\n\n**Rules:**\n• Durasi: {durationDays} hari (sampai {expiresAt})\n• Token harian: {dailyTokenLimit}\n• Prompt: {promptLimit}/{promptWindow}\n• Model: hanya **gpy**\n\n**Model tersedia:**\n{modelList}",
+  reclaimAvailable:
+    "🎁 **Trial Baru Tersedia**\n\nAdmin sudah membuka akses trial lagi untuk kamu. Silakan klaim ulang di channel <#{channelId}> dengan menekan tombol **Klaim Trial API**.\n\nDurasi baru: {durationDays} hari\n{upgradePhantom}",
+  upgradePhantom:
+    "🚀 **Upgrade ke Phantom Member**\n\nUntuk akses unlimited, semua model, dan token lebih besar, verifikasi AG kamu di channel <#{agverifChannelId}>.\n\nKeuntungan Phantom:\n• Akses semua model (qwen, anthropic, tokito, dll)\n• Token limit lebih besar\n• Multi-device\n• Permanen (selama role aktif)",
+  extended:
+    "⏰ **Trial Diperpanjang**\n\nAdmin sudah memperpanjang trial API kamu.\n\n• Tambahan: **{days} hari**\n• Baru berakhir: {expiresAt}\n• Key tetap sama: `{apiKey}`\n\n{upgradePhantom}",
 };
 
 export function parseTrialEmbedConfig(raw: string | null | undefined): TrialEmbedConfig {
@@ -109,7 +118,7 @@ export function buildTrialSettingsResponse(
     trialEnabled: Boolean(config.trialEnabled),
     trialAccessMode: accessMode,
     trialRequiredRoleId: requiredRoleId,
-    trialDefaultDurationDays: config.trialDefaultDurationDays ?? 30,
+    trialDefaultDurationDays: config.trialDefaultDurationDays ?? 1,
     trialMaxPerAccount: config.trialMaxPerAccount ?? 1,
     trialDailyTokenLimit: config.trialDailyTokenLimit ?? 1_000_000,
     trialPromptLimit: config.trialPromptLimit ?? 50,

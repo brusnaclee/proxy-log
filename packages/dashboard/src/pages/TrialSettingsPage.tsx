@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   trialSettings,
@@ -13,14 +13,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Gift, Loader2, RefreshCw, Save, ExternalLink } from "lucide-react";
+import { Gift, Loader2, RefreshCw, Save, ExternalLink, Plus, Pause, StopCircle, RotateCcw, Eraser } from "lucide-react";
 
 function keyDetailPath(u: TrialUserRow) {
   const slug = (u.keyName || "trial").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").substring(0, 40);
   return `/keys/${u.apiKeyId}-${slug}`;
 }
 
-const DURATION_OPTIONS = [7, 14, 30, 60, 90];
+const DURATION_OPTIONS = [1, 3, 7, 14, 30, 60, 90];
 const PROMPT_WINDOWS = ["1h", "3h", "5h", "12h", "24h"];
 
 function colorToHex(color?: number): string {
@@ -56,6 +56,17 @@ function EmbedPreview({ embed, buttonLabel }: { embed: TrialEmbedConfig; buttonL
   );
 }
 
+const DM_TEMPLATE_FIELDS: { key: keyof TrialDmTemplates; label: string; placeholders: string[] }[] = [
+  { key: "claimed", label: "On Claim", placeholders: ["{apiKey}", "{endpoint}", "{durationDays}", "{expiresAt}", "{dailyTokenLimit}", "{promptLimit}", "{promptWindow}", "{modelList}"] },
+  { key: "limitReached", label: "Limit Reached (auto-appends upgrade)", placeholders: ["{reason}", "{expiresAt}", "{upgradePhantom}"] },
+  { key: "expired", label: "Expired (auto-appends upgrade)", placeholders: ["{reason}", "{expiresAt}", "{upgradePhantom}"] },
+  { key: "terminated", label: "Terminated (auto-appends upgrade)", placeholders: ["{reason}", "{upgradePhantom}"] },
+  { key: "keyRotated", label: "Key Rotated", placeholders: ["{apiKey}", "{endpoint}"] },
+  { key: "reclaimAvailable", label: "Reclaim Available (after grant_retry)", placeholders: ["{channelId}", "{durationDays}", "{upgradePhantom}"] },
+  { key: "upgradePhantom", label: "Upgrade to Phantom (auto-attached)", placeholders: ["{reason}", "{agverifChannelId}"] },
+  { key: "extended", label: "Extended (after admin extend)", placeholders: ["{days}", "{expiresAt}", "{apiKey}", "{endpoint}", "{upgradePhantom}"] },
+];
+
 export default function TrialSettingsPage() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -66,6 +77,7 @@ export default function TrialSettingsPage() {
   const [settings, setSettings] = useState<TrialSettings | null>(null);
   const [embed, setEmbed] = useState<TrialEmbedConfig>({});
   const [dmTemplates, setDmTemplates] = useState<TrialDmTemplates>({});
+  const [extendDays, setExtendDays] = useState<Record<number, string>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -138,13 +150,15 @@ export default function TrialSettingsPage() {
     });
   };
 
-  const upstreamGroups = Object.entries(settings?.catalogModelsByUpstream || {}).sort(([a], [b]) =>
-    a.localeCompare(b),
+  const upstreamGroups = useMemo(
+    () => Object.entries(settings?.catalogModelsByUpstream || {}).sort(([a], [b]) => a.localeCompare(b)),
+    [settings?.catalogModelsByUpstream],
   );
   const selectedUpstreams = settings?.trialUpstreams || [];
   const filterByUpstream = selectedUpstreams.length > 0;
 
-  const runAction = async (discordUserId: string, action: string, extra: Record<string, unknown> = {}) => {
+  const runAction = async (discordUserId: string, action: string, extra: Record<string, unknown> = {}, confirmMsg?: string) => {
+    if (confirmMsg && !window.confirm(confirmMsg)) return;
     try {
       await trialSettings.userAction({ action, discordUserId, ...extra });
       await load();
@@ -170,7 +184,7 @@ export default function TrialSettingsPage() {
             <Gift className="h-6 w-6 text-emerald-500" /> Trial Mode
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Discord trial panel, limits, model whitelist, and user management
+            Discord trial panel, limits, model whitelist, DM templates, and user management
           </p>
         </div>
         <div className="flex gap-2">
@@ -187,6 +201,7 @@ export default function TrialSettingsPage() {
       {message && <p className="text-sm text-emerald-500">{message}</p>}
       {error && <p className="text-sm text-red-400">{error}</p>}
 
+      {/* 1. General */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base">General</CardTitle>
@@ -207,10 +222,7 @@ export default function TrialSettingsPage() {
                 className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
                 value={settings.trialAccessMode}
                 onChange={(e) =>
-                  setSettings({
-                    ...settings,
-                    trialAccessMode: e.target.value as TrialSettings["trialAccessMode"],
-                  })
+                  setSettings({ ...settings, trialAccessMode: e.target.value as TrialSettings["trialAccessMode"] })
                 }
               >
                 <option value="groupy_members">Groupy role required</option>
@@ -291,10 +303,11 @@ export default function TrialSettingsPage() {
         </CardContent>
       </Card>
 
+      {/* 2. Panel Embed */}
       <div className="grid lg:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Discord Embed</CardTitle>
+            <CardTitle className="text-base">Discord Panel Embed</CardTitle>
             <CardDescription>Panel shown in Tokito channel when trial is enabled</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -351,11 +364,38 @@ export default function TrialSettingsPage() {
         </Card>
       </div>
 
+      {/* 3. DM Templates */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">DM Templates</CardTitle>
+          <CardDescription>
+            All messages sent to trial users. Use {"{placeholders}"} in text; upgrade prompt is auto-attached to limit/expired/terminated/extended.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          {DM_TEMPLATE_FIELDS.map(({ key, label, placeholders }) => (
+            <div key={key}>
+              <div className="flex items-center justify-between">
+                <Label>{label}</Label>
+                <span className="text-[10px] text-muted-foreground font-mono">{placeholders.join(" ")}</span>
+              </div>
+              <textarea
+                className="mt-1 min-h-[80px] w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-xs"
+                value={(dmTemplates as any)[key] || ""}
+                onChange={(e) => setDmTemplates({ ...dmTemplates, [key]: e.target.value })}
+              />
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      {/* 4. Model Whitelist (per-upstream) */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Trial Models (per upstream)</CardTitle>
           <CardDescription>
-            Select upstream providers and individual gpy models available for trial users
+            Multi-upstream support: centang upstream provider (mis. webnet, anthropic) untuk meng-allow semua model gpy di upstream tsb.
+            Mode whitelist untuk pilih per-model spesifik.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -377,7 +417,7 @@ export default function TrialSettingsPage() {
           </div>
 
           <div className="space-y-2">
-            <Label className="text-xs text-muted-foreground">Upstream filter (optional — empty = all)</Label>
+            <Label className="text-xs text-muted-foreground">Upstream filter (kosongkan = allow semua upstream gpy)</Label>
             <div className="flex flex-wrap gap-2">
               {upstreamGroups.map(([upstream]) => {
                 const on = selectedUpstreams.includes(upstream);
@@ -458,114 +498,133 @@ export default function TrialSettingsPage() {
 
           <p className="text-xs text-muted-foreground">
             Active trial models: {(settings.gpyModels || []).length} —{" "}
-            {(settings.gpyModels || []).slice(0, 5).join(", ")}
-            {(settings.gpyModels || []).length > 5 ? "…" : ""}
+            {(settings.gpyModels || []).slice(0, 6).join(", ")}
+            {(settings.gpyModels || []).length > 6 ? "…" : ""}
           </p>
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">DM Templates</CardTitle>
-          <CardDescription>
-            Placeholders: {"{endpoint}"} {"{apiKey}"} {"{expiresAt}"} {"{durationDays}"} {"{dailyTokenLimit}"}{" "}
-            {"{promptLimit}"} {"{promptWindow}"} {"{modelList}"} {"{reason}"}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-4">
-          {(
-            [
-              ["claimed", "On Claim"],
-              ["limitReached", "Limit Reached"],
-              ["expired", "Expired"],
-              ["terminated", "Terminated"],
-              ["keyRotated", "Key Rotated"],
-            ] as const
-          ).map(([key, label]) => (
-            <div key={key}>
-              <Label>{label}</Label>
-              <textarea
-                className="mt-1 min-h-[80px] w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-xs"
-                value={(dmTemplates as any)[key] || ""}
-                onChange={(e) => setDmTemplates({ ...dmTemplates, [key]: e.target.value })}
-              />
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-
+      {/* 5. Per-User Actions + Users List */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Trial Users</CardTitle>
-          <CardDescription>{users.length} record(s)</CardDescription>
+          <CardDescription>{users.length} record(s) — klik aksi untuk manage</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[800px]">
+            <table className="w-full text-sm min-w-[1100px]">
               <thead>
                 <tr className="border-b border-border/50">
-                  <th className="text-left py-2 px-4 text-muted-foreground font-medium">User</th>
-                  <th className="text-left py-2 px-4 text-muted-foreground font-medium">Status</th>
-                  <th className="text-left py-2 px-4 text-muted-foreground font-medium">Expires</th>
-                  <th className="text-left py-2 px-4 text-muted-foreground font-medium">Key</th>
-                  <th className="text-right py-2 px-4 text-muted-foreground font-medium">Actions</th>
+                  <th className="text-left py-2 px-3 text-muted-foreground font-medium">User</th>
+                  <th className="text-left py-2 px-3 text-muted-foreground font-medium">Status</th>
+                  <th className="text-left py-2 px-3 text-muted-foreground font-medium">Expires</th>
+                  <th className="text-left py-2 px-3 text-muted-foreground font-medium">Key</th>
+                  <th className="text-left py-2 px-3 text-muted-foreground font-medium">Add Days</th>
+                  <th className="text-right py-2 px-3 text-muted-foreground font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {users.map((u) => (
                   <tr
                     key={u.id}
-                    className="border-b border-border/30 cursor-pointer hover:bg-muted/40 transition-colors"
-                    onClick={() => navigate(keyDetailPath(u))}
+                    className="border-b border-border/30 hover:bg-muted/30 transition-colors"
                   >
-                    <td className="py-2 px-4">
+                    <td className="py-2 px-3">
                       <div className="font-medium">{u.discordUsername || u.discordUserId}</div>
                       <div className="text-xs text-muted-foreground font-mono">{u.discordUserId}</div>
                     </td>
-                    <td className="py-2 px-4">
+                    <td className="py-2 px-3">
                       <Badge
-                        variant={
-                          u.status === "active"
-                            ? "default"
-                            : u.status === "unclaimed"
-                              ? "outline"
-                              : "secondary"
-                        }
+                        variant={u.status === "active" ? "default" : u.status === "unclaimed" ? "outline" : "secondary"}
                         className={u.status === "unclaimed" ? "border-amber-500/50 text-amber-400" : undefined}
                       >
                         {u.status}
                       </Badge>
                     </td>
-                    <td className="py-2 px-4 text-xs">{new Date(u.expiresAt).toLocaleString()}</td>
-                    <td className="py-2 px-4 font-mono text-xs">{u.keyPrefix}…</td>
-                    <td className="py-2 px-4 text-right space-x-1" onClick={(e) => e.stopPropagation()}>
-                      <Button size="sm" variant="ghost" onClick={() => navigate(keyDetailPath(u))} title="View detail">
-                        <ExternalLink className="h-3 w-3" />
-                      </Button>
-                      {u.status === "active" && (
-                        <>
-                          <Button size="sm" variant="outline" onClick={() => void runAction(u.discordUserId, "extend", { days: 7 })}>
-                            +7d
-                          </Button>
-                          <Button size="sm" variant="outline" onClick={() => void runAction(u.discordUserId, "suspend")}>
-                            Suspend
-                          </Button>
-                          <Button size="sm" variant="destructive" onClick={() => void runAction(u.discordUserId, "terminate", { reason: "Admin" })}>
-                            End
-                          </Button>
-                        </>
-                      )}
-                      {u.status !== "active" && (
-                        <Button size="sm" variant="outline" onClick={() => void runAction(u.discordUserId, "grant_retry")}>
-                          Grant Retry
+                    <td className="py-2 px-3 text-xs">{new Date(u.expiresAt).toLocaleString()}</td>
+                    <td className="py-2 px-3 font-mono text-xs">{u.keyPrefix}…</td>
+                    <td className="py-2 px-3">
+                      <div className="flex items-center gap-1">
+                        <Input
+                          type="number"
+                          min={1}
+                          max={365}
+                          placeholder="N"
+                          className="h-7 w-16 text-xs"
+                          value={extendDays[u.id] || ""}
+                          onChange={(e) => setExtendDays({ ...extendDays, [u.id]: e.target.value })}
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7"
+                          onClick={() => {
+                            const days = Number(extendDays[u.id] || 0);
+                            if (!days) return;
+                            void runAction(u.discordUserId, "extend", { days });
+                          }}
+                        >
+                          <Plus className="h-3 w-3 mr-1" /> Extend
                         </Button>
-                      )}
+                      </div>
+                    </td>
+                    <td className="py-2 px-3 text-right">
+                      <div className="inline-flex gap-1 flex-wrap justify-end" onClick={(e) => e.stopPropagation()}>
+                        <Button size="sm" variant="ghost" onClick={() => navigate(keyDetailPath(u))} title="View detail">
+                          <ExternalLink className="h-3 w-3" />
+                        </Button>
+                        {u.status === "active" && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => void runAction(u.discordUserId, "suspend", {}, `Suspend trial untuk ${u.discordUsername || u.discordUserId}?`)}
+                            >
+                              <Pause className="h-3 w-3 mr-1" /> Suspend
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => void runAction(u.discordUserId, "terminate", { reason: "Admin" }, `Terminate trial ${u.discordUsername || u.discordUserId}?`)}
+                            >
+                              <StopCircle className="h-3 w-3 mr-1" /> Terminate
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => void runAction(u.discordUserId, "reset_usage", {}, `Reset usage log untuk ${u.discordUsername || u.discordUserId}?`)}
+                            >
+                              <Eraser className="h-3 w-3 mr-1" /> Reset
+                            </Button>
+                          </>
+                        )}
+                        {u.status !== "active" && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => void runAction(u.discordUserId, "grant_retry", {}, `Grant re-claim untuk ${u.discordUsername || u.discordUserId}? User akan di-DM.`)}
+                            >
+                              <RotateCcw className="h-3 w-3 mr-1" /> Re-claim
+                            </Button>
+                            {u.status === "suspended" && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => void runAction(u.discordUserId, "unsuspend")}
+                              >
+                                Unsuspend
+                              </Button>
+                            )}
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
                 {users.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="text-center py-8 text-muted-foreground">No trial users yet</td>
+                    <td colSpan={6} className="text-center py-8 text-muted-foreground">No trial users yet</td>
                   </tr>
                 )}
               </tbody>

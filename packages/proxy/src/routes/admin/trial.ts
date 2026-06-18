@@ -5,6 +5,7 @@ import { adminConfig, apiKeys, trialUsers } from "../../db/schema.js";
 import { configCache } from "../../utils/cache.js";
 import {
   buildTrialSettingsResponse,
+  formatTrialTemplate,
   parseTrialDmTemplates,
   parseTrialEmbedConfig,
   parseTrialModelWhitelist,
@@ -372,12 +373,29 @@ export async function adminTrialAction(body: {
       updatedAt: now,
     }).where(eq(trialUsers.id, trialRow.id));
     await db.update(apiKeys).set({ isActive: true, updatedAt: now }).where(eq(apiKeys.id, trialRow.apiKeyId));
+
+    const [key] = await db.select().from(apiKeys).where(eq(apiKeys.id, trialRow.apiKeyId));
+    const [config] = await db.select().from(adminConfig);
+    const templates = parseTrialDmTemplates(config?.trialDmTemplates);
+    const upgradeText = formatTrialTemplate(templates.upgradePhantom || "", {
+      reason: "berakhir",
+      agverifChannelId: config?.agverifChannelId || "",
+    });
+    await queueTrialNotification(trialRow.apiKeyId, "extended", {
+      days: String(addDays),
+      expiresAt: newExpiry.toISOString(),
+      apiKey: key?.key || "",
+      endpoint: `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`,
+      upgradePhantom: upgradeText,
+    });
     return { success: true, expiresAt: newExpiry.toISOString() };
   }
 
   if (body.action === "reset_usage") {
-    // Usage lives in request_logs — admin can use existing reset-user for full wipe
-    return { error: "Use reset-user internal endpoint for usage reset", status: 400 as const };
+    // Wipe all request_logs rows for this key (trial usage reset).
+    const { requestLogs } = await import("../../db/schema.js");
+    await db.delete(requestLogs).where(eq(requestLogs.apiKeyId, trialRow.apiKeyId));
+    return { success: true, message: "Usage reset" };
   }
 
   if (body.action === "override") {
@@ -410,7 +428,28 @@ export async function adminTrialAction(body: {
     }).where(eq(trialUsers.id, trialRow.id));
     // Disable the previous key so quota resets cleanly on next claim.
     await db.update(apiKeys).set({ isActive: false, updatedAt: now }).where(eq(apiKeys.id, trialRow.apiKeyId));
+
+    const [config] = await db.select().from(adminConfig);
+    const templates = parseTrialDmTemplates(config?.trialDmTemplates);
+    const upgradeText = formatTrialTemplate(templates.upgradePhantom || "", {
+      reason: "berakhir",
+      agverifChannelId: config?.agverifChannelId || "",
+    });
+    await queueTrialNotification(trialRow.apiKeyId, "reclaim_available", {
+      channelId: config?.tokitoChannelId || "",
+      durationDays: String(config?.trialDefaultDurationDays ?? 1),
+      upgradePhantom: upgradeText,
+    });
     return { success: true, message: "User may claim trial again" };
+  }
+
+  if (body.action === "add_max_trials") {
+    const n = Math.max(1, Number((body as any).count) || 1);
+    await db.update(trialUsers).set({
+      overrideMaxTrials: (trialRow.overrideMaxTrials || 0) + n,
+      updatedAt: now,
+    }).where(eq(trialUsers.id, trialRow.id));
+    return { success: true, overrideMaxTrials: (trialRow.overrideMaxTrials || 0) + n };
   }
 
   return { error: "Unknown action", status: 400 as const };

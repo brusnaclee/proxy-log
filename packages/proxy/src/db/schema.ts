@@ -31,7 +31,7 @@ export const adminConfig = pgTable('admin_config', {
 	trialEnabled: boolean('trial_enabled').notNull().default(false),
 	trialAccessMode: text('trial_access_mode').notNull().default('groupy_members'),
 	trialRequiredRoleId: text('trial_required_role_id').default('1354682641961582632'),
-	trialDefaultDurationDays: integer('trial_default_duration_days').notNull().default(30),
+	trialDefaultDurationDays: integer('trial_default_duration_days').notNull().default(1),
 	trialMaxPerAccount: integer('trial_max_per_account').notNull().default(1),
 	trialDailyTokenLimit: integer('trial_daily_token_limit').notNull().default(1_000_000),
 	trialPromptLimit: integer('trial_prompt_limit').notNull().default(50),

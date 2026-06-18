@@ -7,7 +7,10 @@ export type TrialNotificationType =
   | "expired"
   | "terminated"
   | "key_rotated"
-  | "claimed";
+  | "claimed"
+  | "reclaim_available"
+  | "upgrade_phantom"
+  | "extended";
 
 export async function queueTrialNotification(
   apiKeyId: number,

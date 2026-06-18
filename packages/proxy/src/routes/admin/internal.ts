@@ -1092,6 +1092,14 @@ internal.get("/internal/trial-models", async (c) => {
   });
 });
 
+internal.post("/internal/run-auto-expire", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+  const { autoExpireAndNotify } = await import("../../utils/trial-scheduler.js");
+  const result = await autoExpireAndNotify();
+  return c.json({ success: true, ...result });
+});
+
 internal.get("/internal/audit", async (c) => {
   const authErr = checkInternal(c);
   if (authErr) return authErr;

@@ -1,11 +1,12 @@
 import type { AdminConfig } from "../db/schema.js";
 import { isGpyProviderOrModel, parseTrialModelWhitelist, parseTrialUpstreams } from "./trial-config.js";
+import { getModelCatalogResponse } from "./model-catalog.js";
 
 export function isRetryableUpstreamStatus(status: number): boolean {
   return status === 429 || status === 502 || status === 503 || status === 504 || status === 0;
 }
 
-/** Full canonical gpy model list — always exposed to trial users regardless of cache. */
+/** Full canonical gpy model list — used as safety fallback when upstream cache is empty. */
 export const CANONICAL_GPY_MODELS = [
   "gpy/webnet/claude-opus-4.8",
   "gpy/webnet/claude-opus-4-turbo",
@@ -23,21 +24,24 @@ export const CANONICAL_GPY_MODELS = [
   "gpy/webnet/qwen3-max",
 ] as const;
 
+function extractUpstream(modelId: string): string | null {
+  const lower = modelId.toLowerCase();
+  if (!lower.startsWith("gpy/")) return null;
+  const parts = lower.split("/");
+  return parts.length >= 2 ? parts[1] : null;
+}
+
 function modelMatchesUpstream(modelId: string, upstreams: string[]): boolean {
   if (upstreams.length === 0) return true;
-  const lower = modelId.toLowerCase();
-  const parts = lower.split("/");
-  if (parts[0] === "gpy" && parts.length >= 2) {
-    return upstreams.includes(parts[1]);
-  }
-  return upstreams.some((u) => parts[0] === u || lower.includes(`/${u}/`) || lower.startsWith(`${u}/`));
+  const upstream = extractUpstream(modelId);
+  if (!upstream) return false;
+  return upstreams.includes(upstream);
 }
 
 export function groupModelsByUpstream(modelIds: string[]): Record<string, string[]> {
   const groups: Record<string, string[]> = {};
   for (const id of modelIds) {
-    const parts = id.split("/");
-    const upstream = parts[0] === "gpy" && parts.length >= 2 ? parts[1] : parts[0];
+    const upstream = extractUpstream(id) || id.split("/")[0];
     if (!groups[upstream]) groups[upstream] = [];
     groups[upstream].push(id);
   }
@@ -47,19 +51,40 @@ export function groupModelsByUpstream(modelIds: string[]): Record<string, string
   return groups;
 }
 
+/**
+ * Read all `gpy/*` models from the live model catalog cache. If cache is empty,
+ * fall back to the canonical hardcoded list so trial users always have something
+ * to pick from.
+ */
+export async function getAllGpyCatalogModels(): Promise<string[]> {
+  const catalog = await getModelCatalogResponse();
+  const cacheIds = (catalog?.data || []).map((m) => String(m.id));
+  const gpyIds = cacheIds.filter((id) => id.toLowerCase().startsWith("gpy/"));
+  if (gpyIds.length > 0) {
+    return Array.from(new Set(gpyIds));
+  }
+  return [...CANONICAL_GPY_MODELS];
+}
+
+/** All gpy models (no upstream filter) — used for /v1/models multi-upstream display. */
+export async function getAllTrialEligibleModels(): Promise<string[]> {
+  return getAllGpyCatalogModels();
+}
+
 export async function listGpyCatalogModels(config: AdminConfig): Promise<string[]> {
   const mode = config.trialModelSelectionMode || "all_gpy";
   const whitelist = parseTrialModelWhitelist(config.trialModelWhitelist);
   const upstreams = parseTrialUpstreams(config.trialUpstreams);
 
-  let models = CANONICAL_GPY_MODELS.filter((m) => modelMatchesUpstream(m, upstreams));
+  const gpyIds = await getAllGpyCatalogModels();
+  let models = gpyIds.filter((id) => modelMatchesUpstream(id, upstreams));
 
   if (mode === "whitelist" && whitelist.length > 0) {
     const allowed = new Set(whitelist.map((m) => m.toLowerCase()));
     models = models.filter((id) => allowed.has(id.toLowerCase()));
   }
 
-  return [...models];
+  return models;
 }
 
 export async function buildTrialModelCandidates(

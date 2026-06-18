@@ -48,7 +48,9 @@ export async function initializeDatabase() {
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_enabled boolean NOT NULL DEFAULT false`);
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_access_mode text NOT NULL DEFAULT 'groupy_members'`);
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_required_role_id text DEFAULT '1354682641961582632'`);
-		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_default_duration_days integer NOT NULL DEFAULT 30`);
+		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_default_duration_days integer NOT NULL DEFAULT 1`);
+		await pool.query(`ALTER COLUMN admin_config.trial_default_duration_days SET DEFAULT 1`).catch(() => undefined);
+		await pool.query(`UPDATE admin_config SET trial_default_duration_days=1 WHERE trial_default_duration_days=30 AND id=1`);
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_max_per_account integer NOT NULL DEFAULT 1`);
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_daily_token_limit integer NOT NULL DEFAULT 1000000`);
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_prompt_limit integer NOT NULL DEFAULT 50`);

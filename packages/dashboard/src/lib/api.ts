@@ -585,6 +585,9 @@ export interface TrialDmTemplates {
   terminated?: string;
   keyRotated?: string;
   claimed?: string;
+  reclaimAvailable?: string;
+  upgradePhantom?: string;
+  extended?: string;
 }
 
 export interface TrialSettings {

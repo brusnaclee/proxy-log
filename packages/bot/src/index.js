@@ -1382,17 +1382,22 @@ async function ensureGpyModelEntries() {
 		if (!gpy.length) return;
 		const proxyV1Base = PROXY_PUBLIC_BASE_URL.replace(/\/+$/, '') + '/v1';
 		for (const id of gpy) {
+			const lower = id.toLowerCase();
+			if (!lower.startsWith('gpy/')) continue;
 			const slash = id.indexOf('/');
-			const provider = slash > 0 ? id.slice(0, slash) : 'gpy';
-			const modelId = slash > 0 ? id.slice(slash + 1) : id;
+			const provider = 'gpy';
+			// For multi-upstream gpy/webnet/claude-sonnet, the underlying
+			// upstream is webnet (so entry.modelId = webnet/claude-sonnet).
+			const upstreamPath = id.slice(slash + 1); // e.g. "webnet/glm-5"
+			const modelId = upstreamPath;
 			if (runtime.modelEntries.some((e) => e.modelId === modelId && (e.provider || '').toLowerCase() === provider)) {
 				continue;
 			}
 			const entry = { modelId, provider, baseUrl: proxyV1Base, apiKey: '' };
 			runtime.modelEntries.push(entry);
-			runtime.models.push(modelId);
+			if (!runtime.models.includes(modelId)) runtime.models.push(modelId);
 		}
-		console.log(`[tokito-monitor] injected ${gpy.length} gpy model entries (fallback)`);
+		console.log(`[tokito-monitor] injected ${gpy.length} gpy model entries (multi-upstream)`);
 	} catch (err) {
 		console.error('[tokito-monitor] ensureGpyModelEntries failed:', err.message || JSON.stringify(err));
 	}
@@ -4865,12 +4870,30 @@ client.once('clientReady', async () => {
 						} else if (notif.type === 'trial_limit_reached') {
 							title = '⚠️ Limit Trial Tercapai';
 							dmText = notif.message || 'Limit harian/bulanan trial Anda sudah tercapai.';
+							if (notif.upgradePhantom) dmText += `\n\n${notif.upgradePhantom}`;
 						} else if (notif.type === 'trial_expired') {
 							title = '⏰ Trial Berakhir';
-							dmText = 'Masa trial API Anda sudah habis.';
+							dmText = notif.prebuiltText || 'Masa trial API Anda sudah habis.';
 						} else if (notif.type === 'trial_terminated') {
 							title = '🚫 Trial Dihentikan';
 							dmText = `Trial dihentikan. ${notif.reason ? `Alasan: ${notif.reason}` : ''}`;
+							if (notif.upgradePhantom) dmText += `\n\n${notif.upgradePhantom}`;
+						} else if (notif.type === 'trial_reclaim_available') {
+							title = '🎁 Trial Baru Tersedia';
+							color = 0x57f287;
+							dmText = notif.dmTemplate
+								? notif.dmTemplate.replace(/\{(\w+)\}/g, (_, k) => notif[k] || '')
+								: `Admin sudah membuka akses trial lagi. Klaim di <#${notif.channelId || ''}>.`;
+						} else if (notif.type === 'trial_upgrade_phantom') {
+							title = '🚀 Upgrade ke Phantom Member';
+							color = 0x5865f2;
+							dmText = notif.upgradePhantom || notif.dmTemplate || 'Untuk akses unlimited, verifikasi AG.';
+						} else if (notif.type === 'trial_extended') {
+							title = '⏰ Trial Diperpanjang';
+							color = 0x57f287;
+							dmText = notif.dmTemplate
+								? notif.dmTemplate.replace(/\{(\w+)\}/g, (_, k) => notif[k] || '')
+								: `Admin sudah memperpanjang trial +${notif.days} hari. Baru berakhir: ${notif.expiresAt}`;
 						}
 						if (dmText) await sendDMToUser(notif.discordUserId, title, dmText, color);
 						// Kirim How to Use terpisah khusus trial_claimed
