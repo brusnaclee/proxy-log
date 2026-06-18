@@ -7,7 +7,7 @@ import { sanitizeProviderApiKey } from "./crypto.js";
 import { getFallbackMetadata } from "./model-metadata-fallback.js";
 
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
-const FETCH_TIMEOUT_MS = 8000;
+const FETCH_TIMEOUT_MS = 30_000; // Upstream combo is often slow on POST; give the GET enough headroom.
 const CACHE_FILE_PATH = process.env.MODEL_CATALOG_CACHE_PATH || "./data/model_catalog_cache.json";
 
 /** Synthetic model ids exposed for you.com (endpointType "youcom") providers. */
@@ -247,26 +247,36 @@ export async function refreshModelCatalog(): Promise<void> {
 
       const candidates = buildCandidateUrls(provider.endpoint);
       let success = false;
+      // Retry the upstream fetch up to 2x to ride out transient Cloudflare
+      // 524s / aborts. The single-attempt failure on slow upstreams was the
+      // most common cause of the model catalog being empty.
       for (const url of candidates) {
-        try {
-          const models = await fetchModelsFromUpstream(
-            url,
-            provider.apiKey,
-            provider.id,
-            provider.endpointType || "openai",
-          );
-          for (const m of models) {
-            const existing = allModels.find((x) => x.id === m.id && x.provider_id === provider.id);
-            if (!existing) {
-              allModels.push(m);
+        for (let attempt = 0; attempt < 2 && !success; attempt++) {
+          try {
+            const models = await fetchModelsFromUpstream(
+              url,
+              provider.apiKey,
+              provider.id,
+              provider.endpointType || "openai",
+            );
+            for (const m of models) {
+              const existing = allModels.find((x) => x.id === m.id && x.provider_id === provider.id);
+              if (!existing) {
+                allModels.push(m);
+              }
+              appendProviderToMap(modelProviderMap, m.id, provider.id);
             }
-            appendProviderToMap(modelProviderMap, m.id, provider.id);
+            success = true;
+            break;
+          } catch (error: any) {
+            lastError = error?.message || "Unknown upstream fetch error";
+            if (attempt === 0) {
+              console.warn(`[model-catalog] fetch from ${provider.name} attempt 1 failed: ${lastError}, retrying once...`);
+              await new Promise((r) => setTimeout(r, 1500));
+            }
           }
-          success = true;
-          break;
-        } catch (error: any) {
-          lastError = error?.message || "Unknown upstream fetch error";
         }
+        if (success) break;
       }
       if (!success) {
         console.error("Failed to fetch models from provider " + provider.name + ": ", lastError);
