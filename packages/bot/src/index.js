@@ -5063,8 +5063,16 @@ client.on('interactionCreate', async (interaction) => {
 				return;
 			}
 			const kindLabel = kind === 'trial' ? 'Trial' : 'Phantom';
+			// Defer the click immediately so the interaction token stays valid
+			// while we render the picker (and so we can still send an error
+			// followUp if something throws).
 			try {
-				await interaction.reply({
+				if (!interaction.deferred && !interaction.replied) {
+					await interaction.deferReply({ ephemeral: true });
+				}
+			} catch {}
+			try {
+				await interaction.followUp({
 					embeds: [
 						new EmbedBuilder()
 							.setTitle('📘 Pilih IDE')
@@ -5075,13 +5083,12 @@ client.on('interactionCreate', async (interaction) => {
 					ephemeral: true,
 				});
 			} catch (err) {
-				console.error('[howto] picker error:', err);
+				console.error('[howto] picker error:', err.message || err);
 				try {
-					if (interaction.deferred || interaction.replied) {
-						await interaction.followUp({ content: `❌ Gagal tampilkan picker: ${err.message || 'unknown'}`, ephemeral: true });
-					} else {
-						await interaction.reply({ content: `❌ Gagal tampilkan picker: ${err.message || 'unknown'}`, ephemeral: true });
-					}
+					await interaction.followUp({
+						content: `❌ Gagal tampilkan picker: ${err.message || 'unknown'}. Silakan coba lagi dari DM.`,
+						ephemeral: true,
+					});
 				} catch {}
 			}
 			return;
@@ -5092,13 +5099,26 @@ client.on('interactionCreate', async (interaction) => {
 			const ide = interaction.values[0];
 			const targetUserId = interaction.customId.slice(TUTORIAL_MENU_IDE_PREFIX.length);
 			if (interaction.user.id !== targetUserId) {
-				await interaction.reply({ content: '❌ Menu ini bukan untukmu.', ephemeral: true });
+				try {
+					await interaction.reply({ content: '❌ Menu ini bukan untukmu.', ephemeral: true });
+				} catch {}
 				return;
+			}
+			// Defer the update first to avoid the 3s timeout while we fetch context.
+			try {
+				if (!interaction.deferred && !interaction.replied) {
+					await interaction.deferUpdate();
+				}
+			} catch (err) {
+				console.error('[howto] deferUpdate failed:', err.message || err);
 			}
 			try {
 				const kind = await lookupKindForUser(targetUserId);
 				const ctx = await getTutorialContextForUser(targetUserId, kind);
 				const embeds = buildTutorialEmbeds(ide, kind, ctx);
+				if (!embeds.length) {
+					throw new Error('No tutorial content generated');
+				}
 				const components = [];
 				if (embeds.length > 1) {
 					components.push(
@@ -5116,16 +5136,24 @@ client.on('interactionCreate', async (interaction) => {
 				}
 				if (!client.tutorialPages) client.tutorialPages = new Map();
 				client.tutorialPages.set(`${targetUserId}:${ide}`, { embeds, page: 0 });
-				await interaction.update({ embeds: [embeds[0].embed], components });
+				await interaction.editReply({ embeds: [embeds[0].embed], components });
 			} catch (err) {
-				console.error('[howto] render error:', err);
+				console.error('[howto] render error:', err.message || err);
 				try {
-					await interaction.update({
-						content: `❌ Gagal render tutorial: ${err.message || 'unknown'}. Silakan coba lagi dari DM.`,
+					await interaction.editReply({
+						content: `❌ Gagal render tutorial: ${err.message || 'unknown'}. Coba lagi dari DM (klik tombol "How to Use" lagi).`,
 						embeds: [],
 						components: [],
 					});
-				} catch {}
+				} catch (err2) {
+					console.error('[howto] editReply fallback failed:', err2.message || err2);
+					try {
+						await interaction.followUp({
+							content: `❌ Gagal render tutorial: ${err.message || 'unknown'}. Silakan coba lagi.`,
+							ephemeral: true,
+						});
+					} catch {}
+				}
 			}
 			return;
 		}
