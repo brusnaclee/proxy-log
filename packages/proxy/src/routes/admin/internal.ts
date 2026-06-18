@@ -1,5 +1,5 @@
 ﻿import { Hono } from "hono";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { adminConfig, allowedDevices, allowedIdes, apiKeys, devices, requestLogs, modelLimits, providers, trialUsers } from "../../db/schema.js";
 import { generateApiKey, getKeyPrefix, sha256 } from "../../utils/crypto.js";
@@ -1043,6 +1043,35 @@ internal.post("/internal/admin-trial-action", async (c) => {
     return c.json(result, result.status || 400);
   }
   return c.json(result);
+});
+
+internal.post("/internal/reset-all-trials", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+
+  // 1. Kumpulkan semua trial apiKeyId
+  const trialRows = await db.select().from(trialUsers);
+  const trialKeyIds = trialRows.map((t) => t.apiKeyId);
+
+  // 2. Clear notification queue
+  for (const kid of trialKeyIds) {
+    await db.update(apiKeys).set({ pendingNotification: null, updatedAt: new Date() }).where(eq(apiKeys.id, kid));
+  }
+
+  // 3. Delete request_logs & devices & allowed* untuk trial keys
+  if (trialKeyIds.length > 0) {
+    await db.delete(requestLogs).where(inArray(requestLogs.apiKeyId, trialKeyIds));
+    await db.delete(devices).where(inArray(devices.apiKeyId, trialKeyIds));
+    await db.delete(allowedDevices).where(inArray(allowedDevices.apiKeyId, trialKeyIds));
+    await db.delete(allowedIdes).where(inArray(allowedIdes.apiKeyId, trialKeyIds));
+    // 4. Delete trial keys
+    await db.delete(apiKeys).where(inArray(apiKeys.id, trialKeyIds));
+  }
+
+  // 5. Delete trial users rows
+  await db.delete(trialUsers);
+
+  return c.json({ success: true, deleted: { trialUsers: trialRows.length, apiKeys: trialKeyIds.length } });
 });
 
 internal.get("/internal/trial-models", async (c) => {
