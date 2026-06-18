@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, lte, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import * as zlib from 'zlib';
 import { db } from '../db/index.js';
@@ -233,6 +233,44 @@ const NEW_PROMPT_MIN_GAP_MS = 10 * 1000; // 10 seconds
 // a genuine new user prompt.
 const SWITCH_PROMPT_MIN_GAP_MS = 60 * 1000; // 60 seconds
 const MAX_LOG_WRITE_QUEUE_SIZE = 20000;
+
+/** Strip a `gpy/<upstream>/` prefix and return the bare model id used by the monitor table. */
+function stripGpyPrefix(modelId: string): string {
+  const lower = String(modelId || "").toLowerCase();
+  if (!lower.startsWith("gpy/")) return lower;
+  const parts = lower.split("/");
+  return parts.slice(2).join("/");
+}
+
+/** Lookup `gpy/*` model ids whose latest monitor check within `windowMs` is offline / non-200. */
+async function getRecentlyOfflineGpyModelIds(excludeModel: string, windowMs: number): Promise<Set<string>> {
+  try {
+    const since = new Date(Date.now() - windowMs);
+    const rows = await db
+      .select({ modelId: modelMonitor.modelId, isOnline: modelMonitor.isOnline, httpStatus: modelMonitor.httpStatus, checkedAt: modelMonitor.checkedAt })
+      .from(modelMonitor)
+      .where(gt(modelMonitor.checkedAt, since))
+      .orderBy(desc(modelMonitor.checkedAt))
+      .limit(500);
+    const latestPerModel = new Map<string, { isOnline: boolean; httpStatus: number }>();
+    for (const r of rows) {
+      if (!latestPerModel.has(r.modelId)) {
+        latestPerModel.set(r.modelId, { isOnline: !!r.isOnline, httpStatus: r.httpStatus || 0 });
+      }
+    }
+    const offline = new Set<string>();
+    const excludeBare = stripGpyPrefix(excludeModel);
+    for (const [id, status] of latestPerModel.entries()) {
+      if (id === excludeBare) continue;
+      if (!status.isOnline || status.httpStatus === 0 || (status.httpStatus >= 500 && status.httpStatus < 600)) {
+        offline.add(id);
+      }
+    }
+    return offline;
+  } catch {
+    return new Set();
+  }
+}
 const UPSTREAM_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour to support long reasoning models
 const UPSTREAM_MAX_ATTEMPTS = 2;
 const UPSTREAM_RETRY_BACKOFF_MS = 450;
@@ -2945,8 +2983,20 @@ proxy.all('/*', async (c) => {
 		const originalModel = model;
 		const maxAttemptsPerModel = keyRecord.isTrial ? 2 : 3;
 
-		for (let ti = 0; ti < modelsToTry.length; ti++) {
-			const attemptModel = modelsToTry[ti];
+		// Skip models that are known to be offline in the last 10 minutes. This
+		// prevents the trial user from waiting for a 25s timeout on each broken
+		// model before we get to a healthy one. We re-include the user's
+		// explicitly requested model so we still try it first even if the
+		// monitor flagged it (they may have just recovered).
+		const recentlyOffline = await getRecentlyOfflineGpyModelIds(originalModel, 10 * 60 * 1000);
+		const filteredModelsToTry = modelsToTry.filter(
+			(m) => !recentlyOffline.has(stripGpyPrefix(m)),
+		);
+		// Restore user's explicit request at the front even if it's flagged offline.
+		const orderedModels = filteredModelsToTry;
+
+		for (let ti = 0; ti < orderedModels.length; ti++) {
+			const attemptModel = orderedModels[ti];
 
 			for (let attempt = 0; attempt < maxAttemptsPerModel; attempt++) {
 				let pickModel = attemptModel;
