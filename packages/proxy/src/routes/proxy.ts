@@ -2943,11 +2943,12 @@ proxy.all('/*', async (c) => {
 
 		let fetchSucceeded = false;
 		const originalModel = model;
+		const maxAttemptsPerModel = keyRecord.isTrial ? 2 : 3;
 
 		for (let ti = 0; ti < modelsToTry.length; ti++) {
 			const attemptModel = modelsToTry[ti];
 
-			for (let attempt = 0; attempt < 5; attempt++) {
+			for (let attempt = 0; attempt < maxAttemptsPerModel; attempt++) {
 				let pickModel = attemptModel;
 				if (pickModel === '__auto__' || pickModel === 'auto') {
 					let onlineModels = await getOnlineModelsByLatency();
@@ -2960,6 +2961,28 @@ proxy.all('/*', async (c) => {
 					if (onlineModels.length === 0) break;
 					const pick = onlineModels[0];
 					pickModel = pick.provider ? `${pick.provider}/${pick.modelId}` : pick.modelId;
+				}
+
+				// Trial / Phantom auto-fallback: cap each attempt at 25s so we move
+				// on to the next model instead of stalling the user. The 1h default
+				// in fetchUpstreamWithRetry is for long reasoning models on a
+				// single, healthy request — not for a fallback chain.
+				const perAttemptTimeoutMs = keyRecord.isTrial || (!keyRecord.isTrial && model !== 'auto') ? 25_000 : 0;
+				let attemptSignal = c.req.raw.signal;
+				let perAttemptController: AbortController | null = null;
+				if (perAttemptTimeoutMs > 0) {
+					perAttemptController = new AbortController();
+					setTimeout(() => perAttemptController!.abort(new Error('Per-attempt timeout')), perAttemptTimeoutMs).unref?.();
+					if (attemptSignal) {
+						const upstreamSignal = attemptSignal;
+						const handler = () => perAttemptController!.abort(upstreamSignal.reason || new Error('Client disconnected'));
+						if (upstreamSignal.aborted) {
+							perAttemptController.abort(upstreamSignal.reason);
+						} else {
+							upstreamSignal.addEventListener('abort', handler, { once: true });
+						}
+					}
+					attemptSignal = AbortSignal.any([perAttemptController.signal, c.req.raw.signal].filter(Boolean)) as AbortSignal;
 				}
 
 				let attemptProvider = targetProvider;
@@ -3037,7 +3060,7 @@ proxy.all('/*', async (c) => {
 						};
 					},
 					attemptIsYoucom ? false : isStreaming,
-					c.req.raw.signal,
+					attemptSignal,
 				);
 
 				upstreamResponse = result.response;
