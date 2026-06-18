@@ -27,8 +27,7 @@ const trial = new Hono();
 async function buildCatalogModelsByUpstream(): Promise<Record<string, string[]>> {
   const catalog = await getModelCatalogResponse();
   const allIds = (catalog?.data || []).map((m) => String(m.id));
-  const merged = Array.from(new Set([...allIds, ...CANONICAL_GPY_MODELS]));
-  return groupModelsByUpstream(merged);
+  return groupModelsByUpstream(allIds);
 }
 
 trial.get("/settings/trial", async (c) => {
