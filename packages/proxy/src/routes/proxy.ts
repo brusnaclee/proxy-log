@@ -2981,14 +2981,18 @@ proxy.all('/*', async (c) => {
 
 		let fetchSucceeded = false;
 		const originalModel = model;
-		const maxAttemptsPerModel = keyRecord.isTrial ? 2 : 3;
-		// When a model in the chain fails (upstream 5xx / network error) we
-		// increment this. After `consecutiveFailuresToSkipAhead` straight
-		// non-retryable failures for trial users, we abandon the rest of the
-		// gpy chain and jump straight to `__auto__` so the user gets a
-		// last-resort response instead of waiting 6 × 40s of timeouts.
+		// Trial users should not wait through 2 retries per model — one attempt
+		// per model, then skip-ahead to __auto__ on the first failure. Phantom
+		// users still get 3 attempts per model for the cost-savings case where
+		// an upstream has transient hiccups.
+		const maxAttemptsPerModel = keyRecord.isTrial ? 1 : 3;
+		// When a model in the chain fails (upstream 5xx / network error / abort)
+		// we increment this. For trial users we go to __auto__ on the first
+		// failure instead of continuing to retry other gpy models — they've
+		// already waited 2 minutes and we shouldn't make them wait through
+		// every other upstream gpy model in the chain.
 		let consecutiveNonRetryable = 0;
-		const consecutiveFailuresToSkipAhead = keyRecord.isTrial ? 2 : 99;
+		const consecutiveFailuresToSkipAhead = keyRecord.isTrial ? 1 : 99;
 
 		// Skip models that are known to be offline in the last 10 minutes. This
 		// prevents the trial user from waiting for a 25s timeout on each broken
