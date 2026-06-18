@@ -294,6 +294,7 @@ async function getMemberToolAccess(member) {
 	}
 	const isTrialUser = keyType?.isTrial === true;
 	const hasActivePhantomKey = keyType?.hasPhantomKey === true;
+	const hasActiveApiKey = keyType?.hasActiveApiKey === true;
 	let mode = 'none';
 	if (isTrialUser) mode = 'trial';
 	else if (hasActivePhantomKey || isPhantom) mode = 'phantom';
@@ -304,8 +305,9 @@ async function getMemberToolAccess(member) {
 		isTrialUser,
 		hasPhantomKey: hasActivePhantomKey,
 		hasActivePhantomKey,
+		hasActiveApiKey,
 		mode,
-		canUseTools: !!(isPhantom || hasTrialRole || isTrialUser),
+		canUseTools: !!(isPhantom || hasTrialRole || isTrialUser || hasActiveApiKey),
 		trialRoleId,
 		trialCfg,
 	};

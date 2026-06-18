@@ -1194,10 +1194,19 @@ internal.get("/internal/user-key-type/:discordUserId", async (c) => {
     .from(apiKeys)
     .where(and(eq(apiKeys.discordUserId, discordUserId), eq(apiKeys.isTrial, false), eq(apiKeys.isActive, true)))
     .limit(1);
+  // Any active key (trial OR phantom) owned by this user. Used by the bot
+  // API Checker Panel to allow access when the user has a working key but
+  // is missing the required role.
+  const [anyActiveKey] = await db
+    .select({ id: apiKeys.id, isTrial: apiKeys.isTrial })
+    .from(apiKeys)
+    .where(and(eq(apiKeys.discordUserId, discordUserId), eq(apiKeys.isActive, true)))
+    .limit(1);
   return c.json({
     found: true,
     isTrial: key.isTrial,
     hasPhantomKey: !!phantomKey,
+    hasActiveApiKey: !!anyActiveKey,
     isActive: key.isActive,
     discordUserId,
   });

@@ -2993,6 +2993,20 @@ proxy.all('/*', async (c) => {
 		// every other upstream gpy model in the chain.
 		let consecutiveNonRetryable = 0;
 		const consecutiveFailuresToSkipAhead = keyRecord.isTrial ? 1 : 99;
+		// Empty tool_use response counter: when an upstream returns HTTP 200
+		// but the body has no message.content AND no message.tool_calls, AND
+		// the request itself carried a `tools[]` array (Cline / Codex pattern),
+		// the response is unusable for the caller. For trial users we skip
+		// ahead to the next model on the first occurrence instead of returning
+		// the empty body. This is the case where glm-5.2 / tokito repeatedly
+		// returns zero-content to a Cline retry prompt and the IDE ends up
+		// looping "you did not use a tool" forever.
+		let consecutiveEmptyToolUse = 0;
+		// Track the buffered response body of the last successful attempt so
+		// downstream code (which may also re-read it for logging) can use it.
+		// Only set when the body was already inspected for the empty-tool-use
+		// heuristic; otherwise upstreamResponse.body is left untouched.
+		let bufferedEmptyResponse: Response | null = null;
 
 		// Skip models that are known to be offline in the last 10 minutes. This
 		// prevents the trial user from waiting for a 25s timeout on each broken
@@ -3127,6 +3141,69 @@ proxy.all('/*', async (c) => {
 				usedKeyId = result.keyId;
 
 				if (upstreamResponse.ok) {
+					// Empty tool_use detection (trial + non-streaming + has tools):
+					// some upstreams (e.g. tokito/glm-5.2) return HTTP 200 with
+					// choices[0].message.content empty AND no tool_calls when
+					// the client pushes back with a "you did not use a tool"
+					// retry message. Cline then loops forever asking for tool
+					// use that the model won't produce. To prevent wasted
+					// tokens and IDE stalls, treat that as a non-retryable
+					// failure and skip ahead to the next model in the chain.
+					const requestHasTools =
+						Array.isArray(requestBody?.tools) && requestBody.tools.length > 0;
+					let emptyToolUse = false;
+					if (
+						keyRecord.isTrial &&
+						!isStreaming &&
+						requestHasTools &&
+						upstreamResponse.body &&
+						(consecutiveEmptyToolUse === 0 || true)
+					) {
+						try {
+							const cloned = upstreamResponse.clone();
+							const bodyText = await cloned.text();
+							try {
+								const parsed = JSON.parse(bodyText);
+								const msg = parsed?.choices?.[0]?.message;
+								const hasContent =
+									typeof msg?.content === 'string' && msg.content.length > 0;
+								const hasToolCalls =
+									Array.isArray(msg?.tool_calls) && msg.tool_calls.length > 0;
+								if (!hasContent && !hasToolCalls) {
+									emptyToolUse = true;
+								}
+							} catch {
+								/* not JSON, treat as normal success */
+							}
+						} catch (err) {
+							console.error(
+								'[proxy] failed to peek response for empty-tool-use check:',
+								(err as Error)?.message,
+							);
+						}
+					}
+
+					if (emptyToolUse) {
+						consecutiveEmptyToolUse += 1;
+						console.log(
+							`[proxy] trial empty tool_use response from ${pickModel} (key ${usedKeyId}); skipping to next model`,
+						);
+						// Drain the unread body so the connection can be reused.
+						try {
+							await upstreamResponse.body?.cancel();
+						} catch {
+							/* ignore */
+						}
+						upstreamResponse = null as any;
+						// Trial users skip ahead on first empty tool_use response.
+						if (consecutiveEmptyToolUse >= 1) {
+							// Break out of inner attempt loop and outer model loop —
+							// fall through to __auto__ next iteration if available.
+							break;
+						}
+						continue;
+					}
+
 					if (pickModel !== originalModel) {
 						console.log(`[proxy] trial fallback: ${originalModel} -> ${pickModel} (key ${usedKeyId})`);
 						model = pickModel;
@@ -3157,6 +3234,16 @@ proxy.all('/*', async (c) => {
 
 			if (fetchSucceeded) break;
 			if (attemptModel === '__auto__' || attemptModel === 'auto') break;
+			// Empty tool_use skip-ahead: if the previous attempt returned
+			// a 200 with no content AND no tool_calls, advance to the next
+			// model in the chain (or to __auto__ if this was the last
+			// non-auto model) without waiting for an explicit failure.
+			if (consecutiveEmptyToolUse >= 1) {
+				console.log(
+					`[proxy] trial empty tool_use skip-ahead: dropping ${attemptModel}, moving on`,
+				);
+				continue;
+			}
 		}
 
 		if (!fetchSucceeded) {
