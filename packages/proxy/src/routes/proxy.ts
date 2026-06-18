@@ -2982,6 +2982,13 @@ proxy.all('/*', async (c) => {
 		let fetchSucceeded = false;
 		const originalModel = model;
 		const maxAttemptsPerModel = keyRecord.isTrial ? 2 : 3;
+		// When a model in the chain fails (upstream 5xx / network error) we
+		// increment this. After `consecutiveFailuresToSkipAhead` straight
+		// non-retryable failures for trial users, we abandon the rest of the
+		// gpy chain and jump straight to `__auto__` so the user gets a
+		// last-resort response instead of waiting 6 × 40s of timeouts.
+		let consecutiveNonRetryable = 0;
+		const consecutiveFailuresToSkipAhead = keyRecord.isTrial ? 2 : 99;
 
 		// Skip models that are known to be offline in the last 10 minutes. This
 		// prevents the trial user from waiting for a 25s timeout on each broken
@@ -3012,11 +3019,11 @@ proxy.all('/*', async (c) => {
 					pickModel = pick.provider ? `${pick.provider}/${pick.modelId}` : pick.modelId;
 				}
 
-				// Trial / Phantom auto-fallback: cap each attempt at 25s so we move
-				// on to the next model instead of stalling the user. The 1h default
-				// in fetchUpstreamWithRetry is for long reasoning models on a
-				// single, healthy request — not for a fallback chain.
-				const perAttemptTimeoutMs = keyRecord.isTrial || (!keyRecord.isTrial && model !== 'auto') ? 40_000 : 0;
+				// Trial / Phantom auto-fallback: cap each attempt at 120s so that
+				// slow reasoning upstreams have time to respond before we move on.
+				// The 1h default in fetchUpstreamWithRetry is for very long
+				// single requests, not for a fallback chain.
+				const perAttemptTimeoutMs = keyRecord.isTrial || (!keyRecord.isTrial && model !== 'auto') ? 120_000 : 0;
 				let attemptSignal = c.req.raw.signal;
 				let perAttemptController: AbortController | null = null;
 				if (perAttemptTimeoutMs > 0) {
@@ -3123,8 +3130,26 @@ proxy.all('/*', async (c) => {
 					fetchSucceeded = true;
 					break;
 				}
-				if (!isRetryableUpstreamStatus(upstreamResponse.status)) break;
-				console.log(`[proxy] trial ${attemptModel} attempt ${attempt + 1}/5 got ${upstreamResponse.status}, retrying...`);
+				if (!isRetryableUpstreamStatus(upstreamResponse.status)) {
+					// Count this as a non-retryable failure for the consecutive
+					// skip-ahead logic. Only count when the model in question is
+					// a real gpy entry, not the synthetic __auto__ slot.
+					if (attemptModel !== '__auto__' && attemptModel !== 'auto') {
+						consecutiveNonRetryable += 1;
+						if (consecutiveNonRetryable >= consecutiveFailuresToSkipAhead) {
+							console.log(
+								`[proxy] trial ${consecutiveNonRetryable} consecutive gpy failures, skipping ahead to __auto__`,
+							);
+							// Mark the inner loop as done; outer loop will pick the
+							// next iteration (the __auto__ entry if present) and
+							// fall through to break at the start of the next
+							// iteration's pickModel === auto check below.
+							break;
+						}
+					}
+					break;
+				}
+				console.log(`[proxy] trial ${attemptModel} attempt ${attempt + 1}/${maxAttemptsPerModel} got ${upstreamResponse.status}, retrying...`);
 				await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
 			}
 
