@@ -16,16 +16,16 @@ const path = require('path');
 
 // Load .env from project root - try multiple paths
 const envPaths = [
-  path.resolve(__dirname, '../../.env'),        // packages/bot/src -> ../../.env
-  path.resolve(__dirname, '../../../.env'),      // packages/bot/src -> ../../../.env
-  path.resolve(process.cwd(), '.env'),           // current working directory
-  path.resolve(process.cwd(), '../.env'),        // parent of cwd
+	path.resolve(__dirname, '../../.env'), // packages/bot/src -> ../../.env
+	path.resolve(__dirname, '../../../.env'), // packages/bot/src -> ../../../.env
+	path.resolve(process.cwd(), '.env'), // current working directory
+	path.resolve(process.cwd(), '../.env'), // parent of cwd
 ];
 for (const envPath of envPaths) {
-  if (require('fs').existsSync(envPath)) {
-    require('dotenv').config({ path: envPath });
-    break;
-  }
+	if (require('fs').existsSync(envPath)) {
+		require('dotenv').config({ path: envPath });
+		break;
+	}
 }
 
 const client = new Client({
@@ -93,39 +93,48 @@ const TRIAL_CLAIM_BUTTON = 'trial_claim';
 // 3 hours" / "2 days ago"). Use these everywhere instead of raw toLocaleString
 // strings so users in different timezones see consistent info.
 function discordTime(input, style = 'F') {
-  if (!input) return '—';
-  const ms = input instanceof Date ? input.getTime() : new Date(input).getTime();
-  if (!Number.isFinite(ms)) return '—';
-  return `<t:${Math.floor(ms / 1000)}:${style}>`;
+	if (!input) return '—';
+	const ms =
+		input instanceof Date ? input.getTime() : new Date(input).getTime();
+	if (!Number.isFinite(ms)) return '—';
+	return `<t:${Math.floor(ms / 1000)}:${style}>`;
 }
 // Convenience: e.g. discordTimeRange(start, 't', end, 'R') => "<t:..:t> (<t:..:R>)"
 function discordTimeRange(inputStart, startStyle, inputEnd, endStyle) {
-  return `${discordTime(inputStart, startStyle)} (${discordTime(inputEnd, endStyle)})`;
+	return `${discordTime(inputStart, startStyle)} (${discordTime(inputEnd, endStyle)})`;
 }
 
 // ─── How-to-Use tutorial ──────────────────────────────────────────────────────
 const TUTORIAL_BTN_HOWTO_PREFIX = 'howto_open';
-const TUTORIAL_MENU_IDE_PREFIX  = 'howto_ide_';
-const TUTORIAL_PAGE_PREFIX      = 'howto_page_';
-const TUTORIAL_PAGE_SIZE        = 1800;
+const TUTORIAL_MENU_IDE_PREFIX = 'howto_ide_';
+const TUTORIAL_PAGE_PREFIX = 'howto_page_';
+const TUTORIAL_PAGE_SIZE = 1800;
 
 const TUTORIAL_IDES = [
-  { id: 'cline',        label: 'Cline (VS Code extension)' },
-  { id: 'codex_ide',    label: 'Codex (web / VS Code extension)' },
-  { id: 'codex_cli',    label: 'Codex CLI (terminal)' },
-  { id: 'claude_cli',   label: 'Claude Code CLI' },
-  { id: 'opencode',     label: 'OpenCode' },
-  { id: 'oai_provider', label: 'VS Code OpenAI Compat (calgan.oai-provider)' },
+	{ id: 'cline', label: 'Cline (VS Code extension)' },
+	{ id: 'codex_ide', label: 'Codex (web / VS Code extension)' },
+	{ id: 'codex_cli', label: 'Codex CLI (terminal)' },
+	{ id: 'claude_cli', label: 'Claude Code CLI' },
+	{ id: 'opencode', label: 'OpenCode' },
+	{ id: 'oai_provider', label: 'VS Code OpenAI Compat (calgan.oai-provider)' },
 ];
 
 // ─── Monthly Recap (Wrapped) ────────────────────────────────────────────────
 const RECAP_STATE_PATH = path.join(AGVERIF_DATA_DIR, 'recap_state.json');
-const RECAP_DEBUG_CHANNEL_ID = process.env.RECAP_DEBUG_CHANNEL_ID || '1507648716847190088';
+const RECAP_DEBUG_CHANNEL_ID =
+	process.env.RECAP_DEBUG_CHANNEL_ID || '1507648716847190088';
 const RECAP_PUBLIC_BASE_URL = (
-	process.env.RECAP_PUBLIC_BASE_URL || PROXY_PUBLIC_BASE_URL || 'https://api.tokito.xyz'
+	process.env.RECAP_PUBLIC_BASE_URL ||
+	PROXY_PUBLIC_BASE_URL ||
+	'https://api.tokito.xyz'
 ).replace(/\/$/, '');
 const RECAP_DEBUG_INTERVAL_MS = 24 * 60 * 60 * 1000; // daily
-let recapState = { panelMessageId: null, debugPanelMessageId: null, debugLogMessageId: null, pregenFiredYearMonth: null };
+let recapState = {
+	panelMessageId: null,
+	debugPanelMessageId: null,
+	debugLogMessageId: null,
+	pregenFiredYearMonth: null,
+};
 
 // ── Recap double-click lock ────────────────────────────────────────────────────
 // A user can spam "Lihat Recap Saya" / "Generate Recap-ku" buttons. Each click
@@ -145,25 +154,35 @@ function tryClaimRecapLock(key) {
 	const existing = recapInFlight.get(key);
 	if (existing) {
 		if (now - existing.startedAt < RECAP_LOCK_TTL_MS) {
-			const remaining = Math.max(1, Math.ceil((RECAP_LOCK_TTL_MS - (now - existing.startedAt)) / 1000));
+			const remaining = Math.max(
+				1,
+				Math.ceil((RECAP_LOCK_TTL_MS - (now - existing.startedAt)) / 1000),
+			);
 			return { ok: false, remaining, existing };
 		}
 		// Stale (>5 min): abort the lingering fetch and let a new one take over.
-		try { existing.abort.abort('stale lock timeout'); } catch { /* ignore */ }
+		try {
+			existing.abort.abort('stale lock timeout');
+		} catch {
+			/* ignore */
+		}
 		recapInFlight.delete(key);
 	}
 	const entry = { startedAt: now, abort: new AbortController(), key };
 	recapInFlight.set(key, entry);
 	return { ok: true, entry };
 }
-function releaseRecapLock(key) { recapInFlight.delete(key); }
+function releaseRecapLock(key) {
+	recapInFlight.delete(key);
+}
 
 async function proxyInternal(pathname, method = 'GET', body = null, opts = {}) {
 	const headers = {
 		'Content-Type': 'application/json',
 		'x-internal-secret': INTERNAL_API_SECRET,
 	};
-	const maxAttempts = opts.retries ?? (method === 'POST' && pathname.includes('/recap/') ? 2 : 1);
+	const maxAttempts =
+		opts.retries ?? (method === 'POST' && pathname.includes('/recap/') ? 2 : 1);
 	let lastErr;
 	for (let attempt = 0; attempt < maxAttempts; attempt++) {
 		try {
@@ -175,14 +194,20 @@ async function proxyInternal(pathname, method = 'GET', body = null, opts = {}) {
 			});
 			const data = await res.json().catch(() => ({}));
 			if (!res.ok) {
-				const errMsg = typeof data.error === 'object' ? JSON.stringify(data.error) : (data.error || `Proxy internal API failed: ${res.status}`);
+				const errMsg =
+					typeof data.error === 'object'
+						? JSON.stringify(data.error)
+						: data.error || `Proxy internal API failed: ${res.status}`;
 				throw new Error(errMsg);
 			}
 			return data;
 		} catch (err) {
 			lastErr = err;
 			const msg = err?.message || String(err);
-			const retryable = /fetch failed|ECONNRESET|ECONNREFUSED|socket hang up|network/i.test(msg);
+			const retryable =
+				/fetch failed|ECONNRESET|ECONNREFUSED|socket hang up|network/i.test(
+					msg,
+				);
 			if (!retryable || attempt >= maxAttempts - 1) throw err;
 			await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
 		}
@@ -190,11 +215,19 @@ async function proxyInternal(pathname, method = 'GET', body = null, opts = {}) {
 	throw lastErr;
 }
 
-let trialModelsCache = { gpyModels: [], mode: 'all_gpy', whitelist: [], fetchedAt: 0 };
+let trialModelsCache = {
+	gpyModels: [],
+	mode: 'all_gpy',
+	whitelist: [],
+	fetchedAt: 0,
+};
 
 async function getTrialModelsCached() {
 	const TTL = 5 * 60 * 1000;
-	if (trialModelsCache.fetchedAt && Date.now() - trialModelsCache.fetchedAt < TTL) {
+	if (
+		trialModelsCache.fetchedAt &&
+		Date.now() - trialModelsCache.fetchedAt < TTL
+	) {
 		return trialModelsCache;
 	}
 	try {
@@ -207,7 +240,12 @@ async function getTrialModelsCached() {
 		};
 		return trialModelsCache;
 	} catch {
-		return { gpyModels: [], mode: 'all_gpy', whitelist: [], fetchedAt: Date.now() };
+		return {
+			gpyModels: [],
+			mode: 'all_gpy',
+			whitelist: [],
+			fetchedAt: Date.now(),
+		};
 	}
 }
 
@@ -227,14 +265,20 @@ async function getMemberToolAccess(member) {
 	let trialCfg = null;
 	try {
 		trialCfg = await proxyInternal('/admin/internal/trial-panel-config');
-	} catch { /* ignore */ }
+	} catch {
+		/* ignore */
+	}
 	const trialRoleId = trialCfg?.trialRequiredRoleId || '1354682641961582632';
-	const isPhantom = !!(REQUIRED_ROLE_ID && member.roles?.cache?.has(REQUIRED_ROLE_ID));
+	const isPhantom = !!(
+		REQUIRED_ROLE_ID && member.roles?.cache?.has(REQUIRED_ROLE_ID)
+	);
 	const hasTrialRole = !!(trialRoleId && member.roles?.cache?.has(trialRoleId));
 	let keyType = null;
 	try {
 		keyType = await proxyInternal(`/admin/internal/user-key-type/${member.id}`);
-	} catch { /* ignore */ }
+	} catch {
+		/* ignore */
+	}
 	const isTrialUser = keyType?.isTrial === true;
 	const hasActivePhantomKey = keyType?.hasPhantomKey === true;
 	let mode = 'none';
@@ -255,22 +299,25 @@ async function getMemberToolAccess(member) {
 }
 
 function toolAccessDeniedMessage(access) {
-	return (
-		`Anda memerlukan role **The Phantom** atau **role trial Groupy** (<@&${access?.trialRoleId || '1354682641961582632'}>) untuk menggunakan fitur ini.`
-	);
+	return `Anda memerlukan role **The Phantom** atau **role trial Groupy** (<@&${access?.trialRoleId || '1354682641961582632'}>) untuk menggunakan fitur ini.`;
 }
 
 function entryMatchesTrialModel(entry, trialCache) {
 	const provider = (entry.provider || '').toLowerCase();
 	const modelId = entry.modelId || '';
 	if (modelId === 'auto') return false;
-	if (provider !== 'gpy' && !modelId.toLowerCase().startsWith('gpy/')) return false;
+	if (provider !== 'gpy' && !modelId.toLowerCase().startsWith('gpy/'))
+		return false;
 	const fullId = modelId.includes('/') ? modelId : `${provider}/${modelId}`;
-	const candidates = [fullId, modelId, modelId.split('/').pop()].filter(Boolean);
+	const candidates = [fullId, modelId, modelId.split('/').pop()].filter(
+		Boolean,
+	);
 	if (trialCache.mode === 'whitelist' && trialCache.whitelist?.length) {
 		return trialCache.whitelist.some((w) => {
 			const wNorm = String(w);
-			return candidates.some((id) => id === wNorm || id.endsWith('/' + wNorm.split('/').pop()));
+			return candidates.some(
+				(id) => id === wNorm || id.endsWith('/' + wNorm.split('/').pop()),
+			);
 		});
 	}
 	return true;
@@ -553,27 +600,41 @@ async function handleAdminCommand(message) {
 		}
 
 		if (cmd === '!agstatus') {
-			const data = await proxyInternal(`/admin/internal/stats/user-detail/${discordUserId}`);
+			const data = await proxyInternal(
+				`/admin/internal/stats/user-detail/${discordUserId}`,
+			);
 			if (!data || data.error) {
-				await message.reply('User belum punya API key proxy atau tidak ditemukan.');
+				await message.reply(
+					'User belum punya API key proxy atau tidak ditemukan.',
+				);
 				return true;
 			}
-			
+
 			function formatResetTime(isoStr) {
 				if (!isoStr) return '';
 				const unix = Math.floor(new Date(isoStr).getTime() / 1000);
 				return ` (Resets <t:${unix}:t>)`;
 			}
 
-			const globalLimitStr = data.promptLimit > 0 
-				? `${data.promptUsed} / ${data.promptLimit} req (${data.promptLimitWindow})` + formatResetTime(data.promptResetAt)
-				: 'Unlimited';
-				
+			const globalLimitStr =
+				data.promptLimit > 0
+					? `${data.promptUsed} / ${data.promptLimit} req (${data.promptLimitWindow})` +
+						formatResetTime(data.promptResetAt)
+					: 'Unlimited';
+
 			let modelLimitStr = '';
 			if (data.modelUsage && data.modelUsage.length > 0) {
-				const activeModels = data.modelUsage.filter(m => m.used > 0 || m.limit > 0);
+				const activeModels = data.modelUsage.filter(
+					(m) => m.used > 0 || m.limit > 0,
+				);
 				if (activeModels.length > 0) {
-					modelLimitStr = activeModels.map(m => `  • ${m.model}: ${m.used} / ${m.limit > 0 ? m.limit : '∞'}` + formatResetTime(m.resetAt)).join('\n');
+					modelLimitStr = activeModels
+						.map(
+							(m) =>
+								`  • ${m.model}: ${m.used} / ${m.limit > 0 ? m.limit : '∞'}` +
+								formatResetTime(m.resetAt),
+						)
+						.join('\n');
 				}
 			}
 
@@ -594,7 +655,7 @@ async function handleAdminCommand(message) {
 					`Daily Token Limits:\n` +
 					`  • Total: ${data.dailyTokenLimit > 0 ? `${formatTokens(data.dailyTokensUsed)} / ${formatTokens(data.dailyTokenLimit)}` : `${formatTokens(data.dailyTokensUsed)} / ∞`}${formatResetTime(data.dailyResetAt)}\n` +
 					`  • Input: ${data.dailyInputTokenLimit > 0 ? `${formatTokens(data.dailyInputUsed)} / ${formatTokens(data.dailyInputTokenLimit)}` : `${formatTokens(data.dailyInputUsed)} / ∞`}\n` +
-					`  • Output: ${data.dailyOutputTokenLimit > 0 ? `${formatTokens(data.dailyOutputUsed)} / ${formatTokens(data.dailyOutputTokenLimit)}` : `${formatTokens(data.dailyOutputUsed)} / ∞`}`
+					`  • Output: ${data.dailyOutputTokenLimit > 0 ? `${formatTokens(data.dailyOutputUsed)} / ${formatTokens(data.dailyOutputTokenLimit)}` : `${formatTokens(data.dailyOutputUsed)} / ∞`}`,
 			);
 			return true;
 		}
@@ -616,7 +677,10 @@ async function handleAdminCommand(message) {
 						'API key berhasil di-refresh dan dikirim via DM ke user.',
 					);
 				} catch (dmErr) {
-					console.warn('[agrefresh] DM failed, sending key in channel:', dmErr.message);
+					console.warn(
+						'[agrefresh] DM failed, sending key in channel:',
+						dmErr.message,
+					);
 					await message.reply(
 						`API key berhasil di-refresh. DM gagal, dikirim di sini:\n\n**Endpoint**: \`${data.endpoint || `${PROXY_PUBLIC_BASE_URL}/v1`}\`\n**Authorization**: \`Bearer ${data.apiKey}\``,
 					);
@@ -676,7 +740,10 @@ async function handleAdminCommand(message) {
 					'API key user berhasil diaktifkan dan dikirim via DM.',
 				);
 			} catch (dmErr) {
-				console.warn('[agunblock] DM failed, sending key in channel:', dmErr.message);
+				console.warn(
+					'[agunblock] DM failed, sending key in channel:',
+					dmErr.message,
+				);
 				await message.reply(
 					`API key user berhasil diaktifkan. DM gagal, dikirim di sini:\n\n**Endpoint**: \`${data.endpoint || `${PROXY_PUBLIC_BASE_URL}/v1`}\`\n**Authorization**: \`Bearer ${data.apiKey}\``,
 				);
@@ -908,14 +975,20 @@ async function loadThreadsData() {
 	try {
 		const content = await fs.readFile(THREADS_PATH, 'utf8');
 		const trimmed = content.trim();
-		if (!trimmed) { client.agverifData.threads = {}; return; }
+		if (!trimmed) {
+			client.agverifData.threads = {};
+			return;
+		}
 		const data = JSON.parse(trimmed);
 		if (data && typeof data === 'object') {
 			client.agverifData.threads = data;
 		}
 	} catch (err) {
 		if (err.code !== 'ENOENT') {
-			console.warn('[agverif] threads.json unreadable, resetting:', err.message);
+			console.warn(
+				'[agverif] threads.json unreadable, resetting:',
+				err.message,
+			);
 		}
 		client.agverifData.threads = {};
 	}
@@ -948,14 +1021,20 @@ async function loadVerifiedUsersData() {
 	try {
 		const content = await fs.readFile(VERIFIED_USERS_PATH, 'utf8');
 		const trimmed = content.trim();
-		if (!trimmed) { client.agverifData.verifiedUsers = {}; return; }
+		if (!trimmed) {
+			client.agverifData.verifiedUsers = {};
+			return;
+		}
 		const data = JSON.parse(trimmed);
 		if (data && typeof data === 'object') {
 			client.agverifData.verifiedUsers = data;
 		}
 	} catch (err) {
 		if (err.code !== 'ENOENT') {
-			console.warn('[agverif] verified_users.json unreadable, resetting:', err.message);
+			console.warn(
+				'[agverif] verified_users.json unreadable, resetting:',
+				err.message,
+			);
 		}
 		client.agverifData.verifiedUsers = {};
 	}
@@ -979,14 +1058,20 @@ async function loadSetupState() {
 	try {
 		const content = await fs.readFile(SETUP_STATE_PATH, 'utf8');
 		const trimmed = content.trim();
-		if (!trimmed) { client.agverifData.setupState = { messageId: null, channelId: null }; return; }
+		if (!trimmed) {
+			client.agverifData.setupState = { messageId: null, channelId: null };
+			return;
+		}
 		const data = JSON.parse(trimmed);
 		if (data && typeof data === 'object') {
 			client.agverifData.setupState = data;
 		}
 	} catch (err) {
 		if (err.code !== 'ENOENT') {
-			console.warn('[agverif] setup_state.json unreadable, resetting:', err.message);
+			console.warn(
+				'[agverif] setup_state.json unreadable, resetting:',
+				err.message,
+			);
 		}
 		client.agverifData.setupState = { messageId: null, channelId: null };
 	}
@@ -1166,11 +1251,18 @@ async function fetchProvidersFromProxy() {
 		const res = await proxyInternal('/admin/internal/providers', 'GET');
 		if (Array.isArray(res) && res.length > 0) {
 			runtime.activeProviders = res;
-			console.log('[tokito-monitor] fetched', res.length, 'providers from proxy');
+			console.log(
+				'[tokito-monitor] fetched',
+				res.length,
+				'providers from proxy',
+			);
 			return res;
 		}
 	} catch (err) {
-		console.error('[tokito-monitor] failed to fetch providers:', err.message || JSON.stringify(err));
+		console.error(
+			'[tokito-monitor] failed to fetch providers:',
+			err.message || JSON.stringify(err),
+		);
 	}
 	return null;
 }
@@ -1198,7 +1290,12 @@ async function fetchProviderModelList(prov) {
 				const payload = await res.json();
 				const arr = Array.isArray(payload) ? payload : payload?.data || [];
 				if (arr.length === 0) continue;
-				return { arr, url, baseUrl: base, apiKey: key || cleanKey || prov.apiKey };
+				return {
+					arr,
+					url,
+					baseUrl: base,
+					apiKey: key || cleanKey || prov.apiKey,
+				};
 			} catch (_) {}
 		}
 	}
@@ -1209,7 +1306,9 @@ async function pollModelStatus() {
 	let providers = await fetchProvidersFromProxy();
 
 	if (!providers || providers.length === 0) {
-		console.log('[tokito-monitor] no providers configured, falling back to TOKITO_BASE_URL');
+		console.log(
+			'[tokito-monitor] no providers configured, falling back to TOKITO_BASE_URL',
+		);
 		if (!TOKITO_API_KEY) return;
 		const result = await apiFetch('/models');
 		if (!result.ok || !result.body || !Array.isArray(result.body.data)) {
@@ -1229,18 +1328,26 @@ async function pollModelStatus() {
 		try {
 			// Fetch all active API keys for this provider
 			try {
-				const keysResult = await proxyInternal(`/admin/providers/${prov.id}/keys`, 'GET');
+				const keysResult = await proxyInternal(
+					`/admin/providers/${prov.id}/keys`,
+					'GET',
+				);
 				if (Array.isArray(keysResult)) {
 					const activeKeys = keysResult
-						.filter(k => k.isActive && !k.isLimited)
-						.map(k => k.apiKey);
+						.filter((k) => k.isActive && !k.isLimited)
+						.map((k) => k.apiKey);
 					if (activeKeys.length > 0) {
 						runtime.providerKeys.set(prov.name, activeKeys);
-						console.log(`[tokito-monitor] loaded ${activeKeys.length} active keys for provider: ${prov.name}`);
+						console.log(
+							`[tokito-monitor] loaded ${activeKeys.length} active keys for provider: ${prov.name}`,
+						);
 					}
 				}
 			} catch (err) {
-				console.error(`[tokito-monitor] failed to fetch keys for ${prov.name}:`, err.message || JSON.stringify(err));
+				console.error(
+					`[tokito-monitor] failed to fetch keys for ${prov.name}:`,
+					err.message || JSON.stringify(err),
+				);
 			}
 
 			// you.com providers do not expose a /v1/models endpoint. Synthesize the
@@ -1267,13 +1374,17 @@ async function pollModelStatus() {
 						apiKey: provApiKey,
 					});
 				}
-				console.log(`[tokito-monitor] added 2 synthetic you.com models for provider: ${prov.name}`);
+				console.log(
+					`[tokito-monitor] added 2 synthetic you.com models for provider: ${prov.name}`,
+				);
 				continue;
 			}
 
 			const result = await fetchProviderModelList(prov);
 			if (!result) {
-				console.error(`[tokito-monitor] failed to fetch models from ${prov.name}`);
+				console.error(
+					`[tokito-monitor] failed to fetch models from ${prov.name}`,
+				);
 				continue;
 			}
 			const { arr, url, baseUrl, apiKey } = result;
@@ -1282,11 +1393,20 @@ async function pollModelStatus() {
 				allModels.push(id);
 				const entry = { modelId: id, provider: prov.name, baseUrl, apiKey };
 				runtime.modelEntries.push(entry);
-				runtime.modelProviderMap.set(id, { provider: prov.name, baseUrl, apiKey });
+				runtime.modelProviderMap.set(id, {
+					provider: prov.name,
+					baseUrl,
+					apiKey,
+				});
 			}
-			console.log(`[tokito-monitor] fetched ${arr.length} models from provider: ${prov.name} (${url})`);
+			console.log(
+				`[tokito-monitor] fetched ${arr.length} models from provider: ${prov.name} (${url})`,
+			);
 		} catch (err) {
-			console.error(`[tokito-monitor] error fetching from ${prov.name}:`, err.message || JSON.stringify(err));
+			console.error(
+				`[tokito-monitor] error fetching from ${prov.name}:`,
+				err.message || JSON.stringify(err),
+			);
 		}
 	}
 
@@ -1294,41 +1414,70 @@ async function pollModelStatus() {
 	try {
 		const customModelsResult = await proxyInternal(`/admin/providers`, 'GET');
 		if (Array.isArray(customModelsResult)) {
-			console.log(`[tokito-monitor] fetched ${customModelsResult.length} providers from proxy for custom models check`);
+			console.log(
+				`[tokito-monitor] fetched ${customModelsResult.length} providers from proxy for custom models check`,
+			);
 			for (const prov of customModelsResult) {
 				try {
-					const customModels = await proxyInternal(`/admin/providers/${prov.id}/custom-models`, 'GET');
+					const customModels = await proxyInternal(
+						`/admin/providers/${prov.id}/custom-models`,
+						'GET',
+					);
 					if (Array.isArray(customModels) && customModels.length > 0) {
-						console.log(`[tokito-monitor] found ${customModels.length} custom models for provider: ${prov.name}`);
+						console.log(
+							`[tokito-monitor] found ${customModels.length} custom models for provider: ${prov.name}`,
+						);
 						// Resolve API key: use provider's main apiKey as primary, then try keys from runtime.providerKeys
 						const provKeys = runtime.providerKeys.get(prov.name) || [];
-						const fallbackApiKey = prov.apiKey || (provKeys.length > 0 ? provKeys[0] : '');
+						const fallbackApiKey =
+							prov.apiKey || (provKeys.length > 0 ? provKeys[0] : '');
 						// Resolve baseUrl: use provider's endpoint
 						const baseUrl = prov.endpoint || '';
-						
+
 						for (const cm of customModels) {
 							if (!cm.isActive) continue;
 							const id = cm.modelId;
 							const apiKey = fallbackApiKey;
-							
+
 							if (!allModels.includes(id)) {
 								allModels.push(id);
-								const entry = { modelId: id, provider: prov.name, baseUrl, apiKey };
+								const entry = {
+									modelId: id,
+									provider: prov.name,
+									baseUrl,
+									apiKey,
+								};
 								runtime.modelEntries.push(entry);
-								runtime.modelProviderMap.set(id, { provider: prov.name, baseUrl, apiKey });
-								console.log(`[tokito-monitor] added custom model: ${id} from provider: ${prov.name} baseUrl=${baseUrl} apiKey=${apiKey ? 'OK' : 'EMPTY'}`);
+								runtime.modelProviderMap.set(id, {
+									provider: prov.name,
+									baseUrl,
+									apiKey,
+								});
+								console.log(
+									`[tokito-monitor] added custom model: ${id} from provider: ${prov.name} baseUrl=${baseUrl} apiKey=${apiKey ? 'OK' : 'EMPTY'}`,
+								);
 							}
 						}
 					}
 				} catch (err) {
-					const errMsg = err.message || (typeof err === 'object' ? JSON.stringify(err) : String(err));
-					console.error(`[tokito-monitor] error fetching custom models from ${prov.name}:`, errMsg);
+					const errMsg =
+						err.message ||
+						(typeof err === 'object' ? JSON.stringify(err) : String(err));
+					console.error(
+						`[tokito-monitor] error fetching custom models from ${prov.name}:`,
+						errMsg,
+					);
 				}
 			}
 		}
 	} catch (err) {
-		const errMsg = err.message || (typeof err === 'object' ? JSON.stringify(err) : String(err));
-		console.error(`[tokito-monitor] error fetching providers for custom models:`, errMsg);
+		const errMsg =
+			err.message ||
+			(typeof err === 'object' ? JSON.stringify(err) : String(err));
+		console.error(
+			`[tokito-monitor] error fetching providers for custom models:`,
+			errMsg,
+		);
 	}
 
 	runtime.models = allModels;
@@ -1343,7 +1492,12 @@ async function pollModelStatus() {
 async function pushMetricsToProxy() {
 	const payload = runtime.modelEntries.map((entry) => {
 		const key = entryKey(entry);
-		const lt = runtime.latency.get(key) || { ms: 0, status: 0, ok: false, error: null };
+		const lt = runtime.latency.get(key) || {
+			ms: 0,
+			status: 0,
+			ok: false,
+			error: null,
+		};
 		return {
 			modelId: entry.modelId,
 			provider: entry.provider,
@@ -1406,16 +1560,27 @@ async function ensureGpyModelEntries() {
 			// upstream is webnet (so entry.modelId = webnet/claude-sonnet).
 			const upstreamPath = id.slice(slash + 1); // e.g. "webnet/glm-5"
 			const modelId = upstreamPath;
-			if (runtime.modelEntries.some((e) => e.modelId === modelId && (e.provider || '').toLowerCase() === provider)) {
+			if (
+				runtime.modelEntries.some(
+					(e) =>
+						e.modelId === modelId &&
+						(e.provider || '').toLowerCase() === provider,
+				)
+			) {
 				continue;
 			}
 			const entry = { modelId, provider, baseUrl: proxyV1Base, apiKey: '' };
 			runtime.modelEntries.push(entry);
 			if (!runtime.models.includes(modelId)) runtime.models.push(modelId);
 		}
-		console.log(`[tokito-monitor] injected ${gpy.length} gpy model entries (multi-upstream)`);
+		console.log(
+			`[tokito-monitor] injected ${gpy.length} gpy model entries (multi-upstream)`,
+		);
 	} catch (err) {
-		console.error('[tokito-monitor] ensureGpyModelEntries failed:', err.message || JSON.stringify(err));
+		console.error(
+			'[tokito-monitor] ensureGpyModelEntries failed:',
+			err.message || JSON.stringify(err),
+		);
 	}
 }
 
@@ -1439,7 +1604,9 @@ async function refreshLatencyFromProxy() {
 				newLatency.set(key, {
 					ok: Boolean(row.isOnline),
 					ms: row.latencyMs || 0,
-					checkedAt: row.checkedAt ? new Date(row.checkedAt).getTime() : Date.now(),
+					checkedAt: row.checkedAt
+						? new Date(row.checkedAt).getTime()
+						: Date.now(),
 					status: row.httpStatus || 0,
 					error: row.errorMessage || null,
 				});
@@ -1449,18 +1616,23 @@ async function refreshLatencyFromProxy() {
 			if (newEntries.length > 0) {
 				runtime.modelEntries = newEntries;
 				runtime.latency = newLatency;
-				runtime.models = [...new Set(newEntries.map(e => e.modelId))];
+				runtime.models = [...new Set(newEntries.map((e) => e.modelId))];
 				// Don't update lastLatencyAt here - only sweeps should set it
 			}
 
-			console.log(`[tokito-monitor] refreshed ${newEntries.length} models from proxy DB`);
+			console.log(
+				`[tokito-monitor] refreshed ${newEntries.length} models from proxy DB`,
+			);
 		}
 		// Fallback: kalau provider gpy di DB tidak return gpy/ di /v1/models,
 		// inject manual list dari trial-models endpoint supaya trial user panel
 		// tetap bisa lihat model gpy.
 		await ensureGpyModelEntries();
 	} catch (err) {
-		console.error('[tokito-monitor] failed to refresh from proxy:', err.message || JSON.stringify(err));
+		console.error(
+			'[tokito-monitor] failed to refresh from proxy:',
+			err.message || JSON.stringify(err),
+		);
 	}
 }
 
@@ -1478,7 +1650,10 @@ async function runLatencyTest() {
 		let result;
 		try {
 			const controller = new AbortController();
-			const timeout = setTimeout(() => controller.abort(), TOKITO_REQUEST_TIMEOUT_MS);
+			const timeout = setTimeout(
+				() => controller.abort(),
+				TOKITO_REQUEST_TIMEOUT_MS,
+			);
 			const res = await fetch(`${baseUrl}/chat/completions`, {
 				method: 'POST',
 				headers: {
@@ -1496,7 +1671,11 @@ async function runLatencyTest() {
 			clearTimeout(timeout);
 			const text = await res.text();
 			let body;
-			try { body = JSON.parse(text); } catch (_) { body = { raw: text }; }
+			try {
+				body = JSON.parse(text);
+			} catch (_) {
+				body = { raw: text };
+			}
 			result = { ok: res.ok, status: res.status, body };
 		} catch (err) {
 			result = { ok: false, status: 0, body: { error: err.message } };
@@ -1529,13 +1708,19 @@ async function testSingleModel(entry) {
 	// Get all available keys for this provider
 	const providerKeys = runtime.providerKeys.get(provider) || [];
 	// Use entry's apiKey as fallback, plus any additional keys from the pool
-	const keysToTry = [entry.apiKey, ...providerKeys.filter(k => k !== entry.apiKey)];
+	const keysToTry = [
+		entry.apiKey,
+		...providerKeys.filter((k) => k !== entry.apiKey),
+	];
 
 	let result;
 	for (const apiKey of keysToTry) {
 		try {
 			const controller = new AbortController();
-			const timeout = setTimeout(() => controller.abort(), TOKITO_REQUEST_TIMEOUT_MS);
+			const timeout = setTimeout(
+				() => controller.abort(),
+				TOKITO_REQUEST_TIMEOUT_MS,
+			);
 			const res = await fetch(`${baseUrl}/chat/completions`, {
 				method: 'POST',
 				headers: {
@@ -1553,9 +1738,13 @@ async function testSingleModel(entry) {
 			clearTimeout(timeout);
 			const text = await res.text();
 			let body;
-			try { body = JSON.parse(text); } catch (_) { body = { raw: text }; }
+			try {
+				body = JSON.parse(text);
+			} catch (_) {
+				body = { raw: text };
+			}
 			result = { ok: res.ok, status: res.status, body };
-			
+
 			// If 429, try next key
 			if (res.status === 429 && keysToTry.length > 1) {
 				continue;
@@ -1594,9 +1783,10 @@ function applyModelRetryState(entry, latency) {
 	} else {
 		const current = runtime.modelRetryState.get(key) || { retryCount: 0 };
 		const newRetryCount = current.retryCount + 1;
-		const suspendedUntil = newRetryCount >= 3
-			? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
-			: null;
+		const suspendedUntil =
+			newRetryCount >= 3
+				? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+				: null;
 		runtime.modelRetryState.set(key, {
 			retryCount: newRetryCount,
 			lastTestAt: new Date().toISOString(),
@@ -1607,7 +1797,9 @@ function applyModelRetryState(entry, latency) {
 
 async function sweepModelsParallel(entries, label) {
 	if (!entries.length) return;
-	console.log(`[tokito-monitor] ${label}: testing ${entries.length} models (parallel, concurrency ${SWEEP_CONCURRENCY})`);
+	console.log(
+		`[tokito-monitor] ${label}: testing ${entries.length} models (parallel, concurrency ${SWEEP_CONCURRENCY})`,
+	);
 	for (let i = 0; i < entries.length; i += SWEEP_CONCURRENCY) {
 		const batch = entries.slice(i, i + SWEEP_CONCURRENCY);
 		const results = await Promise.allSettled(
@@ -1623,7 +1815,9 @@ async function sweepModelsParallel(entries, label) {
 			if (r.status !== 'fulfilled') continue;
 			applyModelRetryState(r.value.entry, r.value.latency);
 			if (label === 'retry sweep' && r.value.latency.ok) {
-				console.log(`[tokito-monitor] model back online: ${r.value.entry.modelId}`);
+				console.log(
+					`[tokito-monitor] model back online: ${r.value.entry.modelId}`,
+				);
 			}
 		}
 	}
@@ -1681,9 +1875,14 @@ async function midnightReset() {
 	try {
 		await proxyInternal('/admin/internal/monitor/models/state/reset', 'PATCH');
 		runtime.modelRetryState.clear();
-		console.log('[tokito-monitor] midnight reset complete — all models eligible for testing');
+		console.log(
+			'[tokito-monitor] midnight reset complete — all models eligible for testing',
+		);
 	} catch (err) {
-		console.error('[tokito-monitor] midnight reset failed:', err.message || JSON.stringify(err));
+		console.error(
+			'[tokito-monitor] midnight reset failed:',
+			err.message || JSON.stringify(err),
+		);
 	}
 }
 
@@ -1691,7 +1890,10 @@ async function midnightReset() {
 
 async function recoverRetryState() {
 	try {
-		const data = await proxyInternal('/admin/internal/monitor/models/state', 'GET');
+		const data = await proxyInternal(
+			'/admin/internal/monitor/models/state',
+			'GET',
+		);
 		const states = data?.states || [];
 		for (const s of states) {
 			const entry = runtime.modelEntries.find(
@@ -1707,10 +1909,15 @@ async function recoverRetryState() {
 			}
 		}
 		if (states.length > 0) {
-			console.log(`[tokito-monitor] recovered retry state for ${states.length} models`);
+			console.log(
+				`[tokito-monitor] recovered retry state for ${states.length} models`,
+			);
 		}
 	} catch (err) {
-		console.error('[tokito-monitor] failed to recover retry state:', err.message || JSON.stringify(err));
+		console.error(
+			'[tokito-monitor] failed to recover retry state:',
+			err.message || JSON.stringify(err),
+		);
 	}
 }
 
@@ -1730,7 +1937,9 @@ function scheduleMidnightReset() {
 
 	function scheduleNext() {
 		const delay = msUntilMidnight();
-		console.log(`[tokito-monitor] next midnight reset in ${Math.round(delay / 60000)} minutes`);
+		console.log(
+			`[tokito-monitor] next midnight reset in ${Math.round(delay / 60000)} minutes`,
+		);
 		setTimeout(async () => {
 			await midnightReset();
 			scheduleNext(); // schedule the next one
@@ -1791,14 +2000,15 @@ async function ensurePanelMessage() {
 		return;
 	}
 	const state = await loadTokitoState();
-	const channel = await client.channels
-		.fetch(TOKITO_CHANNEL_ID)
-		.catch((e) => {
-			console.error('[tokito] Failed to fetch channel:', e.message);
-			return null;
-		});
+	const channel = await client.channels.fetch(TOKITO_CHANNEL_ID).catch((e) => {
+		console.error('[tokito] Failed to fetch channel:', e.message);
+		return null;
+	});
 	if (!channel || !channel.isTextBased()) {
-		console.log('[tokito] ensurePanelMessage: Channel not found or not text based. ID:', TOKITO_CHANNEL_ID);
+		console.log(
+			'[tokito] ensurePanelMessage: Channel not found or not text based. ID:',
+			TOKITO_CHANNEL_ID,
+		);
 		return;
 	}
 
@@ -1808,7 +2018,10 @@ async function ensurePanelMessage() {
 			msg.author.id === client.user.id &&
 			msg.components?.some((row) =>
 				row.components?.some(
-					(c) => c.customId === PANEL_STATUS || c.customId === PANEL_LATENCY || c.customId === PANEL_DETAILS,
+					(c) =>
+						c.customId === PANEL_STATUS ||
+						c.customId === PANEL_LATENCY ||
+						c.customId === PANEL_DETAILS,
 				),
 			),
 	);
@@ -1915,24 +2128,38 @@ function buildTokitoRows(
 		return [nav];
 	}
 
-	const upstreamOptions = ['all', ...new Set(runtime.modelEntries.map(e => e.provider))].slice(0, 25);
+	const upstreamOptions = [
+		'all',
+		...new Set(runtime.modelEntries.map((e) => e.provider)),
+	].slice(0, 25);
 	const upstreamMenu = new StringSelectMenuBuilder()
 		.setCustomId(`tokito_filter_upstream_${sessionId}`)
 		.setPlaceholder('Upstream provider')
 		.addOptions(
-			upstreamOptions.map((p) => ({ label: p, value: p, default: p === upstreamProvider })),
+			upstreamOptions.map((p) => ({
+				label: p,
+				value: p,
+				default: p === upstreamProvider,
+			})),
 		);
 
 	let vendorSource = runtime.modelEntries;
 	if (upstreamProvider !== 'all') {
 		vendorSource = vendorSource.filter((e) => e.provider === upstreamProvider);
 	}
-	const vendorOptions = ['all', ...new Set(vendorSource.map((e) => providerOf(e.modelId)))].slice(0, 25);
+	const vendorOptions = [
+		'all',
+		...new Set(vendorSource.map((e) => providerOf(e.modelId))),
+	].slice(0, 25);
 	const vendorMenu = new StringSelectMenuBuilder()
 		.setCustomId(`tokito_filter_vendor_${sessionId}`)
 		.setPlaceholder('Model vendor (ag/minimax/...)')
 		.addOptions(
-			vendorOptions.map((v) => ({ label: v, value: v, default: v === modelVendor })),
+			vendorOptions.map((v) => ({
+				label: v,
+				value: v,
+				default: v === modelVendor,
+			})),
 		);
 
 	const sortMenu = new StringSelectMenuBuilder()
@@ -1974,7 +2201,13 @@ function buildTokitoRows(
 	];
 }
 
-function listModels(kind, upstreamProvider, modelVendor, sortMode, session = null) {
+function listModels(
+	kind,
+	upstreamProvider,
+	modelVendor,
+	sortMode,
+	session = null,
+) {
 	let items = [...runtime.modelEntries];
 
 	if (session?.trialMode) {
@@ -1991,44 +2224,55 @@ function listModels(kind, upstreamProvider, modelVendor, sortMode, session = nul
 	}
 
 	if (upstreamProvider !== 'all') {
-		items = items.filter((e) => e.provider === upstreamProvider || e.modelId === 'auto');
+		items = items.filter(
+			(e) => e.provider === upstreamProvider || e.modelId === 'auto',
+		);
 	}
 	if (modelVendor !== 'all') {
-		items = items.filter((e) => providerOf(e.modelId) === modelVendor || e.modelId === 'auto');
+		items = items.filter(
+			(e) => providerOf(e.modelId) === modelVendor || e.modelId === 'auto',
+		);
 	}
 
 	items.sort((a, b) => a.modelId.localeCompare(b.modelId));
 	// Keep auto at the top
-	items.sort((a, b) => (a.modelId === 'auto' ? -1 : b.modelId === 'auto' ? 1 : 0));
+	items.sort((a, b) =>
+		a.modelId === 'auto' ? -1 : b.modelId === 'auto' ? 1 : 0,
+	);
 
 	if (sortMode === 'status_online_first') {
-		items.sort(
-			(a, b) => {
-				if (a.modelId === 'auto') return -1;
-				if (b.modelId === 'auto') return 1;
-				// Online first, then by latency (fastest first)
-				const aOnline = runtime.latency.get(entryKey(a))?.ok ? 0 : 1;
-				const bOnline = runtime.latency.get(entryKey(b))?.ok ? 0 : 1;
-				if (aOnline !== bOnline) return aOnline - bOnline;
-				const am = runtime.latency.get(entryKey(a))?.ms ?? Number.MAX_SAFE_INTEGER;
-				const bm = runtime.latency.get(entryKey(b))?.ms ?? Number.MAX_SAFE_INTEGER;
-				return am - bm;
-			},
-		);
+		items.sort((a, b) => {
+			if (a.modelId === 'auto') return -1;
+			if (b.modelId === 'auto') return 1;
+			// Online first, then by latency (fastest first)
+			const aOnline = runtime.latency.get(entryKey(a))?.ok ? 0 : 1;
+			const bOnline = runtime.latency.get(entryKey(b))?.ok ? 0 : 1;
+			if (aOnline !== bOnline) return aOnline - bOnline;
+			const am =
+				runtime.latency.get(entryKey(a))?.ms ?? Number.MAX_SAFE_INTEGER;
+			const bm =
+				runtime.latency.get(entryKey(b))?.ms ?? Number.MAX_SAFE_INTEGER;
+			return am - bm;
+		});
 	}
 	if (sortMode === 'provider_asc') {
 		items.sort((a, b) => {
 			if (a.modelId === 'auto') return -1;
 			if (b.modelId === 'auto') return 1;
-			return (a.provider || '').localeCompare(b.provider || '') || a.modelId.localeCompare(b.modelId);
+			return (
+				(a.provider || '').localeCompare(b.provider || '') ||
+				a.modelId.localeCompare(b.modelId)
+			);
 		});
 	}
 	if (sortMode === 'latency_fastest' || sortMode === 'latency_slowest') {
 		items.sort((a, b) => {
 			if (a.modelId === 'auto') return -1;
 			if (b.modelId === 'auto') return 1;
-			const am = runtime.latency.get(entryKey(a))?.ms ?? Number.MAX_SAFE_INTEGER;
-			const bm = runtime.latency.get(entryKey(b))?.ms ?? Number.MAX_SAFE_INTEGER;
+			const am =
+				runtime.latency.get(entryKey(a))?.ms ?? Number.MAX_SAFE_INTEGER;
+			const bm =
+				runtime.latency.get(entryKey(b))?.ms ?? Number.MAX_SAFE_INTEGER;
 			return sortMode === 'latency_fastest' ? am - bm : bm - am;
 		});
 	}
@@ -2055,10 +2299,11 @@ function resolveModelDetailsMeta(entry, detailsCache) {
 		const hit = detailsCache.find((m) => m.id === id);
 		if (hit && (hit.context_length || hit.name || hit.pricing)) return hit;
 	}
-	return detailsCache.find((m) =>
-		m.id === entry.modelId ||
-		m.id === `${entry.provider}/${entry.modelId}` ||
-		(m.id && m.id.endsWith('/' + entry.modelId)),
+	return detailsCache.find(
+		(m) =>
+			m.id === entry.modelId ||
+			m.id === `${entry.provider}/${entry.modelId}` ||
+			(m.id && m.id.endsWith('/' + entry.modelId)),
 	);
 }
 
@@ -2068,22 +2313,28 @@ async function ensureModelDetailsCache() {
 		const detailsData = await proxyInternal('/admin/internal/models/details');
 		runtime._modelDetailsCache = detailsData?.data || [];
 	} catch (err) {
-		console.error('[tokito] Failed to fetch model details cache:', err.message || err);
+		console.error(
+			'[tokito] Failed to fetch model details cache:',
+			err.message || err,
+		);
 		runtime._modelDetailsCache = runtime._modelDetailsCache || [];
 	}
 }
 
 function buildTokitoEmbed(kind, session) {
 	const pageSize = kind === 'details' ? 5 : TOKITO_PAGE_SIZE;
-	const entries = listModels(kind, session.upstreamProvider, session.modelVendor, session.sortMode, session);
+	const entries = listModels(
+		kind,
+		session.upstreamProvider,
+		session.modelVendor,
+		session.sortMode,
+		session,
+	);
 	const totalPages = Math.max(1, Math.ceil(entries.length / pageSize));
 	const page = Math.max(0, Math.min(session.page, totalPages - 1));
 	session.page = page;
 
-	const slice = entries.slice(
-		page * pageSize,
-		(page + 1) * pageSize,
-	);
+	const slice = entries.slice(page * pageSize, (page + 1) * pageSize);
 	const lines = slice.map((entry) => {
 		// Auto model: show special description
 		if (entry.modelId === 'auto') {
@@ -2092,20 +2343,31 @@ function buildTokitoEmbed(kind, session) {
 
 		const vendor = providerOf(entry.modelId);
 		const lt = displayLatencyForEntry(entry, session);
-		
+
 		if (kind === 'details') {
 			const detailsCache = runtime._modelDetailsCache || [];
 			const meta = resolveModelDetailsMeta(entry, detailsCache);
-			const icon = lt?.ok ? '🟢' : (lt?.status === 429 ? '🟡' : (lt ? '🔴' : '⚪'));
+			const icon = lt?.ok ? '🟢' : lt?.status === 429 ? '🟡' : lt ? '🔴' : '⚪';
 			const name = meta?.name || entry.modelId;
-			const ctx = meta?.context_length ? `${Math.round(meta.context_length / 1024)}K` : '—';
-			const maxOut = meta?.max_output_tokens ? `${Math.round(meta.max_output_tokens / 1024)}K` : '—';
-			const inPrice = meta?.pricing?.prompt != null ? `$${meta.pricing.prompt.toFixed(2)}` : '—';
-			const outPrice = meta?.pricing?.completion != null ? `$${meta.pricing.completion.toFixed(2)}` : '—';
+			const ctx = meta?.context_length
+				? `${Math.round(meta.context_length / 1024)}K`
+				: '—';
+			const maxOut = meta?.max_output_tokens
+				? `${Math.round(meta.max_output_tokens / 1024)}K`
+				: '—';
+			const inPrice =
+				meta?.pricing?.prompt != null
+					? `$${meta.pricing.prompt.toFixed(2)}`
+					: '—';
+			const outPrice =
+				meta?.pricing?.completion != null
+					? `$${meta.pricing.completion.toFixed(2)}`
+					: '—';
 			const inMod = (meta?.input_modalities || ['text']).join(', ');
 			const outMod = (meta?.output_modalities || ['text']).join(', ');
 			const latency = lt?.ms != null ? `${lt.ms}ms` : '—';
-			const features = (meta?.supported_features || []).slice(0, 4).join(', ') || '—';
+			const features =
+				(meta?.supported_features || []).slice(0, 4).join(', ') || '—';
 			return `━━━━━━━━━━━━━━━━━━━━\n${icon} **${name}** (\`${entry.modelId}\`)\n📐 Context/Input: **${ctx}**  •  Max Output: **${maxOut}**\n💰 In: **${inPrice}/M**  •  Out: **${outPrice}/M**\n📥 ${inMod} → ${outMod}\n⚡ ${latency}  •  🛠 ${features}`;
 		}
 
@@ -2113,23 +2375,35 @@ function buildTokitoEmbed(kind, session) {
 			if (!lt || lt.status == null) {
 				return `⚪ \`${entry.provider}/${entry.modelId}\` | not tested yet | vendor: **${vendor}**`;
 			}
-			const icon = lt.ok ? '🟢' : (lt.status === 429 ? '🟡' : '🔴');
-			const httpInfo = lt.status === 429 ? 'rate limited' : (lt.status ? `HTTP ${lt.status}` : 'timeout');
+			const icon = lt.ok ? '🟢' : lt.status === 429 ? '🟡' : '🔴';
+			const httpInfo =
+				lt.status === 429
+					? 'rate limited'
+					: lt.status
+						? `HTTP ${lt.status}`
+						: 'timeout';
 			return `${icon} \`${entry.provider}/${entry.modelId}\` | ${httpInfo} | vendor: **${vendor}**`;
 		}
-		
-		if (!lt) return `⚪ \`${entry.provider}/${entry.modelId}\` | not tested yet`;
-		const icon = lt.ok ? '🟢' : (lt.status === 429 ? '🟡' : '🔴');
+
+		if (!lt)
+			return `⚪ \`${entry.provider}/${entry.modelId}\` | not tested yet`;
+		const icon = lt.ok ? '🟢' : lt.status === 429 ? '🟡' : '🔴';
 		const statusInfo = lt.status === 429 ? 'rate limited' : `HTTP ${lt.status}`;
 		return `${icon} \`${entry.provider}/${entry.modelId}\` | ${lt.ms} ms | ${statusInfo}`;
 	});
 
 	const titleStyled =
 		kind === 'status'
-			? (session.trialMode ? 'Tokito API • Model Status (Trial / gpy)' : 'Tokito API • Model Status')
+			? session.trialMode
+				? 'Tokito API • Model Status (Trial / gpy)'
+				: 'Tokito API • Model Status'
 			: kind === 'details'
-				? (session.trialMode ? '📋 Model Details (Trial / gpy)' : '📋 Model Details')
-				: (session.trialMode ? 'Tokito API • Latency (Trial / gpy)' : 'Tokito API • Latency Benchmark');
+				? session.trialMode
+					? '📋 Model Details (Trial / gpy)'
+					: '📋 Model Details'
+				: session.trialMode
+					? 'Tokito API • Latency (Trial / gpy)'
+					: 'Tokito API • Latency Benchmark';
 	const updatedAt = runtime.lastLatencyAt;
 
 	let online = 0,
@@ -2145,20 +2419,24 @@ function buildTokitoEmbed(kind, session) {
 	if (session.trialMode) {
 		online = summaryEntries.length;
 	} else {
-	for (const entry of summaryEntries) {
-		const lt = runtime.latency.get(entryKey(entry));
-		if (!lt) {
-			untested += 1;
-			continue;
+		for (const entry of summaryEntries) {
+			const lt = runtime.latency.get(entryKey(entry));
+			if (!lt) {
+				untested += 1;
+				continue;
+			}
+			if (lt.status === 0 || lt.status == null) timeout += 1;
+			else if (lt.ok) online += 1;
+			else if (lt.status === 429) rateLimited += 1;
+			else down += 1;
 		}
-		if (lt.status === 0 || lt.status == null) timeout += 1;
-		else if (lt.ok) online += 1;
-		else if (lt.status === 429) rateLimited += 1;
-		else down += 1;
-	}
 	}
 
-	const summaryParts = [`Online: ${online}`, `Down: ${down}`, `Timeout: ${timeout}`];
+	const summaryParts = [
+		`Online: ${online}`,
+		`Down: ${down}`,
+		`Timeout: ${timeout}`,
+	];
 	if (rateLimited > 0) summaryParts.push(`Rate Limited: ${rateLimited}`);
 	if (untested > 0) summaryParts.push(`Untested: ${untested}`);
 
@@ -2173,7 +2451,11 @@ function buildTokitoEmbed(kind, session) {
 				inline: false,
 			},
 			{ name: 'Page', value: `${page + 1}/${totalPages}`, inline: true },
-			{ name: 'Upstream', value: session.trialMode ? 'gpy (trial)' : session.upstreamProvider, inline: true },
+			{
+				name: 'Upstream',
+				value: session.trialMode ? 'gpy (trial)' : session.upstreamProvider,
+				inline: true,
+			},
 			{ name: 'Vendor', value: session.modelVendor, inline: true },
 			{ name: 'Sort', value: session.sortMode, inline: true },
 			{
@@ -2576,7 +2858,10 @@ function getTutorialContext(ide, kind, ctx) {
 	const apiKey = ctx.apiKey || '<API_KEY>';
 	const models = ctx.models && ctx.models.length ? ctx.models : [];
 	const modelList = models.length
-		? models.slice(0, 4).map((m) => '`' + m + '`').join(', ')
+		? models
+				.slice(0, 4)
+				.map((m) => '`' + m + '`')
+				.join(', ')
 		: '`gpy/webnet/glm-5`';
 	const firstModel = models[0] || 'gpy/webnet/glm-5';
 	const kindLabel = kind === 'trial' ? 'Trial' : 'Phantom';
@@ -2816,7 +3101,9 @@ function getTutorialContext(ide, kind, ctx) {
 				'           "apiKey": "GROUPY_API_KEY"',
 				'         },',
 				'         "models": {',
-				...models.slice(0, 6).map((m) => `           "${m}": { "name": "${m}" },`),
+				...models
+					.slice(0, 6)
+					.map((m) => `           "${m}": { "name": "${m}" },`),
 				'         }',
 				'       }',
 				'     },',
@@ -2864,7 +3151,12 @@ function getTutorialContext(ide, kind, ctx) {
 				`       "baseUrl": "${endpoint}",`,
 				`       "apiKey": "${apiKey}",`,
 				'       "models": [',
-				...models.slice(0, 5).map((m) => `         { "id": "${m}", "name": "${m}", "maxInputTokens": 200000, "maxOutputTokens": 64000, "supportsToolCalling": true },`),
+				...models
+					.slice(0, 5)
+					.map(
+						(m) =>
+							`         { "id": "${m}", "name": "${m}", "maxInputTokens": 200000, "maxOutputTokens": 64000, "supportsToolCalling": true },`,
+					),
 				'       ]',
 				'     }',
 				'   ]',
@@ -2897,11 +3189,15 @@ function paginateText(text, max) {
 function buildTutorialEmbeds(ide, kind, ctx) {
 	const fullText = getTutorialContext(ide, kind, ctx);
 	const pages = paginateText(fullText, TUTORIAL_PAGE_SIZE);
-	const labelMap = Object.fromEntries(TUTORIAL_IDES.map((i) => [i.id, i.label]));
+	const labelMap = Object.fromEntries(
+		TUTORIAL_IDES.map((i) => [i.id, i.label]),
+	);
 	const ideLabel = labelMap[ide] || ide;
 	return pages.map((chunk, i) => ({
 		embed: new EmbedBuilder()
-			.setTitle(`📘 How to Use — ${ideLabel}${pages.length > 1 ? ` (${i + 1}/${pages.length})` : ''}`)
+			.setTitle(
+				`📘 How to Use — ${ideLabel}${pages.length > 1 ? ` (${i + 1}/${pages.length})` : ''}`,
+			)
 			.setDescription(chunk)
 			.setColor(0x5865f2)
 			.setTimestamp(),
@@ -2912,10 +3208,12 @@ function buildHowToPicker(userId, kindLabel) {
 	const menu = new StringSelectMenuBuilder()
 		.setCustomId(`${TUTORIAL_MENU_IDE_PREFIX}${userId}`)
 		.setPlaceholder(`Pilih IDE untuk tutorial ${kindLabel}...`)
-		.addOptions(TUTORIAL_IDES.map((i) => ({
-			label: i.label,
-			value: i.id,
-		})));
+		.addOptions(
+			TUTORIAL_IDES.map((i) => ({
+				label: i.label,
+				value: i.id,
+			})),
+		);
 	return [new ActionRowBuilder().addComponents(menu)];
 }
 
@@ -2940,7 +3238,9 @@ async function getTutorialContextForUser(userId, kind) {
 		return {
 			endpoint,
 			apiKey: 'sk-phantom',
-			models: (data?.data || []).map((m) => m.id).filter((id) => id && id !== 'auto'),
+			models: (data?.data || [])
+				.map((m) => m.id)
+				.filter((id) => id && id !== 'auto'),
 		};
 	} catch (err) {
 		console.error('[tutorial] getTutorialContextForUser failed:', err.message);
@@ -2967,7 +3267,9 @@ async function sendHowToDm(userId, kind, ctx) {
 
 async function runDailyInactiveMemberCleanup() {
 	console.log('[daily-cleanup] starting inactive-member sweep');
-	const channel = await client.channels.fetch(AGVERIF_CHANNEL_ID).catch(() => null);
+	const channel = await client.channels
+		.fetch(AGVERIF_CHANNEL_ID)
+		.catch(() => null);
 	if (!channel?.guild) {
 		console.warn('[daily-cleanup] agverif channel not found, skipping');
 		return;
@@ -2978,7 +3280,9 @@ async function runDailyInactiveMemberCleanup() {
 	const candidates = keys.filter(
 		(k) => k.discordUserId && k.provisionedBy === 'discord-bot',
 	);
-	console.log(`[daily-cleanup] scanning ${candidates.length} agverif-provisioned keys`);
+	console.log(
+		`[daily-cleanup] scanning ${candidates.length} agverif-provisioned keys`,
+	);
 
 	const cleaned = [];
 	for (const key of candidates) {
@@ -2986,7 +3290,9 @@ async function runDailyInactiveMemberCleanup() {
 		let member = null;
 		try {
 			member = await guild.members.fetch({ user: userId, force: true });
-		} catch (_) { /* user left guild */ }
+		} catch (_) {
+			/* user left guild */
+		}
 
 		const isVerified = member?.roles.cache.has(VERIFIED_ROLE_ID);
 		const isPhantom = member?.roles.cache.has(REQUIRED_ROLE_ID);
@@ -2994,24 +3300,34 @@ async function runDailyInactiveMemberCleanup() {
 		if (!member || !isPhantom) {
 			const verifiedData = client.agverifData.verifiedUsers[userId];
 			if (verifiedData?.threadId) {
-				const thread = await client.channels.fetch(verifiedData.threadId).catch(() => null);
+				const thread = await client.channels
+					.fetch(verifiedData.threadId)
+					.catch(() => null);
 				if (thread?.isThread()) {
-					await thread.delete('Phantom role hilang — daily cleanup').catch((err) => {
-						if (err.code !== 10003) console.error('[daily-cleanup] thread delete failed:', err);
-					});
+					await thread
+						.delete('Phantom role hilang — daily cleanup')
+						.catch((err) => {
+							if (err.code !== 10003)
+								console.error('[daily-cleanup] thread delete failed:', err);
+						});
 				}
 				await removeThreadFromData(verifiedData.threadId).catch(() => {});
 			}
 			await removeVerifiedUser(userId).catch(() => {});
 
 			if (member && isVerified) {
-				await member.roles.remove(VERIFIED_ROLE_ID, 'Phantom role hilang — daily cleanup').catch((err) => {
-					console.error('[daily-cleanup] role remove failed:', err);
-				});
+				await member.roles
+					.remove(VERIFIED_ROLE_ID, 'Phantom role hilang — daily cleanup')
+					.catch((err) => {
+						console.error('[daily-cleanup] role remove failed:', err);
+					});
 			}
 
 			try {
-				await revokeApiKeyForUser(userId, 'Phantom role hilang — daily cleanup');
+				await revokeApiKeyForUser(
+					userId,
+					'Phantom role hilang — daily cleanup',
+				);
 			} catch (err) {
 				console.error('[daily-cleanup] revoke failed:', err);
 			}
@@ -3024,11 +3340,17 @@ async function runDailyInactiveMemberCleanup() {
 				0xff6b6b,
 			).catch((err) => console.error('[daily-cleanup] DM failed:', err));
 
-			cleaned.push({ userId, keyId: key.id, username: key.discordUsername || userId });
+			cleaned.push({
+				userId,
+				keyId: key.id,
+				username: key.discordUsername || userId,
+			});
 		}
 	}
 
-	console.log(`[daily-cleanup] done. cleaned ${cleaned.length} members: ${cleaned.map((c) => c.username).join(', ') || '(none)'}`);
+	console.log(
+		`[daily-cleanup] done. cleaned ${cleaned.length} members: ${cleaned.map((c) => c.username).join(', ') || '(none)'}`,
+	);
 }
 
 function scheduleDailyInactiveMemberCleanup() {
@@ -3042,8 +3364,11 @@ function scheduleDailyInactiveMemberCleanup() {
 	}
 	function scheduleNext() {
 		setTimeout(async () => {
-			try { await runDailyInactiveMemberCleanup(); }
-			catch (err) { console.error('[daily-cleanup] error:', err); }
+			try {
+				await runDailyInactiveMemberCleanup();
+			} catch (err) {
+				console.error('[daily-cleanup] error:', err);
+			}
 			scheduleNext();
 		}, msUntilMidnightWib());
 	}
@@ -3220,15 +3545,29 @@ async function loadRankingState() {
 			rankingState = data;
 		}
 	} catch (err) {
-		if (err.code !== 'ENOENT') console.error('[ranking] Failed to load ranking state:', err);
-		rankingState = { channelId: null, messages: { modelByRequests: null, modelByTokens: null, userByRequests: null, userByTokens: null, searchUser: null } };
+		if (err.code !== 'ENOENT')
+			console.error('[ranking] Failed to load ranking state:', err);
+		rankingState = {
+			channelId: null,
+			messages: {
+				modelByRequests: null,
+				modelByTokens: null,
+				userByRequests: null,
+				userByTokens: null,
+				searchUser: null,
+			},
+		};
 	}
 }
 
 async function saveRankingState() {
 	try {
 		await fs.mkdir(AGVERIF_DATA_DIR, { recursive: true });
-		await fs.writeFile(RANKING_STATE_PATH, JSON.stringify(rankingState, null, 2), 'utf8');
+		await fs.writeFile(
+			RANKING_STATE_PATH,
+			JSON.stringify(rankingState, null, 2),
+			'utf8',
+		);
 	} catch (err) {
 		console.error('[ranking] Failed to save ranking state:', err);
 	}
@@ -3238,16 +3577,22 @@ async function loadRecapState() {
 	try {
 		const content = await fs.readFile(RECAP_STATE_PATH, 'utf8');
 		const data = JSON.parse(content);
-		if (data && typeof data === 'object') recapState = { ...recapState, ...data };
+		if (data && typeof data === 'object')
+			recapState = { ...recapState, ...data };
 	} catch (err) {
-		if (err.code !== 'ENOENT') console.error('[recap] Failed to load recap state:', err);
+		if (err.code !== 'ENOENT')
+			console.error('[recap] Failed to load recap state:', err);
 	}
 }
 
 async function saveRecapState() {
 	try {
 		await fs.mkdir(AGVERIF_DATA_DIR, { recursive: true });
-		await fs.writeFile(RECAP_STATE_PATH, JSON.stringify(recapState, null, 2), 'utf8');
+		await fs.writeFile(
+			RECAP_STATE_PATH,
+			JSON.stringify(recapState, null, 2),
+			'utf8',
+		);
 	} catch (err) {
 		console.error('[recap] Failed to save recap state:', err);
 	}
@@ -3256,10 +3601,14 @@ async function saveRecapState() {
 // ─── Build Ranking Embeds ──────────────────────────────────────────────────────
 function buildRankingEmbed(title, color, todayItems, monthItems, formatItem) {
 	const todayLines = todayItems.length
-		? todayItems.map((item, i) => `**${i + 1}.** ${formatItem(item)}`).join('\n')
+		? todayItems
+				.map((item, i) => `**${i + 1}.** ${formatItem(item)}`)
+				.join('\n')
 		: '_Belum ada data_';
 	const monthLines = monthItems.length
-		? monthItems.map((item, i) => `**${i + 1}.** ${formatItem(item)}`).join('\n')
+		? monthItems
+				.map((item, i) => `**${i + 1}.** ${formatItem(item)}`)
+				.join('\n')
 		: '_Belum ada data_';
 
 	return new EmbedBuilder()
@@ -3269,7 +3618,9 @@ function buildRankingEmbed(title, color, todayItems, monthItems, formatItem) {
 			{ name: '📅 Hari Ini', value: todayLines.slice(0, 1000), inline: true },
 			{ name: '📆 Bulan Ini', value: monthLines.slice(0, 1000), inline: true },
 		)
-		.setFooter({ text: `🔄 Auto-refresh setiap 1 menit  •  ${discordTime(new Date(), 'F')}` });
+		.setFooter({
+			text: `🔄 Auto-refresh setiap 1 menit  •  ${discordTime(new Date(), 'F')}`,
+		});
 }
 
 async function buildSearchEmbed() {
@@ -3280,7 +3631,8 @@ async function buildSearchEmbed() {
 		console.error('[ranking] Failed to fetch limits:', err.message);
 	}
 
-	const fmt = (v, unit) => v > 0 ? `${v.toLocaleString()} ${unit}` : 'Unlimited';
+	const fmt = (v, unit) =>
+		v > 0 ? `${v.toLocaleString()} ${unit}` : 'Unlimited';
 	const fmtTok = (v) => {
 		if (!v || v <= 0) return 'Unlimited';
 		if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
@@ -3360,17 +3712,34 @@ function buildUsageDetailRow(includeOther = false) {
 function fmtGlobalModelLimitRow(r) {
 	const parts = [];
 	if (r.promptLimit > 0) parts.push(r.promptLimit + ' prompt / 30m');
-	if (r.dailyTokenLimit > 0) parts.push(r.dailyTokenLimit.toLocaleString() + ' daily tok');
-	if (r.monthlyTokenLimit > 0) parts.push(r.monthlyTokenLimit.toLocaleString() + ' monthly tok');
-	if (r.dailyInputTokenLimit > 0) parts.push(r.dailyInputTokenLimit.toLocaleString() + ' daily in');
-	if (r.dailyOutputTokenLimit > 0) parts.push(r.dailyOutputTokenLimit.toLocaleString() + ' daily out');
+	if (r.dailyTokenLimit > 0)
+		parts.push(r.dailyTokenLimit.toLocaleString() + ' daily tok');
+	if (r.monthlyTokenLimit > 0)
+		parts.push(r.monthlyTokenLimit.toLocaleString() + ' monthly tok');
+	if (r.dailyInputTokenLimit > 0)
+		parts.push(r.dailyInputTokenLimit.toLocaleString() + ' daily in');
+	if (r.dailyOutputTokenLimit > 0)
+		parts.push(r.dailyOutputTokenLimit.toLocaleString() + ' daily out');
 	const limit = parts.length ? parts.join(', ') : 'Unlimited';
 	const tag = '`' + r.model + '`';
 	if (r.isPattern) {
 		const count = r.matchCount || 0;
-		const sample = (r.matchedIds || []).slice(0, 5).map((m) => '`' + m + '`').join(', ');
+		const sample = (r.matchedIds || [])
+			.slice(0, 5)
+			.map((m) => '`' + m + '`')
+			.join(', ');
 		const more = count > 5 ? ' +' + (count - 5) + ' lainnya' : '';
-		return '🧩 ' + tag + ' → ' + count + ' model · ' + limit + (sample ? '\n   ' + sample + more : '\n   _belum ada model di catalog yang cocok_');
+		return (
+			'🧩 ' +
+			tag +
+			' → ' +
+			count +
+			' model · ' +
+			limit +
+			(sample
+				? '\n   ' + sample + more
+				: '\n   _belum ada model di catalog yang cocok_')
+		);
 	}
 	return '🎯 ' + tag + ' · ' + limit;
 }
@@ -3380,10 +3749,15 @@ async function buildTrialLimitsEmbed() {
 	try {
 		cfg = await proxyInternal('/admin/internal/trial-panel-config');
 	} catch (err) {
-		return { error: 'Gagal memuat config trial: ' + (err.message || 'Unknown error') };
+		return {
+			error: 'Gagal memuat config trial: ' + (err.message || 'Unknown error'),
+		};
 	}
 	const models = await getTrialModelsCached();
-	const modelLines = (models.gpyModels || []).slice(0, 25).map((m) => `• \`${m}\``).join('\n');
+	const modelLines = (models.gpyModels || [])
+		.slice(0, 25)
+		.map((m) => `• \`${m}\``)
+		.join('\n');
 	const desc = [
 		'**🎁 Trial Limits** _(provider gpy saja)_',
 		'',
@@ -3395,8 +3769,12 @@ async function buildTrialLimitsEmbed() {
 		'',
 		'**Model tersedia:**',
 		modelLines || '_Belum ada model gpy di catalog_',
-		(models.gpyModels || []).length > 25 ? `_...dan ${models.gpyModels.length - 25} model lainnya_` : '',
-	].filter(Boolean).join('\n');
+		(models.gpyModels || []).length > 25
+			? `_...dan ${models.gpyModels.length - 25} model lainnya_`
+			: '',
+	]
+		.filter(Boolean)
+		.join('\n');
 	return {
 		embed: new EmbedBuilder()
 			.setTitle('🎯 See Model Limit — Trial')
@@ -3418,60 +3796,110 @@ async function buildSeeModelLimitsEmbed(filter, access = null) {
 		const r = await proxyInternal('/admin/settings/model-limits');
 		rows = (r && r.data) || [];
 	} catch (err) {
-		return { error: 'Gagal mengambil model limits: ' + (err.message || 'Unknown error') };
+		return {
+			error:
+				'Gagal mengambil model limits: ' + (err.message || 'Unknown error'),
+		};
 	}
 
 	const exacts = rows.filter((r) => !r.isPattern);
 	const patterns = rows.filter((r) => r.isPattern);
 	let chosen;
 	let filterLabel;
-	if (filter === 'exact') { chosen = exacts; filterLabel = 'Exact Override'; }
-	else if (filter === 'pattern') { chosen = patterns; filterLabel = 'Pattern / Batch'; }
-	else { chosen = rows; filterLabel = 'Semua Override'; }
+	if (filter === 'exact') {
+		chosen = exacts;
+		filterLabel = 'Exact Override';
+	} else if (filter === 'pattern') {
+		chosen = patterns;
+		filterLabel = 'Pattern / Batch';
+	} else {
+		chosen = rows;
+		filterLabel = 'Semua Override';
+	}
 
 	if (rows.length === 0) {
-		return { embed: new EmbedBuilder()
-			.setTitle('🎯 See Model Limit')
-			.setDescription('ℹ️ Belum ada model override global. Tambah dari dashboard **Settings > Model Limits**.')
-			.setColor(0x5865f2) };
+		return {
+			embed: new EmbedBuilder()
+				.setTitle('🎯 See Model Limit')
+				.setDescription(
+					'ℹ️ Belum ada model override global. Tambah dari dashboard **Settings > Model Limits**.',
+				)
+				.setColor(0x5865f2),
+		};
 	}
 
 	if (chosen.length === 0) {
-		return { embed: new EmbedBuilder()
-			.setTitle('🎯 See Model Limit · ' + filterLabel)
-			.setDescription('ℹ️ Tidak ada entry untuk filter ini.\n\nExact: ' + exacts.length + ' · Pattern: ' + patterns.length)
-			.setColor(0x5865f2) };
+		return {
+			embed: new EmbedBuilder()
+				.setTitle('🎯 See Model Limit · ' + filterLabel)
+				.setDescription(
+					'ℹ️ Tidak ada entry untuk filter ini.\n\nExact: ' +
+						exacts.length +
+						' · Pattern: ' +
+						patterns.length,
+				)
+				.setColor(0x5865f2),
+		};
 	}
 
 	const desc = [
-		'**Filter:** ' + filterLabel + '  ·  Exact: ' + exacts.length + ' · Pattern: ' + patterns.length,
+		'**Filter:** ' +
+			filterLabel +
+			'  ·  Exact: ' +
+			exacts.length +
+			' · Pattern: ' +
+			patterns.length,
 		'',
 		chosen.slice(0, 15).map(fmtGlobalModelLimitRow).join('\n\n'),
-		chosen.length > 15 ? '_...dan ' + (chosen.length - 15) + ' entry lainnya_' : '',
+		chosen.length > 15
+			? '_...dan ' + (chosen.length - 15) + ' entry lainnya_'
+			: '',
 		'',
 		'_Pattern (🧩) = substring match ke semua model di catalog. Match count = berapa model di catalog yang substring mengandung pattern._',
-	].filter(Boolean).join('\n');
+	]
+		.filter(Boolean)
+		.join('\n');
 
-	return { embed: new EmbedBuilder()
-		.setTitle('🎯 See Model Limit · ' + filterLabel)
-		.setDescription(desc)
-		.setColor(0x5865f2)
-		.setFooter({ text: 'Ganti filter lewat dropdown di bawah.' })
-		.setTimestamp() };
+	return {
+		embed: new EmbedBuilder()
+			.setTitle('🎯 See Model Limit · ' + filterLabel)
+			.setDescription(desc)
+			.setColor(0x5865f2)
+			.setFooter({ text: 'Ganti filter lewat dropdown di bawah.' })
+			.setTimestamp(),
+	};
 }
 
 function buildSeeModelLimitsRow(currentFilter) {
 	const menu = new StringSelectMenuBuilder()
 		.setCustomId('ranking_model_limit_filter')
-		.setPlaceholder('Filter: ' + (
-			currentFilter === 'exact' ? 'Exact Override' :
-			currentFilter === 'pattern' ? 'Pattern / Batch' :
-			'Semua'
-		))
+		.setPlaceholder(
+			'Filter: ' +
+				(currentFilter === 'exact'
+					? 'Exact Override'
+					: currentFilter === 'pattern'
+						? 'Pattern / Batch'
+						: 'Semua'),
+		)
 		.addOptions([
-			{ label: 'Semua', value: 'all', default: !currentFilter || currentFilter === 'all', description: 'Tampilkan semua override (exact + pattern)' },
-			{ label: 'Exact Override', value: 'exact', default: currentFilter === 'exact', description: 'Override per model (1 entry = 1 model)' },
-			{ label: 'Pattern / Batch', value: 'pattern', default: currentFilter === 'pattern', description: 'Override via substring (1 entry = banyak model)' },
+			{
+				label: 'Semua',
+				value: 'all',
+				default: !currentFilter || currentFilter === 'all',
+				description: 'Tampilkan semua override (exact + pattern)',
+			},
+			{
+				label: 'Exact Override',
+				value: 'exact',
+				default: currentFilter === 'exact',
+				description: 'Override per model (1 entry = 1 model)',
+			},
+			{
+				label: 'Pattern / Batch',
+				value: 'pattern',
+				default: currentFilter === 'pattern',
+				description: 'Override via substring (1 entry = banyak model)',
+			},
 		]);
 	return new ActionRowBuilder().addComponents(menu);
 }
@@ -3499,7 +3927,11 @@ async function handleRankingModelLimitFilter(interaction) {
 	await interaction.deferUpdate();
 	const access = await getMemberToolAccess(interaction.member);
 	if (!access.canUseTools) {
-		await interaction.editReply({ content: toolAccessDeniedMessage(access), embeds: [], components: [] });
+		await interaction.editReply({
+			content: toolAccessDeniedMessage(access),
+			embeds: [],
+			components: [],
+		});
 		return;
 	}
 	const filter = interaction.values[0] || 'all';
@@ -3522,14 +3954,15 @@ function buildRecapPanelEmbed(win) {
 		.setColor(0xec4899)
 		.setDescription(
 			'Jejak ngodingmu bulan ini udah kami rangkum jadi sesuatu yang... menarik. 👀\n' +
-			'Berani buka?',
+				'Berani buka?',
 		)
 		.setFooter({
-			text: win && !win.isOpen
-				? `⏳ Dibuka ${win.openDay} ${win.openMonthLabel} – 5 ${win.closeMonthLabel}`
-				: win
-					? `🟢 Sedang dibuka • sampai 5 ${win.closeMonthLabel}`
-					: 'Recap bulanan',
+			text:
+				win && !win.isOpen
+					? `⏳ Dibuka ${win.openDay} ${win.openMonthLabel} – 5 ${win.closeMonthLabel}`
+					: win
+						? `🟢 Sedang dibuka • sampai 5 ${win.closeMonthLabel}`
+						: 'Recap bulanan',
 		});
 	return embed;
 }
@@ -3554,19 +3987,30 @@ function buildRecapDebugEmbed(win) {
 		.setColor(0x22d3ee)
 		.setDescription(
 			'Panel debug recap (selalu aktif untuk testing).\n\n' +
-			'🎁 **Generate Recap-ku** — buat & lihat recap kamu sendiri.\n' +
-			'🔍 **Lihat Recap User** — masukkan User ID untuk lihat recap orang lain.\n' +
-			'💬 **Lihat Testimoni** — testimoni bulan ini, bergilir.\n\n' +
-			(win ? `Bulan target: **${win.monthLabel}** • Window: ${win.isOpen ? '🟢 OPEN' : '🔒 CLOSED'}` : ''),
+				'🎁 **Generate Recap-ku** — buat & lihat recap kamu sendiri.\n' +
+				'🔍 **Lihat Recap User** — masukkan User ID untuk lihat recap orang lain.\n' +
+				'💬 **Lihat Testimoni** — testimoni bulan ini, bergilir.\n\n' +
+				(win
+					? `Bulan target: **${win.monthLabel}** • Window: ${win.isOpen ? '🟢 OPEN' : '🔒 CLOSED'}`
+					: ''),
 		)
 		.setFooter({ text: 'Debug only • data di-generate ulang tiap hari' });
 }
 
 function buildRecapDebugRow() {
 	return new ActionRowBuilder().addComponents(
-		new ButtonBuilder().setCustomId('recap_debug_self').setLabel('🎁 Generate Recap-ku').setStyle(ButtonStyle.Success),
-		new ButtonBuilder().setCustomId('recap_debug_other').setLabel('🔍 Lihat Recap User').setStyle(ButtonStyle.Primary),
-		new ButtonBuilder().setCustomId('recap_testi_view_debug').setLabel('💬 Lihat Testimoni').setStyle(ButtonStyle.Secondary),
+		new ButtonBuilder()
+			.setCustomId('recap_debug_self')
+			.setLabel('🎁 Generate Recap-ku')
+			.setStyle(ButtonStyle.Success),
+		new ButtonBuilder()
+			.setCustomId('recap_debug_other')
+			.setLabel('🔍 Lihat Recap User')
+			.setStyle(ButtonStyle.Primary),
+		new ButtonBuilder()
+			.setCustomId('recap_testi_view_debug')
+			.setLabel('💬 Lihat Testimoni')
+			.setStyle(ButtonStyle.Secondary),
 	);
 }
 
@@ -3574,18 +4018,26 @@ function buildRecapDebugRow() {
 // (from the 25th through the 5th). Removed otherwise. Role-gated on click.
 async function ensureRecapMessage() {
 	if (!AGVERIF_CHANNEL_ID) return;
-	const channel = await client.channels.fetch(AGVERIF_CHANNEL_ID).catch(() => null);
+	const channel = await client.channels
+		.fetch(AGVERIF_CHANNEL_ID)
+		.catch(() => null);
 	if (!channel || !channel.isTextBased()) return;
 
 	let win = null;
-	try { win = await proxyInternal('/admin/internal/recap/window'); } catch { /* ignore */ }
+	try {
+		win = await proxyInternal('/admin/internal/recap/window');
+	} catch {
+		/* ignore */
+	}
 
 	const shouldShow = win ? !!win.panelVisible : false;
 
 	// If it should not be visible, remove any existing panel and stop.
 	if (!shouldShow) {
 		if (recapState.panelMessageId) {
-			const existing = await channel.messages.fetch(recapState.panelMessageId).catch(() => null);
+			const existing = await channel.messages
+				.fetch(recapState.panelMessageId)
+				.catch(() => null);
 			if (existing) await existing.delete().catch(() => {});
 			recapState.panelMessageId = null;
 			await saveRecapState();
@@ -3595,36 +4047,64 @@ async function ensureRecapMessage() {
 
 	// Dedupe: delete any extra bot-authored recap panels in agverif, keep one.
 	try {
-		const recent = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+		const recent = await channel.messages
+			.fetch({ limit: 50 })
+			.catch(() => null);
 		if (recent) {
-			const mine = recent.filter((m) =>
-				m.author.id === client.user.id &&
-				m.components?.some((row) => row.components?.some((cmp) => cmp.customId === 'monthly_recap')));
-			const sorted = [...mine.values()].sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+			const mine = recent.filter(
+				(m) =>
+					m.author.id === client.user.id &&
+					m.components?.some((row) =>
+						row.components?.some((cmp) => cmp.customId === 'monthly_recap'),
+					),
+			);
+			const sorted = [...mine.values()].sort(
+				(a, b) => a.createdTimestamp - b.createdTimestamp,
+			);
 			const keep = sorted[0];
-			for (let i = 1; i < sorted.length; i++) await sorted[i].delete().catch(() => {});
+			for (let i = 1; i < sorted.length; i++)
+				await sorted[i].delete().catch(() => {});
 			if (keep) {
 				recapState.panelMessageId = keep.id;
 				await saveRecapState();
-				await keep.edit({ embeds: [buildRecapPanelEmbed(win)], components: [buildRecapRow()] }).catch(() => {});
+				await keep
+					.edit({
+						embeds: [buildRecapPanelEmbed(win)],
+						components: [buildRecapRow()],
+					})
+					.catch(() => {});
 				return;
 			}
 		}
-	} catch { /* fall through */ }
+	} catch {
+		/* fall through */
+	}
 
 	// Reuse existing message if present.
 	if (recapState.panelMessageId) {
-		const existing = await channel.messages.fetch(recapState.panelMessageId).catch(() => null);
+		const existing = await channel.messages
+			.fetch(recapState.panelMessageId)
+			.catch(() => null);
 		if (existing) {
-			await existing.edit({ embeds: [buildRecapPanelEmbed(win)], components: [buildRecapRow()] }).catch(() => {});
+			await existing
+				.edit({
+					embeds: [buildRecapPanelEmbed(win)],
+					components: [buildRecapRow()],
+				})
+				.catch(() => {});
 			return;
 		}
 	}
 
-	const sent = await channel.send({ embeds: [buildRecapPanelEmbed(win)], components: [buildRecapRow()] }).catch((e) => {
-		console.error('[recap] Failed to send panel:', e.message);
-		return null;
-	});
+	const sent = await channel
+		.send({
+			embeds: [buildRecapPanelEmbed(win)],
+			components: [buildRecapRow()],
+		})
+		.catch((e) => {
+			console.error('[recap] Failed to send panel:', e.message);
+			return null;
+		});
 	if (sent) {
 		recapState.panelMessageId = sent.id;
 		await saveRecapState();
@@ -3634,28 +4114,47 @@ async function ensureRecapMessage() {
 // Persistent panel in the DEBUG channel — always present (for testing).
 async function ensureRecapDebugMessage() {
 	if (!RECAP_DEBUG_CHANNEL_ID) return;
-	const channel = await client.channels.fetch(RECAP_DEBUG_CHANNEL_ID).catch(() => null);
+	const channel = await client.channels
+		.fetch(RECAP_DEBUG_CHANNEL_ID)
+		.catch(() => null);
 	if (!channel || !channel.isTextBased()) return;
 
 	let win = null;
-	try { win = await proxyInternal('/admin/internal/recap/window'); } catch { /* ignore */ }
+	try {
+		win = await proxyInternal('/admin/internal/recap/window');
+	} catch {
+		/* ignore */
+	}
 
 	// Delete ALL existing bot recap-debug panels so the button is unique, then
 	// always re-send a fresh one so it stays the LAST message in the channel.
 	try {
-		const recent = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+		const recent = await channel.messages
+			.fetch({ limit: 50 })
+			.catch(() => null);
 		if (recent) {
-			const mine = recent.filter((m) =>
-				m.author.id === client.user.id &&
-				m.components?.some((row) => row.components?.some((cmp) => cmp.customId === 'recap_debug_self')));
+			const mine = recent.filter(
+				(m) =>
+					m.author.id === client.user.id &&
+					m.components?.some((row) =>
+						row.components?.some((cmp) => cmp.customId === 'recap_debug_self'),
+					),
+			);
 			for (const m of mine.values()) await m.delete().catch(() => {});
 		}
-	} catch { /* ignore */ }
+	} catch {
+		/* ignore */
+	}
 
-	const sent = await channel.send({ embeds: [buildRecapDebugEmbed(win)], components: [buildRecapDebugRow()] }).catch((e) => {
-		console.error('[recap] Failed to send debug panel:', e.message);
-		return null;
-	});
+	const sent = await channel
+		.send({
+			embeds: [buildRecapDebugEmbed(win)],
+			components: [buildRecapDebugRow()],
+		})
+		.catch((e) => {
+			console.error('[recap] Failed to send debug panel:', e.message);
+			return null;
+		});
 	if (sent) {
 		recapState.debugPanelMessageId = sent.id;
 		await saveRecapState();
@@ -3681,7 +4180,11 @@ async function handleMonthlyRecap(interaction) {
 	// No role gate: anyone can open their recap (if data exists for the month).
 	// Window gate first (cheap reply before defer when closed).
 	let win = null;
-	try { win = await proxyInternal('/admin/internal/recap/window'); } catch { /* ignore */ }
+	try {
+		win = await proxyInternal('/admin/internal/recap/window');
+	} catch {
+		/* ignore */
+	}
 	if (win && !win.isOpen) {
 		await interaction.reply({ content: `🔒 ${win.message}`, ephemeral: true });
 		return;
@@ -3689,15 +4192,20 @@ async function handleMonthlyRecap(interaction) {
 	const lockKey = getRecapLockKey(interaction.user.id, interaction.user.id);
 	const claim = tryClaimRecapLock(lockKey);
 	if (!claim.ok) {
-		await interaction.reply({
-			content: `⏳ Recap kamu sedang diproses, coba lagi dalam **${claim.remaining} detik** ya 🙏`,
-			ephemeral: true,
-		}).catch(() => {});
+		await interaction
+			.reply({
+				content: `⏳ Recap kamu sedang diproses, coba lagi dalam **${claim.remaining} detik** ya 🙏`,
+				ephemeral: true,
+			})
+			.catch(() => {});
 		return;
 	}
 	try {
 		await interaction.deferReply({ ephemeral: true });
-		await generateAndReplyRecap(interaction, interaction.user, { self: true, signal: claim.entry.abort.signal });
+		await generateAndReplyRecap(interaction, interaction.user, {
+			self: true,
+			signal: claim.entry.abort.signal,
+		});
 	} finally {
 		releaseRecapLock(lockKey);
 	}
@@ -3714,9 +4222,10 @@ async function generateAndReplyRecap(interaction, targetUser, opts = {}) {
 	const signal = opts.signal || undefined;
 
 	let done = false;
-	const avatarUrl = typeof targetUser.displayAvatarURL === 'function'
-		? targetUser.displayAvatarURL({ size: 256, extension: 'png' })
-		: undefined;
+	const avatarUrl =
+		typeof targetUser.displayAvatarURL === 'function'
+			? targetUser.displayAvatarURL({ size: 256, extension: 'png' })
+			: undefined;
 	const username = targetUser.username;
 	// Smooth time-based progress. The bar climbs from ~5% to 99% over
 	// EXPECTED_MS using easeOutQuad so it looks alive early and creeps the
@@ -3732,19 +4241,27 @@ async function generateAndReplyRecap(interaction, targetUser, opts = {}) {
 		const clamped = Math.max(0, Math.min(99, Math.round(pct)));
 		if (clamped === lastPct) return;
 		lastPct = clamped;
-		const stage = RECAP_PROGRESS_STAGES[Math.min(stageIdx, RECAP_PROGRESS_STAGES.length - 1)];
+		const stage =
+			RECAP_PROGRESS_STAGES[
+				Math.min(stageIdx, RECAP_PROGRESS_STAGES.length - 1)
+			];
 		const filled = Math.round(clamped / 10);
 		const bar = '█'.repeat(filled) + '░'.repeat(10 - filled);
 		const embed = new EmbedBuilder()
 			.setColor(0x7c3aed)
-			.setTitle(self ? '🎁 Membuat Recap Kamu...' : `🔍 Mengambil Recap ${username || userId}...`)
+			.setTitle(
+				self
+					? '🎁 Membuat Recap Kamu...'
+					: `🔍 Mengambil Recap ${username || userId}...`,
+			)
 			.setDescription(`${stage}\n\`${bar}\` ${clamped}%`);
 		await interaction.editReply({ embeds: [embed] }).catch(() => {});
 	};
-	const stageForElapsed = (elapsed) => Math.min(
-		RECAP_PROGRESS_STAGES.length - 1,
-		Math.floor((elapsed / EXPECTED_MS) * RECAP_PROGRESS_STAGES.length),
-	);
+	const stageForElapsed = (elapsed) =>
+		Math.min(
+			RECAP_PROGRESS_STAGES.length - 1,
+			Math.floor((elapsed / EXPECTED_MS) * RECAP_PROGRESS_STAGES.length),
+		);
 	const tick = async () => {
 		if (done) return;
 		const elapsed = Date.now() - startedAt;
@@ -3753,23 +4270,35 @@ async function generateAndReplyRecap(interaction, targetUser, opts = {}) {
 		await renderProgress(eased * 99, stageForElapsed(elapsed));
 	};
 	await renderProgress(5, 0);
-	const timer = setInterval(() => { tick().catch(() => {}); }, 700);
+	const timer = setInterval(() => {
+		tick().catch(() => {});
+	}, 700);
 
 	try {
-		const data = await proxyInternal(`/admin/internal/recap/${userId}`, 'POST', { avatarUrl, username, interactive: true }, { signal });
+		const data = await proxyInternal(
+			`/admin/internal/recap/${userId}`,
+			'POST',
+			{ avatarUrl, username, interactive: true },
+			{ signal },
+		);
 		done = true;
 		clearInterval(timer);
 
 		const s = data.stats || {};
 		const totals = s.totals || {};
 		const persona = (data.narrative && data.narrative.persona) || {};
-		const tokenQuery = data.shareToken ? `?t=${encodeURIComponent(data.shareToken)}` : '';
+		const tokenQuery = data.shareToken
+			? `?t=${encodeURIComponent(data.shareToken)}`
+			: '';
 		const recapUrl = `${RECAP_PUBLIC_BASE_URL}/recap/${encodeURIComponent(data.apiKeyName || username || userId)}${tokenQuery}`;
 
 		const rankReq = (data.rank && data.rank.requests) || 0;
 		const rankTok = (data.rank && data.rank.tokens) || 0;
 		const fav = (s.models && s.models.favorite) || '-';
-		const hr = s.activity && s.activity.mostActiveHour ? `${s.activity.mostActiveHour.hour}:00 WIB` : '-';
+		const hr =
+			s.activity && s.activity.mostActiveHour
+				? `${s.activity.mostActiveHour.hour}:00 WIB`
+				: '-';
 
 		const embed = new EmbedBuilder()
 			.setColor(0xec4899)
@@ -3778,25 +4307,58 @@ async function generateAndReplyRecap(interaction, targetUser, opts = {}) {
 				`**${persona.title || 'Coder'}** — ${persona.subtitle || ''}`,
 			)
 			.addFields(
-				{ name: '📨 Request', value: fmtRecapNum(totals.requests), inline: true },
-				{ name: '🪙 Total Token', value: fmtRecapNum(totals.totalTokens), inline: true },
-				{ name: '🏆 Peringkat Req', value: rankReq ? `#${rankReq}` : '-', inline: true },
-				{ name: '📥 Input', value: fmtRecapNum(totals.inputTokens), inline: true },
-				{ name: '📤 Output', value: fmtRecapNum(totals.outputTokens), inline: true },
-				{ name: '🥇 Peringkat Token', value: rankTok ? `#${rankTok}` : '-', inline: true },
+				{
+					name: '📨 Request',
+					value: fmtRecapNum(totals.requests),
+					inline: true,
+				},
+				{
+					name: '🪙 Total Token',
+					value: fmtRecapNum(totals.totalTokens),
+					inline: true,
+				},
+				{
+					name: '🏆 Peringkat Req',
+					value: rankReq ? `#${rankReq}` : '-',
+					inline: true,
+				},
+				{
+					name: '📥 Input',
+					value: fmtRecapNum(totals.inputTokens),
+					inline: true,
+				},
+				{
+					name: '📤 Output',
+					value: fmtRecapNum(totals.outputTokens),
+					inline: true,
+				},
+				{
+					name: '🥇 Peringkat Token',
+					value: rankTok ? `#${rankTok}` : '-',
+					inline: true,
+				},
 				{ name: '⭐ Model Favorit', value: String(fav), inline: true },
 				{ name: '🕐 Jam Sibuk', value: hr, inline: true },
 			)
-			.setFooter({ text: self ? 'Buka recap web buat kasih testimoni • pesan ini hilang dalam 60 detik' : 'Pesan ini hilang dalam 60 detik' });
+			.setFooter({
+				text: self
+					? 'Buka recap web buat kasih testimoni • pesan ini hilang dalam 60 detik'
+					: 'Pesan ini hilang dalam 60 detik',
+			});
 		if (avatarUrl) embed.setThumbnail(avatarUrl);
 
 		const row = new ActionRowBuilder().addComponents(
-			new ButtonBuilder().setLabel('🎬 Buka Recap (Animasi)').setStyle(ButtonStyle.Link).setURL(recapUrl),
+			new ButtonBuilder()
+				.setLabel('🎬 Buka Recap (Animasi)')
+				.setStyle(ButtonStyle.Link)
+				.setURL(recapUrl),
 		);
 
 		await interaction.editReply({ embeds: [embed], components: [row] });
 		// Auto-delete the ephemeral after 60s.
-		setTimeout(() => { interaction.deleteReply().catch(() => {}); }, 60000);
+		setTimeout(() => {
+			interaction.deleteReply().catch(() => {});
+		}, 60000);
 	} catch (err) {
 		done = true;
 		clearInterval(timer);
@@ -3804,13 +4366,18 @@ async function generateAndReplyRecap(interaction, targetUser, opts = {}) {
 		if (/AI busy|busy|sibuk/i.test(err.message)) {
 			msg = 'Server lagi sibuk, coba lagi nanti ya 🙏';
 		} else if (/not found/i.test(err.message)) {
-			msg = self ? 'Kamu belum punya API key. Verifikasi dulu untuk dapat recap ya!' : 'User tersebut tidak punya API key / data recap.';
+			msg = self
+				? 'Kamu belum punya API key. Verifikasi dulu untuk dapat recap ya!'
+				: 'User tersebut tidak punya API key / data recap.';
 		} else if (/fetch failed|ECONNRESET|socket hang up/i.test(err.message)) {
-			msg = 'Koneksi ke server putus saat generate recap. Coba lagi ya — biasanya berhasil di percobaan kedua 🙏';
+			msg =
+				'Koneksi ke server putus saat generate recap. Coba lagi ya — biasanya berhasil di percobaan kedua 🙏';
 		} else {
 			msg = `Gagal membuat recap: ${err.message}`;
 		}
-		await interaction.editReply({ content: `⚠️ ${msg}`, embeds: [], components: [] }).catch(() => {});
+		await interaction
+			.editReply({ content: `⚠️ ${msg}`, embeds: [], components: [] })
+			.catch(() => {});
 	}
 }
 
@@ -3819,15 +4386,20 @@ async function handleRecapDebugSelf(interaction) {
 	const lockKey = getRecapLockKey(interaction.user.id, interaction.user.id);
 	const claim = tryClaimRecapLock(lockKey);
 	if (!claim.ok) {
-		await interaction.reply({
-			content: `⏳ Recap kamu sedang diproses, coba lagi dalam **${claim.remaining} detik** ya 🙏`,
-			ephemeral: true,
-		}).catch(() => {});
+		await interaction
+			.reply({
+				content: `⏳ Recap kamu sedang diproses, coba lagi dalam **${claim.remaining} detik** ya 🙏`,
+				ephemeral: true,
+			})
+			.catch(() => {});
 		return;
 	}
 	try {
 		await interaction.deferReply({ ephemeral: true });
-		await generateAndReplyRecap(interaction, interaction.user, { self: true, signal: claim.entry.abort.signal });
+		await generateAndReplyRecap(interaction, interaction.user, {
+			self: true,
+			signal: claim.entry.abort.signal,
+		});
 	} finally {
 		releaseRecapLock(lockKey);
 	}
@@ -3835,7 +4407,9 @@ async function handleRecapDebugSelf(interaction) {
 
 // Debug: open a modal to enter a user id to view someone else's recap.
 async function handleRecapDebugOtherButton(interaction) {
-	const modal = new ModalBuilder().setCustomId('recap_debug_other_modal').setTitle('🔍 Lihat Recap User');
+	const modal = new ModalBuilder()
+		.setCustomId('recap_debug_other_modal')
+		.setTitle('🔍 Lihat Recap User');
 	const input = new TextInputBuilder()
 		.setCustomId('discord_user_id')
 		.setLabel('Discord User ID')
@@ -3848,9 +4422,13 @@ async function handleRecapDebugOtherButton(interaction) {
 }
 
 async function handleRecapDebugOtherModal(interaction) {
-	const rawId = (interaction.fields.getTextInputValue('discord_user_id') || '').trim().replace(/[^0-9]/g, '');
+	const rawId = (interaction.fields.getTextInputValue('discord_user_id') || '')
+		.trim()
+		.replace(/[^0-9]/g, '');
 	if (!rawId) {
-		await interaction.reply({ content: '⚠️ User ID tidak valid.', ephemeral: true }).catch(() => {});
+		await interaction
+			.reply({ content: '⚠️ User ID tidak valid.', ephemeral: true })
+			.catch(() => {});
 		return;
 	}
 	// Try to resolve username/avatar for nicer output (optional).
@@ -3858,19 +4436,26 @@ async function handleRecapDebugOtherModal(interaction) {
 	try {
 		const u = await client.users.fetch(rawId);
 		targetUser = u;
-	} catch { /* user not reachable; proceed with id only */ }
+	} catch {
+		/* user not reachable; proceed with id only */
+	}
 	const lockKey = getRecapLockKey(interaction.user.id, targetUser.id);
 	const claim = tryClaimRecapLock(lockKey);
 	if (!claim.ok) {
-		await interaction.reply({
-			content: `⏳ Recap untuk <@${targetUser.id}> sedang diproses, coba lagi dalam **${claim.remaining} detik** ya 🙏`,
-			ephemeral: true,
-		}).catch(() => {});
+		await interaction
+			.reply({
+				content: `⏳ Recap untuk <@${targetUser.id}> sedang diproses, coba lagi dalam **${claim.remaining} detik** ya 🙏`,
+				ephemeral: true,
+			})
+			.catch(() => {});
 		return;
 	}
 	try {
 		await interaction.deferReply({ ephemeral: true });
-		await generateAndReplyRecap(interaction, targetUser, { self: false, signal: claim.entry.abort.signal });
+		await generateAndReplyRecap(interaction, targetUser, {
+			self: false,
+			signal: claim.entry.abort.signal,
+		});
 	} finally {
 		releaseRecapLock(lockKey);
 	}
@@ -3878,17 +4463,32 @@ async function handleRecapDebugOtherModal(interaction) {
 
 // ─── Testimonial viewer: rotating ephemeral, 5s cycle, 60s auto-expire ───────
 function buildTestimonialEmbed(t) {
-	const stars = '★'.repeat(Math.max(0, Math.min(5, t.stars || 0))) + '☆'.repeat(5 - Math.max(0, Math.min(5, t.stars || 0)));
+	const stars =
+		'★'.repeat(Math.max(0, Math.min(5, t.stars || 0))) +
+		'☆'.repeat(5 - Math.max(0, Math.min(5, t.stars || 0)));
 	const rankReq = t.rankRequests || 0;
 	const rankTok = t.rankTokens || 0;
-	const rankStr = [rankReq ? `🏆 #${rankReq} req` : null, rankTok ? `🪙 #${rankTok} tok` : null].filter(Boolean).join(' • ') || 'peserta aktif';
+	const rankStr =
+		[
+			rankReq ? `🏆 #${rankReq} req` : null,
+			rankTok ? `🪙 #${rankTok} tok` : null,
+		]
+			.filter(Boolean)
+			.join(' • ') || 'peserta aktif';
 	const embed = new EmbedBuilder()
 		.setColor(0xf59e0b)
-		.setAuthor({ name: t.discordUsername || 'Anonim', iconURL: t.avatarUrl || undefined })
+		.setAuthor({
+			name: t.discordUsername || 'Anonim',
+			iconURL: t.avatarUrl || undefined,
+		})
 		.setTitle(`${stars}`)
-		.setDescription(t.body ? `“${String(t.body).slice(0, 500)}”` : '_(tanpa teks)_')
+		.setDescription(
+			t.body ? `“${String(t.body).slice(0, 500)}”` : '_(tanpa teks)_',
+		)
 		.addFields({ name: 'Peringkat', value: rankStr, inline: true })
-		.setFooter({ text: 'Testimoni bergilir tiap 5 detik • hilang dalam 60 detik' });
+		.setFooter({
+			text: 'Testimoni bergilir tiap 5 detik • hilang dalam 60 detik',
+		});
 	return embed;
 }
 
@@ -3898,24 +4498,36 @@ async function handleTestimonialViewer(interaction) {
 	try {
 		data = await proxyInternal('/admin/internal/recap/testimonials');
 	} catch (err) {
-		await interaction.editReply({ content: `⚠️ Gagal ambil testimoni: ${err.message}` }).catch(() => {});
+		await interaction
+			.editReply({ content: `⚠️ Gagal ambil testimoni: ${err.message}` })
+			.catch(() => {});
 		return;
 	}
 	const list = (data && data.testimonials) || [];
 	if (!list.length) {
-		await interaction.editReply({ content: '💬 Belum ada testimoni bulan ini. Jadilah yang pertama!' }).catch(() => {});
-		setTimeout(() => { interaction.deleteReply().catch(() => {}); }, 60000);
+		await interaction
+			.editReply({
+				content: '💬 Belum ada testimoni bulan ini. Jadilah yang pertama!',
+			})
+			.catch(() => {});
+		setTimeout(() => {
+			interaction.deleteReply().catch(() => {});
+		}, 60000);
 		return;
 	}
 
 	// Shuffle once, then rotate through the list (random-ish order).
 	const order = [...list].sort(() => Math.random() - 0.5);
 	let idx = 0;
-	await interaction.editReply({ embeds: [buildTestimonialEmbed(order[idx])] }).catch(() => {});
+	await interaction
+		.editReply({ embeds: [buildTestimonialEmbed(order[idx])] })
+		.catch(() => {});
 
 	const rotate = setInterval(() => {
 		idx = (idx + 1) % order.length;
-		interaction.editReply({ embeds: [buildTestimonialEmbed(order[idx])] }).catch(() => {});
+		interaction
+			.editReply({ embeds: [buildTestimonialEmbed(order[idx])] })
+			.catch(() => {});
 	}, 5000);
 
 	setTimeout(() => {
@@ -3928,7 +4540,9 @@ async function handleTestimonialViewer(interaction) {
 async function resolveAvatarsForLeaderboard(yearMonth) {
 	let lb;
 	try {
-		lb = await proxyInternal(`/admin/internal/recap/leaderboard${yearMonth ? `?yearMonth=${yearMonth}` : ''}`);
+		lb = await proxyInternal(
+			`/admin/internal/recap/leaderboard${yearMonth ? `?yearMonth=${yearMonth}` : ''}`,
+		);
 	} catch (err) {
 		console.error('[recap] leaderboard fetch failed:', err.message);
 		return null;
@@ -3941,13 +4555,20 @@ async function resolveAvatarsForLeaderboard(yearMonth) {
 	for (const id of ids) {
 		try {
 			const user = await client.users.fetch(id);
-			avatars.push({ discordUserId: id, avatarUrl: user.displayAvatarURL({ size: 128, extension: 'png' }), username: user.username });
-		} catch { /* user may be unreachable */ }
+			avatars.push({
+				discordUserId: id,
+				avatarUrl: user.displayAvatarURL({ size: 128, extension: 'png' }),
+				username: user.username,
+			});
+		} catch {
+			/* user may be unreachable */
+		}
 	}
 	if (avatars.length) {
-		await proxyInternal('/admin/internal/recap/leaderboard-avatars', 'POST', { yearMonth: lb.yearMonth, avatars }).catch((e) =>
-			console.error('[recap] push avatars failed:', e.message),
-		);
+		await proxyInternal('/admin/internal/recap/leaderboard-avatars', 'POST', {
+			yearMonth: lb.yearMonth,
+			avatars,
+		}).catch((e) => console.error('[recap] push avatars failed:', e.message));
 	}
 	return lb;
 }
@@ -3957,7 +4578,11 @@ async function runDailyRecapJob(opts = {}) {
 	const label = skipIfToday ? 'pre-generate' : 'daily recap regeneration';
 	console.log(`[recap] Running ${label}...`);
 	let win = null;
-	try { win = await proxyInternal('/admin/internal/recap/window'); } catch { /* ignore */ }
+	try {
+		win = await proxyInternal('/admin/internal/recap/window');
+	} catch {
+		/* ignore */
+	}
 	const yearMonth = win ? win.yearMonth : undefined;
 
 	// Regenerate recap data for all users with a key. The 24h daily job
@@ -3972,7 +4597,8 @@ async function runDailyRecapJob(opts = {}) {
 		console.error('[recap] users fetch failed:', err.message);
 	}
 
-	let ok = 0, fail = 0;
+	let ok = 0,
+		fail = 0;
 	const errors = [];
 	for (const u of users) {
 		if (!u.discordUserId) continue;
@@ -3982,7 +4608,9 @@ async function runDailyRecapJob(opts = {}) {
 				const user = await client.users.fetch(u.discordUserId);
 				avatarUrl = user.displayAvatarURL({ size: 256, extension: 'png' });
 				username = user.username;
-			} catch { /* ignore avatar fetch */ }
+			} catch {
+				/* ignore avatar fetch */
+			}
 			await proxyInternal(`/admin/internal/recap/${u.discordUserId}`, 'POST', {
 				avatarUrl,
 				username,
@@ -3998,40 +4626,62 @@ async function runDailyRecapJob(opts = {}) {
 			if (errors.length < 5) errors.push(`${u.discordUserId}: ${err.message}`);
 		}
 	}
-	if (errors.length) console.error(`[recap] ${label} errors:`, errors.join(' | '));
+	if (errors.length)
+		console.error(`[recap] ${label} errors:`, errors.join(' | '));
 
 	const lb = await resolveAvatarsForLeaderboard(yearMonth);
 
 	// Debug LOG post: keep exactly ONE log message (edit in place, never pile up).
 	try {
-		const channel = await client.channels.fetch(RECAP_DEBUG_CHANNEL_ID).catch(() => null);
+		const channel = await client.channels
+			.fetch(RECAP_DEBUG_CHANNEL_ID)
+			.catch(() => null);
 		if (channel && channel.isTextBased()) {
-			const topReq = (lb && lb.byRequests || []).slice(0, 5)
-				.map((r) => `**${r.rank}.** ${r.discordUsername || r.discordUserId || '?'} — ${fmtRecapNum(r.value)} req`).join('\n') || '_kosong_';
-			const sampleName = lb && lb.byRequests && lb.byRequests[0] ? (lb.byRequests[0].discordUsername || '') : '';
+			const topReq =
+				((lb && lb.byRequests) || [])
+					.slice(0, 5)
+					.map(
+						(r) =>
+							`**${r.rank}.** ${r.discordUsername || r.discordUserId || '?'} — ${fmtRecapNum(r.value)} req`,
+					)
+					.join('\n') || '_kosong_';
+			const sampleName =
+				lb && lb.byRequests && lb.byRequests[0]
+					? lb.byRequests[0].discordUsername || ''
+					: '';
 			const embed = new EmbedBuilder()
 				.setColor(0x22d3ee)
 				.setTitle('🛠️ Recap Debug — Daily Regenerate')
 				.setDescription(
 					`Bulan target: **${win ? win.monthLabel : '-'}** (${yearMonth || '-'})\n` +
-					`Window: ${win ? (win.isOpen ? '🟢 OPEN' : '🔒 CLOSED') : '?'}\n` +
-					`Regenerate: ✅ ${ok} sukses, ❌ ${fail} gagal (dari ${users.length} user)`,
+						`Window: ${win ? (win.isOpen ? '🟢 OPEN' : '🔒 CLOSED') : '?'}\n` +
+						`Regenerate: ✅ ${ok} sukses, ❌ ${fail} gagal (dari ${users.length} user)`,
 				)
 				.addFields(
 					{ name: '🏆 Top 5 Request', value: topReq },
-					{ name: '🔗 Contoh Link', value: sampleName ? `${RECAP_PUBLIC_BASE_URL}/recap/${encodeURIComponent(sampleName)}` : '_tidak ada_' },
+					{
+						name: '🔗 Contoh Link',
+						value: sampleName
+							? `${RECAP_PUBLIC_BASE_URL}/recap/${encodeURIComponent(sampleName)}`
+							: '_tidak ada_',
+					},
 				)
 				.setFooter({ text: discordTime(new Date(), 'F') });
 
 			// Edit existing log message if present, else create one.
 			let logMsg = recapState.debugLogMessageId
-				? await channel.messages.fetch(recapState.debugLogMessageId).catch(() => null)
+				? await channel.messages
+						.fetch(recapState.debugLogMessageId)
+						.catch(() => null)
 				: null;
 			if (logMsg) {
 				await logMsg.edit({ embeds: [embed] }).catch(() => {});
 			} else {
 				const sent = await channel.send({ embeds: [embed] }).catch(() => null);
-				if (sent) { recapState.debugLogMessageId = sent.id; await saveRecapState(); }
+				if (sent) {
+					recapState.debugLogMessageId = sent.id;
+					await saveRecapState();
+				}
 			}
 		}
 	} catch (err) {
@@ -4053,11 +4703,17 @@ async function runDailyRecapJob(opts = {}) {
  */
 async function maybeFirePregen() {
 	let win = null;
-	try { win = await proxyInternal('/admin/internal/recap/window'); } catch { return; }
+	try {
+		win = await proxyInternal('/admin/internal/recap/window');
+	} catch {
+		return;
+	}
 	if (!win || !win.isOpen) return;
 	if (recapState.pregenFiredYearMonth === win.yearMonth) return; // already fired for this cycle
 
-	console.log(`[recap] Window opened for ${win.yearMonth}, pre-generating all active keys...`);
+	console.log(
+		`[recap] Window opened for ${win.yearMonth}, pre-generating all active keys...`,
+	);
 	recapState.pregenFiredYearMonth = win.yearMonth;
 	await saveRecapState().catch(() => {});
 
@@ -4073,7 +4729,13 @@ async function maybeFirePregen() {
 async function refreshRankingEmbeds() {
 	if (!TOKITO_CHANNEL_ID) return;
 	const { messages } = rankingState;
-	if (!messages.modelByRequests || !messages.modelByTokens || !messages.userByRequests || !messages.userByTokens) return;
+	if (
+		!messages.modelByRequests ||
+		!messages.modelByTokens ||
+		!messages.userByRequests ||
+		!messages.userByTokens
+	)
+		return;
 
 	let ranking;
 	try {
@@ -4083,14 +4745,18 @@ async function refreshRankingEmbeds() {
 		return;
 	}
 
-	const channel = await client.channels.fetch(TOKITO_CHANNEL_ID).catch(() => null);
+	const channel = await client.channels
+		.fetch(TOKITO_CHANNEL_ID)
+		.catch(() => null);
 	if (!channel || !channel.isTextBased()) return;
 
 	const { today, month } = ranking;
 
 	// Embed 1: Top Models by Requests
 	try {
-		const msg = await channel.messages.fetch(messages.modelByRequests).catch(() => null);
+		const msg = await channel.messages
+			.fetch(messages.modelByRequests)
+			.catch(() => null);
 		if (msg) {
 			const embed = buildRankingEmbed(
 				'🏆 Top Models — By Requests',
@@ -4101,11 +4767,15 @@ async function refreshRankingEmbeds() {
 			);
 			await msg.edit({ embeds: [embed] });
 		}
-	} catch (err) { console.error('[ranking] Edit modelByRequests failed:', err.message); }
+	} catch (err) {
+		console.error('[ranking] Edit modelByRequests failed:', err.message);
+	}
 
 	// Embed 2: Top Models by Tokens
 	try {
-		const msg = await channel.messages.fetch(messages.modelByTokens).catch(() => null);
+		const msg = await channel.messages
+			.fetch(messages.modelByTokens)
+			.catch(() => null);
 		if (msg) {
 			const embed = buildRankingEmbed(
 				'🏆 Top Models — By Tokens',
@@ -4116,11 +4786,15 @@ async function refreshRankingEmbeds() {
 			);
 			await msg.edit({ embeds: [embed] });
 		}
-	} catch (err) { console.error('[ranking] Edit modelByTokens failed:', err.message); }
+	} catch (err) {
+		console.error('[ranking] Edit modelByTokens failed:', err.message);
+	}
 
 	// Embed 3: Top Users by Requests
 	try {
-		const msg = await channel.messages.fetch(messages.userByRequests).catch(() => null);
+		const msg = await channel.messages
+			.fetch(messages.userByRequests)
+			.catch(() => null);
 		if (msg) {
 			const embed = buildRankingEmbed(
 				'👤 Top Users — By Requests',
@@ -4129,7 +4803,10 @@ async function refreshRankingEmbeds() {
 				month.topUsersByRequests,
 				(item) => {
 					let name = item.discordUsername || 'Unknown';
-					if (item.discordUserId && item.discordUsername === item.discordUserId) {
+					if (
+						item.discordUserId &&
+						item.discordUsername === item.discordUserId
+					) {
 						name = `<@${item.discordUserId}>`;
 					}
 					const suffix = item.isTrial ? ' 🎁' : '';
@@ -4138,11 +4815,15 @@ async function refreshRankingEmbeds() {
 			);
 			await msg.edit({ embeds: [embed] });
 		}
-	} catch (err) { console.error('[ranking] Edit userByRequests failed:', err.message); }
+	} catch (err) {
+		console.error('[ranking] Edit userByRequests failed:', err.message);
+	}
 
 	// Embed 4: Top Users by Tokens
 	try {
-		const msg = await channel.messages.fetch(messages.userByTokens).catch(() => null);
+		const msg = await channel.messages
+			.fetch(messages.userByTokens)
+			.catch(() => null);
 		if (msg) {
 			const embed = buildRankingEmbed(
 				'👤 Top Users — By Tokens',
@@ -4151,7 +4832,10 @@ async function refreshRankingEmbeds() {
 				month.topUsersByTokens,
 				(item) => {
 					let name = item.discordUsername || 'Unknown';
-					if (item.discordUserId && item.discordUsername === item.discordUserId) {
+					if (
+						item.discordUserId &&
+						item.discordUsername === item.discordUserId
+					) {
 						name = `<@${item.discordUserId}>`;
 					}
 					const suffix = item.isTrial ? ' 🎁' : '';
@@ -4160,15 +4844,21 @@ async function refreshRankingEmbeds() {
 			);
 			await msg.edit({ embeds: [embed] });
 		}
-	} catch (err) { console.error('[ranking] Edit userByTokens failed:', err.message); }
+	} catch (err) {
+		console.error('[ranking] Edit userByTokens failed:', err.message);
+	}
 
 	// Embed 5: Search User (with refreshed limits)
 	try {
-		const msg = await channel.messages.fetch(messages.searchUser).catch(() => null);
+		const msg = await channel.messages
+			.fetch(messages.searchUser)
+			.catch(() => null);
 		if (msg) {
 			await msg.edit({ embeds: [await buildSearchEmbed()] });
 		}
-	} catch (err) { console.error('[ranking] Edit searchUser failed:', err.message); }
+	} catch (err) {
+		console.error('[ranking] Edit searchUser failed:', err.message);
+	}
 }
 
 // ─── Ensure Ranking Messages (check/repair/create) ────────────────────────────
@@ -4189,7 +4879,13 @@ async function ensureRankingMessages() {
 
 	// Check if all 5 messages exist, are from this bot, and are in correct order
 	const { messages } = rankingState;
-	const msgIds = [messages.modelByRequests, messages.modelByTokens, messages.userByRequests, messages.userByTokens, messages.searchUser];
+	const msgIds = [
+		messages.modelByRequests,
+		messages.modelByTokens,
+		messages.userByRequests,
+		messages.userByTokens,
+		messages.searchUser,
+	];
 	const allExist = msgIds.every(Boolean);
 
 	let valid = false;
@@ -4197,13 +4893,19 @@ async function ensureRankingMessages() {
 
 	if (allExist) {
 		try {
-			existingMsgs = await Promise.all(msgIds.map((id) => channel.messages.fetch(id).catch(() => null)));
+			existingMsgs = await Promise.all(
+				msgIds.map((id) => channel.messages.fetch(id).catch(() => null)),
+			);
 			// All must exist, be from bot, and be in ascending time order
-			const allFound = existingMsgs.every((m) => m && m.author.id === client.user.id);
+			const allFound = existingMsgs.every(
+				(m) => m && m.author.id === client.user.id,
+			);
 			if (allFound) {
 				// Check order: each message must be newer than the previous
 				const timestamps = existingMsgs.map((m) => m.createdTimestamp);
-				const inOrder = timestamps.every((t, i) => i === 0 || t > timestamps[i - 1]);
+				const inOrder = timestamps.every(
+					(t, i) => i === 0 || t > timestamps[i - 1],
+				);
 				valid = inOrder;
 			}
 		} catch (err) {
@@ -4224,7 +4926,10 @@ async function ensureRankingMessages() {
 		}
 
 		// Initial embed content (will be refreshed right after)
-		const placeholder = new EmbedBuilder().setTitle('⏳ Loading...').setDescription('Data sedang dimuat...').setColor(0x888888);
+		const placeholder = new EmbedBuilder()
+			.setTitle('⏳ Loading...')
+			.setDescription('Data sedang dimuat...')
+			.setColor(0x888888);
 
 		const m1 = await channel.send({ embeds: [placeholder] });
 		const m2 = await channel.send({ embeds: [placeholder] });
@@ -4250,14 +4955,18 @@ async function ensureRankingMessages() {
 	}
 
 	// Immediately refresh ranking data
-	await refreshRankingEmbeds().catch((e) => console.error('[ranking] Initial refresh failed:', e.message));
+	await refreshRankingEmbeds().catch((e) =>
+		console.error('[ranking] Initial refresh failed:', e.message),
+	);
 }
 
 // ─── Trial Panel ─────────────────────────────────────────────────────────────
 function buildTrialPanelEmbed(cfg) {
 	const embedCfg = cfg?.trialEmbedConfig || {};
 	const title = embedCfg.title || '🎁 Trial API Access — Klaim Sekarang!';
-	const description = embedCfg.description || 'Klik tombol di bawah untuk klaim trial API proxy Groupy.';
+	const description =
+		embedCfg.description ||
+		'Klik tombol di bawah untuk klaim trial API proxy Groupy.';
 	const color = embedCfg.color || 0x57f287;
 	const footer = embedCfg.footer || 'Groupy Proxy Trial';
 	return new EmbedBuilder()
@@ -4308,13 +5017,17 @@ async function ensureTrialPanelMessage() {
 			return;
 		}
 
-		const channel = await client.channels.fetch(TOKITO_CHANNEL_ID).catch((err) => {
-			console.error('[trial] Failed to fetch channel:', err.message);
-			return null;
-		});
+		const channel = await client.channels
+			.fetch(TOKITO_CHANNEL_ID)
+			.catch((err) => {
+				console.error('[trial] Failed to fetch channel:', err.message);
+				return null;
+			});
 		if (!channel || !channel.isTextBased()) return;
 
-		const recent = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+		const recent = await channel.messages
+			.fetch({ limit: 50 })
+			.catch(() => null);
 		const trialPanels = recent
 			? [...recent.values()].filter(isTrialPanelMessage)
 			: [];
@@ -4329,7 +5042,9 @@ async function ensureTrialPanelMessage() {
 				await msg.delete().catch(() => {});
 			}
 			if (cfg.trialPanelMessageId) {
-				const saved = await channel.messages.fetch(cfg.trialPanelMessageId).catch(() => null);
+				const saved = await channel.messages
+					.fetch(cfg.trialPanelMessageId)
+					.catch(() => null);
 				if (saved && saved.author?.id === client.user.id) {
 					await saved.delete().catch(() => {});
 				}
@@ -4404,12 +5119,16 @@ async function handleTrialClaimButton(interaction) {
 	try {
 		cfg = await proxyInternal('/admin/internal/trial-panel-config');
 	} catch (err) {
-		await interaction.editReply({ content: `❌ Gagal memuat config trial: ${err.message}` });
+		await interaction.editReply({
+			content: `❌ Gagal memuat config trial: ${err.message}`,
+		});
 		return;
 	}
 
 	if (!cfg.trialEnabled) {
-		await interaction.editReply({ content: '❌ Mode trial sedang **nonaktif**.' });
+		await interaction.editReply({
+			content: '❌ Mode trial sedang **nonaktif**.',
+		});
 		return;
 	}
 
@@ -4431,7 +5150,8 @@ async function handleTrialClaimButton(interaction) {
 	const access = await getMemberToolAccess(interaction.member);
 	if (access.hasPhantomKey) {
 		await interaction.editReply({
-			content: '❌ Anda sudah punya API **key aktif**. Trial hanya untuk member yang **belum verif AG** atau API key-nya **disabled**.',
+			content:
+				'❌ Anda sudah punya API **key aktif**. Trial hanya untuk member yang **belum verif AG** atau API key-nya **disabled**.',
 		});
 		return;
 	}
@@ -4443,7 +5163,10 @@ async function handleTrialClaimButton(interaction) {
 			hasRequiredRole,
 		});
 
-		const models = (result.rules?.models || []).slice(0, 15).map((m) => `\`${m}\``).join('\n');
+		const models = (result.rules?.models || [])
+			.slice(0, 15)
+			.map((m) => `\`${m}\``)
+			.join('\n');
 		const rulesText =
 			`**Endpoint:** \`${result.endpoint}\`\n` +
 			`**Authorization:** \`Bearer ${result.apiKey}\`\n\n` +
@@ -4464,12 +5187,18 @@ async function handleTrialClaimButton(interaction) {
 	} catch (err) {
 		const msg = err.message || 'Unknown error';
 		if (msg.includes('trial_already_used') || msg.includes('409')) {
-			await interaction.editReply({ content: '❌ Anda sudah pernah klaim trial. Satu akun hanya bisa trial sesuai limit yang berlaku.' });
+			await interaction.editReply({
+				content:
+					'❌ Anda sudah pernah klaim trial. Satu akun hanya bisa trial sesuai limit yang berlaku.',
+			});
 		} else if (msg.includes('trial_already_active')) {
-			await interaction.editReply({ content: '❌ Anda masih punya trial aktif.' });
+			await interaction.editReply({
+				content: '❌ Anda masih punya trial aktif.',
+			});
 		} else if (msg.includes('phantom_member')) {
 			await interaction.editReply({
-				content: '❌ Anda sudah punya API **key aktif**. Trial hanya untuk member yang **belum verif AG** atau API key-nya **disabled**.',
+				content:
+					'❌ Anda sudah punya API **key aktif**. Trial hanya untuk member yang **belum verif AG** atau API key-nya **disabled**.',
 			});
 		} else {
 			await interaction.editReply({ content: `❌ Gagal klaim trial: ${msg}` });
@@ -4479,11 +5208,27 @@ async function handleTrialClaimButton(interaction) {
 
 function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 	const {
-		discordUsername, isActive, keyPrefix, today, month, promptLimit, promptLimitWindow,
-		promptUsed, modelUsage, perModelPromptLimit, perModelPromptLimitWindow,
-		dailyTokenLimit, monthlyTokenLimit, dailyTokensUsed, monthlyTokensUsed,
-		dailyInputTokenLimit, dailyOutputTokenLimit, dailyInputUsed, dailyOutputUsed,
-		isTrial, trial,
+		discordUsername,
+		isActive,
+		keyPrefix,
+		today,
+		month,
+		promptLimit,
+		promptLimitWindow,
+		promptUsed,
+		modelUsage,
+		perModelPromptLimit,
+		perModelPromptLimitWindow,
+		dailyTokenLimit,
+		monthlyTokenLimit,
+		dailyTokensUsed,
+		monthlyTokensUsed,
+		dailyInputTokenLimit,
+		dailyOutputTokenLimit,
+		dailyInputUsed,
+		dailyOutputUsed,
+		isTrial,
+		trial,
 	} = data;
 	const displayName = discordUsername || `User ${discordUserId}`;
 
@@ -4493,43 +5238,75 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 		return ` — Resets <t:${unix}:t> (<t:${unix}:R>)`;
 	}
 
-	const globalLimitStr = promptLimit > 0
-		? `**${promptUsed} / ${promptLimit}** req (${promptLimitWindow})` + (promptUsed >= promptLimit ? ' 🔴' : '') + formatResetTime(data.promptResetAt)
-		: '**Unlimited**';
+	const globalLimitStr =
+		promptLimit > 0
+			? `**${promptUsed} / ${promptLimit}** req (${promptLimitWindow})` +
+				(promptUsed >= promptLimit ? ' 🔴' : '') +
+				formatResetTime(data.promptResetAt)
+			: '**Unlimited**';
 
 	let modelLimitStr = '';
 	if (modelUsage && modelUsage.length > 0) {
 		const activeModels = modelUsage.filter((m) => m.used > 0 || m.limit > 0);
 		if (activeModels.length > 0) {
-			modelLimitStr = activeModels.map((m) =>
-				`- \`${m.model}\`: **${m.used} / ${m.limit > 0 ? m.limit : '∞'}**` + (m.limit > 0 && m.used >= m.limit ? ' 🔴' : '') + formatResetTime(m.resetAt),
-			).join('\n');
+			modelLimitStr = activeModels
+				.map(
+					(m) =>
+						`- \`${m.model}\`: **${m.used} / ${m.limit > 0 ? m.limit : '∞'}**` +
+						(m.limit > 0 && m.used >= m.limit ? ' 🔴' : '') +
+						formatResetTime(m.resetAt),
+				)
+				.join('\n');
 		} else {
-			modelLimitStr = perModelPromptLimit > 0 ? `Default: **${perModelPromptLimit}** req (${perModelPromptLimitWindow})` : '**Unlimited**';
+			modelLimitStr =
+				perModelPromptLimit > 0
+					? `Default: **${perModelPromptLimit}** req (${perModelPromptLimitWindow})`
+					: '**Unlimited**';
 		}
 	} else {
-		modelLimitStr = perModelPromptLimit > 0 ? `Default: **${perModelPromptLimit}** req (${perModelPromptLimitWindow})` : '**Unlimited**';
+		modelLimitStr =
+			perModelPromptLimit > 0
+				? `Default: **${perModelPromptLimit}** req (${perModelPromptLimitWindow})`
+				: '**Unlimited**';
 	}
 
-	const dailyTokenStr = dailyTokenLimit > 0
-		? `**${formatTokens(dailyTokensUsed)} / ${formatTokens(dailyTokenLimit)}**` + (dailyTokensUsed >= dailyTokenLimit ? ' 🔴' : '') + formatResetTime(data.dailyResetAt)
-		: `**${formatTokens(dailyTokensUsed)} / Unlimited**` + formatResetTime(data.dailyResetAt);
-	const monthlyTokenStr = monthlyTokenLimit > 0
-		? `**${formatTokens(monthlyTokensUsed)} / ${formatTokens(monthlyTokenLimit)}**` + (monthlyTokensUsed >= monthlyTokenLimit ? ' 🔴' : '') + formatResetTime(data.monthlyResetAt)
-		: `**${formatTokens(monthlyTokensUsed)} / Unlimited**` + formatResetTime(data.monthlyResetAt);
-	const dailyInputStr = dailyInputTokenLimit > 0
-		? `**${formatTokens(dailyInputUsed)} / ${formatTokens(dailyInputTokenLimit)}**` + (dailyInputUsed >= dailyInputTokenLimit ? ' 🔴' : '') + formatResetTime(data.dailyResetAt)
-		: `**${formatTokens(dailyInputUsed)} / Unlimited**` + formatResetTime(data.dailyResetAt);
-	const dailyOutputStr = dailyOutputTokenLimit > 0
-		? `**${formatTokens(dailyOutputUsed)} / ${formatTokens(dailyOutputTokenLimit)}**` + (dailyOutputUsed >= dailyOutputTokenLimit ? ' 🔴' : '') + formatResetTime(data.dailyResetAt)
-		: `**${formatTokens(dailyOutputUsed)} / Unlimited**` + formatResetTime(data.dailyResetAt);
+	const dailyTokenStr =
+		dailyTokenLimit > 0
+			? `**${formatTokens(dailyTokensUsed)} / ${formatTokens(dailyTokenLimit)}**` +
+				(dailyTokensUsed >= dailyTokenLimit ? ' 🔴' : '') +
+				formatResetTime(data.dailyResetAt)
+			: `**${formatTokens(dailyTokensUsed)} / Unlimited**` +
+				formatResetTime(data.dailyResetAt);
+	const monthlyTokenStr =
+		monthlyTokenLimit > 0
+			? `**${formatTokens(monthlyTokensUsed)} / ${formatTokens(monthlyTokenLimit)}**` +
+				(monthlyTokensUsed >= monthlyTokenLimit ? ' 🔴' : '') +
+				formatResetTime(data.monthlyResetAt)
+			: `**${formatTokens(monthlyTokensUsed)} / Unlimited**` +
+				formatResetTime(data.monthlyResetAt);
+	const dailyInputStr =
+		dailyInputTokenLimit > 0
+			? `**${formatTokens(dailyInputUsed)} / ${formatTokens(dailyInputTokenLimit)}**` +
+				(dailyInputUsed >= dailyInputTokenLimit ? ' 🔴' : '') +
+				formatResetTime(data.dailyResetAt)
+			: `**${formatTokens(dailyInputUsed)} / Unlimited**` +
+				formatResetTime(data.dailyResetAt);
+	const dailyOutputStr =
+		dailyOutputTokenLimit > 0
+			? `**${formatTokens(dailyOutputUsed)} / ${formatTokens(dailyOutputTokenLimit)}**` +
+				(dailyOutputUsed >= dailyOutputTokenLimit ? ' 🔴' : '') +
+				formatResetTime(data.dailyResetAt)
+			: `**${formatTokens(dailyOutputUsed)} / Unlimited**` +
+				formatResetTime(data.dailyResetAt);
 
 	const isSelf = viewerUserId === discordUserId;
-	const keyDisplay = isSelf ? (data.key || `${keyPrefix}...`) : '[HIDDEN]';
+	const keyDisplay = isSelf ? data.key || `${keyPrefix}...` : '[HIDDEN]';
 
 	let trialBlock = '';
 	if (isTrial || trial?.isTrial) {
-		const exp = trial?.expiresAt ? `<t:${Math.floor(new Date(trial.expiresAt).getTime() / 1000)}:F>` : '—';
+		const exp = trial?.expiresAt
+			? `<t:${Math.floor(new Date(trial.expiresAt).getTime() / 1000)}:F>`
+			: '—';
 		trialBlock = `\n\n**🎁 Status Trial:** ${trial?.status || 'active'}\n**Berakhir:** ${exp}`;
 	}
 
@@ -4544,7 +5321,9 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 		if (p.topModels && p.topModels.length > 0) {
 			lines.push('\n**Top Models:**');
 			p.topModels.forEach((m) => {
-				lines.push(`\`${m.model}\` (${m.requests.toLocaleString()} req, ${formatTokens(m.tokens)} tok)`);
+				lines.push(
+					`\`${m.model}\` (${m.requests.toLocaleString()} req, ${formatTokens(m.tokens)} tok)`,
+				);
 			});
 		}
 		return lines.join('\n');
@@ -4563,7 +5342,7 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 		.setTitle(`📊 Usage: ${displayName}`)
 		.setDescription(
 			`Discord ID: \`${discordUserId}\`\nAPI Key: \`${keyDisplay}\`\nStatus: ${isActive ? '🟢 Active' : '🔴 Inactive'}${trialBlock}\n\n` +
-			limitSection,
+				limitSection,
 		)
 		.setColor(isActive ? 0x57f287 : 0xff6b6b)
 		.addFields(
@@ -4578,7 +5357,9 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 async function canTrialUserViewTarget(callerId, targetId, targetData, guild) {
 	let callerTrial = false;
 	try {
-		const callerKey = await proxyInternal(`/admin/internal/user-key-type/${callerId}`);
+		const callerKey = await proxyInternal(
+			`/admin/internal/user-key-type/${callerId}`,
+		);
 		callerTrial = callerKey?.isTrial === true;
 	} catch {}
 
@@ -4588,7 +5369,8 @@ async function canTrialUserViewTarget(callerId, targetId, targetData, guild) {
 
 	return {
 		ok: false,
-		message: '❌ Sebagai user trial, Anda hanya bisa melihat usage user trial lain.',
+		message:
+			'❌ Sebagai user trial, Anda hanya bisa melihat usage user trial lain.',
 	};
 }
 
@@ -4598,7 +5380,9 @@ async function handleShowMyUsage(interaction) {
 
 	let data;
 	try {
-		data = await proxyInternal(`/admin/internal/stats/user-detail/${discordUserId}`);
+		data = await proxyInternal(
+			`/admin/internal/stats/user-detail/${discordUserId}`,
+		);
 	} catch (err) {
 		const msg = err.message || '';
 		if (msg.includes('404') || msg.includes('not found')) {
@@ -4613,7 +5397,8 @@ async function handleShowMyUsage(interaction) {
 
 	if (!data.isActive) {
 		await interaction.editReply({
-			content: '❌ API key Anda **nonaktif/disabled**. Hubungi admin jika ini tidak seharusnya.',
+			content:
+				'❌ API key Anda **nonaktif/disabled**. Hubungi admin jika ini tidak seharusnya.',
 		});
 		return;
 	}
@@ -4633,7 +5418,10 @@ async function handleRankingSearchButton(interaction) {
 async function handleRankingSearchOtherButton(interaction) {
 	const access = await getMemberToolAccess(interaction.member);
 	if (!access.canUseTools) {
-		await interaction.reply({ content: toolAccessDeniedMessage(access), ephemeral: true });
+		await interaction.reply({
+			content: toolAccessDeniedMessage(access),
+			ephemeral: true,
+		});
 		return;
 	}
 	const modal = new ModalBuilder()
@@ -4654,30 +5442,46 @@ async function handleRankingSearchOtherButton(interaction) {
 }
 
 async function handleRankingSearchModal(interaction) {
-	const discordUserId = interaction.fields.getTextInputValue('discord_user_id').trim();
+	const discordUserId = interaction.fields
+		.getTextInputValue('discord_user_id')
+		.trim();
 	await interaction.deferReply({ ephemeral: true });
 
 	let data;
 	try {
-		data = await proxyInternal(`/admin/internal/stats/user-detail/${discordUserId}`);
+		data = await proxyInternal(
+			`/admin/internal/stats/user-detail/${discordUserId}`,
+		);
 	} catch (err) {
 		const msg = err.message || 'Unknown error';
 		if (msg.includes('User not found') || msg.includes('404')) {
-			await interaction.editReply({ content: `❌ User \`${discordUserId}\` tidak ditemukan atau belum punya API key.` });
+			await interaction.editReply({
+				content: `❌ User \`${discordUserId}\` tidak ditemukan atau belum punya API key.`,
+			});
 		} else {
-			await interaction.editReply({ content: `❌ Gagal mengambil data: ${msg}` });
+			await interaction.editReply({
+				content: `❌ Gagal mengambil data: ${msg}`,
+			});
 		}
 		return;
 	}
 
-	const access = await canTrialUserViewTarget(interaction.user.id, discordUserId, data, interaction.guild);
+	const access = await canTrialUserViewTarget(
+		interaction.user.id,
+		discordUserId,
+		data,
+		interaction.guild,
+	);
 	if (!access.ok) {
 		await interaction.editReply({ content: access.message });
 		return;
 	}
 
 	const embed = buildUsageDetailEmbed(data, discordUserId, interaction.user.id);
-	await interaction.editReply({ embeds: [embed], components: [buildUsageDetailRow(false)] });
+	await interaction.editReply({
+		embeds: [embed],
+		components: [buildUsageDetailRow(false)],
+	});
 }
 
 client.once('clientReady', async () => {
@@ -4775,32 +5579,69 @@ client.once('clientReady', async () => {
 	}
 
 	await ensureRankingMessages();
-	await refreshTrialPanelIfNeeded().catch((e) => console.error('[trial] panel error:', e.message));
+	await refreshTrialPanelIfNeeded().catch((e) =>
+		console.error('[trial] panel error:', e.message),
+	);
 	await setupVerificationButton();
 	startPhotoCheckInterval();
 	startRoleSyncInterval();
 
 	// Monthly Recap: panel + daily regeneration/debug job
 	await loadRecapState();
-	await ensureRecapMessage().catch((err) => console.error('[recap] ensure panel error:', err.message));
-	await ensureRecapDebugMessage().catch((err) => console.error('[recap] ensure debug panel error:', err.message));
-	// Run shortly after startup, then every 24h.
-	setTimeout(() => { runDailyRecapJob().catch((err) => console.error('[recap] daily job error:', err.message)); }, 15000);
+	await ensureRecapMessage().catch((err) =>
+		console.error('[recap] ensure panel error:', err.message),
+	);
+	await ensureRecapDebugMessage().catch((err) =>
+		console.error('[recap] ensure debug panel error:', err.message),
+	);
+	// Recap generation ONLY runs when the access window is OPEN. Outside the
+	// window, users can still click the button to view the recap, and admins
+	// can trigger an on-demand regenerate from the dashboard. We skip the
+	// cron entirely so we don't burn AI tokens on auto.
+	async function maybeRunDailyRecap() {
+		try {
+			const win = await proxyInternal('/admin/internal/recap/window');
+			if (win && win.isOpen) {
+				console.log('[recap] window OPEN — running daily job');
+				await runDailyRecapJob();
+			} else {
+				console.log('[recap] window CLOSED — skipping daily job (on-demand only)');
+			}
+		} catch (err) {
+			console.error('[recap] window check failed:', err.message);
+		}
+	}
+	setTimeout(() => {
+		maybeRunDailyRecap().catch((err) =>
+			console.error('[recap] daily job error:', err.message),
+		);
+	}, 15000);
 	setInterval(() => {
-		runDailyRecapJob().catch((err) => console.error('[recap] daily job error:', err.message));
+		maybeRunDailyRecap().catch((err) =>
+			console.error('[recap] daily job error:', err.message),
+		);
 	}, RECAP_DEBUG_INTERVAL_MS);
 
 	// Hourly: re-ensure the agverif panel so it appears/disappears promptly
 	// when the visibility window (25th-5th) opens or closes, AND check
 	// whether the recap window has just opened (H-2) so we can pre-warm
 	// every active user's recap in the background.
-	setInterval(() => {
-		ensureRecapMessage().catch((err) => console.error('[recap] hourly panel refresh error:', err.message));
-		maybeFirePregen().catch((err) => console.error('[recap] pregen check error:', err.message));
-	}, 60 * 60 * 1000);
+	setInterval(
+		() => {
+			ensureRecapMessage().catch((err) =>
+				console.error('[recap] hourly panel refresh error:', err.message),
+			);
+			maybeFirePregen().catch((err) =>
+				console.error('[recap] pregen check error:', err.message),
+			);
+		},
+		60 * 60 * 1000,
+	);
 	// Also kick a pregen check ~30s after startup so a bot that just restarted
 	// on/after H-2 doesn't have to wait an hour to discover the open window.
-	setTimeout(() => { maybeFirePregen().catch(() => {}); }, 30_000);
+	setTimeout(() => {
+		maybeFirePregen().catch(() => {});
+	}, 30_000);
 
 	// Start 1-minute ranking refresh
 	setInterval(() => {
@@ -4816,7 +5657,9 @@ client.once('clientReady', async () => {
 	}, 30 * 1000);
 
 	if (TOKITO_API_KEY) {
-		console.log(`[tokito] Monitor active. Panel Channel ID: ${TOKITO_CHANNEL_ID}`);
+		console.log(
+			`[tokito] Monitor active. Panel Channel ID: ${TOKITO_CHANNEL_ID}`,
+		);
 		await ensurePanelMessage();
 		await pollModelStatus();
 		await recoverRetryState();
@@ -4864,31 +5707,40 @@ client.once('clientReady', async () => {
 							title = '🎁 Trial API Aktif';
 							color = 0x57f287;
 							const modelBlock = (notif.modelList || '').toString().trim();
-							const modelSection = modelBlock && !/lihat \/v1\/models/.test(modelBlock)
-								? `**Model tersedia:**\n${modelBlock}\n\n`
-								: '';
+							const modelSection =
+								modelBlock && !/lihat \/v1\/models/.test(modelBlock)
+									? `**Model tersedia:**\n${modelBlock}\n\n`
+									: '';
 							dmText =
-								notif.dmTemplate?.replace(/\{(\w+)\}/g, (_, k) => notif[k] || '') ||
+								notif.dmTemplate?.replace(
+									/\{(\w+)\}/g,
+									(_, k) => notif[k] || '',
+								) ||
 								`🎁 **Trial API Aktif**\n\n` +
-								`**Endpoint:** \`${notif.endpoint || ''}\`\n` +
-								`**Authorization:** \`Bearer ${notif.apiKey || ''}\`\n\n` +
-								`**Rules:**\n` +
-								`• Durasi: ${notif.durationDays || '?'} hari (berakhir ${discordTime(notif.expiresAt, 'F')})\n` +
-								`• Token harian: ${(Number(notif.dailyTokenLimit) || 0).toLocaleString()}\n` +
-								`• Prompt: ${notif.promptLimit || '?'}/${notif.promptWindow || '5h'}\n` +
-								`• Model: hanya **gpy**\n\n` +
-								modelSection +
-								`Kredensial juga sudah dikirim ke channel trial.`;
+									`**Endpoint:** \`${notif.endpoint || ''}\`\n` +
+									`**Authorization:** \`Bearer ${notif.apiKey || ''}\`\n\n` +
+									`**Rules:**\n` +
+									`• Durasi: ${notif.durationDays || '?'} hari (berakhir ${discordTime(notif.expiresAt, 'F')})\n` +
+									`• Token harian: ${(Number(notif.dailyTokenLimit) || 0).toLocaleString()}\n` +
+									`• Prompt: ${notif.promptLimit || '?'}/${notif.promptWindow || '5h'}\n` +
+									`• Model: hanya **gpy**\n\n` +
+									modelSection +
+									`Kredensial juga sudah dikirim ke channel trial.`;
 						} else if (notif.type === 'trial_key_rotated') {
 							title = '🔄 Trial Key Di-rotate';
 							if (notif.dmTemplate) {
-								dmText = notif.dmTemplate.replace(/\{(\w+)\}/g, (_, k) => notif[k] || '');
+								dmText = notif.dmTemplate.replace(
+									/\{(\w+)\}/g,
+									(_, k) => notif[k] || '',
+								);
 							} else {
 								dmText = `⚠️ Key trial di-rotate karena device baru terdeteksi.\n\n**Endpoint:** \`${notif.endpoint || ''}\`\n**Key baru:** \`${notif.newKey || ''}\``;
 							}
 						} else if (notif.type === 'trial_limit_reached') {
 							title = '⚠️ Limit Trial Tercapai';
-							dmText = notif.message || 'Limit harian/bulanan trial Anda sudah tercapai.';
+							dmText =
+								notif.message ||
+								'Limit harian/bulanan trial Anda sudah tercapai.';
 							if (notif.upgradePhantom) dmText += `\n\n${notif.upgradePhantom}`;
 						} else if (notif.type === 'trial_expired') {
 							title = '⏰ Trial Berakhir';
@@ -4901,26 +5753,41 @@ client.once('clientReady', async () => {
 							title = '🎁 Trial Baru Tersedia';
 							color = 0x57f287;
 							dmText = notif.dmTemplate
-								? notif.dmTemplate.replace(/\{(\w+)\}/g, (_, k) => notif[k] || '')
+								? notif.dmTemplate.replace(
+										/\{(\w+)\}/g,
+										(_, k) => notif[k] || '',
+									)
 								: `Admin sudah membuka akses trial lagi. Klaim di <#${notif.channelId || ''}>.`;
 						} else if (notif.type === 'trial_upgrade_phantom') {
 							title = '🚀 Upgrade ke Phantom Member';
 							color = 0x5865f2;
-							dmText = notif.upgradePhantom || notif.dmTemplate || 'Untuk akses unlimited, verifikasi AG.';
+							dmText =
+								notif.upgradePhantom ||
+								notif.dmTemplate ||
+								'Untuk akses unlimited, verifikasi AG.';
 						} else if (notif.type === 'trial_extended') {
 							title = '⏰ Trial Diperpanjang';
 							color = 0x57f287;
 							dmText = notif.dmTemplate
-								? notif.dmTemplate.replace(/\{(\w+)\}/g, (_, k) => notif[k] || '')
+								? notif.dmTemplate.replace(
+										/\{(\w+)\}/g,
+										(_, k) => notif[k] || '',
+									)
 								: `Admin sudah memperpanjang trial +${notif.days} hari. Baru berakhir: ${discordTime(notif.expiresAt, 'F')}`;
 						}
-						if (dmText) await sendDMToUser(notif.discordUserId, title, dmText, color);
+						if (dmText)
+							await sendDMToUser(notif.discordUserId, title, dmText, color);
 						// Kirim How to Use terpisah khusus trial_claimed
 						if (notif.type === 'trial_claimed') {
 							try {
 								const models = (notif.modelList || '')
 									.split('\n')
-									.map((l) => l.replace(/^•\s*`/, '').replace(/`\s*$/, '').trim())
+									.map((l) =>
+										l
+											.replace(/^•\s*`/, '')
+											.replace(/`\s*$/, '')
+											.trim(),
+									)
 									.filter(Boolean);
 								await sendHowToDm(notif.discordUserId, 'trial', {
 									endpoint: notif.endpoint,
@@ -4932,7 +5799,10 @@ client.once('clientReady', async () => {
 							}
 						}
 						if (notif.keyId) {
-							await proxyInternal(`/admin/internal/clear-notification/${notif.keyId}`, 'POST');
+							await proxyInternal(
+								`/admin/internal/clear-notification/${notif.keyId}`,
+								'POST',
+							);
 						}
 						continue;
 					}
@@ -4955,7 +5825,8 @@ client.once('clientReady', async () => {
 						);
 
 						const threadId =
-							client.agverifData?.verifiedUsers?.[notif.discordUserId]?.threadId ||
+							client.agverifData?.verifiedUsers?.[notif.discordUserId]
+								?.threadId ||
 							Object.entries(client.agverifData?.threads || {}).find(
 								([, data]) => data.userId === notif.discordUserId,
 							)?.[0];
@@ -4978,7 +5849,10 @@ client.once('clientReady', async () => {
 									await thread.send({ embeds: [embed] });
 								}
 							} catch (err) {
-								console.error(`[notify] Failed to send bulk rotate thread for ${notif.discordUserId}:`, err.message);
+								console.error(
+									`[notify] Failed to send bulk rotate thread for ${notif.discordUserId}:`,
+									err.message,
+								);
 							}
 						}
 					} else {
@@ -4991,9 +5865,16 @@ client.once('clientReady', async () => {
 							`Your old device has been removed. Configure your IDE with the new key above.\n\n` +
 							`If you need more than 1 device, please contact an admin.`;
 
-						await sendDMToUser(notif.discordUserId, '🔑 API Key Rotated — New Device Detected', dmText, 0xf59e0b);
+						await sendDMToUser(
+							notif.discordUserId,
+							'🔑 API Key Rotated — New Device Detected',
+							dmText,
+							0xf59e0b,
+						);
 
-						const threadId = client.agverifData?.verifiedUsers?.[notif.discordUserId]?.threadId;
+						const threadId =
+							client.agverifData?.verifiedUsers?.[notif.discordUserId]
+								?.threadId;
 						if (threadId) {
 							try {
 								const thread = await client.channels.fetch(threadId);
@@ -5011,26 +5892,38 @@ client.once('clientReady', async () => {
 									await thread.send({ embeds: [embed] });
 								}
 							} catch (err) {
-								console.error(`[notify] Failed to send thread message for ${notif.discordUserId}:`, err.message);
+								console.error(
+									`[notify] Failed to send thread message for ${notif.discordUserId}:`,
+									err.message,
+								);
 							}
 						}
 					}
 
-					await proxyInternal(`/admin/internal/clear-notification/${notif.keyId}`, 'POST');
+					await proxyInternal(
+						`/admin/internal/clear-notification/${notif.keyId}`,
+						'POST',
+					);
 				} catch (err) {
-					console.error(`[notify] Failed to process notification for ${notif.discordUserId}:`, err.message);
+					console.error(
+						`[notify] Failed to process notification for ${notif.discordUserId}:`,
+						err.message,
+					);
 				}
 			}
 		} catch (err) {
-			console.error('[notify] Failed to poll pending notifications:', err.message);
+			console.error(
+				'[notify] Failed to poll pending notifications:',
+				err.message,
+			);
 		}
 	}
 
 	// Run immediately then every 30 seconds
 	void processPendingNotifications();
 	setInterval(() => {
-		processPendingNotifications().catch(err =>
-			console.error('[notify] Poll error:', err.message)
+		processPendingNotifications().catch((err) =>
+			console.error('[notify] Poll error:', err.message),
 		);
 	}, 30000);
 });
@@ -5038,12 +5931,18 @@ client.once('clientReady', async () => {
 client.on('interactionCreate', async (interaction) => {
 	try {
 		// ─── Ranking Search Button ───────────────────────────────────────────
-		if (interaction.isButton() && interaction.customId === 'ranking_search_user') {
+		if (
+			interaction.isButton() &&
+			interaction.customId === 'ranking_search_user'
+		) {
 			await handleRankingSearchButton(interaction);
 			return;
 		}
 
-		if (interaction.isButton() && interaction.customId === 'ranking_search_user_other') {
+		if (
+			interaction.isButton() &&
+			interaction.customId === 'ranking_search_user_other'
+		) {
 			await handleRankingSearchOtherButton(interaction);
 			return;
 		}
@@ -5055,13 +5954,19 @@ client.on('interactionCreate', async (interaction) => {
 		}
 
 		// ─── How-to-Use: open picker ────────────────────────────────────────────
-		if (interaction.isButton() && interaction.customId.startsWith(TUTORIAL_BTN_HOWTO_PREFIX + ':')) {
+		if (
+			interaction.isButton() &&
+			interaction.customId.startsWith(TUTORIAL_BTN_HOWTO_PREFIX + ':')
+		) {
 			const parts = interaction.customId.split(':');
 			const targetUserId = parts[1];
 			const kind = parts[2];
 			if (interaction.user.id !== targetUserId) {
 				try {
-					await interaction.reply({ content: '❌ Tombol ini bukan untukmu.', ephemeral: true });
+					await interaction.reply({
+						content: '❌ Tombol ini bukan untukmu.',
+						ephemeral: true,
+					});
 				} catch {}
 				return;
 			}
@@ -5079,7 +5984,9 @@ client.on('interactionCreate', async (interaction) => {
 					embeds: [
 						new EmbedBuilder()
 							.setTitle('📘 Pilih IDE')
-							.setDescription(`Pilih IDE untuk lihat tutorial setup **${kindLabel} API key** di bawah ini.`)
+							.setDescription(
+								`Pilih IDE untuk lihat tutorial setup **${kindLabel} API key** di bawah ini.`,
+							)
 							.setColor(0x5865f2),
 					],
 					components: buildHowToPicker(targetUserId, kindLabel),
@@ -5098,12 +6005,20 @@ client.on('interactionCreate', async (interaction) => {
 		}
 
 		// ─── How-to-Use: IDE selected, render tutorial ──────────────────────────
-		if (interaction.isStringSelectMenu() && interaction.customId.startsWith(TUTORIAL_MENU_IDE_PREFIX)) {
+		if (
+			interaction.isStringSelectMenu() &&
+			interaction.customId.startsWith(TUTORIAL_MENU_IDE_PREFIX)
+		) {
 			const ide = interaction.values[0];
-			const targetUserId = interaction.customId.slice(TUTORIAL_MENU_IDE_PREFIX.length);
+			const targetUserId = interaction.customId.slice(
+				TUTORIAL_MENU_IDE_PREFIX.length,
+			);
 			if (interaction.user.id !== targetUserId) {
 				try {
-					await interaction.reply({ content: '❌ Menu ini bukan untukmu.', ephemeral: true });
+					await interaction.reply({
+						content: '❌ Menu ini bukan untukmu.',
+						ephemeral: true,
+					});
 				} catch {}
 				return;
 			}
@@ -5127,11 +6042,15 @@ client.on('interactionCreate', async (interaction) => {
 					components.push(
 						new ActionRowBuilder().addComponents(
 							new ButtonBuilder()
-								.setCustomId(`${TUTORIAL_PAGE_PREFIX}${targetUserId}:${ide}:prev`)
+								.setCustomId(
+									`${TUTORIAL_PAGE_PREFIX}${targetUserId}:${ide}:prev`,
+								)
 								.setLabel('◀ Prev')
 								.setStyle(ButtonStyle.Secondary),
 							new ButtonBuilder()
-								.setCustomId(`${TUTORIAL_PAGE_PREFIX}${targetUserId}:${ide}:next`)
+								.setCustomId(
+									`${TUTORIAL_PAGE_PREFIX}${targetUserId}:${ide}:next`,
+								)
 								.setLabel('Next ▶')
 								.setStyle(ButtonStyle.Secondary),
 						),
@@ -5149,7 +6068,10 @@ client.on('interactionCreate', async (interaction) => {
 						components: [],
 					});
 				} catch (err2) {
-					console.error('[howto] editReply fallback failed:', err2.message || err2);
+					console.error(
+						'[howto] editReply fallback failed:',
+						err2.message || err2,
+					);
 					try {
 						await interaction.followUp({
 							content: `❌ Gagal render tutorial: ${err.message || 'unknown'}. Silakan coba lagi.`,
@@ -5162,29 +6084,40 @@ client.on('interactionCreate', async (interaction) => {
 		}
 
 		// ─── How-to-Use: pagination ─────────────────────────────────────────────
-		if (interaction.isButton() && interaction.customId.startsWith(TUTORIAL_PAGE_PREFIX)) {
+		if (
+			interaction.isButton() &&
+			interaction.customId.startsWith(TUTORIAL_PAGE_PREFIX)
+		) {
 			const rest = interaction.customId.slice(TUTORIAL_PAGE_PREFIX.length);
 			const [targetUserId, ide, dir] = rest.split(':');
 			if (interaction.user.id !== targetUserId) {
-				await interaction.reply({ content: '❌ Tombol ini bukan untukmu.', ephemeral: true });
+				await interaction.reply({
+					content: '❌ Tombol ini bukan untukmu.',
+					ephemeral: true,
+				});
 				return;
 			}
 			const state = client.tutorialPages?.get(`${targetUserId}:${ide}`);
 			if (!state) {
 				try {
 					await interaction.update({
-						content: 'Sesi tutorial kadaluarsa. Silakan buka ulang dari DM (klik tombol "How to Use" lagi).',
+						content:
+							'Sesi tutorial kadaluarsa. Silakan buka ulang dari DM (klik tombol "How to Use" lagi).',
 						embeds: [],
 						components: [],
 					});
 				} catch {
-					await interaction.followUp({ content: 'Sesi tutorial kadaluarsa. Silakan buka ulang dari DM.', ephemeral: true });
+					await interaction.followUp({
+						content: 'Sesi tutorial kadaluarsa. Silakan buka ulang dari DM.',
+						ephemeral: true,
+					});
 				}
 				return;
 			}
-			state.page = dir === 'next'
-				? Math.min(state.page + 1, state.embeds.length - 1)
-				: Math.max(state.page - 1, 0);
+			state.page =
+				dir === 'next'
+					? Math.min(state.page + 1, state.embeds.length - 1)
+					: Math.max(state.page - 1, 0);
 			try {
 				await interaction.update({ embeds: [state.embeds[state.page].embed] });
 			} catch (err) {
@@ -5194,24 +6127,37 @@ client.on('interactionCreate', async (interaction) => {
 		}
 
 		// ─── Ranking Search Modal Submit ─────────────────────────────────────
-		if (interaction.isModalSubmit() && interaction.customId === 'ranking_search_user_other_modal') {
+		if (
+			interaction.isModalSubmit() &&
+			interaction.customId === 'ranking_search_user_other_modal'
+		) {
 			await handleRankingSearchModal(interaction);
 			return;
 		}
 
-		if (interaction.isModalSubmit() && interaction.customId === 'ranking_search_user_modal') {
+		if (
+			interaction.isModalSubmit() &&
+			interaction.customId === 'ranking_search_user_modal'
+		) {
 			await handleRankingSearchModal(interaction);
 			return;
 		}
 
 		// ─── Ranking See Model Limit Button ──────────────────────────────────
-		if (interaction.isButton() && (interaction.customId === 'ranking_see_model_limits' || interaction.customId.startsWith('ranking_see_model_limits:'))) {
+		if (
+			interaction.isButton() &&
+			(interaction.customId === 'ranking_see_model_limits' ||
+				interaction.customId.startsWith('ranking_see_model_limits:'))
+		) {
 			await handleRankingSeeModelLimits(interaction);
 			return;
 		}
 
 		// ─── Ranking Model Limit Filter Select ──────────────────────────────
-		if (interaction.isStringSelectMenu() && interaction.customId === 'ranking_model_limit_filter') {
+		if (
+			interaction.isStringSelectMenu() &&
+			interaction.customId === 'ranking_model_limit_filter'
+		) {
 			await handleRankingModelLimitFilter(interaction);
 			return;
 		}
@@ -5227,11 +6173,17 @@ client.on('interactionCreate', async (interaction) => {
 			await handleRecapDebugSelf(interaction);
 			return;
 		}
-		if (interaction.isButton() && interaction.customId === 'recap_debug_other') {
+		if (
+			interaction.isButton() &&
+			interaction.customId === 'recap_debug_other'
+		) {
 			await handleRecapDebugOtherButton(interaction);
 			return;
 		}
-		if (interaction.isModalSubmit() && interaction.customId === 'recap_debug_other_modal') {
+		if (
+			interaction.isModalSubmit() &&
+			interaction.customId === 'recap_debug_other_modal'
+		) {
 			await handleRecapDebugOtherModal(interaction);
 			return;
 		}
@@ -5241,7 +6193,10 @@ client.on('interactionCreate', async (interaction) => {
 			await handleTestimonialViewer(interaction);
 			return;
 		}
-		if (interaction.isButton() && interaction.customId === 'recap_testi_view_debug') {
+		if (
+			interaction.isButton() &&
+			interaction.customId === 'recap_testi_view_debug'
+		) {
 			await handleTestimonialViewer(interaction);
 			return;
 		}
@@ -5270,34 +6225,54 @@ client.on('interactionCreate', async (interaction) => {
 				const hasVerifiedRoleNow = member.roles.cache.has(VERIFIED_ROLE_ID);
 				const existingVerifiedData = client.agverifData.verifiedUsers[userId];
 
-			if (hasVerifiedRoleNow) {
-				// Cek apakah thread verifikasi masih ada di Discord
-				if (existingVerifiedData) {
-					let threadStillExists = false;
-					try {
-						const thread = await client.channels.fetch(existingVerifiedData.threadId);
-						if (thread && thread.isThread()) {
-							threadStillExists = true;
-						}
-					} catch (_) {}
-
-					if (!threadStillExists) {
-						// Thread sudah dihapus — bersihkan data dan izinkan verifikasi ulang
-						await removeVerifiedUser(userId);
-						if (client.agverifData.threads[existingVerifiedData.threadId]) {
-							await removeThreadFromData(existingVerifiedData.threadId);
-						}
-						// Juga hapus role karena thread sudah tidak ada
+				if (hasVerifiedRoleNow) {
+					// Cek apakah thread verifikasi masih ada di Discord
+					if (existingVerifiedData) {
+						let threadStillExists = false;
 						try {
-							await member.roles.remove(VERIFIED_ROLE_ID, 'Thread verifikasi sudah tidak ada, role dihapus');
+							const thread = await client.channels.fetch(
+								existingVerifiedData.threadId,
+							);
+							if (thread && thread.isThread()) {
+								threadStillExists = true;
+							}
 						} catch (_) {}
-						// Lanjut buat tiket baru (jangan return)
+
+						if (!threadStillExists) {
+							// Thread sudah dihapus — bersihkan data dan izinkan verifikasi ulang
+							await removeVerifiedUser(userId);
+							if (client.agverifData.threads[existingVerifiedData.threadId]) {
+								await removeThreadFromData(existingVerifiedData.threadId);
+							}
+							// Juga hapus role karena thread sudah tidak ada
+							try {
+								await member.roles.remove(
+									VERIFIED_ROLE_ID,
+									'Thread verifikasi sudah tidak ada, role dihapus',
+								);
+							} catch (_) {}
+							// Lanjut buat tiket baru (jangan return)
+						} else {
+							// Thread masih ada — tampilkan "sudah terverifikasi"
+							const infoEmbed = new EmbedBuilder()
+								.setTitle('✅ Sudah Terverifikasi')
+								.setDescription(
+									`Anda sudah terverifikasi antigravity.\nThread verifikasi: <#${existingVerifiedData.threadId}>`,
+								)
+								.setColor(0x57f287);
+
+							await interaction.reply({
+								embeds: [infoEmbed],
+								ephemeral: true,
+							});
+							return;
+						}
 					} else {
-						// Thread masih ada — tampilkan "sudah terverifikasi"
+						// Punya role tapi tidak ada data verifikasi — tampilkan "sudah terverifikasi"
 						const infoEmbed = new EmbedBuilder()
 							.setTitle('✅ Sudah Terverifikasi')
 							.setDescription(
-								`Anda sudah terverifikasi antigravity.\nThread verifikasi: <#${existingVerifiedData.threadId}>`,
+								'Anda sudah terverifikasi antigravity dan memiliki role yang diperlukan.',
 							)
 							.setColor(0x57f287);
 
@@ -5307,22 +6282,7 @@ client.on('interactionCreate', async (interaction) => {
 						});
 						return;
 					}
-				} else {
-					// Punya role tapi tidak ada data verifikasi — tampilkan "sudah terverifikasi"
-					const infoEmbed = new EmbedBuilder()
-						.setTitle('✅ Sudah Terverifikasi')
-						.setDescription(
-							'Anda sudah terverifikasi antigravity dan memiliki role yang diperlukan.',
-						)
-						.setColor(0x57f287);
-
-					await interaction.reply({
-						embeds: [infoEmbed],
-						ephemeral: true,
-					});
-					return;
 				}
-			}
 
 				// Sampai di sini user TIDAK punya role verif saat ini → anggap BELUM terverifikasi,
 				// walaupun mungkin masih ada data lama di verifiedUsers / threads.
@@ -5644,45 +6604,61 @@ client.on('interactionCreate', async (interaction) => {
 				}
 
 				const kind =
-					interaction.customId === PANEL_STATUS ? 'status' : 
-					interaction.customId === PANEL_LATENCY ? 'latency' : 'details';
-				
+					interaction.customId === PANEL_STATUS
+						? 'status'
+						: interaction.customId === PANEL_LATENCY
+							? 'latency'
+							: 'details';
+
 				// Immediately acknowledge to prevent 10s timeout
 				await interaction.deferReply({ ephemeral: true });
-				
+
 				// Refresh data from proxy DB for fresh results
 				await refreshLatencyFromProxy();
 
 				// Load enriched catalog metadata for details view (and trial gpy panel)
 				if (kind === 'details') {
 					try {
-						const detailsData = await proxyInternal('/admin/internal/models/details');
+						const detailsData = await proxyInternal(
+							'/admin/internal/models/details',
+						);
 						runtime._modelDetailsCache = detailsData?.data || [];
 					} catch (err) {
-						console.error('[tokito] Failed to fetch model details:', err.message || JSON.stringify(err));
+						console.error(
+							'[tokito] Failed to fetch model details:',
+							err.message || JSON.stringify(err),
+						);
 						runtime._modelDetailsCache = [];
 					}
 				}
-				
+
 				const session = createTokitoSession(interaction.user.id, kind, access);
 				if (session.trialMode) {
 					session.trialCache = await getTrialModelsCached();
-					if (kind === 'details' && (!runtime._modelDetailsCache || runtime._modelDetailsCache.length === 0)) {
+					if (
+						kind === 'details' &&
+						(!runtime._modelDetailsCache ||
+							runtime._modelDetailsCache.length === 0)
+					) {
 						try {
-							const detailsData = await proxyInternal('/admin/internal/models/details');
+							const detailsData = await proxyInternal(
+								'/admin/internal/models/details',
+							);
 							runtime._modelDetailsCache = detailsData?.data || [];
-						} catch { /* ignore */ }
+						} catch {
+							/* ignore */
+						}
 					}
 				}
 				// Store interaction for message deletion on expiry
 				session.interaction = interaction;
 				const { embed, components } = buildTokitoEmbed(kind, session);
-				
+
 				// Add endpoint info footer to the embed
 				embed.setFooter({
 					text: `Endpoint: ${PROXY_PUBLIC_BASE_URL}  •  ${embed.data.footer?.text || ''}`.trim(),
 				});
-				
+
 				// Edit with actual results
 				await interaction.editReply({
 					embeds: [embed],
@@ -5694,11 +6670,11 @@ client.on('interactionCreate', async (interaction) => {
 			// Model Details button handler (old static version - replaced by above)
 			if (false && interaction.customId === PANEL_DETAILS) {
 				await interaction.deferReply({ ephemeral: true });
-				
+
 				try {
 					const data = await proxyInternal('/admin/internal/models/details');
-					const models = (data?.data || []).filter(m => m.id !== 'auto');
-					
+					const models = (data?.data || []).filter((m) => m.id !== 'auto');
+
 					// Sort: online first, then by name
 					models.sort((a, b) => {
 						if (a.is_online && !b.is_online) return -1;
@@ -5710,17 +6686,25 @@ client.on('interactionCreate', async (interaction) => {
 					const PAGE_SIZE = 10;
 					const page = 0;
 					const totalPages = Math.max(1, Math.ceil(models.length / PAGE_SIZE));
-					const pageModels = models.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+					const pageModels = models.slice(
+						page * PAGE_SIZE,
+						(page + 1) * PAGE_SIZE,
+					);
 
 					function formatModelLine(m) {
 						const status = m.is_online ? '🟢' : '🔴';
-						const ctx = m.context_length ? `${Math.round(m.context_length / 1024)}K` : '?';
-						const maxOut = m.max_output_tokens ? `${Math.round(m.max_output_tokens / 1024)}K` : '?';
+						const ctx = m.context_length
+							? `${Math.round(m.context_length / 1024)}K`
+							: '?';
+						const maxOut = m.max_output_tokens
+							? `${Math.round(m.max_output_tokens / 1024)}K`
+							: '?';
 						const pricing = m.pricing
 							? `$${m.pricing.prompt?.toFixed(2) || '?'}/$${m.pricing.completion?.toFixed(2) || '?'}`
 							: 'N/A';
 						const modalities = (m.input_modalities || ['text']).join(',');
-						const features = (m.supported_features || []).slice(0, 3).join(', ') || '-';
+						const features =
+							(m.supported_features || []).slice(0, 3).join(', ') || '-';
 						const latency = m.latency_ms != null ? `${m.latency_ms}ms` : '-';
 						return `${status} **${m.id}**\n  ctx: ${ctx} | out: ${maxOut} | ${pricing}/M | ${modalities} | ${latency}\n  features: ${features}`;
 					}
@@ -5730,14 +6714,21 @@ client.on('interactionCreate', async (interaction) => {
 					const embed = new EmbedBuilder()
 						.setTitle('📋 Model Details')
 						.setDescription(description || 'No models found')
-						.setFooter({ text: `Page ${page + 1}/${totalPages} • ${models.length} models total` })
+						.setFooter({
+							text: `Page ${page + 1}/${totalPages} • ${models.length} models total`,
+						})
 						.setColor(0x5865f2)
 						.setTimestamp();
 
 					await interaction.editReply({ embeds: [embed] });
 				} catch (err) {
-					console.error('[tokito] Model details error:', err.message || JSON.stringify(err));
-					await interaction.editReply({ content: 'Failed to fetch model details.' });
+					console.error(
+						'[tokito] Model details error:',
+						err.message || JSON.stringify(err),
+					);
+					await interaction.editReply({
+						content: 'Failed to fetch model details.',
+					});
 				}
 				return;
 			}
@@ -5750,10 +6741,7 @@ client.on('interactionCreate', async (interaction) => {
 			const action = match[1];
 			const sessionId = match[2];
 			const session = tokitoSessions.get(sessionId);
-			if (
-				!session ||
-				session.userId !== interaction.user.id
-			) {
+			if (!session || session.userId !== interaction.user.id) {
 				try {
 					// ALWAYS defer the update immediately so Discord doesn't throw "Unknown interaction"
 					await interaction.deferUpdate().catch(() => {});
@@ -5763,7 +6751,7 @@ client.on('interactionCreate', async (interaction) => {
 						await interaction.deleteReply().catch(() => {});
 					}
 				} catch (err) {
-					console.error("Failed to delete expired tokito interaction:", err);
+					console.error('Failed to delete expired tokito interaction:', err);
 				}
 				return;
 			}
@@ -5797,10 +6785,14 @@ client.on('interactionCreate', async (interaction) => {
 				/^tokito_filter_vendor_(.+)$/,
 			);
 			const sortMatch = interaction.customId.match(/^tokito_filter_sort_(.+)$/);
-			const sessionId = upstreamMatch?.[1] || vendorMatch?.[1] || sortMatch?.[1];
-			
+			const sessionId =
+				upstreamMatch?.[1] || vendorMatch?.[1] || sortMatch?.[1];
+
 			if (!sessionId) {
-				console.warn("tokito interaction: no session ID found in customId", interaction.customId);
+				console.warn(
+					'tokito interaction: no session ID found in customId',
+					interaction.customId,
+				);
 				// Acknowledge to prevent unknown interaction if it somehow drops through
 				await interaction.deferUpdate().catch(() => {});
 				if (interaction.message && interaction.message.deletable) {
@@ -5810,10 +6802,7 @@ client.on('interactionCreate', async (interaction) => {
 			}
 
 			const session = tokitoSessions.get(sessionId);
-			if (
-				!session ||
-				session.userId !== interaction.user.id
-			) {
+			if (!session || session.userId !== interaction.user.id) {
 				try {
 					// ALWAYS defer the update immediately so Discord doesn't throw "Unknown interaction"
 					await interaction.deferUpdate().catch(() => {});
@@ -5823,13 +6812,15 @@ client.on('interactionCreate', async (interaction) => {
 						await interaction.deleteReply().catch(() => {});
 					}
 				} catch (err) {
-					console.error("Failed to delete expired tokito interaction:", err);
+					console.error('Failed to delete expired tokito interaction:', err);
 				}
 				return;
 			}
 
 			if (upstreamMatch) {
-				session.upstreamProvider = session.trialMode ? 'gpy' : (interaction.values[0] || 'all');
+				session.upstreamProvider = session.trialMode
+					? 'gpy'
+					: interaction.values[0] || 'all';
 				session.modelVendor = 'all';
 				session.page = 0;
 			}
@@ -5980,7 +6971,8 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 						}
 
 						if (provision) {
-							const endpoint = provision.endpoint || `${PROXY_PUBLIC_BASE_URL}/v1`;
+							const endpoint =
+								provision.endpoint || `${PROXY_PUBLIC_BASE_URL}/v1`;
 							// Send DM (non-critical — may fail if user has DMs disabled)
 							try {
 								await sendApiCredentialsDm(
@@ -5990,11 +6982,22 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 								);
 								// Kirim DM How to Use terpisah
 								try {
-									const data = await proxyInternal('/admin/internal/models/details');
-									const models = (data?.data || []).map((m) => m.id).filter((id) => id && id !== 'auto');
-									await sendHowToDm(newMember.id, 'phantom', { endpoint, apiKey: provision.apiKey, models });
+									const data = await proxyInternal(
+										'/admin/internal/models/details',
+									);
+									const models = (data?.data || [])
+										.map((m) => m.id)
+										.filter((id) => id && id !== 'auto');
+									await sendHowToDm(newMember.id, 'phantom', {
+										endpoint,
+										apiKey: provision.apiKey,
+										models,
+									});
 								} catch (howtoErr) {
-									console.error('[agverif] sendHowToDm failed:', howtoErr.message);
+									console.error(
+										'[agverif] sendHowToDm failed:',
+										howtoErr.message,
+									);
 								}
 								await thread.send({
 									embeds: [
@@ -6010,7 +7013,10 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 									],
 								});
 							} catch (dmErr) {
-								console.warn('[agverif] DM failed, sending key in thread:', dmErr.message);
+								console.warn(
+									'[agverif] DM failed, sending key in thread:',
+									dmErr.message,
+								);
 								// DM failed — send credentials in thread instead
 								await thread.send({
 									content: `🔑 API key untuk <@${newMember.id}> (DM gagal, dikirim di sini):\n\n**Endpoint**: \`${endpoint}\`\n**Authorization**: \`Bearer ${provision.apiKey}\``,
