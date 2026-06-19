@@ -40,6 +40,52 @@ export function ProvidersManager() {
   const [priority, setPriority] = useState(1);
   const [endpointType, setEndpointType] = useState("openai");
 
+  // Inline-edit state for provider row fields (name, endpoint, endpointType, priority)
+  const [editingProviderField, setEditingProviderField] = useState<{
+    providerId: number;
+    field: "name" | "endpoint" | "endpointType" | "priority";
+  } | null>(null);
+  const [editProviderValue, setEditProviderValue] = useState<string>("");
+
+  const handleEditProviderField = (
+    providerId: number,
+    field: "name" | "endpoint" | "endpointType" | "priority",
+    currentValue: string | number,
+  ) => {
+    setEditingProviderField({ providerId, field });
+    setEditProviderValue(String(currentValue ?? ""));
+  };
+
+  const handleCancelEditProviderField = () => {
+    setEditingProviderField(null);
+    setEditProviderValue("");
+  };
+
+  const handleSaveProviderField = async (providerId: number) => {
+    if (!editingProviderField) return;
+    const { field } = editingProviderField;
+    // Validate required string fields
+    if ((field === "name" || field === "endpoint") && !editProviderValue.trim()) {
+      alert(`${field} cannot be empty`);
+      return;
+    }
+    let value: any = editProviderValue.trim();
+    if (field === "priority") {
+      value = parseInt(editProviderValue, 10);
+      if (Number.isNaN(value)) value = 0;
+    }
+    try {
+      await request(`/providers/${providerId}`, {
+        method: "PUT",
+        body: JSON.stringify({ [field]: value }),
+      });
+      handleCancelEditProviderField();
+      loadProviders();
+    } catch (e: any) {
+      alert("Error: " + e.message);
+    }
+  };
+
   const loadProviders = async () => {
     try {
       const res = await request<any[]>("/providers");
@@ -276,15 +322,176 @@ export function ProvidersManager() {
                   <button onClick={() => toggleExpand(p.id)} className="p-0.5 hover:bg-muted rounded">
                     {expandedProvider === p.id ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                   </button>
-                  {p.name}
+                  {editingProviderField?.providerId === p.id && editingProviderField?.field === "name" ? (
+                    <div className="flex items-center gap-1 flex-1 min-w-0">
+                      <input
+                        autoFocus
+                        value={editProviderValue}
+                        onChange={(e) => setEditProviderValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleSaveProviderField(p.id);
+                          else if (e.key === "Escape") handleCancelEditProviderField();
+                        }}
+                        className="flex-1 min-w-0 px-1 py-0.5 text-sm border border-border rounded bg-background"
+                      />
+                      <button
+                        onClick={() => handleSaveProviderField(p.id)}
+                        className="p-0.5 hover:bg-green-500/20 rounded"
+                        title="Save"
+                      >
+                        <Check className="w-3.5 h-3.5 text-green-500" />
+                      </button>
+                      <button
+                        onClick={handleCancelEditProviderField}
+                        className="p-0.5 hover:bg-red-500/20 rounded"
+                        title="Cancel"
+                      >
+                        <X className="w-3.5 h-3.5 text-red-500" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1 min-w-0">
+                      <span className="truncate">{p.name}</span>
+                      <button
+                        onClick={() => handleEditProviderField(p.id, "name", p.name)}
+                        className="p-0.5 hover:bg-muted rounded opacity-60 hover:opacity-100"
+                        title="Edit name"
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </button>
+                    </div>
+                  )}
                 </div>
-                <div className="col-span-2 truncate">{p.endpoint}</div>
+                <div className="col-span-2 truncate">
+                  {editingProviderField?.providerId === p.id && editingProviderField?.field === "endpoint" ? (
+                    <div className="flex items-center gap-1">
+                      <input
+                        autoFocus
+                        value={editProviderValue}
+                        onChange={(e) => setEditProviderValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleSaveProviderField(p.id);
+                          else if (e.key === "Escape") handleCancelEditProviderField();
+                        }}
+                        className="flex-1 min-w-0 px-1 py-0.5 text-sm border border-border rounded bg-background"
+                      />
+                      <button
+                        onClick={() => handleSaveProviderField(p.id)}
+                        className="p-0.5 hover:bg-green-500/20 rounded"
+                        title="Save"
+                      >
+                        <Check className="w-3.5 h-3.5 text-green-500" />
+                      </button>
+                      <button
+                        onClick={handleCancelEditProviderField}
+                        className="p-0.5 hover:bg-red-500/20 rounded"
+                        title="Cancel"
+                      >
+                        <X className="w-3.5 h-3.5 text-red-500" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1 min-w-0">
+                      <span className="truncate flex-1">{p.endpoint}</span>
+                      <button
+                        onClick={() => handleEditProviderField(p.id, "endpoint", p.endpoint)}
+                        className="p-0.5 hover:bg-muted rounded opacity-60 hover:opacity-100"
+                        title="Edit endpoint"
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <div className="col-span-1 text-xs">
-                  <span className={`px-1.5 py-0.5 rounded text-xs ${p.endpointType === "anthropic" ? "bg-orange-500/20 text-orange-400" : p.endpointType === "youcom" ? "bg-green-500/20 text-green-400" : "bg-blue-500/20 text-blue-400"}`}>
-                    {p.endpointType || "openai"}
-                  </span>
+                  {editingProviderField?.providerId === p.id && editingProviderField?.field === "endpointType" ? (
+                    <div className="flex items-center gap-1">
+                      <select
+                        autoFocus
+                        value={editProviderValue}
+                        onChange={(e) => setEditProviderValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleSaveProviderField(p.id);
+                          else if (e.key === "Escape") handleCancelEditProviderField();
+                        }}
+                        className="px-1 py-0.5 text-xs border border-border rounded bg-background"
+                      >
+                        <option value="openai">openai</option>
+                        <option value="anthropic">anthropic</option>
+                        <option value="youcom">youcom</option>
+                      </select>
+                      <button
+                        onClick={() => handleSaveProviderField(p.id)}
+                        className="p-0.5 hover:bg-green-500/20 rounded"
+                        title="Save"
+                      >
+                        <Check className="w-3.5 h-3.5 text-green-500" />
+                      </button>
+                      <button
+                        onClick={handleCancelEditProviderField}
+                        className="p-0.5 hover:bg-red-500/20 rounded"
+                        title="Cancel"
+                      >
+                        <X className="w-3.5 h-3.5 text-red-500" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <span className={`px-1.5 py-0.5 rounded text-xs ${p.endpointType === "anthropic" ? "bg-orange-500/20 text-orange-400" : p.endpointType === "youcom" ? "bg-green-500/20 text-green-400" : "bg-blue-500/20 text-blue-400"}`}>
+                        {p.endpointType || "openai"}
+                      </span>
+                      <button
+                        onClick={() => handleEditProviderField(p.id, "endpointType", p.endpointType || "openai")}
+                        className="p-0.5 hover:bg-muted rounded opacity-60 hover:opacity-100"
+                        title="Edit type"
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </button>
+                    </div>
+                  )}
                 </div>
-                <div className="col-span-1">{p.priority}</div>
+                <div className="col-span-1">
+                  {editingProviderField?.providerId === p.id && editingProviderField?.field === "priority" ? (
+                    <div className="flex items-center gap-1">
+                      <input
+                        autoFocus
+                        type="number"
+                        value={editProviderValue}
+                        onChange={(e) => setEditProviderValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleSaveProviderField(p.id);
+                          else if (e.key === "Escape") handleCancelEditProviderField();
+                        }}
+                        className="w-16 px-1 py-0.5 text-sm border border-border rounded bg-background"
+                      />
+                      <button
+                        onClick={() => handleSaveProviderField(p.id)}
+                        className="p-0.5 hover:bg-green-500/20 rounded"
+                        title="Save"
+                      >
+                        <Check className="w-3.5 h-3.5 text-green-500" />
+                      </button>
+                      <button
+                        onClick={handleCancelEditProviderField}
+                        className="p-0.5 hover:bg-red-500/20 rounded"
+                        title="Cancel"
+                      >
+                        <X className="w-3.5 h-3.5 text-red-500" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <span>{p.priority}</span>
+                      <button
+                        onClick={() => handleEditProviderField(p.id, "priority", p.priority)}
+                        className="p-0.5 hover:bg-muted rounded opacity-60 hover:opacity-100"
+                        title="Edit priority"
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <div className="col-span-1 text-right flex justify-end gap-1">
                   <Button
                     variant={p.isActive ? "default" : "outline"}
