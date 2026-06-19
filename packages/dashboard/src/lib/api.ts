@@ -211,6 +211,21 @@ export const keys = {
       method: "POST",
       body: JSON.stringify({ name }),
     }),
+  adminOverrideDiscord: (discordUserId: string, discordUsername?: string, note?: string) =>
+    request<{
+      success: boolean;
+      alreadyExists: boolean;
+      apiKey: string;
+      keyId: number;
+      keyName: string;
+      endpoint: string;
+      discordUserId: string;
+      discordUsername: string;
+      message?: string;
+    }>("/keys/override-discord", {
+      method: "POST",
+      body: JSON.stringify({ discordUserId, discordUsername, note }),
+    }),
   update: (id: number, data: Partial<{
     name: string; isActive: boolean; maxDevices: number;
     devicePolicy: string; ipPolicy: string; idePolicy: string;
@@ -393,6 +408,11 @@ export const monitor = {
   getModelDetails: () => request<{ object: string; data: any[] }>("/monitor/models/details"),
   triggerSweep: () => request<{ started: boolean; message: string }>("/monitor/sweep", { method: "POST" }),
   getSweepProgress: () => request<{ total: number; tested: number; online: number; offline: number; rateLimited: number; startedAt: string; status: string }>("/monitor/sweep/progress"),
+  activate: (modelId: string, provider: string) =>
+    request<{ success: boolean; message?: string }>("/monitor/models/activate", {
+      method: "POST",
+      body: JSON.stringify({ modelId, provider }),
+    }),
 };
 
 // ─── Global Settings ──────────────────────────────────────────────────────────

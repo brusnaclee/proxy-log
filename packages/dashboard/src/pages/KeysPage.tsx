@@ -11,10 +11,11 @@ import {
   DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { formatNumber, formatCost, copyToClipboard } from "@/lib/utils";
-import { Plus, Copy, Check, Key, Download } from "lucide-react";
+import { Plus, Copy, Check, Key, Download, Zap } from "lucide-react";
 import { useRealtimeSSE } from "@/lib/use-realtime-sse";
 import { exportCsvSimple } from "@/lib/export-csv";
 import { useCallback } from "react";
+import { Label } from "@/components/ui/label";
 
 export default function KeysPage() {
   const [allKeys, setAllKeys] = useState<ApiKeyListItem[]>([]);
@@ -23,6 +24,17 @@ export default function KeysPage() {
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [showOverride, setShowOverride] = useState(false);
+  const [overrideDiscordId, setOverrideDiscordId] = useState("");
+  const [overrideUsername, setOverrideUsername] = useState("");
+  const [overrideNote, setOverrideNote] = useState("");
+  const [overrideResult, setOverrideResult] = useState<{
+    apiKey: string;
+    keyName: string;
+    endpoint: string;
+    alreadyExists: boolean;
+  } | null>(null);
+  const [overrideError, setOverrideError] = useState<string | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -66,6 +78,30 @@ export default function KeysPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleOverride = async () => {
+    setOverrideError(null);
+    if (!/^\d{15,25}$/.test(overrideDiscordId.trim())) {
+      setOverrideError("Discord ID harus 15-25 digit angka");
+      return;
+    }
+    try {
+      const res = await keys.adminOverrideDiscord(
+        overrideDiscordId.trim(),
+        overrideUsername.trim() || undefined,
+        overrideNote.trim() || undefined,
+      );
+      setOverrideResult({
+        apiKey: res.apiKey,
+        keyName: res.keyName,
+        endpoint: res.endpoint,
+        alreadyExists: res.alreadyExists,
+      });
+      await loadKeys();
+    } catch (err: any) {
+      setOverrideError(err?.message || "Override failed");
+    }
+  };
+
   const handleExport = () => {
     const headers = ["Name", "Key Prefix", "Status", "Devices", "Requests Today", "Tokens Today", "Est. Cost Today", "Max Devices", "Device Policy", "IP Policy", "IDE Policy", "Created At"];
     const rows = allKeys.map((k) => [
@@ -96,6 +132,9 @@ export default function KeysPage() {
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={handleExport}>
             <Download className="h-4 w-4 mr-2" /> Export CSV
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => { setShowOverride(true); setOverrideResult(null); setOverrideError(null); setOverrideDiscordId(""); setOverrideUsername(""); setOverrideNote(""); }}>
+            <Zap className="h-4 w-4 mr-2" /> Admin Override
           </Button>
           <Button size="sm" onClick={() => { setShowCreate(true); setCreatedKey(null); }}>
             <Plus className="h-4 w-4 mr-2" />
@@ -213,6 +252,86 @@ export default function KeysPage() {
                 </Button>
                 <Button onClick={handleCreate} disabled={loading || !newKeyName.trim()}>
                   {loading ? "Creating..." : "Create"}
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Admin Override Dialog */}
+      <Dialog open={showOverride} onOpenChange={setShowOverride}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{overrideResult ? "Override Key Issued" : "Admin Override Discord Member"}</DialogTitle>
+            <DialogDescription>
+              {overrideResult
+                ? overrideResult.alreadyExists
+                  ? "User sudah punya active admin-override key. Key ditampilkan ulang."
+                  : "Key unlimited berhasil dibuat. Key ini dikecualikan dari daily-cleanup (admin-override)."
+                : "Buat API key untuk Discord user tanpa agverif gate. Key unlimited, isActive=true, tidak akan auto-revoke."}
+            </DialogDescription>
+          </DialogHeader>
+
+          {overrideResult ? (
+            <div className="space-y-4">
+              <div className="text-xs text-muted-foreground">
+                <strong>Name:</strong> {overrideResult.keyName}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                <strong>Endpoint:</strong> <code className="font-mono">{overrideResult.endpoint}</code>
+              </div>
+              <div className="space-y-2">
+                <Label>API Key</Label>
+                <div className="flex items-center gap-2 p-3 bg-accent/50 rounded-lg">
+                  <code className="flex-1 text-sm font-mono break-all">{overrideResult.apiKey}</code>
+                  <Button size="icon" variant="ghost" onClick={() => handleCopy(overrideResult.apiKey)}>
+                    {copied ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
+                  </Button>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                DM user Discord-nya via bot command atau manual. Key ini sudah aktif dan bisa langsung dipakai.
+              </p>
+              <DialogFooter>
+                <Button onClick={() => setShowOverride(false)}>Done</Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Discord User ID <span className="text-red-400">*</span></Label>
+                <Input
+                  placeholder="123456789012345678"
+                  value={overrideDiscordId}
+                  onChange={(e) => setOverrideDiscordId(e.target.value.replace(/[^0-9]/g, ""))}
+                  maxLength={25}
+                />
+                <p className="text-xs text-muted-foreground">15-25 digit angka (snowflake ID Discord)</p>
+              </div>
+              <div className="space-y-2">
+                <Label>Discord Username (optional)</Label>
+                <Input
+                  placeholder="johndoe"
+                  value={overrideUsername}
+                  onChange={(e) => setOverrideUsername(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Note (admin only, untuk audit)</Label>
+                <Input
+                  placeholder="VIP / sponsor / trusted user"
+                  value={overrideNote}
+                  onChange={(e) => setOverrideNote(e.target.value)}
+                />
+              </div>
+              {overrideError && (
+                <p className="text-xs text-red-400">{overrideError}</p>
+              )}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setShowOverride(false)}>Cancel</Button>
+                <Button onClick={handleOverride} disabled={!overrideDiscordId.trim()}>
+                  Create Override Key
                 </Button>
               </DialogFooter>
             </div>

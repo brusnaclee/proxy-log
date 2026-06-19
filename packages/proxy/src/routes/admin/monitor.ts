@@ -353,6 +353,31 @@ monitor.get("/internal/monitor/models", async (c) => {
   return c.json({ data });
 });
 
+// POST admin force-activate: override-mark a model as online without
+// testing it. Useful when an admin knows a model is back online but the
+// last sweep is still showing it as offline. The next sweep (10min for
+// gpy, 1h for others) will verify the actual status and may flip it
+// back to offline if it is in fact broken.
+monitor.post("/monitor/models/activate", async (c) => {
+  const authErr = checkAdminSession(c);
+  if (authErr) return authErr;
+
+  const body = await c.req.json<{ modelId: string; provider: string }>();
+  if (!body.modelId || !body.provider) {
+    return c.json({ error: "modelId and provider required" }, 400);
+  }
+  await upsertModelStatus({
+    modelId: String(body.modelId),
+    provider: String(body.provider),
+    isOnline: true,
+    latencyMs: 0,
+    httpStatus: 200,
+    errorMessage: null,
+    baseUrl: null,
+  });
+  return c.json({ success: true, message: `${body.modelId} force-activated` });
+});
+
 // ─── Enriched Model Details (catalog + metadata + monitor status) ────────────
 monitor.get("/monitor/models/details", async (c) => {
   const { getModelCatalogResponse, getOnlineModelsByLatency, getModelMetadataMap } = await import("../../utils/model-catalog.js");

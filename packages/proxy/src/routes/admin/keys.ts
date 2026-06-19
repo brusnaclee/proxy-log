@@ -102,6 +102,89 @@ keys.post("/keys", async (c) => {
   return c.json({ id: result.id, name: result.name, key, keyPrefix: result.keyPrefix, isActive: result.isActive, createdAt: result.createdAt }, 201);
 });
 
+// Admin Override: create (or return existing) unlimited API key for a Discord
+// user without requiring agverif / phantom role. The key is marked
+// `provisionedBy = "admin-override"` so the bot's daily-cleanup cron
+// (which only targets `discord-bot` keys) leaves it alone indefinitely.
+// Use case: VIP / sponsor / trusted user who needs API access without
+// the standard agverif flow.
+keys.post("/keys/override-discord", async (c) => {
+  if (!isAuthenticated(c)) return c.json({ error: "Unauthorized" }, 401);
+
+  const body = await c.req.json<{ discordUserId: string; discordUsername?: string; note?: string }>();
+  if (!body.discordUserId || !/^\d{15,25}$/.test(body.discordUserId)) {
+    return c.json({ error: "Valid discordUserId required (15-25 digits)" }, 400);
+  }
+  const discordUserId = body.discordUserId;
+  const discordUsername = body.discordUsername || `override-${discordUserId}`;
+
+  // Check existing active admin-override key for this user
+  const [existing] = await db.select()
+    .from(apiKeys)
+    .where(and(
+      eq(apiKeys.discordUserId, discordUserId),
+      eq(apiKeys.provisionedBy, "admin-override"),
+      eq(apiKeys.isActive, true),
+    ))
+    .limit(1);
+
+  const endpoint = `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`;
+
+  if (existing) {
+    return c.json({
+      success: true,
+      alreadyExists: true,
+      apiKey: existing.key,
+      keyId: existing.id,
+      keyName: existing.name,
+      endpoint,
+      discordUserId,
+      discordUsername,
+      message: "User already has an active admin-override key",
+    });
+  }
+
+  const key = generateApiKey();
+  const keyName = `Override-${discordUsername}-${discordUserId.slice(-6)}`;
+  const [result] = await db.insert(apiKeys).values({
+    name: keyName,
+    key,
+    keyPrefix: getKeyPrefix(key),
+    keyHash: sha256(key),
+    discordUserId,
+    discordUsername,
+    provisionedBy: "admin-override",
+    isActive: true,
+    isTrial: false,
+    // Unlimited by default — admin can adjust limits later via Key Detail page
+    maxDevices: 99,
+    devicePolicy: "none",
+    ipPolicy: "none",
+    idePolicy: "none",
+    dailyTokenLimit: 0,
+    monthlyTokenLimit: 0,
+    dailyInputTokenLimit: 0,
+    dailyOutputTokenLimit: 0,
+    promptLimit: 0,
+    promptLimitWindow: "5h",
+    perModelPromptLimit: 0,
+  }).returning();
+
+  console.log(`[admin-override] key ${result.id} (${keyName}) issued for discordUserId=${discordUserId}` +
+    (body.note ? ` note="${body.note}"` : ""));
+
+  return c.json({
+    success: true,
+    alreadyExists: false,
+    apiKey: key,
+    keyId: result.id,
+    keyName,
+    endpoint,
+    discordUserId,
+    discordUsername,
+  });
+});
+
 keys.get("/keys/:id", async (c) => {
   const id = parseInt(c.req.param("id"));
   const key = (await db.select().from(apiKeys).where(eq(apiKeys.id, id)))[0];

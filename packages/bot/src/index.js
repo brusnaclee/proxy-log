@@ -1810,6 +1810,31 @@ function applyModelRetryState(entry, latency) {
 	}
 }
 
+async function runSweepForProviderPrefix(matcher, label, opts = {}) {
+	await pollModelStatus();
+	if (!runtime.modelEntries.length) return;
+	const filtered = runtime.modelEntries.filter((e) => matcher(e));
+	if (!filtered.length) return;
+	// For gpy 10min cadence we DO NOT honor suspendedUntil — trial-critical
+	// models must be re-tested every 10 minutes regardless of how many times
+	// they previously failed (otherwise they would be skipped for 24h after
+	// 3 consecutive failures like the standard retry sweep).
+	const queue = filtered.filter((entry) => {
+		if (opts.ignoreSuspend) return true;
+		const key = entryKey(entry);
+		const retryState = runtime.modelRetryState.get(key);
+		if (retryState?.suspendedUntil) {
+			const suspendedUntil = new Date(retryState.suspendedUntil).getTime();
+			if (Date.now() < suspendedUntil) return false;
+		}
+		return true;
+	});
+	await sweepModelsParallel(queue, label);
+}
+
+const GPY_WEBNET_MATCHER = (e) =>
+	e.provider === 'gpy' && /^webnet\//i.test(e.modelId);
+
 async function sweepModelsParallel(entries, label) {
 	if (!entries.length) return;
 	console.log(
@@ -3293,7 +3318,7 @@ async function runDailyInactiveMemberCleanup() {
 
 	const keys = await fetchAllActiveNonTrialKeys();
 	const candidates = keys.filter(
-		(k) => k.discordUserId && k.provisionedBy === 'discord-bot',
+		(k) => k.discordUserId && k.provisionedBy === 'discord-bot', // excludes 'admin-override' keys (imun dari auto-revoke)
 	);
 	console.log(
 		`[daily-cleanup] scanning ${candidates.length} agverif-provisioned keys`,
@@ -5686,6 +5711,19 @@ client.once('clientReady', async () => {
 		await pollModelStatus();
 		await recoverRetryState();
 		await runFullSweep();
+
+		// Gpy/webnet: every 10 minutes, ignore 24h suspend — trial-critical models
+		// must be re-tested even if they have been failing for a long time.
+		setInterval(() => {
+			runSweepForProviderPrefix(GPY_WEBNET_MATCHER, 'gpy 10min sweep', { ignoreSuspend: true })
+				.catch((err) => console.error('gpy 10min sweep error:', err.message));
+		}, 600000);
+
+		// Startup: kick an immediate gpy sweep at +15s for fresh data
+		setTimeout(() => {
+			runSweepForProviderPrefix(GPY_WEBNET_MATCHER, 'gpy startup sweep', { ignoreSuspend: true })
+				.catch((err) => console.error('gpy startup sweep error:', err.message));
+		}, 15000);
 
 		// Full sweep: every 1 hour (test all models)
 		setInterval(() => {

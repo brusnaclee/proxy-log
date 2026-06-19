@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatRelativeTime, formatDate } from "@/lib/utils";
-import { Download, RefreshCw, Activity, ServerCrash, CheckCircle2, Clock, Zap } from "lucide-react";
+import { Download, RefreshCw, Activity, ServerCrash, CheckCircle2, Clock, Zap, Power } from "lucide-react";
 import { exportXlsx } from "@/lib/export-xlsx";
 
 function modelVendorOf(modelId: string) {
@@ -30,11 +30,19 @@ export default function ModelMonitorPage() {
     try {
       await monitor.triggerSweep();
       setSweepState({ running: true, progress: null });
-      // Poll progress every 3 seconds
+      // Poll every 1.5s for snappier feedback; also pull model table on every
+      // tick so the user sees results appear in real time (instead of only
+      // after the entire sweep completes).
       const interval = setInterval(async () => {
         try {
           const progress = await monitor.getSweepProgress();
           setSweepState({ running: progress.status === "running", progress });
+          if (progress.status === "running") {
+            // Realtime refresh: pull model table every tick
+            const res = await monitor.getModels();
+            setData(res.data);
+            setSummary(res.summary);
+          }
           if (progress.status !== "running") {
             clearInterval(interval);
             setSweepInterval(null);
@@ -42,7 +50,7 @@ export default function ModelMonitorPage() {
             setTimeout(() => loadData(), 2000);
           }
         } catch {}
-      }, 3000);
+      }, 1500);
       setSweepInterval(interval);
     } catch (err) {
       console.error("Sweep failed:", err);
@@ -53,6 +61,17 @@ export default function ModelMonitorPage() {
   useEffect(() => {
     return () => { if (sweepInterval) clearInterval(sweepInterval); };
   }, [sweepInterval]);
+
+  const handleActivate = async (d: ModelMonitorEntry) => {
+    if (!confirm(`Force-activate model "${d.modelId}"? Next sweep will verify the real status.`)) return;
+    try {
+      await monitor.activate(d.modelId, d.provider || "");
+      await loadData();
+    } catch (err) {
+      console.error("Activate failed:", err);
+      alert(`Activate failed: ${(err as any)?.message || err}`);
+    }
+  };
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -183,7 +202,9 @@ export default function ModelMonitorPage() {
             <>
               <Button variant="destructive" size="sm" onClick={handleSweep} disabled={sweepState.running}>
                 <Zap className={`h-4 w-4 mr-2 ${sweepState.running ? "animate-pulse" : ""}`} />
-                {sweepState.running ? `Sweeping... ${sweepState.progress?.tested || 0}/${sweepState.progress?.total || 0}` : "Test All Models"}
+                {sweepState.running && sweepState.progress
+                  ? `Sweeping... ${sweepState.progress.tested}/${sweepState.progress.total} (${Math.round((sweepState.progress.tested / Math.max(sweepState.progress.total, 1)) * 100)}%)`
+                  : "Test All Models"}
               </Button>
               <Button variant="outline" size="sm" onClick={handleExport}>
                 <Download className="h-4 w-4 mr-2" />
@@ -418,6 +439,7 @@ export default function ModelMonitorPage() {
                   <th className="text-right py-3 px-4 font-medium text-muted-foreground">Latency</th>
                   <th className="text-left py-3 px-4 font-medium text-muted-foreground">HTTP</th>
                   <th className="text-left py-3 px-4 font-medium text-muted-foreground">Last Checked</th>
+                  <th className="text-center py-3 px-4 font-medium text-muted-foreground">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -455,11 +477,18 @@ export default function ModelMonitorPage() {
                       <div>{formatRelativeTime(d.checkedAt)}</div>
                       <div className="text-[10px] opacity-70">{formatDate(d.checkedAt)}</div>
                     </td>
+                    <td className="py-3 px-4 text-center">
+                      {!d.isOnline && (
+                        <Button size="sm" variant="outline" onClick={() => handleActivate(d)}>
+                          <Power className="h-3 w-3 mr-1" /> Activate
+                        </Button>
+                      )}
+                    </td>
                   </tr>
                 ))}
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="text-center py-12 text-muted-foreground">
+                    <td colSpan={8} className="text-center py-12 text-muted-foreground">
                       No model data available.
                     </td>
                   </tr>
