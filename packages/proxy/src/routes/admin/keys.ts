@@ -10,6 +10,7 @@ import { applyTokenMultiplierRows, getTokenMultipliers } from "../../utils/token
 import { apiKeyCache, statsCache } from "../../utils/cache.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
 import { enrichModelLimitsWithCatalog } from "../../utils/model-limits-enrich.js";
+import { isAuthenticated } from "../../middleware/session.js";
 
 const keys = new Hono();
 
