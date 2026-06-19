@@ -435,3 +435,375 @@ export function buildAnthropicUpstreamHeaders(
 export function prepareAnthropicUpstreamBody(openaiBody: OpenAIRequest): string {
   return JSON.stringify(convertRequestToAnthropic(openaiBody));
 }
+
+// ─── Reverse Direction: Anthropic → OpenAI (for clients that send Anthropic Messages) ──
+
+interface AnthropicToOpenAIMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | null;
+  tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>;
+  tool_call_id?: string;
+}
+
+interface AnthropicToOpenAIRequest {
+  model: string;
+  messages: AnthropicToOpenAIMessage[];
+  max_tokens?: number;
+  temperature?: number;
+  top_p?: number;
+  stream?: boolean;
+  tools?: Array<{ type: "function"; function: { name: string; description?: string; parameters?: any } }>;
+  stop?: string | string[];
+  system?: string | Array<{ type: "text"; text: string; cache_control?: any }>;
+}
+
+/**
+ * Convert an Anthropic Messages request body to OpenAI Chat Completions format.
+ * - system prompt becomes a system message
+ * - tool_use blocks become assistant tool_calls
+ * - tool_result blocks become role=tool messages with tool_call_id
+ */
+export function convertAnthropicToOpenAI(anthropic: AnthropicToOpenAIRequest): OpenAIRequest {
+  const outMessages: OpenAIMessage[] = [];
+
+  // Extract system prompt (Anthropic puts it as top-level field, not in messages array)
+  if (typeof anthropic.system === "string" && anthropic.system.trim()) {
+    outMessages.push({ role: "system", content: anthropic.system });
+  } else if (Array.isArray(anthropic.system)) {
+    const sysText = anthropic.system.map((b) => b?.text || "").join("\n").trim();
+    if (sysText) outMessages.push({ role: "system", content: sysText });
+  }
+
+  for (const msg of anthropic.messages || []) {
+    if (msg.role === "user") {
+      // user.content can be a string or array of content blocks
+      if (typeof msg.content === "string") {
+        outMessages.push({ role: "user", content: msg.content });
+      } else if (Array.isArray(msg.content)) {
+        const blocks = msg.content as AnthropicContentBlock[];
+        const textParts: string[] = [];
+        const toolResults: Array<{ tool_call_id: string; content: string }> = [];
+        for (const b of blocks) {
+          if (b.type === "text" && b.text) textParts.push(b.text);
+          else if (b.type === "tool_result" && b.tool_use_id) {
+            const resultContent = typeof b.content === "string"
+              ? b.content
+              : Array.isArray(b.content)
+                ? b.content.map((x: any) => x?.text || "").join("\n")
+                : "";
+            toolResults.push({ tool_call_id: b.tool_use_id, content: resultContent });
+          }
+        }
+        for (const tr of toolResults) {
+          outMessages.push({ role: "tool", tool_call_id: tr.tool_call_id, content: tr.content });
+        }
+        if (textParts.length > 0) {
+          outMessages.push({ role: "user", content: textParts.join("\n") });
+        }
+      }
+    } else if (msg.role === "assistant") {
+      // assistant.content can be string or array of content blocks (text/tool_use)
+      if (typeof msg.content === "string") {
+        outMessages.push({ role: "assistant", content: msg.content });
+      } else if (Array.isArray(msg.content)) {
+        const blocks = msg.content as AnthropicContentBlock[];
+        const textParts: string[] = [];
+        const toolCalls: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }> = [];
+        for (const b of blocks) {
+          if (b.type === "text" && b.text) textParts.push(b.text);
+          else if (b.type === "tool_use" && b.id && b.name) {
+            toolCalls.push({
+              id: b.id,
+              type: "function",
+              function: { name: b.name, arguments: JSON.stringify(b.input || {}) },
+            });
+          }
+        }
+        outMessages.push({
+          role: "assistant",
+          content: textParts.join("\n") || null,
+          ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+        });
+      }
+    }
+  }
+
+  // Convert tools (Anthropic uses input_schema, OpenAI uses parameters)
+  const openaiTools = (anthropic.tools || []).map((t) => ({
+    type: "function" as const,
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.input_schema,
+    },
+  }));
+
+  return {
+    model: anthropic.model,
+    messages: outMessages,
+    max_tokens: anthropic.max_tokens,
+    temperature: anthropic.temperature,
+    top_p: anthropic.top_p,
+    stream: anthropic.stream,
+    tools: openaiTools.length > 0 ? openaiTools : undefined,
+    stop: anthropic.stop_sequences,
+  };
+}
+
+/**
+ * Convert an OpenAI Chat Completions response back to Anthropic Messages format
+ * (used after upstream returns, so we can serve Anthropic-shaped responses to clients).
+ */
+export function convertOpenAIToAnthropicResponse(openai: OpenAIResponse): AnthropicResponse {
+  const choice = openai.choices?.[0];
+  const message = choice?.message || ({} as any);
+  const contentBlocks: AnthropicContentBlock[] = [];
+  if (typeof message?.content === "string" && message.content.length > 0) {
+    contentBlocks.push({ type: "text", text: message.content });
+  }
+  if (Array.isArray(message?.tool_calls)) {
+    for (const tc of message.tool_calls) {
+      contentBlocks.push({
+        type: "tool_use",
+        id: tc.id,
+        name: tc.function?.name || "",
+        input: (() => {
+          try { return JSON.parse(tc.function?.arguments || "{}"); } catch { return {}; }
+        })(),
+      });
+    }
+  }
+  return {
+    id: (openai.id || `msg_${Date.now()}`).replace(/^chatcmpl-/, "msg_"),
+    type: "message",
+    role: "assistant",
+    model: openai.model,
+    content: contentBlocks,
+    stop_reason:
+      choice?.finish_reason === "tool_calls" ? "tool_use" :
+      choice?.finish_reason === "length" ? "max_tokens" :
+      choice?.finish_reason === "stop" ? "end_turn" :
+      "end_turn",
+    stop_sequence: null,
+    usage: {
+      input_tokens: openai.usage?.prompt_tokens || 0,
+      output_tokens: openai.usage?.completion_tokens || 0,
+    },
+  };
+}
+
+/**
+ * Detect if a request body looks like an Anthropic Messages payload.
+ * Heuristic: top-level `system` field (string or array) AND `max_tokens` number AND `messages` array.
+ */
+export function looksLikeAnthropicMessages(body: any): boolean {
+  if (!body || typeof body !== "object") return false;
+  if (typeof body.system !== "string" && !Array.isArray(body.system)) return false;
+  if (typeof body.max_tokens !== "number") return false;
+  if (!Array.isArray(body.messages)) return false;
+  return true;
+}
+
+/**
+ * Detect if a request path matches the Anthropic Messages endpoint.
+ * Accepts: /v1/messages, /v1/messages/, /v1/v1/messages (defensive)
+ */
+export function isAnthropicMessagesPath(path: string): boolean {
+  const cleaned = path.replace(/\/+$/, "");
+  return /\/v\d+\/messages\/?$/.test(cleaned) || /\/v\d+\/v\d+\/messages\/?$/.test(cleaned);
+}
+
+// ─── Anthropic SSE Stream Conversion (OpenAI chunks → Anthropic events) ────────
+
+export interface AnthropicStreamState {
+  messageId: string;
+  model: string;
+  contentBlockIndex: number;
+  contentBlockOpen: boolean;
+  toolBlockOpen: boolean;
+  toolIndex: number;
+  stopReason: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  textAccumulated: string;
+}
+
+export function createAnthropicStreamState(model: string, msgId?: string): AnthropicStreamState {
+  return {
+    messageId: msgId || `msg_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+    model,
+    contentBlockIndex: 0,
+    contentBlockOpen: false,
+    toolBlockOpen: false,
+    toolIndex: 0,
+    stopReason: null,
+    inputTokens: 0,
+    outputTokens: 0,
+    textAccumulated: "",
+  };
+}
+
+function sseEvent(event: string, data: any): string {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+/**
+ * Convert a single OpenAI SSE chunk (e.g. `data: {...}`) to one or more Anthropic SSE events.
+ * Returns empty string if no conversion should be emitted for this chunk.
+ */
+export function convertOpenAIChunkToAnthropicEvents(chunk: string, state: AnthropicStreamState): string {
+  // Strip "data: " prefix
+  const trimmed = chunk.replace(/^data:\s*/, "").trim();
+  if (!trimmed || trimmed === "[DONE]") {
+    if (trimmed === "[DONE]") {
+      // Flush: close any open content block, send message_delta + message_stop
+      let out = "";
+      if (state.contentBlockOpen && state.textAccumulated.length > 0) {
+        out += sseEvent("content_block_stop", { type: "content_block_stop", index: state.contentBlockIndex });
+        state.contentBlockOpen = false;
+      }
+      if (!state.stopReason) state.stopReason = "end_turn";
+      out += sseEvent("message_delta", {
+        type: "message_delta",
+        delta: { stop_reason: state.stopReason, stop_sequence: null },
+        usage: { output_tokens: state.outputTokens },
+      });
+      out += sseEvent("message_stop", { type: "message_stop" });
+      return out;
+    }
+    return "";
+  }
+
+  let parsed: any;
+  try { parsed = JSON.parse(trimmed); } catch { return ""; }
+
+  let out = "";
+
+  // Capture usage if present (some providers send it in the last chunk)
+  if (parsed.usage) {
+    state.inputTokens = parsed.usage.prompt_tokens || state.inputTokens;
+    state.outputTokens = parsed.usage.completion_tokens || state.outputTokens;
+  }
+
+  const choice = parsed.choices?.[0];
+  if (!choice) {
+    // Could be a usage-only chunk — emit message_delta with usage later
+    if (parsed.usage) {
+      // The DONE event will emit final message_delta
+    }
+    return out;
+  }
+
+  // First chunk: emit message_start
+  if (choice.index === 0 && !state.contentBlockOpen && state.textAccumulated === "" && state.contentBlockIndex === 0 && state.toolBlockOpen === false) {
+    out += sseEvent("message_start", {
+      type: "message_start",
+      message: {
+        id: state.messageId,
+        type: "message",
+        role: "assistant",
+        model: state.model,
+        content: [],
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: state.inputTokens, output_tokens: 0 },
+      },
+    });
+  }
+
+  const delta = choice.delta || {};
+
+  // Handle text content
+  if (typeof delta.content === "string" && delta.content.length > 0) {
+    if (!state.contentBlockOpen) {
+      out += sseEvent("content_block_start", {
+        type: "content_block_start",
+        index: state.contentBlockIndex,
+        content_block: { type: "text", text: "" },
+      });
+      state.contentBlockOpen = true;
+    }
+    out += sseEvent("content_block_delta", {
+      type: "content_block_delta",
+      index: state.contentBlockIndex,
+      delta: { type: "text_delta", text: delta.content },
+    });
+    state.textAccumulated += delta.content;
+  }
+
+  // Handle tool calls
+  if (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) {
+    for (const tc of delta.tool_calls) {
+      // Close previous text block if open
+      if (state.contentBlockOpen) {
+        out += sseEvent("content_block_stop", { type: "content_block_stop", index: state.contentBlockIndex });
+        state.contentBlockOpen = false;
+        state.contentBlockIndex++;
+      }
+      // Open tool_use block on first chunk (has id+name); subsequent chunks append arguments via input_json_delta
+      const idx = typeof tc.index === "number" ? tc.index : state.toolIndex;
+      if (tc.id && tc.function?.name && !state.toolBlockOpen) {
+        out += sseEvent("content_block_start", {
+          type: "content_block_start",
+          index: state.contentBlockIndex,
+          content_block: {
+            type: "tool_use",
+            id: tc.id,
+            name: tc.function.name,
+            input: {},
+          },
+        });
+        state.toolBlockOpen = true;
+        state.toolIndex = idx;
+      }
+      if (tc.function?.arguments) {
+        out += sseEvent("content_block_delta", {
+          type: "content_block_delta",
+          index: state.contentBlockIndex,
+          delta: {
+            type: "input_json_delta",
+            partial_json: tc.function.arguments,
+          },
+        });
+      }
+    }
+  }
+
+  // Handle finish_reason
+  if (choice.finish_reason) {
+    if (state.contentBlockOpen || state.toolBlockOpen) {
+      out += sseEvent("content_block_stop", { type: "content_block_stop", index: state.contentBlockIndex });
+      state.contentBlockOpen = false;
+      state.toolBlockOpen = false;
+      state.contentBlockIndex++;
+    }
+    state.stopReason =
+      choice.finish_reason === "tool_calls" ? "tool_use" :
+      choice.finish_reason === "length" ? "max_tokens" :
+      "end_turn";
+  }
+
+  return out;
+}
+
+/**
+ * Flush helper: emit any closing events for an incomplete stream.
+ */
+export function flushAnthropicStream(state: AnthropicStreamState): string {
+  let out = "";
+  if (state.contentBlockOpen || state.toolBlockOpen) {
+    out += sseEvent("content_block_stop", { type: "content_block_stop", index: state.contentBlockIndex });
+    state.contentBlockOpen = false;
+    state.toolBlockOpen = false;
+  }
+  if (!state.stopReason) state.stopReason = "end_turn";
+  out += sseEvent("message_delta", {
+    type: "message_delta",
+    delta: { stop_reason: state.stopReason, stop_sequence: null },
+    usage: { output_tokens: state.outputTokens },
+  });
+  out += sseEvent("message_stop", { type: "message_stop" });
+  return out;
+}
+
+

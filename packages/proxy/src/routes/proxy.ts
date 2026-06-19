@@ -845,6 +845,20 @@ proxy.all('/*', async (c) => {
 	const path = c.req.path; // e.g., /v1/chat/completions
 	const normalizedPath = path.replace(/\/+$/, '') || '/';
 
+	// Anthropic Messages endpoint detection — path-based OR body-shape-based.
+	// Clients like Claude Code send POST /v1/messages (strict Anthropic format).
+	// We translate to OpenAI Chat Completions internally and back to Anthropic on response.
+	const {
+		isAnthropicMessagesPath,
+		convertAnthropicToOpenAI,
+		convertOpenAIToAnthropicResponse,
+		looksLikeAnthropicMessages,
+		convertOpenAIChunkToAnthropicEvents,
+		flushAnthropicStream,
+		createAnthropicStreamState,
+	} = await import("../utils/anthropic-adapter.js");
+	const anthropicByPath = isAnthropicMessagesPath(path);
+
 	// Public model discovery endpoints from local cache.
 	// If a Bearer token is present, filter by the key's isTrial flag so trial
 	// users only see gpy/* models (their allowlist). Without auth, return full
@@ -1291,8 +1305,7 @@ proxy.all('/*', async (c) => {
 		}
 	}
 
-	if (requestBody) {
-		const contextInfo = extractContextInfo(requestBody);
+	if (requestBody) {		const contextInfo = extractContextInfo(requestBody);
 		model = requestBody?.model || contextInfo.model || 'unknown';
 		contextTokensBefore = contextInfo.contextTokensBefore;
 		estimatedContextLength = contextInfo.contextTokensBefore;
@@ -1382,6 +1395,33 @@ proxy.all('/*', async (c) => {
 
 		// Change forward path to chat/completions
 		forwardPath = path.replace('/v1/responses', '/v1/chat/completions');
+	}
+
+	// ─── 7c. Anthropic Messages -> OpenAI Chat Completions ─────────────────
+	// Detect Anthropic format clients (Claude Code, Anthropic SDK) and translate.
+	// Detection: path matches /v1/messages OR body shape is Anthropic (system string + max_tokens + messages array).
+	let isAnthropicRequest = anthropicByPath;
+	if (!isAnthropicRequest && requestBody && c.req.method === 'POST') {
+		if (looksLikeAnthropicMessages(requestBody)) {
+			isAnthropicRequest = true;
+		}
+	}
+	if (isAnthropicRequest && requestBody) {
+		try {
+			const openaiBody = convertAnthropicToOpenAI(requestBody as any);
+			requestBody = openaiBody as any;
+			requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
+			forwardPath = '/v1/chat/completions';
+			console.log(`[proxy] anthropic->openai translation for model=${(requestBody as any).model}`);
+		} catch (err) {
+			console.error('[proxy] anthropic translation failed:', (err as Error).message);
+			return c.json({
+				error: {
+					type: "invalid_request_error",
+					message: `Anthropic request translation failed: ${(err as Error).message}`,
+				}
+			}, 400);
+		}
 	}
 
 	// ─── 7b. Content-based IDE fallback detection ──────────────────────────
@@ -3290,6 +3330,9 @@ proxy.all('/*', async (c) => {
 			const anthropicStreamState = isAnthropicProvider
 				? createStreamState(model)
 				: null;
+			const clientAnthropicStreamState = isAnthropicRequest
+				? createAnthropicStreamState(model)
+				: null;
 			let anthropicBuffer = '';
 			let responsesBuffer = ''; // for Responses API SSE conversion
 			let responsesResponseId = `resp-${Date.now()}`;
@@ -3366,6 +3409,33 @@ proxy.all('/*', async (c) => {
 								}
 							} catch {}
 						}
+					} else if (isAnthropicRequest && clientAnthropicStreamState) {
+						// Anthropic SSE streaming: convert OpenAI chunks → Anthropic events
+						// (do NOT pass through the original OpenAI chunks — only emit the converted Anthropic events)
+						try {
+							const text = decoder.decode(chunk, { stream: true });
+							const lines = text.split('\n');
+							for (const line of lines) {
+								if (!line.startsWith('data:')) continue;
+								const payloadText = line.slice(5).trim();
+								if (payloadText === '[DONE]') {
+									const flushed = flushAnthropicStream(clientAnthropicStreamState);
+									if (flushed) controller.enqueue(new TextEncoder().encode(flushed));
+									continue;
+								}
+								if (!payloadText) continue;
+								try {
+									const data = JSON.parse(payloadText);
+									appendToolsFromPayload(data);
+									if (detectToolCallsInResponse(data)) hasActualToolCalls = true;
+									consumeStreamPayload(acc, data);
+									const converted = convertOpenAIChunkToAnthropicEvents(line, clientAnthropicStreamState);
+									if (converted) {
+										controller.enqueue(new TextEncoder().encode(converted));
+									}
+								} catch {}
+							}
+						} catch {}
 					} else {
 						// OpenAI streaming: pass through as-is
 						controller.enqueue(chunk);
@@ -3574,6 +3644,20 @@ proxy.all('/*', async (c) => {
 			} catch (convErr) {
 				console.error(
 					'[responses-adapter] Failed to convert response:',
+					convErr,
+				);
+			}
+		}
+
+		// Convert OpenAI Chat Completions response to Anthropic Messages format
+		if (isAnthropicRequest && statusCode >= 200 && statusCode < 300) {
+			try {
+				const openaiParsed = JSON.parse(responseBody);
+				const anthropicResp = convertOpenAIToAnthropicResponse(openaiParsed);
+				responseBody = JSON.stringify(anthropicResp);
+			} catch (convErr) {
+				console.error(
+					'[anthropic-adapter] Failed to convert response:',
 					convErr,
 				);
 			}

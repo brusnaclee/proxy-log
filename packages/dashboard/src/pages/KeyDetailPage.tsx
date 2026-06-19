@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatDate, formatNumber, formatRelativeTime, copyToClipboard, formatCost } from "@/lib/utils";
-import { ArrowLeft, Copy, Check, RotateCw, Trash2, Shield, ShieldOff, X, Download, DollarSign, Gift } from "lucide-react";
+import { ArrowLeft, Copy, Check, RotateCw, Trash2, Shield, ShieldOff, X, Download, DollarSign, Gift, Info, ExternalLink } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
   DialogDescription, DialogFooter, DialogTrigger
@@ -600,6 +600,45 @@ export default function KeyDetailPage() {
                   })}
                 </tbody>
               </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {keyData.isActive && keyData.discordUserId && (
+        <Card className="border-blue-500/30 bg-blue-500/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2 text-blue-400">
+              <Info className="h-4 w-4" /> Setup di IDE / CLI
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm">
+            <div>
+              <div className="font-medium mb-1 flex items-center gap-2">
+                <span className="text-emerald-400">A.</span> OpenAI-compatible clients
+                <span className="text-xs text-muted-foreground">(Cline, Codex, OpenCode, Cursor)</span>
+              </div>
+              <pre className="bg-background/60 p-3 rounded font-mono text-xs whitespace-pre-wrap break-all">
+{`Endpoint: ${(import.meta as any).env?.VITE_PROXY_PUBLIC_BASE_URL || "https://api.tokito.xyz"}/v1
+Authorization: Bearer ${keyData.keyMasked}`}
+              </pre>
+            </div>
+            <div>
+              <div className="font-medium mb-1 flex items-center gap-2">
+                <span className="text-orange-400">B.</span> Anthropic clients
+                <span className="text-xs text-muted-foreground">(Claude Code, Anthropic SDK)</span>
+              </div>
+              <pre className="bg-background/60 p-3 rounded font-mono text-xs whitespace-pre-wrap break-all">
+{`export ANTHROPIC_BASE_URL="${(import.meta as any).env?.VITE_PROXY_PUBLIC_BASE_URL || "https://api.tokito.xyz"}/v1"
+export ANTHROPIC_AUTH_TOKEN="${keyData.keyMasked}"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="<groupy-model-id>"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="<groupy-model-id>"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="<groupy-model-id>"
+export API_TIMEOUT_MS=500000`}
+              </pre>
+              <p className="text-xs text-muted-foreground mt-2">
+                Setting <code className="font-mono">ANTHROPIC_BASE_URL</code> ke path di atas otomatis route ke <code className="font-mono">/v1/messages</code> di proxy dengan translation ke OpenAI Chat Completions. Tidak perlu install CCProxy / ccrouter lagi.
+              </p>
             </div>
           </CardContent>
         </Card>

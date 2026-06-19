@@ -43,7 +43,7 @@ export const DEFAULT_TRIAL_DM: TrialDmTemplates = {
   keyRotated:
     "🔄 **API Key Trial Di-rotate**\n\nKey trial Anda di-rotate karena terdeteksi penggunaan dari lebih dari 1 device.\n\n**Endpoint:** `{endpoint}`\n**Key baru:** `{apiKey}`",
   claimed:
-    "🎁 **Trial API Aktif**\n\n**Endpoint:** `{endpoint}`\n**Authorization:** `Bearer {apiKey}`\n\n**Rules:**\n• Durasi: {durationDays} hari (berakhir {expiresAtFormatted})\n• Token harian: {dailyTokenLimit}\n• Prompt: {promptLimit}/{promptWindow}\n• Model: hanya **gpy**\n\n**Model tersedia:**\n{modelList}",
+    "🎁 **Trial API Aktif**\n\n**A. OpenAI-compatible clients (Cline/Codex/OpenCode/Cursor):**\n```\nEndpoint:   {endpoint}\nAuthorization: Bearer {apiKey}\n```\n\n**B. Anthropic clients (Claude Code) — auto-translated by proxy:**\n```bash\nexport ANTHROPIC_BASE_URL=\"{endpoint}\"\nexport ANTHROPIC_AUTH_TOKEN=\"{apiKey}\"\nexport ANTHROPIC_DEFAULT_SONNET_MODEL=\"{firstModel}\"\nexport ANTHROPIC_DEFAULT_HAIKU_MODEL=\"{firstModel}\"\nexport ANTHROPIC_DEFAULT_OPUS_MODEL=\"{firstModel}\"\nexport API_TIMEOUT_MS=500000\n```\n(Setting `ANTHROPIC_BASE_URL` ke path di atas otomatis route ke `/v1/messages` di proxy.)\n\n**Rules:**\n• Durasi: {durationDays} hari (berakhir {expiresAtFormatted})\n• Token harian: {dailyTokenLimit}\n• Prompt: {promptLimit}/{promptWindow}\n• Model: hanya **gpy**\n\n**Model tersedia:**\n{modelList}",
   reclaimAvailable:
     "🎁 **Trial Baru Tersedia**\n\nAdmin sudah membuka akses trial lagi untuk kamu. Silakan klaim ulang di channel <#{channelId}> dengan menekan tombol **Klaim Trial API**.\n\nDurasi baru: {durationDays} hari\n{upgradePhantom}",
   upgradePhantom:

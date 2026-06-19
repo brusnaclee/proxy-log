@@ -369,14 +369,29 @@ function extractUserId(raw) {
 }
 
 async function sendApiCredentialsDm(userId, apiKey, endpoint) {
+	const anthropicUrl = endpoint; // same URL works: /v1/messages auto-routed + translated
 	const result = await sendDMToUser(
 		userId,
 		'🔑 API Key Proxy Anda',
 		`Verifikasi Anda berhasil. Berikut kredensial akses API proxy:\n\n` +
-			`**Endpoint**: \`${endpoint}\`\n` +
-			`**Authorization**: \`Bearer ${apiKey}\`\n\n` +
-			`Contoh request ke OpenAI-compatible endpoint:\n` +
-			`\`${endpoint}/chat/completions\`\n\n` +
+			`**A. Untuk OpenAI-compatible clients (Cline, Codex, OpenCode, Cursor):**\n` +
+			`\`\`\`\n` +
+			`Endpoint:   ${endpoint}\n` +
+			`Authorization: Bearer ${apiKey}\n` +
+			`\`\`\`\n` +
+			`Contoh: \`${endpoint}/chat/completions\`\n\n` +
+			`**B. Untuk Anthropic clients (Claude Code, Anthropic SDK):**\n` +
+			`Proxy auto-translate \`/v1/messages\` (Anthropic) ↔ \`/v1/chat/completions\` (OpenAI). ` +
+			`Set env vars berikut:\n` +
+			`\`\`\`bash\n` +
+			`export ANTHROPIC_BASE_URL="${anthropicUrl}"\n` +
+			`export ANTHROPIC_AUTH_TOKEN="${apiKey}"\n` +
+			`export ANTHROPIC_DEFAULT_SONNET_MODEL="<groupy-model-id>"\n` +
+			`export ANTHROPIC_DEFAULT_HAIKU_MODEL="<groupy-model-id>"\n` +
+			`export ANTHROPIC_DEFAULT_OPUS_MODEL="<groupy-model-id>"\n` +
+			`export API_TIMEOUT_MS=500000\n` +
+			`\`\`\`\n` +
+			`Untuk bantuan setup di IDE: buka Discord DM bot ini dan klik "How to Use".\n\n` +
 			`**Peraturan Penggunaan:**\n` +
 			`• Maksimal **1 device** per API key\n` +
 			`• Jika terdeteksi >1 device, key akan di-revoke/rotate otomatis\n` +

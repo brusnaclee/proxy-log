@@ -313,6 +313,7 @@ export async function claimTrialForUser(body: {
   const dmTemplates = parseTrialDmTemplates(config.trialDmTemplates);
 
   const { queueTrialNotification } = await import("../../utils/trial-notify.js");
+  const firstModel = gpyModels[0] || "gpy/webnet/claude-haiku-4.5";
   await queueTrialNotification(insertedKey.id, "claimed", {
     apiKey: keyPlain,
     endpoint,
@@ -323,6 +324,7 @@ export async function claimTrialForUser(body: {
     promptLimit: String(promptLimit),
     promptWindow,
     modelList: gpyModels.slice(0, 30).map((m) => `• \`${m}\``).join("\n") || "• (lihat /v1/models)",
+    firstModel,
     dmTemplate: dmTemplates.claimed || "",
   });
 
@@ -509,6 +511,7 @@ export async function adminTrialAction(body: {
     const modelList = gpyModels.slice(0, 30).map((m) => `• \`${m}\``).join("\n") || "• (lihat /v1/models)";
 
     // Send the new key directly to the user via the `claimed` DM template.
+    const firstModel = (gpyModels && gpyModels.length > 0 ? gpyModels[0] : "gpy/webnet/claude-haiku-4.5");
     await queueTrialNotification(insertedKey.id, "claimed", {
       apiKey: keyPlain,
       endpoint,
@@ -519,6 +522,7 @@ export async function adminTrialAction(body: {
       promptLimit: String(promptLimit),
       promptWindow,
       modelList,
+      firstModel,
       dmTemplate: templates.claimed || "",
     });
 
