@@ -47,11 +47,27 @@ async function main() {
 
   // 4. Update server .env AGVERIF_ENABLED and AGVERIF_CHANNEL_ID
   console.log('\n--- Updating server .env ---');
-  const envUpdate = await ssh.execCommand(
-    "sed -i 's/AGVERIF_ENABLED=.*/AGVERIF_ENABLED=false/' /root/proxy-log/.env && " +
-    "sed -i 's/AGVERIF_CHANNEL_ID=.*/AGVERIF_CHANNEL_ID=1507648903900565514/' /root/proxy-log/.env && " +
-    "echo 'Updated AGVERIF_ENABLED and AGVERIF_CHANNEL_ID in .env'"
-  );
+
+  // Check if AGVERIF_ENABLED exists in .env
+  const checkEnv = await ssh.execCommand("grep -c 'AGVERIF_ENABLED' /root/proxy-log/.env || echo '0'");
+  const agverifExists = parseInt(checkEnv.stdout?.trim() || '0') > 0;
+
+  let envUpdate;
+  if (agverifExists) {
+    // Replace existing value
+    envUpdate = await ssh.execCommand(
+      "sed -i 's/AGVERIF_ENABLED=.*/AGVERIF_ENABLED=false/' /root/proxy-log/.env && " +
+      "sed -i 's/AGVERIF_CHANNEL_ID=.*/AGVERIF_CHANNEL_ID=1507648903900565514/' /root/proxy-log/.env && " +
+      "echo 'Updated existing AGVERIF_ENABLED and AGVERIF_CHANNEL_ID in .env'"
+    );
+  } else {
+    // Add new lines if not exists
+    envUpdate = await ssh.execCommand(
+      "echo 'AGVERIF_ENABLED=false' >> /root/proxy-log/.env && " +
+      "sed -i 's/AGVERIF_CHANNEL_ID=.*/AGVERIF_CHANNEL_ID=1507648903900565514/' /root/proxy-log/.env && " +
+      "echo 'Added AGVERIF_ENABLED to .env'"
+    );
+  }
   console.log(envUpdate.stdout || envUpdate.stderr || 'No .env update output');
 
   // Also update .env.example for future reference
