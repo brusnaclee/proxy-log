@@ -47,6 +47,8 @@ let VERIFIED_ROLE_ID = process.env.VERIFIED_ROLE_ID || '1486334226671337472';
 let BOT_TOKEN = process.env.BOT_TOKEN;
 let VERIF_AUTO_ENABLED =
 	String(process.env.VERIF_AUTO || 'false').toLowerCase() === 'true';
+let AGVERIF_ENABLED =
+	String(process.env.AGVERIF_ENABLED || 'true').toLowerCase() === 'true';
 const NO_PHOTO_TIMEOUT_HOURS = 1;
 const NO_PHOTO_TIMEOUT_MS = NO_PHOTO_TIMEOUT_HOURS * 60 * 60 * 1000;
 const INACTIVE_TIMEOUT_DAYS = 3;
@@ -3512,32 +3514,60 @@ async function setupVerificationButton() {
 			return;
 		}
 
-		const button = new ButtonBuilder()
-			.setCustomId('create_agverif_ticket')
-			.setLabel('🔐 Verifikasi Antigravity')
-			.setStyle(ButtonStyle.Primary);
+		let button;
+		let embed;
+
+		if (AGVERIF_ENABLED) {
+			// Original photo verification flow
+			button = new ButtonBuilder()
+				.setCustomId('create_agverif_ticket')
+				.setLabel('🔐 Verifikasi Antigravity')
+				.setStyle(ButtonStyle.Primary);
+
+			embed = new EmbedBuilder()
+				.setTitle('🔐 Verifikasi Antigravity')
+				.setDescription(
+					'Klik tombol di bawah untuk membuat tiket verifikasi antigravity.\n\n' +
+						'**Syarat:**\n' +
+						'• Memiliki role **The Phantom**\n' +
+						'• Belum terverifikasi antigravity\n\n' +
+						'**Proses Verifikasi:**\n' +
+						'1. Klik tombol untuk membuat tiket\n' +
+						'2. Upload foto selfie dengan kertas bertulisan:\n' +
+						'   *"saya pengguna paket phantom, ingin verifikasi antigravity"*\n' +
+						'3. Tunggu Owner Groupy memverifikasi\n' +
+						'4. Dapatkan role verifikasi setelah disetujui\n\n' +
+						'⚠️ **Peringatan:**\n' +
+						'• Jangan hapus foto setelah upload\n' +
+						'• Role akan dicabut jika foto dihapus',
+				)
+				.setColor(0x5865f2)
+				.setTimestamp();
+		} else {
+			// Auto-claim flow (no photo verification)
+			button = new ButtonBuilder()
+				.setCustomId('create_agverif_ticket')
+				.setLabel('🎁 Claim API Key')
+				.setStyle(ButtonStyle.Primary);
+
+			embed = new EmbedBuilder()
+				.setTitle('🎁 Claim API Key')
+				.setDescription(
+					'Klik tombol di bawah untuk claim API key Antigravity.\n\n' +
+						'**Syarat:**\n' +
+						'• Memiliki role **The Phantom**\n\n' +
+						'**Cara Claim:**\n' +
+						'1. Klik tombol Claim API Key\n' +
+						'2. API key akan dikirim via DM\n\n' +
+						'⚠️ **Penting:**\n' +
+						'• Jika role Phantom dicabut, API key akan dinonaktifkan\n' +
+						'• Claim ulang setelah perpanjang paket Phantom',
+				)
+				.setColor(0x57f287)
+				.setTimestamp();
+		}
 
 		const row = new ActionRowBuilder().addComponents(button);
-
-		const embed = new EmbedBuilder()
-			.setTitle('🔐 Verifikasi Antigravity')
-			.setDescription(
-				'Klik tombol di bawah untuk membuat tiket verifikasi antigravity.\n\n' +
-					'**Syarat:**\n' +
-					'• Memiliki role **The Phantom**\n' +
-					'• Belum terverifikasi antigravity\n\n' +
-					'**Proses Verifikasi:**\n' +
-					'1. Klik tombol untuk membuat tiket\n' +
-					'2. Upload foto selfie dengan kertas bertulisan:\n' +
-					'   *"saya pengguna paket phantom, ingin verifikasi antigravity"*\n' +
-					'3. Tunggu Owner Groupy memverifikasi\n' +
-					'4. Dapatkan role verifikasi setelah disetujui\n\n' +
-					'⚠️ **Peringatan:**\n' +
-					'• Jangan hapus foto setelah upload\n' +
-					'• Role akan dicabut jika foto dihapus',
-			)
-			.setColor(0x5865f2)
-			.setTimestamp();
 
 		if (client.agverifData.setupState.messageId) {
 			try {
@@ -6281,6 +6311,90 @@ client.on('interactionCreate', async (interaction) => {
 				const member = interaction.member;
 				const userId = interaction.user.id;
 
+				// ─── AGVERIF_ENABLED = false: Auto-claim flow ───
+				if (!AGVERIF_ENABLED) {
+					// Check Phantom role requirement
+					if (!member.roles.cache.has(REQUIRED_ROLE_ID)) {
+						const errorEmbed = new EmbedBuilder()
+							.setTitle('❌ Akses Ditolak')
+							.setDescription(
+								'Anda memerlukan role **The Phantom** untuk claim API key.\n\n' +
+									'Jika anda sudah memiliki paket Phantom, silakan hubungi admin.',
+							)
+							.setColor(0xff6b6b);
+
+						await interaction.reply({
+							embeds: [errorEmbed],
+							ephemeral: true,
+						});
+						return;
+					}
+
+					// Check if user already has active API key
+					let existingKey = null;
+					try {
+						existingKey = await proxyInternal(`/admin/internal/user-key-type/${userId}`);
+					} catch (err) {
+						console.error('[auto-claim] Failed to check existing key:', err);
+					}
+
+					if (existingKey?.hasActiveApiKey) {
+						const infoEmbed = new EmbedBuilder()
+							.setTitle('✅ Sudah Memiliki API Key')
+							.setDescription(
+								'Anda sudah memiliki API key aktif.\n\n' +
+									'Jika key tidak berfungsi, silakan hubungi admin untuk reset.\n\n' +
+									'Note: Jika role Phantom dicabut, API key akan dinonaktifkan.',
+							)
+							.setColor(0x57f287);
+
+						await interaction.reply({
+							embeds: [infoEmbed],
+							ephemeral: true,
+						});
+						return;
+					}
+
+					// Provision new API key
+					try {
+						const result = await provisionApiKeyForVerifiedUser(
+							userId,
+							interaction.user.username,
+							'auto-claim',
+							interaction.guildId,
+						);
+
+						const successEmbed = new EmbedBuilder()
+							.setTitle('✅ API Key Dikirim')
+							.setDescription(
+								'API key sudah dikirim via DM.\n\n' +
+									'⚠️ **Penting:** Jika role Phantom dicabut, API key akan dinonaktifkan. Claim ulang setelah perpanjang paket Phantom.',
+							)
+							.setColor(0x57f287);
+
+						await interaction.reply({
+							embeds: [successEmbed],
+							ephemeral: true,
+						});
+						return;
+					} catch (err) {
+						console.error('[auto-claim] Failed to provision key:', err);
+						const errorEmbed = new EmbedBuilder()
+							.setTitle('❌ Gagal Claim')
+							.setDescription(
+								'Gagal membuat API key. Silakan coba lagi atau hubungi admin.',
+							)
+							.setColor(0xff6b6b);
+
+						await interaction.reply({
+							embeds: [errorEmbed],
+							ephemeral: true,
+						});
+						return;
+					}
+				}
+
+				// ─── AGVERIF_ENABLED = true: Original photo verification flow ───
 				if (!member.roles.cache.has(REQUIRED_ROLE_ID)) {
 					const errorEmbed = new EmbedBuilder()
 						.setTitle('❌ Akses Ditolak')
@@ -7121,6 +7235,7 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 		}
 
 		if (oldHasRole && !newHasRole) {
+			// Check if user is in verifiedUsers (photo verification mode)
 			if (client.agverifData.verifiedUsers[newMember.id]) {
 				const verifiedData = client.agverifData.verifiedUsers[newMember.id];
 				const threadId = verifiedData.threadId;
@@ -7147,44 +7262,79 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 
 				if (!threadExists) {
 					await removeThreadFromData(threadId);
-					return;
-				}
+				} else {
+					// Get channel name for claim instructions
+					let claimChannelMention = 'channel verifikasi';
+					try {
+						const claimChannel = await client.channels.fetch(AGVERIF_CHANNEL_ID);
+						if (claimChannel) {
+							claimChannelMention = `<#${claimChannel.id}>`;
+						}
+					} catch (_) {}
 
-				let verifiedRoleName = 'Role verifikasi';
+					// Tandai thread akan dihapus karena role dicabut
+					if (client.agverifData.threads[threadId]) {
+						await updateThreadData(threadId, {
+							hasRole: false,
+							deletedByRoleRemoval: true,
+						});
+					}
+
+					// Hapus thread verifikasi (abaikan 10003 = channel sudah tidak ada)
+					try {
+						await thread.delete('Role verifikasi antigravity dicabut');
+					} catch (err) {
+						if (err.code !== 10003) {
+							console.error(
+								'Failed to delete verification thread after role removal:',
+								err,
+							);
+						}
+					}
+					await removeThreadFromData(threadId);
+
+					await sendDMToUser(
+						newMember.id,
+						'⚠️ Phantom Kadaluarsa',
+						`Paket Phantom anda sudah habis atau role telah dicabut.\n\n` +
+							`API key Antigravity anda telah dinonaktifkan.\n\n` +
+							`**Untuk melanjutkan:**\n` +
+							`1. Perpanjang paket Phantom anda\n` +
+							`2. Setelah dapat role Phantom baru, claim ulang API key di ${claimChannelMention}\n\n` +
+							`Jika ada pertanyaan, silakan hubungi admin.`,
+						0xff6b6b,
+					);
+				}
+			} else if (!AGVERIF_ENABLED) {
+				// Auto-claim mode: Phantom role was removed, revoke/disable API key
+				await revokeApiKeyForUser(
+					newMember.id,
+					'Phantom role removed - auto-claim mode',
+				).catch((err) => {
+					console.error(
+						'[auto-claim] failed to revoke proxy key on Phantom role removal:',
+						err,
+					);
+				});
+
+				// Get channel name for claim instructions
+				let claimChannelMention = 'channel verifikasi';
 				try {
-					const verifiedRole =
-						await newMember.guild.roles.fetch(VERIFIED_ROLE_ID);
-					if (verifiedRole) {
-						verifiedRoleName = `role **${verifiedRole.name}**`;
+					const claimChannel = await client.channels.fetch(AGVERIF_CHANNEL_ID);
+					if (claimChannel) {
+						claimChannelMention = `<#${claimChannel.id}>`;
 					}
 				} catch (_) {}
 
-				// Tandai thread akan dihapus karena role dicabut
-				if (client.agverifData.threads[threadId]) {
-					await updateThreadData(threadId, {
-						hasRole: false,
-						deletedByRoleRemoval: true,
-					});
-				}
-
-				// Hapus thread verifikasi (abaikan 10003 = channel sudah tidak ada)
-				try {
-					await thread.delete('Role verifikasi antigravity dicabut');
-				} catch (err) {
-					if (err.code !== 10003) {
-						console.error(
-							'Failed to delete verification thread after role removal:',
-							err,
-						);
-					}
-				}
-				await removeThreadFromData(threadId);
-
 				await sendDMToUser(
 					newMember.id,
-					'⚠️ Role Verifikasi Dicabut',
-					`${verifiedRoleName} antigravity Anda telah dicabut.\n\n` +
-						'Jika ini adalah kesalahan, silakan hubungi admin.',
+					'⚠️ Phantom Kadaluarsa',
+					`Paket Phantom anda sudah habis atau role telah dicabut.\n\n` +
+						`API key Antigravity anda telah dinonaktifkan.\n\n` +
+						`**Untuk melanjutkan:**\n` +
+						`1. Perpanjang paket Phantom anda\n` +
+						`2. Setelah dapat role Phantom baru, claim ulang API key di ${claimChannelMention}\n\n` +
+						`Jika ada pertanyaan, silakan hubungi admin.`,
 					0xff6b6b,
 				);
 			}

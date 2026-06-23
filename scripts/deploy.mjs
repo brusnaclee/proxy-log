@@ -45,14 +45,22 @@ async function main() {
   if (buildDash.stderr) console.log('Dashboard build stderr:', buildDash.stderr);
   console.log('Dashboard build completed.');
 
-  // 4. Update server .env AGVERIF_CHANNEL_ID
+  // 4. Update server .env AGVERIF_ENABLED and AGVERIF_CHANNEL_ID
   console.log('\n--- Updating server .env ---');
   const envUpdate = await ssh.execCommand(
-    "sed -i 's/AGVERIF_CHANNEL_ID=.*/AGVERIF_CHANNEL_ID=1507648903900565514/' /root/proxy-log/.env && echo 'Updated AGVERIF_CHANNEL_ID in .env'"
+    "sed -i 's/AGVERIF_ENABLED=.*/AGVERIF_ENABLED=false/' /root/proxy-log/.env && " +
+    "sed -i 's/AGVERIF_CHANNEL_ID=.*/AGVERIF_CHANNEL_ID=1507648903900565514/' /root/proxy-log/.env && " +
+    "echo 'Updated AGVERIF_ENABLED and AGVERIF_CHANNEL_ID in .env'"
   );
   console.log(envUpdate.stdout || envUpdate.stderr || 'No .env update output');
 
-  // 5. Update DB admin_config agverif_channel_id
+  // Also update .env.example for future reference
+  const envExampleUpdate = await ssh.execCommand(
+    "sed -i 's/AGVERIF_ENABLED=.*/AGVERIF_ENABLED=false/' /root/proxy-log/.env.example 2>/dev/null || echo 'No .env.example update needed'"
+  );
+  console.log(envExampleUpdate.stdout || 'Updated .env.example');
+
+  // 5. Update DB admin_config agverif_channel_id (for bot dashboard settings)
   console.log('\n--- Updating DB admin_config ---');
   const dbUpdate = await ssh.execCommand(
     "sudo -u postgres psql -d monit_api -c \"UPDATE admin_config SET agverif_channel_id='1507648903900565514' WHERE id=1\" 2>&1"
