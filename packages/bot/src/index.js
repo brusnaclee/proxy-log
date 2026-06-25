@@ -6344,7 +6344,7 @@ client.on('interactionCreate', async (interaction) => {
 						return;
 					}
 
-					// Check if user already has active API key
+					// Check if user already has Phantom API key
 					let existingKey = null;
 					try {
 						existingKey = await proxyInternal(`/admin/internal/user-key-type/${userId}`);
@@ -6352,8 +6352,9 @@ client.on('interactionCreate', async (interaction) => {
 						console.error('[auto-claim] Failed to check existing key:', err);
 					}
 
-					if (existingKey?.hasActiveApiKey) {
-						// User already has active key - get the key and re-send DM
+					// If user has phantom key, resend it. Trial key doesn't count for phantom claim.
+					if (existingKey?.hasPhantomKey) {
+						// User already has Phantom key - get the key and re-send DM
 						try {
 							const keyInfo = await proxyInternal(`/admin/internal/key-for-user/${userId}`);
 							if (keyInfo && keyInfo.apiKey) {
@@ -6362,14 +6363,13 @@ client.on('interactionCreate', async (interaction) => {
 								// Send credentials DM
 								await sendApiCredentialsDm(userId, keyInfo.apiKey, endpoint);
 
-								// Send How to Use guide
-								const kind = existingKey.isTrial ? 'trial' : 'phantom';
+								// Send How to Use guide (always phantom for this button)
 								try {
 									const data = await proxyInternal('/admin/internal/models/details');
 									const models = (data?.data || [])
 										.map((m) => m.id)
 										.filter((id) => id && id !== 'auto');
-									await sendHowToDm(userId, kind, {
+									await sendHowToDm(userId, 'phantom', {
 										endpoint,
 										apiKey: keyInfo.apiKey,
 										models,
@@ -6381,7 +6381,7 @@ client.on('interactionCreate', async (interaction) => {
 								const infoEmbed = new EmbedBuilder()
 									.setTitle('✅ API Key Dikirim Ulang')
 									.setDescription(
-										'API key anda sudah dikirim ulang via DM.\n\n' +
+										'API key Phantom anda sudah dikirim ulang via DM.\n\n' +
 											'Jika tidak menerima DM, silakan cek:\n' +
 											'• Allow DM dari server ini\n' +
 											'• Hubungi admin\n\n' +

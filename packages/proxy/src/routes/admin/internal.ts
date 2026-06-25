@@ -1199,27 +1199,27 @@ internal.get("/internal/user-key-type/:discordUserId", async (c) => {
   const authErr = checkInternal(c);
   if (authErr) return authErr;
   const discordUserId = c.req.param("discordUserId");
-  const key = await findBestKeyForDiscordUser(discordUserId);
-  if (!key) return c.json({ found: false });
+
+  // Get phantom key (non-trial, active)
   const [phantomKey] = await db
-    .select({ id: apiKeys.id })
+    .select({ id: apiKeys.id, isTrial: apiKeys.isTrial })
     .from(apiKeys)
     .where(and(eq(apiKeys.discordUserId, discordUserId), eq(apiKeys.isTrial, false), eq(apiKeys.isActive, true)))
     .limit(1);
-  // Any active key (trial OR phantom) owned by this user. Used by the bot
-  // API Checker Panel to allow access when the user has a working key but
-  // is missing the required role.
+
+  // Any active key (trial OR phantom) owned by this user
   const [anyActiveKey] = await db
     .select({ id: apiKeys.id, isTrial: apiKeys.isTrial })
     .from(apiKeys)
     .where(and(eq(apiKeys.discordUserId, discordUserId), eq(apiKeys.isActive, true)))
     .limit(1);
+
   return c.json({
-    found: true,
-    isTrial: key.isTrial,
+    found: !!phantomKey || !!anyActiveKey,
+    isTrial: phantomKey ? phantomKey.isTrial : (anyActiveKey ? anyActiveKey.isTrial : null),
     hasPhantomKey: !!phantomKey,
     hasActiveApiKey: !!anyActiveKey,
-    isActive: key.isActive,
+    isActive: phantomKey ? true : (anyActiveKey ? anyActiveKey.isTrial === false : false),
     discordUserId,
   });
 });
