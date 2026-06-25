@@ -699,22 +699,36 @@ async function handleAdminCommand(message) {
 					'POST',
 					{ discordUserId },
 				);
+				const endpoint = data.endpoint || `${PROXY_PUBLIC_BASE_URL}/v1`;
+				const dmSent = await sendApiCredentialsDm(
+					discordUserId,
+					data.apiKey,
+					endpoint,
+				);
+
+				// Send How to Use guide
 				try {
-					await sendApiCredentialsDm(
-						discordUserId,
-						data.apiKey,
-						data.endpoint || `${PROXY_PUBLIC_BASE_URL}/v1`,
-					);
+					const kind = 'phantom'; // Refreshed keys are always phantom keys
+					const details = await proxyInternal('/admin/internal/models/details');
+					const models = (details?.data || [])
+						.map((m) => m.id)
+						.filter((id) => id && id !== 'auto');
+					await sendHowToDm(discordUserId, kind, {
+						endpoint,
+						apiKey: data.apiKey,
+						models,
+					});
+				} catch (howtoErr) {
+					console.error('[agrefresh] sendHowToDm failed:', howtoErr.message);
+				}
+
+				if (dmSent) {
 					await message.reply(
 						'API key berhasil di-refresh dan dikirim via DM ke user.',
 					);
-				} catch (dmErr) {
-					console.warn(
-						'[agrefresh] DM failed, sending key in channel:',
-						dmErr.message,
-					);
+				} else {
 					await message.reply(
-						`API key berhasil di-refresh. DM gagal, dikirim di sini:\n\n**Endpoint**: \`${data.endpoint || `${PROXY_PUBLIC_BASE_URL}/v1`}\`\n**Authorization**: \`Bearer ${data.apiKey}\``,
+						`API key berhasil di-refresh. DM gagal, dikirim di sini:\n\n**Endpoint**: \`${endpoint}\`\n**Authorization**: \`Bearer ${data.apiKey}\``,
 					);
 				}
 			} catch (err) {
@@ -6344,7 +6358,25 @@ client.on('interactionCreate', async (interaction) => {
 							const keyInfo = await proxyInternal(`/admin/internal/key-for-user/${userId}`);
 							if (keyInfo && keyInfo.apiKey) {
 								const endpoint = keyInfo.endpoint || PROXY_PUBLIC_BASE_URL + '/v1';
+
+								// Send credentials DM
 								await sendApiCredentialsDm(userId, keyInfo.apiKey, endpoint);
+
+								// Send How to Use guide
+								const kind = existingKey.isTrial ? 'trial' : 'phantom';
+								try {
+									const data = await proxyInternal('/admin/internal/models/details');
+									const models = (data?.data || [])
+										.map((m) => m.id)
+										.filter((id) => id && id !== 'auto');
+									await sendHowToDm(userId, kind, {
+										endpoint,
+										apiKey: keyInfo.apiKey,
+										models,
+									});
+								} catch (howtoErr) {
+									console.error('[auto-claim] sendHowToDm failed:', howtoErr.message);
+								}
 
 								const infoEmbed = new EmbedBuilder()
 									.setTitle('✅ API Key Dikirim Ulang')
@@ -6422,6 +6454,21 @@ client.on('interactionCreate', async (interaction) => {
 						));
 					} catch (dmErr) {
 						console.error('[auto-claim] DM send failed:', dmErr);
+					}
+
+					// Send How to Use guide
+					try {
+						const data = await proxyInternal('/admin/internal/models/details');
+						const models = (data?.data || [])
+							.map((m) => m.id)
+							.filter((id) => id && id !== 'auto');
+						await sendHowToDm(userId, 'phantom', {
+							endpoint,
+							apiKey: provisionResult.apiKey,
+							models,
+						});
+					} catch (howtoErr) {
+						console.error('[auto-claim] sendHowToDm failed:', howtoErr.message);
 					}
 
 					// Create thread for tracking (even in auto-claim mode)
