@@ -101,7 +101,13 @@ internal.post("/internal/verify-user", async (c) => {
   const normalizedUsername = String(body.discordUsername || body.discordUserId).trim();
   const displayName = `Discord-${normalizedUsername}-${body.discordUserId}`;
 
-  const existing = await findKeyByDiscordUser(body.discordUserId);
+  // Always prefer phantom key (non-trial), not trial key
+  const [existingPhantom] = await db
+    .select()
+    .from(apiKeys)
+    .where(and(eq(apiKeys.discordUserId, body.discordUserId), eq(apiKeys.isTrial, false)))
+    .limit(1);
+
   let keyPlaintext = "";
   let keyId = 0;
   let created = false;
@@ -109,18 +115,18 @@ internal.post("/internal/verify-user", async (c) => {
   const [config] = await db.select().from(adminConfig);
   const maxDevices = config?.globalMaxDevices ?? 1;
 
-  if (existing) {
-    keyPlaintext = existing.key;
-    keyId = existing.id;
+  if (existingPhantom) {
+    keyPlaintext = existingPhantom.key;
+    keyId = existingPhantom.id;
     await db.update(apiKeys)
       .set({
         name: displayName,
         isActive: true,
-        discordUsername: body.discordUsername || existing.discordUsername,
+        discordUsername: body.discordUsername || existingPhantom.discordUsername,
         maxDevices,
         updatedAt: new Date(),
       })
-      .where(eq(apiKeys.id, existing.id));
+      .where(eq(apiKeys.id, existingPhantom.id));
   } else {
     created = true;
     keyPlaintext = generateApiKey();
@@ -325,12 +331,38 @@ internal.get("/internal/keys", async (c) => {
 
 internal.get("/internal/key-for-user/:userId", async (c) => {
   const userId = c.req.param("userId");
-  const key = await findBestKeyForDiscordUser(userId);
-  if (!key) return c.json({ error: "No key found for user" }, 404);
+
+  // Always prefer phantom key, not trial key
+  const [phantomKey] = await db
+    .select()
+    .from(apiKeys)
+    .where(and(eq(apiKeys.discordUserId, userId), eq(apiKeys.isTrial, false), eq(apiKeys.isActive, true)))
+    .limit(1);
+
+  if (phantomKey) {
+    return c.json({
+      apiKey: phantomKey.key,
+      keyPrefix: phantomKey.keyPrefix,
+      isActive: phantomKey.isActive,
+      isTrial: false,
+      endpoint: `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`,
+    });
+  }
+
+  // If no phantom key, check for any active key (trial)
+  const [anyKey] = await db
+    .select()
+    .from(apiKeys)
+    .where(and(eq(apiKeys.discordUserId, userId), eq(apiKeys.isActive, true)))
+    .limit(1);
+
+  if (!anyKey) return c.json({ error: "No key found for user" }, 404);
+
   return c.json({
-    apiKey: key.key,
-    keyPrefix: key.keyPrefix,
-    isActive: key.isActive,
+    apiKey: anyKey.key,
+    keyPrefix: anyKey.keyPrefix,
+    isActive: anyKey.isActive,
+    isTrial: anyKey.isTrial,
     endpoint: `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`,
   });
 });
