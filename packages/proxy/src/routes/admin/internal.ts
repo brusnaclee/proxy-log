@@ -323,6 +323,18 @@ internal.get("/internal/keys", async (c) => {
   })));
 });
 
+internal.get("/internal/key-for-user/:userId", async (c) => {
+  const userId = c.req.param("userId");
+  const key = await findBestKeyForDiscordUser(userId);
+  if (!key) return c.json({ error: "No key found for user" }, 404);
+  return c.json({
+    apiKey: key.key,
+    keyPrefix: key.keyPrefix,
+    isActive: key.isActive,
+    endpoint: `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`,
+  });
+});
+
 internal.post("/internal/ip-policy", async (c) => {
   const body = await c.req.json<{ discordUserId: string; ipAddress: string; mode: "allow" | "block" | "remove" }>();
   if (!body.discordUserId || !body.ipAddress || !body.mode) return c.json({ error: "discordUserId, ipAddress, mode required" }, 400);

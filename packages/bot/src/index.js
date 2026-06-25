@@ -6339,11 +6339,40 @@ client.on('interactionCreate', async (interaction) => {
 					}
 
 					if (existingKey?.hasActiveApiKey) {
+						// User already has active key - get the key and re-send DM
+						try {
+							const keyInfo = await proxyInternal(`/admin/internal/key-for-user/${userId}`);
+							if (keyInfo && keyInfo.apiKey) {
+								const endpoint = keyInfo.endpoint || PROXY_PUBLIC_BASE_URL + '/v1';
+								await sendApiCredentialsDm(userId, keyInfo.apiKey, endpoint);
+
+								const infoEmbed = new EmbedBuilder()
+									.setTitle('✅ API Key Dikirim Ulang')
+									.setDescription(
+										'API key anda sudah dikirim ulang via DM.\n\n' +
+											'Jika tidak menerima DM, silakan cek:\n' +
+											'• Allow DM dari server ini\n' +
+											'• Hubungi admin\n\n' +
+											'⚠️ **Penting:** Jika role Phantom dicabut, API key akan dinonaktifkan.',
+									)
+									.setColor(0x57f287);
+
+								await interaction.reply({
+									embeds: [infoEmbed],
+									ephemeral: true,
+								});
+								return;
+							}
+						} catch (keyErr) {
+							console.error('[auto-claim] Failed to get existing key:', keyErr);
+						}
+
+						// Fallback if can't get key
 						const infoEmbed = new EmbedBuilder()
 							.setTitle('✅ Sudah Memiliki API Key')
 							.setDescription(
 								'Anda sudah memiliki API key aktif.\n\n' +
-									'Jika key tidak berfungsi, silakan hubungi admin untuk reset.\n\n' +
+									'Jika tidak berfungsi, silakan hubungi admin untuk reset.\n\n' +
 									'Note: Jika role Phantom dicabut, API key akan dinonaktifkan.',
 							)
 							.setColor(0x57f287);
