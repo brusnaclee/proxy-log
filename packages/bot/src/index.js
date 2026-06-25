@@ -6356,27 +6356,14 @@ client.on('interactionCreate', async (interaction) => {
 					}
 
 					// Provision new API key
+					let provisionResult = null;
 					try {
-						const result = await provisionApiKeyForVerifiedUser(
+						provisionResult = await provisionApiKeyForVerifiedUser(
 							userId,
 							interaction.user.username,
 							'auto-claim',
 							interaction.guildId,
 						);
-
-						const successEmbed = new EmbedBuilder()
-							.setTitle('✅ API Key Dikirim')
-							.setDescription(
-								'API key sudah dikirim via DM.\n\n' +
-									'⚠️ **Penting:** Jika role Phantom dicabut, API key akan dinonaktifkan. Claim ulang setelah perpanjang paket Phantom.',
-							)
-							.setColor(0x57f287);
-
-						await interaction.reply({
-							embeds: [successEmbed],
-							ephemeral: true,
-						});
-						return;
 					} catch (err) {
 						console.error('[auto-claim] Failed to provision key:', err);
 						const errorEmbed = new EmbedBuilder()
@@ -6392,6 +6379,85 @@ client.on('interactionCreate', async (interaction) => {
 						});
 						return;
 					}
+
+					// Get endpoint
+					const endpoint = provisionResult.endpoint || PROXY_PUBLIC_BASE_URL + '/v1';
+
+					// Send DM with API credentials
+					let dmSent = false;
+					try {
+						dmSent = !!(await sendApiCredentialsDm(
+							userId,
+							provisionResult.apiKey,
+							endpoint,
+						));
+					} catch (dmErr) {
+						console.error('[auto-claim] DM send failed:', dmErr);
+					}
+
+					// Create thread for tracking (even in auto-claim mode)
+					const channel = await client.channels.fetch(AGVERIF_CHANNEL_ID);
+					if (!channel) {
+						console.error('[auto-claim] Channel not found');
+					} else {
+						try {
+							const thread = await channel.threads.create({
+								name: `claim-${interaction.user.username}`,
+								autoArchiveDuration: 4320,
+								type: ChannelType.PrivateThread,
+								reason: 'API key claim ticket',
+							});
+
+							await thread.members.add(interaction.user.id);
+
+							// Save to verifiedUsers for tracking
+							const verifiedData = {
+								userId: userId,
+								threadId: thread.id,
+								claimedAt: Date.now(),
+								dmSent: dmSent,
+							};
+							client.agverifData.verifiedUsers[userId] = verifiedData;
+							await saveVerifiedUsersData();
+
+							// Send info in thread
+							await thread.send({
+								embeds: [
+									new EmbedBuilder()
+										.setTitle('🎁 API Key Di Claim')
+										.setDescription(
+											`API key sudah ${dmSent ? 'dikirim via DM' : 'dibuat tapi DM gagal, silakan hubungi admin'}.\n\n` +
+												`Jika tidak menerima DM, silakan cek:\n` +
+												`• Allow DM dari server ini\n` +
+												`• Hubungi admin untuk kirim ulang`,
+										)
+										.setColor(dmSent ? 0x57f287 : 0xffa500)
+										.setTimestamp(),
+								],
+							});
+						} catch (threadErr) {
+							console.error('[auto-claim] Failed to create thread:', threadErr);
+						}
+					}
+
+					// Reply to user
+					const successEmbed = new EmbedBuilder()
+						.setTitle(dmSent ? '✅ API Key Dikirim' : '⚠️ API Key Dibuat')
+						.setDescription(
+							dmSent
+								? 'API key sudah dikirim via DM. Silakan cek DM anda.\n\n' +
+										'⚠️ **Penting:** Jika role Phantom dicabut, API key akan dinonaktifkan.'
+								: 'API key sudah dibuat tapi DM gagal terkirim.\n\n' +
+										'Silakan hubungi admin untuk kirim ulang API key.\n\n' +
+										'⚠️ **Penting:** Jika role Phantom dicabut, API key akan dinonaktifkan.',
+						)
+						.setColor(dmSent ? 0x57f287 : 0xffa500);
+
+					await interaction.reply({
+						embeds: [successEmbed],
+						ephemeral: true,
+					});
+					return;
 				}
 
 				// ─── AGVERIF_ENABLED = true: Original photo verification flow ───
