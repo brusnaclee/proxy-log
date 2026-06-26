@@ -45,36 +45,28 @@ async function main() {
   if (buildDash.stderr) console.log('Dashboard build stderr:', buildDash.stderr);
   console.log('Dashboard build completed.');
 
-  // 4. Update server .env AGVERIF_ENABLED and AGVERIF_CHANNEL_ID
+  // 4. Update server .env RECAP_CHANNEL_ID
   console.log('\n--- Updating server .env ---');
 
-  // Check if AGVERIF_ENABLED exists in .env
-  const checkEnv = await ssh.execCommand("grep -c 'AGVERIF_ENABLED' /root/proxy-log/.env || echo '0'");
-  const agverifExists = parseInt(checkEnv.stdout?.trim() || '0') > 0;
+  // Check if RECAP_CHANNEL_ID exists in .env
+  const checkEnv = await ssh.execCommand("grep -c 'RECAP_CHANNEL_ID' /root/proxy-log/.env || echo '0'");
+  const recapEnvExists = parseInt(checkEnv.stdout?.trim() || '0') > 0;
 
   let envUpdate;
-  if (agverifExists) {
+  if (recapEnvExists) {
     // Replace existing value
     envUpdate = await ssh.execCommand(
-      "sed -i 's/AGVERIF_ENABLED=.*/AGVERIF_ENABLED=false/' /root/proxy-log/.env && " +
-      "sed -i 's/AGVERIF_CHANNEL_ID=.*/AGVERIF_CHANNEL_ID=1507648903900565514/' /root/proxy-log/.env && " +
-      "echo 'Updated existing AGVERIF_ENABLED and AGVERIF_CHANNEL_ID in .env'"
+      "sed -i 's/RECAP_CHANNEL_ID=.*/RECAP_CHANNEL_ID=1470313934752972993/' /root/proxy-log/.env && " +
+      "echo 'Updated RECAP_CHANNEL_ID in .env'"
     );
   } else {
-    // Add new lines if not exists
+    // Add new line if not exists
     envUpdate = await ssh.execCommand(
-      "echo 'AGVERIF_ENABLED=false' >> /root/proxy-log/.env && " +
-      "sed -i 's/AGVERIF_CHANNEL_ID=.*/AGVERIF_CHANNEL_ID=1507648903900565514/' /root/proxy-log/.env && " +
-      "echo 'Added AGVERIF_ENABLED to .env'"
+      "echo 'RECAP_CHANNEL_ID=1470313934752972993' >> /root/proxy-log/.env && " +
+      "echo 'Added RECAP_CHANNEL_ID to .env'"
     );
   }
   console.log(envUpdate.stdout || envUpdate.stderr || 'No .env update output');
-
-  // Also update .env.example for future reference
-  const envExampleUpdate = await ssh.execCommand(
-    "sed -i 's/AGVERIF_ENABLED=.*/AGVERIF_ENABLED=false/' /root/proxy-log/.env.example 2>/dev/null || echo 'No .env.example update needed'"
-  );
-  console.log(envExampleUpdate.stdout || 'Updated .env.example');
 
   // 5. Update DB admin_config agverif_channel_id (for bot dashboard settings)
   console.log('\n--- Updating DB admin_config ---');

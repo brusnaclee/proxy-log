@@ -40,6 +40,8 @@ const client = new Client({
 
 let AGVERIF_CHANNEL_ID =
 	process.env.AGVERIF_CHANNEL_ID || '1507648903900565514';
+let RECAP_CHANNEL_ID =
+	process.env.RECAP_CHANNEL_ID || '1470313934752972993'; // Recap button panel channel
 let REQUIRED_ROLE_ID = process.env.REQUIRED_ROLE_ID || '1354646304042651728';
 let OWNER_GROUPY_ROLE_ID =
 	process.env.OWNER_GROUPY_ROLE_ID || '1354642878063710260';
@@ -4113,12 +4115,12 @@ function buildRecapDebugRow() {
 	);
 }
 
-// Panel in the AGVERIF channel — only present while the window panel is visible
+// Panel in the RECAP channel — only present while the window panel is visible
 // (from the 25th through the 5th). Removed otherwise. Role-gated on click.
 async function ensureRecapMessage() {
-	if (!AGVERIF_CHANNEL_ID) return;
+	if (!RECAP_CHANNEL_ID) return;
 	const channel = await client.channels
-		.fetch(AGVERIF_CHANNEL_ID)
+		.fetch(RECAP_CHANNEL_ID)
 		.catch(() => null);
 	if (!channel || !channel.isTextBased()) return;
 
