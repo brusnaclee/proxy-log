@@ -39,7 +39,7 @@ const client = new Client({
 });
 
 let AGVERIF_CHANNEL_ID =
-	process.env.AGVERIF_CHANNEL_ID || '1507648903900565514';
+	process.env.AGVERIF_CHANNEL_ID || '1470313934752972993';
 let REQUIRED_ROLE_ID = process.env.REQUIRED_ROLE_ID || '1354646304042651728';
 let OWNER_GROUPY_ROLE_ID =
 	process.env.OWNER_GROUPY_ROLE_ID || '1354642878063710260';
@@ -4690,7 +4690,7 @@ async function runDailyRecapJob(opts = {}) {
 	// opened their recap earlier in the day.
 	let users = [];
 	try {
-		const res = await proxyInternal('/admin/internal/recap/users');
+		const res = await proxyInternal(`/admin/internal/recap/users?yearMonth=${yearMonth}`);
 		users = res.users || [];
 	} catch (err) {
 		console.error('[recap] users fetch failed:', err.message);

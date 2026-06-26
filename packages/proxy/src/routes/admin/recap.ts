@@ -20,6 +20,7 @@ import {
   wibTodayDateStr,
   previousYearMonth,
   monthLabelFromYearMonth,
+  getMonthRangeUtc,
 } from "../../utils/recap-window.js";
 import {
   getRecapStats,
@@ -375,11 +376,21 @@ recap.post("/internal/recap/leaderboard-avatars", async (c) => {
   return c.json({ success: true, updated });
 });
 
-/** List discord users that have a key (for the daily batch regenerate job). */
+/** List discord users that have request logs in the target month (for the daily batch regenerate job). */
 recap.get("/internal/recap/users", async (c) => {
-  const rows = await db.select({ discordUserId: apiKeys.discordUserId, name: apiKeys.name })
-    .from(apiKeys).where(sql`discord_user_id IS NOT NULL AND is_active = true`);
-  return c.json({ users: rows });
+  const yearMonth = c.req.query("yearMonth") || getRecapWindow().yearMonth;
+  const { start, end } = getMonthRangeUtc(yearMonth);
+
+  const rows = await db.execute(sql`
+    SELECT DISTINCT k.discord_user_id AS discord_user_id, k.name AS name
+    FROM api_keys k
+    JOIN request_logs rl ON rl.api_key_id = k.id
+    WHERE k.discord_user_id IS NOT NULL
+      AND rl.created_at >= ${start}
+      AND rl.created_at < ${end}
+      AND rl.status_code BETWEEN 200 AND 299
+  `);
+  return c.json({ users: rows.rows.map((r: any) => ({ discordUserId: r.discord_user_id, name: r.name })) });
 });
 
 /**
