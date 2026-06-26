@@ -57,14 +57,14 @@ async function main() {
     // Replace existing value
     envUpdate = await ssh.execCommand(
       "sed -i 's/AGVERIF_ENABLED=.*/AGVERIF_ENABLED=false/' /root/proxy-log/.env && " +
-      "sed -i 's/AGVERIF_CHANNEL_ID=.*/AGVERIF_CHANNEL_ID=1507648903900565514/' /root/proxy-log/.env && " +
+      "sed -i 's/AGVERIF_CHANNEL_ID=.*/AGVERIF_CHANNEL_ID=1470313934752972993/' /root/proxy-log/.env && " +
       "echo 'Updated existing AGVERIF_ENABLED and AGVERIF_CHANNEL_ID in .env'"
     );
   } else {
     // Add new lines if not exists
     envUpdate = await ssh.execCommand(
       "echo 'AGVERIF_ENABLED=false' >> /root/proxy-log/.env && " +
-      "sed -i 's/AGVERIF_CHANNEL_ID=.*/AGVERIF_CHANNEL_ID=1507648903900565514/' /root/proxy-log/.env && " +
+      "sed -i 's/AGVERIF_CHANNEL_ID=.*/AGVERIF_CHANNEL_ID=1470313934752972993/' /root/proxy-log/.env && " +
       "echo 'Added AGVERIF_ENABLED to .env'"
     );
   }
@@ -79,7 +79,7 @@ async function main() {
   // 5. Update DB admin_config agverif_channel_id (for bot dashboard settings)
   console.log('\n--- Updating DB admin_config ---');
   const dbUpdate = await ssh.execCommand(
-    "sudo -u postgres psql -d monit_api -c \"UPDATE admin_config SET agverif_channel_id='1507648903900565514' WHERE id=1\" 2>&1"
+    "sudo -u postgres psql -d monit_api -c \"UPDATE admin_config SET agverif_channel_id='1470313934752972993' WHERE id=1\" 2>&1"
   );
   console.log(dbUpdate.stdout || dbUpdate.stderr || 'No DB update output');
 
