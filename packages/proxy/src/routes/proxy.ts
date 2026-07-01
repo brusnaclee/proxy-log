@@ -272,8 +272,8 @@ async function getRecentlyOfflineGpyModelIds(excludeModel: string, windowMs: num
   }
 }
 const UPSTREAM_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour to support long reasoning models
-const UPSTREAM_MAX_ATTEMPTS = 3;
-const UPSTREAM_RETRY_BACKOFF_MS = 600;
+const UPSTREAM_MAX_ATTEMPTS = 5;
+const UPSTREAM_RETRY_BACKOFF_MS = 700;
 
 const logWriteQueue: Array<(tx: any) => Promise<void>> = [];
 let logWriteRunning = false;
