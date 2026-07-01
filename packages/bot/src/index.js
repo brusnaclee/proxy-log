@@ -1904,7 +1904,12 @@ async function runFullSweep() {
 	await pollModelStatus();
 	if (!runtime.modelEntries.length) return;
 
+	// Skip `conduit` provider: it's transient (single request always fails on
+	// upstream 502). The proxy itself bypasses the offline gate for conduit
+	// and retries 10x per request, so we don't need to monitor it here.
 	const queue = runtime.modelEntries.filter((entry) => {
+		if ((entry.provider || '').toLowerCase() === 'conduit') return false;
+
 		const key = entryKey(entry);
 		const retryState = runtime.modelRetryState.get(key);
 		if (retryState?.suspendedUntil) {
@@ -1924,6 +1929,9 @@ async function runRetrySweep() {
 
 	const entriesToRetry = [];
 	for (const entry of runtime.modelEntries) {
+		// Skip `conduit` (see runFullSweep for rationale)
+		if ((entry.provider || '').toLowerCase() === 'conduit') continue;
+
 		const key = entryKey(entry);
 		const retryState = runtime.modelRetryState.get(key);
 
