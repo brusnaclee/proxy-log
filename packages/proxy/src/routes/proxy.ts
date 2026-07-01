@@ -367,6 +367,11 @@ function isRetryableFetchError(error: any): boolean {
 	);
 }
 
+// Per-attempt timeout for non-streaming retry attempts on transient 5xx.
+// 15s is enough to detect 502/503 quickly; full 1h is for first attempt (long
+// reasoning models). Saves user from waiting 10 minutes for 10 retries.
+const RETRY_ATTEMPT_TIMEOUT_MS = 15_000;
+
 async function fetchUpstreamWithRetry(
 	url: string,
 	init: RequestInit,
@@ -379,9 +384,10 @@ async function fetchUpstreamWithRetry(
 		try {
 			// Combine client abort signal with timeout
 			const controller = new AbortController();
+			const timeoutMs = attempt === 1 ? UPSTREAM_TIMEOUT_MS : RETRY_ATTEMPT_TIMEOUT_MS;
 			const timeoutId = setTimeout(
 				() => controller.abort(new Error('Timeout')),
-				UPSTREAM_TIMEOUT_MS,
+				timeoutMs,
 			);
 
 			const abortHandler = () => {
