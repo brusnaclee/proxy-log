@@ -5786,12 +5786,12 @@ client.once('clientReady', async () => {
 				.catch((err) => console.error('gpy startup sweep error:', err.message));
 		}, 15000);
 
-		// Full sweep: every 1 hour (test all models)
+		// Full sweep: every 10 minutes (was 1 hour — faster detection of model recovery/down)
 		setInterval(() => {
 			runFullSweep().catch((err) =>
 				console.error('runFullSweep error:', err.message),
 			);
-		}, 3600000);
+		}, 600000);
 
 		// Retry sweep: every 10 minutes (test only offline models)
 		setInterval(() => {
