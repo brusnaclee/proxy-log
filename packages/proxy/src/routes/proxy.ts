@@ -271,8 +271,11 @@ async function getRecentlyOfflineGpyModelIds(excludeModel: string, windowMs: num
     return new Set();
   }
 }
-const UPSTREAM_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour to support long reasoning models
-const UPSTREAM_MAX_ATTEMPTS = 30;
+// 90s for non-streaming (under CloudFlare 100s edge timeout to detect 524 fast).
+// 1h for streaming first attempt (long reasoning models).
+const STREAMING_TIMEOUT_MS = 60 * 60 * 1000;
+const NON_STREAMING_TIMEOUT_MS = 90 * 1000;
+const UPSTREAM_MAX_ATTEMPTS = 10;
 const UPSTREAM_RETRY_BACKOFF_MS = 1000;
 
 const logWriteQueue: Array<(tx: any) => Promise<void>> = [];
@@ -367,9 +370,8 @@ function isRetryableFetchError(error: any): boolean {
 	);
 }
 
-// Per-attempt timeout for non-streaming requests. 20s is enough for healthy
-// upstreams; 1h is reserved for first-attempt streaming (long reasoning).
-const RETRY_ATTEMPT_TIMEOUT_MS = 45_000;
+// Per-attempt timeout for non-streaming requests.
+const RETRY_ATTEMPT_TIMEOUT_MS = NON_STREAMING_TIMEOUT_MS;
 
 async function fetchUpstreamWithRetry(
 	url: string,
@@ -385,7 +387,7 @@ async function fetchUpstreamWithRetry(
 			const controller = new AbortController();
 			// Streaming gets full hour; non-streaming retry attempts get short
 			// timeout to fail fast on transient upstreams (avoid 10x wait).
-			const timeoutMs = isStreaming && attempt === 1 ? UPSTREAM_TIMEOUT_MS : RETRY_ATTEMPT_TIMEOUT_MS;
+			const timeoutMs = isStreaming && attempt === 1 ? STREAMING_TIMEOUT_MS : RETRY_ATTEMPT_TIMEOUT_MS;
 			const timeoutId = setTimeout(
 				() => controller.abort(new Error('Timeout')),
 				timeoutMs,
