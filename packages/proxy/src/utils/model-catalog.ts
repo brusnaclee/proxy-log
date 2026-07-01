@@ -576,6 +576,13 @@ function collectProviderIdsForModel(modelId: string, upstreamModel: string): num
 }
 
 async function isProviderOnlineForModel(providerName: string, upstreamModel: string): Promise<boolean> {
+  // Bypass: `conduit` provider is treated as always online since conduit.ozdoev.net
+  // is transient (upstream 502s frequently but recovers). Forcing offline causes
+  // bad UX for users. Real request will surface a fresh error from upstream.
+  if (providerName === "conduit") {
+    return true;
+  }
+
   // Check exact match first
   const latest = (await db
     .select()
