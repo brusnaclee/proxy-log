@@ -2117,7 +2117,13 @@ proxy.all('/*', async (c) => {
 	// ─── 8a. Model Monitor Check ─────────────────────────────────────────
 	// Block only when monitor has data for this model AND none of the latest checks are online.
 	// Trial users bypass offline gate (upstream retry handles failures).
-	if (!keyRecord.isTrial && upstreamModel && upstreamModel !== 'unknown') {
+	// `conduit` provider bypasses offline gate too (conduit.ozdoev.net is transient upstream 502s).
+	if (
+		!keyRecord.isTrial &&
+		targetProvider.name !== 'conduit' &&
+		upstreamModel &&
+		upstreamModel !== 'unknown'
+	) {
 		const monitorRows = await db
 			.select()
 			.from(modelMonitor)
