@@ -272,8 +272,8 @@ async function getRecentlyOfflineGpyModelIds(excludeModel: string, windowMs: num
   }
 }
 const UPSTREAM_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour to support long reasoning models
-const UPSTREAM_MAX_ATTEMPTS = 10;
-const UPSTREAM_RETRY_BACKOFF_MS = 800;
+const UPSTREAM_MAX_ATTEMPTS = 30;
+const UPSTREAM_RETRY_BACKOFF_MS = 1000;
 
 const logWriteQueue: Array<(tx: any) => Promise<void>> = [];
 let logWriteRunning = false;
@@ -369,7 +369,7 @@ function isRetryableFetchError(error: any): boolean {
 
 // Per-attempt timeout for non-streaming requests. 20s is enough for healthy
 // upstreams; 1h is reserved for first-attempt streaming (long reasoning).
-const RETRY_ATTEMPT_TIMEOUT_MS = 20_000;
+const RETRY_ATTEMPT_TIMEOUT_MS = 45_000;
 
 async function fetchUpstreamWithRetry(
 	url: string,
