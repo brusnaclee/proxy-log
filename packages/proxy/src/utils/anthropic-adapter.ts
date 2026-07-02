@@ -561,6 +561,12 @@ export function convertOpenAIToAnthropicResponse(openai: OpenAIResponse): Anthro
   if (typeof message?.content === "string" && message.content.length > 0) {
     contentBlocks.push({ type: "text", text: message.content });
   }
+  // Some thinking models (gpt-5, deepseek-r1, etc.) return content in
+  // `reasoning_content` and leave `content` empty. Pass reasoning through
+  // as a thinking block so the client sees the response.
+  if (typeof (message as any)?.reasoning_content === "string" && (message as any).reasoning_content.length > 0) {
+    contentBlocks.push({ type: "text", text: (message as any).reasoning_content });
+  }
   if (Array.isArray(message?.tool_calls)) {
     for (const tc of message.tool_calls) {
       contentBlocks.push({
@@ -729,6 +735,25 @@ export function convertOpenAIChunkToAnthropicEvents(chunk: string, state: Anthro
       delta: { type: "text_delta", text: delta.content },
     });
     state.textAccumulated += delta.content;
+  }
+
+  // Handle reasoning_content (thinking models like gpt-5, deepseek-r1)
+  // Falls back to a text block so the client still sees the response.
+  if (typeof (delta as any).reasoning_content === "string" && (delta as any).reasoning_content.length > 0) {
+    if (!state.contentBlockOpen) {
+      out += sseEvent("content_block_start", {
+        type: "content_block_start",
+        index: state.contentBlockIndex,
+        content_block: { type: "text", text: "" },
+      });
+      state.contentBlockOpen = true;
+    }
+    out += sseEvent("content_block_delta", {
+      type: "content_block_delta",
+      index: state.contentBlockIndex,
+      delta: { type: "text_delta", text: (delta as any).reasoning_content },
+    });
+    state.textAccumulated += (delta as any).reasoning_content;
   }
 
   // Handle tool calls
