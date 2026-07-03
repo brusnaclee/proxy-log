@@ -1908,7 +1908,8 @@ async function runFullSweep() {
 	// upstream 502). The proxy itself bypasses the offline gate for conduit
 	// and retries 10x per request, so we don't need to monitor it here.
 	const queue = runtime.modelEntries.filter((entry) => {
-		if ((entry.provider || '').toLowerCase() === 'conduit') return false;
+		if (['conduit', 'ozdoev'].includes((entry.provider || '').toLowerCase()))
+			return false;
 
 		const key = entryKey(entry);
 		const retryState = runtime.modelRetryState.get(key);
@@ -1930,7 +1931,8 @@ async function runRetrySweep() {
 	const entriesToRetry = [];
 	for (const entry of runtime.modelEntries) {
 		// Skip `conduit` (see runFullSweep for rationale)
-		if ((entry.provider || '').toLowerCase() === 'conduit') continue;
+		if (['conduit', 'ozdoev'].includes((entry.provider || '').toLowerCase()))
+			continue;
 
 		const key = entryKey(entry);
 		const retryState = runtime.modelRetryState.get(key);

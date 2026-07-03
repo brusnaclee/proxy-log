@@ -224,6 +224,20 @@ interface StreamState {
 }
 
 /**
+ * Split a buffer of Anthropic SSE events into complete event blocks + remainder.
+ * Some Anthropic-compatible gateways (Nero gateway) emit events where `event:` and
+ * `data:` lines are in separate blocks separated by `\r\n\r\n` instead of bundled
+ * together. This normalizes line endings and splits on double-newline boundaries.
+ */
+export function splitAnthropicSseEvents(buffer: string): { events: string[]; remainder: string } {
+  const normalized = buffer.replace(/\r\n/g, "\n");
+  const parts = normalized.split("\n\n");
+  const remainder = parts.pop() || "";
+  const events = parts.filter((p) => p.trim().length > 0);
+  return { events, remainder };
+}
+
+/**
  * Converts an Anthropic SSE event line to one or more OpenAI SSE event lines.
  * Returns an array of SSE lines (each prefixed with "data: ") or empty array to skip.
  */
@@ -240,6 +254,17 @@ export function convertStreamEvent(line: string, state: StreamState): string[] {
       eventType = l.slice(7).trim();
     } else if (l.startsWith("data: ")) {
       dataStr = l.slice(6).trim();
+    }
+  }
+
+  // Some gateways split event: and data: into separate SSE blocks; if eventType
+  // is missing, derive it from the data payload's `type` field.
+  if (!eventType && dataStr) {
+    try {
+      const parsed = JSON.parse(dataStr);
+      if (parsed?.type) eventType = parsed.type;
+    } catch {
+      // fallthrough
     }
   }
 

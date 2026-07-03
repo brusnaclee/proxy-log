@@ -118,6 +118,45 @@ function tokenCountOpts(keyRecord: { isTrial: boolean }) {
 	return keyRecord.isTrial ? { isTrial: true as const } : undefined;
 }
 
+const TRANSIENT_UPSTREAM_PROVIDERS = new Set(['conduit', 'ozdoev']);
+
+function isTransientUpstreamProvider(providerName: string | null | undefined) {
+	return TRANSIENT_UPSTREAM_PROVIDERS.has(
+		String(providerName || '').toLowerCase(),
+	);
+}
+
+function backfillOpenAIMessageContent<T extends { content?: unknown; reasoning_content?: unknown } | null | undefined>(
+	message: T,
+) {
+	if (!message || typeof message !== 'object') return message;
+	if (
+		typeof message.content !== 'string' &&
+		typeof message.reasoning_content === 'string' &&
+		message.reasoning_content.trim().length > 0
+	) {
+		message.content = message.reasoning_content;
+	}
+	return message;
+}
+
+function backfillOpenAIResponseContent(payload: any) {
+	const choice = payload?.choices?.[0];
+	if (choice?.message) {
+		backfillOpenAIMessageContent(choice.message);
+	}
+	const delta = choice?.delta;
+	if (
+		delta &&
+		typeof delta.content !== 'string' &&
+		typeof delta.reasoning_content === 'string' &&
+		delta.reasoning_content.trim().length > 0
+	) {
+		delta.content = delta.reasoning_content;
+	}
+	return payload;
+}
+
 type ContextEvent = 'new_session' | 'append' | 'compact' | 'switch';
 
 // In-memory cache of the last user message hash per session.
@@ -377,17 +416,25 @@ async function fetchUpstreamWithRetry(
 	url: string,
 	init: RequestInit,
 	isStreaming: boolean,
+	providerName?: string,
 	clientSignal?: AbortSignal,
 ): Promise<Response> {
 	let lastError: any = null;
+	const isTransientProvider = isTransientUpstreamProvider(providerName);
+	const maxAttempts = isTransientProvider ? 30 : UPSTREAM_MAX_ATTEMPTS;
 
-	for (let attempt = 1; attempt <= UPSTREAM_MAX_ATTEMPTS; attempt++) {
+	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 		try {
 			// Combine client abort signal with timeout
 			const controller = new AbortController();
 			// Streaming gets full hour; non-streaming retry attempts get short
 			// timeout to fail fast on transient upstreams (avoid 10x wait).
-			const timeoutMs = isStreaming && attempt === 1 ? STREAMING_TIMEOUT_MS : RETRY_ATTEMPT_TIMEOUT_MS;
+			const timeoutMs =
+				isStreaming && attempt === 1
+					? STREAMING_TIMEOUT_MS
+					: isTransientProvider
+						? Math.min(RETRY_ATTEMPT_TIMEOUT_MS, 15_000)
+						: RETRY_ATTEMPT_TIMEOUT_MS;
 			const timeoutId = setTimeout(
 				() => controller.abort(new Error('Timeout')),
 				timeoutMs,
@@ -418,7 +465,7 @@ async function fetchUpstreamWithRetry(
 
 			if (
 				!isStreaming &&
-				attempt < UPSTREAM_MAX_ATTEMPTS &&
+				attempt < maxAttempts &&
 				isRetryableStatus(response.status)
 			) {
 				try {
@@ -431,7 +478,7 @@ async function fetchUpstreamWithRetry(
 			return response;
 		} catch (error: any) {
 			lastError = error;
-			if (attempt < UPSTREAM_MAX_ATTEMPTS && isRetryableFetchError(error)) {
+			if (attempt < maxAttempts && isRetryableFetchError(error)) {
 				await sleep(UPSTREAM_RETRY_BACKOFF_MS * attempt);
 				continue;
 			}
@@ -449,6 +496,7 @@ async function fetchUpstreamWithRetry(
  */
 async function fetchWithKeyRotation(
 	providerId: number,
+	providerName: string,
 	url: string,
 	initFn: (apiKey: string) => RequestInit,
 	isStreaming: boolean,
@@ -476,6 +524,7 @@ async function fetchWithKeyRotation(
 			url,
 			init,
 			isStreaming,
+			providerName,
 			clientSignal,
 		);
 
@@ -1737,6 +1786,7 @@ proxy.all('/*', async (c) => {
 						body: trialBodyPayload as any,
 					},
 					wantedStream,
+					candidate.provider.name,
 					c.req.raw.signal,
 				);
 
@@ -2129,7 +2179,7 @@ proxy.all('/*', async (c) => {
 	// `conduit` provider bypasses offline gate too (conduit.ozdoev.net is transient upstream 502s).
 	if (
 		!keyRecord.isTrial &&
-		targetProvider.name !== 'conduit' &&
+		!isTransientUpstreamProvider(targetProvider.name) &&
 		upstreamModel &&
 		upstreamModel !== 'unknown'
 	) {
@@ -2223,6 +2273,7 @@ proxy.all('/*', async (c) => {
 				: (requestBodyBytes as BodyInit);
 			const { response: resp } = await fetchWithKeyRotation(
 				targetProvider2.id,
+				targetProvider2.name,
 				upstreamUrl2,
 				(apiKey) => {
 					if (isAnthropicTitleGen) {
@@ -3159,6 +3210,7 @@ proxy.all('/*', async (c) => {
 
 				const result = await fetchWithKeyRotation(
 					attemptProvider.id,
+					attemptProvider.name,
 					attemptIsAnthropic || attemptIsYoucom ? attemptActualUrl : attemptUpstreamUrl,
 					(apiKey) => {
 						if (attemptIsAnthropic) {
@@ -3306,7 +3358,7 @@ proxy.all('/*', async (c) => {
 		}
 
 		const latencyMs = Date.now() - startTime;
-		const statusCode = upstreamResponse.status;
+		let statusCode = upstreamResponse.status;
 
 		// ΓöÇΓöÇΓöÇ 11. Register/Update Device ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 		if (existingDevice) {
@@ -3349,6 +3401,7 @@ proxy.all('/*', async (c) => {
 				? createAnthropicStreamState(model)
 				: null;
 			let anthropicBuffer = '';
+			let openaiPassthroughBuffer = '';
 			let responsesBuffer = ''; // for Responses API SSE conversion
 			let responsesResponseId = `resp-${Date.now()}`;
 			let responsesSentCreated = false;
@@ -3452,28 +3505,73 @@ proxy.all('/*', async (c) => {
 							}
 						} catch {}
 					} else {
-						// OpenAI streaming: pass through as-is
-						controller.enqueue(chunk);
+						// OpenAI streaming: pass through, but backfill text from
+						// reasoning_content so OpenAI-compatible IDEs don't show
+						// "no response" for thinking-only deltas.
 						try {
-							const text = decoder.decode(chunk, { stream: true });
-							const lines = text.split('\n');
+							openaiPassthroughBuffer += decoder.decode(chunk, { stream: true });
+							const lines = openaiPassthroughBuffer.split('\n');
+							openaiPassthroughBuffer = lines.pop() || '';
 							for (const line of lines) {
 								if (line.startsWith('data: ') && line !== 'data: [DONE]') {
 									const payloadText = line.slice(6).trim();
-									if (!payloadText || payloadText === '[DONE]') continue;
+									if (!payloadText || payloadText === '[DONE]') {
+										controller.enqueue(new TextEncoder().encode(`${line}\n`));
+										continue;
+									}
 									try {
-										const data = JSON.parse(payloadText);
+										const data = backfillOpenAIResponseContent(JSON.parse(payloadText));
 										appendToolsFromPayload(data);
 										if (detectToolCallsInResponse(data))
 											hasActualToolCalls = true;
 										consumeStreamPayload(acc, data);
+										controller.enqueue(
+											new TextEncoder().encode(
+												`data: ${JSON.stringify(data)}\n`,
+											),
+										);
 									} catch {}
+								} else {
+									controller.enqueue(new TextEncoder().encode(`${line}\n`));
 								}
 							}
-						} catch {}
+						} catch {
+							controller.enqueue(chunk);
+						}
 					}
 				},
-				flush() {
+				flush(controller) {
+					if (isAnthropicRequest && clientAnthropicStreamState) {
+						const flushed = flushAnthropicStream(clientAnthropicStreamState);
+						if (flushed) {
+							controller.enqueue(new TextEncoder().encode(flushed));
+						}
+					} else if (openaiPassthroughBuffer) {
+						const finalLine = openaiPassthroughBuffer;
+						openaiPassthroughBuffer = '';
+						try {
+							if (
+								finalLine.startsWith('data: ') &&
+								finalLine.trim() !== 'data: [DONE]'
+							) {
+								const payloadText = finalLine.slice(6).trim();
+								if (payloadText) {
+									const data = backfillOpenAIResponseContent(
+										JSON.parse(payloadText),
+									);
+									controller.enqueue(
+										new TextEncoder().encode(
+											`data: ${JSON.stringify(data)}\n`,
+										),
+									);
+								}
+							} else if (finalLine.length > 0) {
+								controller.enqueue(new TextEncoder().encode(finalLine));
+							}
+						} catch {
+							controller.enqueue(new TextEncoder().encode(finalLine));
+						}
+					}
 					const finalized = finalizeCompletion(acc);
 					// Inlined: finalizeCountedCompletion was never exported from token-extractor.ts
 					const rawCompletionTokens = finalized.completionTokens
@@ -3481,6 +3579,42 @@ proxy.all('/*', async (c) => {
 						: finalized.completionText
 							? Math.max(estimateTokens(finalized.completionText), 1)
 							: 0;
+
+					// Guard: if upstream returned HTTP 200 but the streaming response accumulated
+					// zero visible content, throw to abort the stream so the outer catch returns
+					// a proper 502 JSON response (not an SSE that was already sent with 200).
+					if (
+						statusCode >= 200 &&
+						statusCode < 300 &&
+						rawCompletionTokens === 0 &&
+						!finalized.completionText
+					) {
+						const errorMsg =
+							`Upstream model "${model}" returned empty streaming response (0 tokens)`;
+						console.warn(`[proxy] ${errorMsg}`);
+						const toolsList = Array.from(toolNameSet);
+						const logEntry = {
+							...baseLogEntry,
+							promptTokens: finalized.promptTokens || 0,
+							completionTokens: 0,
+							totalTokens: finalized.promptTokens || 0,
+							cachedTokens: finalized.cachedTokens || 0,
+							toolCount: toolsList.length,
+							hasToolCalls: toolsList.length > 0,
+							toolsUsed: toToolJson(toolsList),
+							responsePreview: null,
+							latencyMs: Date.now() - startTime,
+							statusCode: 502,
+							estimatedCost: calculateEstimatedCost(model, finalized.promptTokens || 0, 0),
+							messageRole: messageAnalysis.messageRole,
+							userMessageHash: messageAnalysis.messageHash,
+							actualToolCallsInResponse: hasActualToolCalls,
+						};
+						persistLogAndSession(logEntry, hasActualToolCalls, false);
+						// Throw to abort the streaming response — outer catch returns 502 JSON
+						throw new Error(errorMsg);
+					}
+
 					const billableTokens = resolveBillableTokens(
 						{
 							promptTokens: finalized.promptTokens,
@@ -3612,6 +3746,7 @@ proxy.all('/*', async (c) => {
 		if (isResponsesApi && statusCode >= 200 && statusCode < 300) {
 			try {
 				const chatParsed = JSON.parse(responseBody);
+				backfillOpenAIResponseContent(chatParsed);
 				const responsesOutput: any[] = [];
 
 				if (chatParsed.choices && chatParsed.choices.length > 0) {
@@ -3668,6 +3803,7 @@ proxy.all('/*', async (c) => {
 		if (isAnthropicRequest && statusCode >= 200 && statusCode < 300) {
 			try {
 				const openaiParsed = JSON.parse(responseBody);
+				backfillOpenAIResponseContent(openaiParsed);
 				const anthropicResp = convertOpenAIToAnthropicResponse(openaiParsed);
 				responseBody = JSON.stringify(anthropicResp);
 			} catch (convErr) {
@@ -3680,6 +3816,8 @@ proxy.all('/*', async (c) => {
 
 		try {
 			const parsed = JSON.parse(responseBody);
+			backfillOpenAIResponseContent(parsed);
+			responseBody = JSON.stringify(parsed);
 			appendToolsFromPayload(parsed);
 
 			// Detect actual tool calls in response
@@ -3699,10 +3837,56 @@ proxy.all('/*', async (c) => {
 					: 0;
 			responsePreview = finalized.completionText || null;
 
-			if (!completionTokens && !responsePreview && responseBody.length > 200) {
-				completionTokens = Math.max(estimateTokens(responseBody), 1);
-			}
-		} catch {
+		if (!completionTokens && !responsePreview && responseBody.length > 200) {
+			completionTokens = Math.max(estimateTokens(responseBody), 1);
+		}
+
+		// Guard: if upstream returned HTTP 200 but the response has zero visible content,
+		// return 502 so the client gets a meaningful error instead of "200 OK" with an
+		// empty bubble. This mirrors the streaming guard at lines 3586–3615.
+		if (
+			statusCode >= 200 &&
+			statusCode < 300 &&
+			completionTokens === 0 &&
+			!responsePreview
+		) {
+			const errMsg =
+				`Upstream model "${model}" returned empty non-streaming response`;
+			console.warn(`[proxy] ${errMsg}`);
+			const emptyLogEntry = {
+				...baseLogEntry,
+				promptTokens: finalizedUsage.promptTokens || 0,
+				completionTokens: 0,
+				totalTokens: finalizedUsage.promptTokens || 0,
+				cachedTokens: finalizedUsage.cachedTokens || 0,
+				toolCount: toolsUsed.length,
+				hasToolCalls: toolsUsed.length > 0,
+				toolsUsed: toToolJson(toolsUsed),
+				responsePreview: null,
+				latencyMs: Date.now() - startTime,
+				statusCode: 502,
+				errorMessage: errMsg,
+				estimatedCost: calculateEstimatedCost(
+					model,
+					finalizedUsage.promptTokens || 0,
+					0,
+				),
+				messageRole: messageAnalysis.messageRole,
+				userMessageHash: messageAnalysis.messageHash,
+				actualToolCallsInResponse: hasActualToolCalls,
+			};
+			persistLogAndSession(emptyLogEntry, hasActualToolCalls, false);
+			return c.json(
+				{
+					error: {
+						message: errMsg,
+						type: 'upstream_error',
+					},
+				},
+				502,
+			);
+		}
+	} catch {
 			// Body might not be JSON — try to recover from SSE-style error bodies
 			// (some upstreams return `data:{"error":...}\n\n` instead of plain JSON)
 			if (statusCode >= 400 && responseBody) {
@@ -3806,17 +3990,40 @@ proxy.all('/*', async (c) => {
 		) {
 			try {
 				const openaiParsed = JSON.parse(responseBody);
-				const sseLines = buildYouComStreamChunks(openaiParsed);
-				const sseBody = sseLines.map((l) => l + '\n\n').join('');
-				return new Response(sseBody, {
-					status: statusCode,
-					headers: {
-						...responseHeaders,
-						'Content-Type': 'text/event-stream; charset=utf-8',
-						'Cache-Control': 'no-cache',
-						Connection: 'keep-alive',
-					},
-				});
+				// Guard: detect empty completion before building fake SSE.
+				// If empty, set statusCode=502 and fall through to the final return
+				// so the user gets a meaningful error instead of a silent 200 with
+				// an empty stream.
+				const choice = openaiParsed?.choices?.[0]?.message;
+				const hasToolCalls = Array.isArray(choice?.tool_calls) && choice.tool_calls.length > 0;
+				const choiceContent =
+					choice?.content ||
+					choice?.reasoning_content ||
+					choice?.reasoning ||
+					'';
+				const upstreamTokens = openaiParsed?.usage?.completion_tokens;
+				const isEmptyCompletion =
+					!hasToolCalls &&
+					(!choiceContent || choiceContent.length === 0) &&
+					(upstreamTokens == null || upstreamTokens === 0);
+
+				if (isEmptyCompletion) {
+					errorMessage = `Upstream model "${model}" returned empty response (0 tokens)`;
+					statusCode = 502;
+					console.warn(`[proxy] ${errorMessage}`);
+				} else {
+					const sseLines = buildYouComStreamChunks(openaiParsed);
+					const sseBody = sseLines.map((l) => l + '\n\n').join('');
+					return new Response(sseBody, {
+						status: statusCode,
+						headers: {
+							...responseHeaders,
+							'Content-Type': 'text/event-stream; charset=utf-8',
+							'Cache-Control': 'no-cache',
+							Connection: 'keep-alive',
+						},
+					});
+				}
 			} catch (streamErr) {
 				console.error(
 					'[youcom-adapter] Failed to build stream chunks:',

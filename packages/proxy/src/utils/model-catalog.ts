@@ -579,7 +579,7 @@ async function isProviderOnlineForModel(providerName: string, upstreamModel: str
   // Bypass: `conduit` provider is treated as always online since conduit.ozdoev.net
   // is transient (upstream 502s frequently but recovers). Forcing offline causes
   // bad UX for users. Real request will surface a fresh error from upstream.
-  if (providerName === "conduit") {
+  if (providerName === "conduit" || providerName === "ozdoev") {
     return true;
   }
 
