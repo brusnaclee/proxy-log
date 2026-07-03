@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatRelativeTime, formatDate } from "@/lib/utils";
-import { Download, RefreshCw, Activity, ServerCrash, CheckCircle2, Clock, Zap, Power } from "lucide-react";
+import { Download, RefreshCw, Activity, ServerCrash, CheckCircle2, Clock, Zap, Power, PowerOff } from "lucide-react";
 import { exportXlsx } from "@/lib/export-xlsx";
 
 function modelVendorOf(modelId: string) {
@@ -62,6 +62,8 @@ export default function ModelMonitorPage() {
     return () => { if (sweepInterval) clearInterval(sweepInterval); };
   }, [sweepInterval]);
 
+  const [bulkLoading, setBulkLoading] = useState(false);
+
   const handleActivate = async (d: ModelMonitorEntry) => {
     if (!confirm(`Force-activate model "${d.modelId}"? Next sweep will verify the real status.`)) return;
     try {
@@ -72,6 +74,24 @@ export default function ModelMonitorPage() {
       alert(`Activate failed: ${(err as any)?.message || err}`);
     }
   };
+
+  const handleDeactivate = async (d: ModelMonitorEntry) => {
+    if (!confirm(`Force-deactivate model "${d.modelId}"? Next sweep will verify the real status.`)) return;
+    try {
+      await monitor.deactivate(d.modelId, d.provider || "");
+      await loadData();
+    } catch (err) {
+      console.error("Deactivate failed:", err);
+      alert(`Deactivate failed: ${(err as any)?.message || err}`);
+    }
+  };
+
+  const bulkScopeLabel = useMemo(() => {
+    const parts: string[] = [];
+    if (upstreamFilter !== "all") parts.push(`upstream "${upstreamFilter}"`);
+    if (modelVendorFilter !== "all") parts.push(`vendor "${modelVendorFilter}"`);
+    return parts.length > 0 ? parts.join(" + ") : "all models";
+  }, [upstreamFilter, modelVendorFilter]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -161,21 +181,43 @@ export default function ModelMonitorPage() {
     }
   }, [vendorOptions, modelVendorFilter]);
 
-  let filtered = [...data];
-  if (upstreamFilter !== "all") {
-    filtered = filtered.filter(d => (d.provider || "unknown") === upstreamFilter);
-  }
-  if (modelVendorFilter !== "all") {
-    filtered = filtered.filter(d => modelVendorOf(d.modelId) === modelVendorFilter);
-  }
+  const filtered = useMemo(() => {
+    let rows = [...data];
+    if (upstreamFilter !== "all") {
+      rows = rows.filter(d => (d.provider || "unknown") === upstreamFilter);
+    }
+    if (modelVendorFilter !== "all") {
+      rows = rows.filter(d => modelVendorOf(d.modelId) === modelVendorFilter);
+    }
+    rows.sort((a, b) => {
+      if (sortMode === "name") return a.modelId.localeCompare(b.modelId);
+      if (sortMode === "latency") return (a.latencyMs || 999999) - (b.latencyMs || 999999);
+      if (a.isOnline && !b.isOnline) return -1;
+      if (!a.isOnline && b.isOnline) return 1;
+      return (a.latencyMs || 0) - (b.latencyMs || 0);
+    });
+    return rows;
+  }, [data, upstreamFilter, modelVendorFilter, sortMode]);
 
-  filtered.sort((a, b) => {
-    if (sortMode === "name") return a.modelId.localeCompare(b.modelId);
-    if (sortMode === "latency") return (a.latencyMs || 999999) - (b.latencyMs || 999999);
-    if (a.isOnline && !b.isOnline) return -1;
-    if (!a.isOnline && b.isOnline) return 1;
-    return (a.latencyMs || 0) - (b.latencyMs || 0);
-  });
+  const handleBulkOverride = async (action: "on" | "off") => {
+    const verb = action === "on" ? "ON" : "OFF";
+    if (!confirm(`Turn ${verb} all models for ${bulkScopeLabel}? (${filtered.length} visible)`)) return;
+    setBulkLoading(true);
+    try {
+      const res = await monitor.bulkOverride({
+        action,
+        provider: upstreamFilter !== "all" ? upstreamFilter : undefined,
+        vendor: modelVendorFilter !== "all" ? modelVendorFilter : undefined,
+      });
+      await loadData();
+      alert(res.message || `Updated ${res.updated} model(s)`);
+    } catch (err) {
+      console.error("Bulk override failed:", err);
+      alert(`Bulk override failed: ${(err as any)?.message || err}`);
+    } finally {
+      setBulkLoading(false);
+    }
+  };
 
   return (
     <div className="space-y-8">
@@ -422,6 +464,25 @@ export default function ModelMonitorPage() {
               </SelectContent>
             </Select>
           </div>
+          <div className="flex items-center gap-2 ml-auto">
+            <span className="text-sm text-muted-foreground">Bulk ({filtered.length}):</span>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={bulkLoading || filtered.length === 0}
+              onClick={() => handleBulkOverride("on")}
+            >
+              <Power className="h-3 w-3 mr-1" /> All ON
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={bulkLoading || filtered.length === 0}
+              onClick={() => handleBulkOverride("off")}
+            >
+              <PowerOff className="h-3 w-3 mr-1" /> All OFF
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
@@ -478,11 +539,17 @@ export default function ModelMonitorPage() {
                       <div className="text-[10px] opacity-70">{formatDate(d.checkedAt)}</div>
                     </td>
                     <td className="py-3 px-4 text-center">
-                      {!d.isOnline && (
-                        <Button size="sm" variant="outline" onClick={() => handleActivate(d)}>
-                          <Power className="h-3 w-3 mr-1" /> Activate
-                        </Button>
-                      )}
+                      <div className="flex items-center justify-center gap-1">
+                        {!d.isOnline ? (
+                          <Button size="sm" variant="outline" onClick={() => handleActivate(d)}>
+                            <Power className="h-3 w-3 mr-1" /> ON
+                          </Button>
+                        ) : (
+                          <Button size="sm" variant="outline" onClick={() => handleDeactivate(d)}>
+                            <PowerOff className="h-3 w-3 mr-1" /> OFF
+                          </Button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

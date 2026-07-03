@@ -413,6 +413,16 @@ export const monitor = {
       method: "POST",
       body: JSON.stringify({ modelId, provider }),
     }),
+  deactivate: (modelId: string, provider: string) =>
+    request<{ success: boolean; message?: string }>("/monitor/models/deactivate", {
+      method: "POST",
+      body: JSON.stringify({ modelId, provider }),
+    }),
+  bulkOverride: (params: { action: "on" | "off"; provider?: string; vendor?: string }) =>
+    request<{ success: boolean; updated: number; message?: string }>("/monitor/models/bulk-override", {
+      method: "POST",
+      body: JSON.stringify(params),
+    }),
 };
 
 // ─── Global Settings ──────────────────────────────────────────────────────────

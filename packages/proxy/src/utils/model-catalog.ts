@@ -344,7 +344,9 @@ export async function getModelCatalogResponse() {
     }
   }
 
-  // Deduplicate by model id for public listing (first occurrence wins for display)
+  // Deduplicate per (provider, model) so the same upstream model id on different
+  // providers (e.g. tokito vs claude both serving minimax/MiniMax-M3) each get
+  // their own public entry: {provider}/{modelId}.
   const seen = new Set<string>();
   const publicModels: any[] = [];
 
@@ -360,14 +362,17 @@ export async function getModelCatalogResponse() {
   });
 
   for (const m of cache.models) {
-    if (seen.has(m.id)) continue;
-    seen.add(m.id);
+    const providerId = m.provider_id ?? null;
+    const dedupeKey = providerId != null ? `${providerId}:${m.id}` : m.id;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
 
-    // Resolve upstream provider(s) for this model
-    const providerIds = cache.modelProviderMap[m.id] || [];
-    const upstreamProviderName = providerIds.length > 0
-      ? (providerIdToName.get(providerIds[0]) || null)
-      : null;
+    const upstreamProviderName = providerId != null
+      ? (providerIdToName.get(providerId) || null)
+      : (() => {
+          const providerIds = cache.modelProviderMap[m.id] || [];
+          return providerIds.length > 0 ? (providerIdToName.get(providerIds[0]) || null) : null;
+        })();
 
     // Build the public ID with upstream provider prefix
     const publicId = upstreamProviderName
@@ -440,9 +445,6 @@ export async function getModelCatalogResponse() {
     const publicId = `${providerName}/${cm.modelId}`;
 
     if (seen.has(publicId)) continue;
-    // Also skip if a catalog entry already covers this raw model id
-    // (e.g. regular path emitted "tokito/minimax/MiniMax-M3" for raw "minimax/MiniMax-M3")
-    if (publicModels.some((pm) => pm.id === cm.modelId || pm.id.endsWith("/" + cm.modelId))) continue;
     seen.add(publicId);
 
     // Pull fallback metadata for the raw model id to fill any gaps

@@ -353,6 +353,37 @@ monitor.get("/internal/monitor/models", async (c) => {
   return c.json({ data });
 });
 
+function modelVendorOf(modelId: string): string {
+  return modelId.includes("/") ? modelId.split("/")[0] : "unknown";
+}
+
+async function getLatestMonitorRows() {
+  const activeNames = await getActiveProviderNames();
+
+  const latestSubquery = db
+    .select({
+      modelId: modelMonitor.modelId,
+      provider: modelMonitor.provider,
+      maxCheckedAt: sql<string>`MAX(checked_at)`.as("max_checked_at"),
+    })
+    .from(modelMonitor)
+    .groupBy(modelMonitor.modelId, modelMonitor.provider)
+    .as("latest");
+
+  const rows = await db
+    .select()
+    .from(modelMonitor)
+    .innerJoin(
+      latestSubquery,
+      sql`${modelMonitor.modelId} = ${latestSubquery.modelId} AND COALESCE(${modelMonitor.provider}, '') = COALESCE(${latestSubquery.provider}, '') AND ${modelMonitor.checkedAt} = ${latestSubquery.maxCheckedAt}`,
+    )
+    .orderBy(modelMonitor.provider, modelMonitor.modelId);
+
+  return rows
+    .map((r) => r.model_monitor)
+    .filter((d) => d.provider && activeNames.has(d.provider));
+}
+
 // POST admin force-activate: override-mark a model as online without
 // testing it. Useful when an admin knows a model is back online but the
 // last sweep is still showing it as offline. The next sweep (10min for
@@ -376,6 +407,81 @@ monitor.post("/monitor/models/activate", async (c) => {
     baseUrl: null,
   });
   return c.json({ success: true, message: `${body.modelId} force-activated` });
+});
+
+// POST admin force-deactivate: override-mark a model as offline without testing.
+monitor.post("/monitor/models/deactivate", async (c) => {
+  const authErr = checkAdminSession(c);
+  if (authErr) return authErr;
+
+  const body = await c.req.json<{ modelId: string; provider: string }>();
+  if (!body.modelId || !body.provider) {
+    return c.json({ error: "modelId and provider required" }, 400);
+  }
+  await upsertModelStatus({
+    modelId: String(body.modelId),
+    provider: String(body.provider),
+    isOnline: false,
+    latencyMs: 0,
+    httpStatus: 503,
+    errorMessage: "Force-deactivated by admin",
+    baseUrl: null,
+  });
+  return c.json({ success: true, message: `${body.modelId} force-deactivated` });
+});
+
+// POST bulk override: toggle all models matching filter ON or OFF.
+monitor.post("/monitor/models/bulk-override", async (c) => {
+  const authErr = checkAdminSession(c);
+  if (authErr) return authErr;
+
+  const body = await c.req.json<{
+    action: "on" | "off";
+    provider?: string;
+    vendor?: string;
+  }>();
+  if (body.action !== "on" && body.action !== "off") {
+    return c.json({ error: 'action must be "on" or "off"' }, 400);
+  }
+
+  const providerFilter = body.provider && body.provider !== "all" ? String(body.provider) : null;
+  const vendorFilter = body.vendor && body.vendor !== "all" ? String(body.vendor) : null;
+
+  let rows = await getLatestMonitorRows();
+  if (providerFilter) {
+    rows = rows.filter((d) => d.provider === providerFilter);
+  }
+  if (vendorFilter) {
+    rows = rows.filter((d) => modelVendorOf(d.modelId) === vendorFilter);
+  }
+
+  if (rows.length === 0) {
+    return c.json({ success: true, updated: 0, message: "No models matched the filter" });
+  }
+
+  const turnOn = body.action === "on";
+  for (const row of rows) {
+    await upsertModelStatus({
+      modelId: row.modelId,
+      provider: row.provider,
+      isOnline: turnOn,
+      latencyMs: turnOn ? (row.latencyMs ?? 0) : 0,
+      httpStatus: turnOn ? 200 : 503,
+      errorMessage: turnOn ? null : "Force-deactivated by admin (bulk)",
+      baseUrl: row.baseUrl,
+    });
+  }
+
+  const scope = [
+    providerFilter ? `upstream=${providerFilter}` : null,
+    vendorFilter ? `vendor=${vendorFilter}` : null,
+  ].filter(Boolean).join(", ") || "all models";
+
+  return c.json({
+    success: true,
+    updated: rows.length,
+    message: `Turned ${body.action.toUpperCase()} ${rows.length} model(s) (${scope})`,
+  });
 });
 
 // ─── Enriched Model Details (catalog + metadata + monitor status) ────────────
