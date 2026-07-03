@@ -126,16 +126,31 @@ function isTransientUpstreamProvider(providerName: string | null | undefined) {
 	);
 }
 
-function backfillOpenAIMessageContent<T extends { content?: unknown; reasoning_content?: unknown } | null | undefined>(
+function backfillOpenAIMessageContent<T extends { content?: unknown; reasoning_content?: unknown; reasoning?: unknown } | null | undefined>(
 	message: T,
 ) {
 	if (!message || typeof message !== 'object') return message;
-	if (
-		typeof message.content !== 'string' &&
-		typeof message.reasoning_content === 'string' &&
-		message.reasoning_content.trim().length > 0
-	) {
-		message.content = message.reasoning_content;
+	const msg = message as any;
+	const rcStr: string | undefined =
+		typeof msg?.reasoning_content === 'string' ? msg.reasoning_content : undefined;
+	const rStr: string | undefined =
+		typeof msg?.reasoning === 'string' ? msg.reasoning : undefined;
+	const hadBackfill =
+		typeof msg?.content !== 'string' &&
+		(Boolean(rcStr?.trim()) || Boolean(rStr?.trim()));
+
+	if (typeof msg?.content !== 'string' && rcStr?.trim()) {
+		msg.content = rcStr;
+	} else if (typeof msg?.content !== 'string' && rStr?.trim()) {
+		msg.content = rStr;
+	}
+
+	// Strip the reasoning fields after backfill so clients like OpenCode don't
+	// receive per-token reasoning_content and open a new "Thought" block for every
+	// word. The text is now visible via the content field.
+	if (hadBackfill) {
+		delete msg.reasoning_content;
+		delete msg.reasoning;
 	}
 	return message;
 }
@@ -146,13 +161,28 @@ function backfillOpenAIResponseContent(payload: any) {
 		backfillOpenAIMessageContent(choice.message);
 	}
 	const delta = choice?.delta;
-	if (
-		delta &&
-		typeof delta.content !== 'string' &&
-		typeof delta.reasoning_content === 'string' &&
-		delta.reasoning_content.trim().length > 0
-	) {
-		delta.content = delta.reasoning_content;
+	if (!delta) return payload;
+
+	const d = delta as any;
+	const rcStr: string | undefined =
+		typeof d?.reasoning_content === 'string' ? d.reasoning_content : undefined;
+	const rStr: string | undefined =
+		typeof d?.reasoning === 'string' ? d.reasoning : undefined;
+	const hadBackfill =
+		typeof d?.content !== 'string' &&
+		(Boolean(rcStr?.trim()) || Boolean(rStr?.trim()));
+
+	if (typeof d?.content !== 'string' && rcStr?.trim()) {
+		d.content = rcStr;
+	} else if (typeof d?.content !== 'string' && rStr?.trim()) {
+		d.content = rStr;
+	}
+
+	// Remove reasoning fields after backfill to prevent OpenCode from creating
+	// a new "Thought" block per streaming chunk.
+	if (hadBackfill) {
+		delete d.reasoning_content;
+		delete d.reasoning;
 	}
 	return payload;
 }
