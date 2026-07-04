@@ -21,6 +21,7 @@ import {
 	resolveAnthropicUpstreamUrl,
 	buildAnthropicUpstreamHeaders,
 	prepareAnthropicUpstreamBody,
+	splitAnthropicSseEvents,
 } from '../utils/anthropic-adapter.js';
 import {
 	buildCachedRoundTripResponse,
@@ -128,6 +129,7 @@ function isTransientUpstreamProvider(providerName: string | null | undefined) {
 
 function backfillOpenAIMessageContent<T extends { content?: unknown; reasoning_content?: unknown; reasoning?: unknown } | null | undefined>(
 	message: T,
+	opts?: { stripReasoning?: boolean },
 ) {
 	if (!message || typeof message !== 'object') return message;
 	const msg = message as any;
@@ -135,29 +137,28 @@ function backfillOpenAIMessageContent<T extends { content?: unknown; reasoning_c
 		typeof msg?.reasoning_content === 'string' ? msg.reasoning_content : undefined;
 	const rStr: string | undefined =
 		typeof msg?.reasoning === 'string' ? msg.reasoning : undefined;
-	const hadBackfill =
-		typeof msg?.content !== 'string' &&
-		(Boolean(rcStr?.trim()) || Boolean(rStr?.trim()));
 
 	if (typeof msg?.content !== 'string' && rcStr?.trim()) {
 		msg.content = rcStr;
 	} else if (typeof msg?.content !== 'string' && rStr?.trim()) {
 		msg.content = rStr;
 	}
-	// NOTE: do NOT delete reasoning_content/reasoning after backfill.
-	// The backfill ensures content is visible for clients that don't understand
-	// reasoning_content. The reasoning field is preserved so clients that DO
-	// understand it (Cursor, Claude Code) can render thinking separately.
-	// OpenCode's per-token fragmentation is a client-side bug that upstream
-	// OpenCode must fix — we cannot resolve it from the proxy without breaking
-	// proper thinking display in other clients.
+	// OpenCode renders reasoning_content as fragmented "Thought: Xms" lines.
+	// Strip only for OpenCode; Cursor/Claude Code keep reasoning fields intact.
+	if (opts?.stripReasoning) {
+		delete msg.reasoning_content;
+		delete msg.reasoning;
+	}
 	return message;
 }
 
-function backfillOpenAIResponseContent(payload: any) {
+function backfillOpenAIResponseContent(
+	payload: any,
+	opts?: { stripReasoning?: boolean },
+) {
 	const choice = payload?.choices?.[0];
 	if (choice?.message) {
-		backfillOpenAIMessageContent(choice.message);
+		backfillOpenAIMessageContent(choice.message, opts);
 	}
 	const delta = choice?.delta;
 	if (!delta) return payload;
@@ -173,7 +174,10 @@ function backfillOpenAIResponseContent(payload: any) {
 	} else if (typeof d?.content !== 'string' && rStr?.trim()) {
 		d.content = rStr;
 	}
-	// Do NOT delete reasoning fields — same rationale as above.
+	if (opts?.stripReasoning) {
+		delete d.reasoning_content;
+		delete d.reasoning;
+	}
 	return payload;
 }
 
@@ -336,6 +340,16 @@ const STREAMING_TIMEOUT_MS = 60 * 60 * 1000;
 const NON_STREAMING_TIMEOUT_MS = 90 * 1000;
 const UPSTREAM_MAX_ATTEMPTS = 10;
 const UPSTREAM_RETRY_BACKOFF_MS = 1000;
+const TRANSIENT_MAX_ATTEMPTS = 8;
+const TRANSIENT_MAX_WALL_MS = 60_000;
+
+function shouldStripReasoningForIde(ide: string): boolean {
+	return ide === 'OpenCode' || ide === 'OpenCode (VS Code)';
+}
+
+function isTransientStreamingRetryable(code: number): boolean {
+	return code === 502 || code === 503 || code === 504;
+}
 
 const logWriteQueue: Array<(tx: any) => Promise<void>> = [];
 let logWriteRunning = false;
@@ -440,10 +454,23 @@ async function fetchUpstreamWithRetry(
 	clientSignal?: AbortSignal,
 ): Promise<Response> {
 	let lastError: any = null;
+	let lastResponse: Response | null = null;
 	const isTransientProvider = isTransientUpstreamProvider(providerName);
-	const maxAttempts = isTransientProvider ? 30 : UPSTREAM_MAX_ATTEMPTS;
+	const maxAttempts = isTransientProvider
+		? TRANSIENT_MAX_ATTEMPTS
+		: UPSTREAM_MAX_ATTEMPTS;
+	const wallStart = Date.now();
 
 	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+		if (
+			isTransientProvider &&
+			attempt > 1 &&
+			Date.now() - wallStart >= TRANSIENT_MAX_WALL_MS
+		) {
+			if (lastResponse) return lastResponse;
+			throw lastError || new Error('Upstream request failed (wall clock exceeded)');
+		}
+
 		try {
 			// Combine client abort signal with timeout
 			const controller = new AbortController();
@@ -483,15 +510,27 @@ async function fetchUpstreamWithRetry(
 				clientSignal.removeEventListener('abort', abortHandler);
 			}
 
-			if (
-				!isStreaming &&
+			lastResponse = response;
+
+			const canRetryStatus =
 				attempt < maxAttempts &&
-				isRetryableStatus(response.status)
-			) {
+				isRetryableStatus(response.status) &&
+				(!isStreaming ||
+					(isTransientProvider &&
+						isTransientStreamingRetryable(response.status)));
+
+			if (canRetryStatus) {
+				const nextBackoff = UPSTREAM_RETRY_BACKOFF_MS * attempt;
+				if (
+					isTransientProvider &&
+					Date.now() - wallStart + nextBackoff >= TRANSIENT_MAX_WALL_MS
+				) {
+					return response;
+				}
 				try {
 					await response.body?.cancel();
 				} catch {}
-				await sleep(UPSTREAM_RETRY_BACKOFF_MS * attempt);
+				await sleep(nextBackoff);
 				continue;
 			}
 
@@ -499,13 +538,21 @@ async function fetchUpstreamWithRetry(
 		} catch (error: any) {
 			lastError = error;
 			if (attempt < maxAttempts && isRetryableFetchError(error)) {
-				await sleep(UPSTREAM_RETRY_BACKOFF_MS * attempt);
+				const nextBackoff = UPSTREAM_RETRY_BACKOFF_MS * attempt;
+				if (
+					isTransientProvider &&
+					Date.now() - wallStart + nextBackoff >= TRANSIENT_MAX_WALL_MS
+				) {
+					throw error;
+				}
+				await sleep(nextBackoff);
 				continue;
 			}
 			throw error;
 		}
 	}
 
+	if (lastResponse) return lastResponse;
 	throw lastError || new Error('Upstream request failed');
 }
 
@@ -1842,24 +1889,51 @@ proxy.all('/*', async (c) => {
 						const acc = makeAccumulator();
 						const decoder = new TextDecoder();
 						const logModel = `auto (${candidate.modelId}) [stream]`;
+						const stripReasoning = shouldStripReasoningForIde(ide);
+						let openaiPassthroughBuffer = '';
 
 						const { readable, writable } = new TransformStream({
 							transform(chunk, controller) {
-								controller.enqueue(chunk);
 								try {
-									const text = decoder.decode(chunk, { stream: true });
-									const lines = text.split('\n');
+									openaiPassthroughBuffer += decoder.decode(chunk, {
+										stream: true,
+									});
+									const lines = openaiPassthroughBuffer.split('\n');
+									openaiPassthroughBuffer = lines.pop() || '';
 									for (const line of lines) {
 										if (line.startsWith('data: ') && line !== 'data: [DONE]') {
 											const payloadText = line.slice(6).trim();
-											if (!payloadText || payloadText === '[DONE]') continue;
+											if (!payloadText || payloadText === '[DONE]') {
+												controller.enqueue(
+													new TextEncoder().encode(`${line}\n`),
+												);
+												continue;
+											}
 											try {
-												const data = JSON.parse(payloadText);
+												const data = backfillOpenAIResponseContent(
+													JSON.parse(payloadText),
+													{ stripReasoning },
+												);
 												consumeStreamPayload(acc, data);
-											} catch {}
+												controller.enqueue(
+													new TextEncoder().encode(
+														`data: ${JSON.stringify(data)}\n`,
+													),
+												);
+											} catch {
+												controller.enqueue(
+													new TextEncoder().encode(`${line}\n`),
+												);
+											}
+										} else {
+											controller.enqueue(
+												new TextEncoder().encode(`${line}\n`),
+											);
 										}
 									}
-								} catch {}
+								} catch {
+									controller.enqueue(chunk);
+								}
 							},
 							flush() {
 								const finalized = finalizeCompletion(acc);
@@ -2000,7 +2074,9 @@ proxy.all('/*', async (c) => {
 					const choice0 = responseJson?.choices?.[0];
 					const msgContent = choice0?.message?.content;
 					const toolCalls = choice0?.message?.tool_calls;
-					hasContent = !!(msgContent || toolCalls);
+					const reasoning =
+						choice0?.message?.reasoning_content || choice0?.message?.reasoning;
+					hasContent = !!(msgContent || toolCalls || reasoning);
 				} catch {
 					// Not JSON or unparseable — treat as no content
 				}
@@ -3414,13 +3490,18 @@ proxy.all('/*', async (c) => {
 			const acc = makeAccumulator();
 			let hasActualToolCalls = false;
 			const decoder = new TextDecoder();
-			const anthropicStreamState = isAnthropicProvider
-				? createStreamState(model)
-				: null;
-			const clientAnthropicStreamState = isAnthropicRequest
-				? createAnthropicStreamState(model)
-				: null;
+			const stripReasoning = shouldStripReasoningForIde(ide);
+			const anthropicPassthrough = isAnthropicProvider && isAnthropicRequest;
+			const anthropicStreamState =
+				isAnthropicProvider && !anthropicPassthrough
+					? createStreamState(model)
+					: null;
+			const clientAnthropicStreamState =
+				isAnthropicRequest && !anthropicPassthrough
+					? createAnthropicStreamState(model)
+					: null;
 			let anthropicBuffer = '';
+			let anthropicPassthroughBuffer = '';
 			let openaiPassthroughBuffer = '';
 			let responsesBuffer = ''; // for Responses API SSE conversion
 			let responsesResponseId = `resp-${Date.now()}`;
@@ -3428,13 +3509,33 @@ proxy.all('/*', async (c) => {
 
 			const { readable, writable } = new TransformStream({
 				transform(chunk, controller) {
-					if (isAnthropicProvider && anthropicStreamState) {
+					if (anthropicPassthrough) {
+						controller.enqueue(chunk);
+						try {
+							anthropicPassthroughBuffer += decoder.decode(chunk, {
+								stream: true,
+							});
+							const split = splitAnthropicSseEvents(anthropicPassthroughBuffer);
+							anthropicPassthroughBuffer = split.remainder;
+							for (const event of split.events) {
+								for (const line of event.split('\n')) {
+									if (!line.startsWith('data: ')) continue;
+									const payloadText = line.slice(6).trim();
+									if (!payloadText || payloadText === '[DONE]') continue;
+									try {
+										const data = JSON.parse(payloadText);
+										consumeStreamPayload(acc, data);
+									} catch {}
+								}
+							}
+						} catch {}
+					} else if (isAnthropicProvider && anthropicStreamState) {
 						// Anthropic streaming: convert SSE events to OpenAI format
 						anthropicBuffer += decoder.decode(chunk, { stream: true });
-						const events = anthropicBuffer.split('\n\n');
-						anthropicBuffer = events.pop() || ''; // Keep incomplete event in buffer
+						const split = splitAnthropicSseEvents(anthropicBuffer);
+						anthropicBuffer = split.remainder;
 
-						for (const event of events) {
+						for (const event of split.events) {
 							const openaiLines = convertStreamEvent(
 								event,
 								anthropicStreamState,
@@ -3491,8 +3592,12 @@ proxy.all('/*', async (c) => {
 
 								// Convert delta to Responses API format
 								const delta = data.choices?.[0]?.delta;
-								if (delta?.content) {
-									const deltaEvent = `event: response.output_text.delta\ndata: ${JSON.stringify({ type: 'response.output_text.delta', item_id: `msg-${Date.now()}`, output_index: 0, content_index: 0, delta: delta.content })}\n\n`;
+								const textDelta =
+									delta?.content ||
+									(delta as any)?.reasoning_content ||
+									(delta as any)?.reasoning;
+								if (textDelta) {
+									const deltaEvent = `event: response.output_text.delta\ndata: ${JSON.stringify({ type: 'response.output_text.delta', item_id: `msg-${Date.now()}`, output_index: 0, content_index: 0, delta: textDelta })}\n\n`;
 									controller.enqueue(new TextEncoder().encode(deltaEvent));
 								}
 							} catch {}
@@ -3540,7 +3645,10 @@ proxy.all('/*', async (c) => {
 										continue;
 									}
 									try {
-										const data = backfillOpenAIResponseContent(JSON.parse(payloadText));
+										const data = backfillOpenAIResponseContent(
+											JSON.parse(payloadText),
+											{ stripReasoning },
+										);
 										appendToolsFromPayload(data);
 										if (detectToolCallsInResponse(data))
 											hasActualToolCalls = true;
@@ -3578,6 +3686,7 @@ proxy.all('/*', async (c) => {
 								if (payloadText) {
 									const data = backfillOpenAIResponseContent(
 										JSON.parse(payloadText),
+										{ stripReasoning },
 									);
 									controller.enqueue(
 										new TextEncoder().encode(
@@ -3600,9 +3709,7 @@ proxy.all('/*', async (c) => {
 							? Math.max(estimateTokens(finalized.completionText), 1)
 							: 0;
 
-					// Guard: if upstream returned HTTP 200 but the streaming response accumulated
-					// zero visible content, throw to abort the stream so the outer catch returns
-					// a proper 502 JSON response (not an SSE that was already sent with 200).
+					// Guard: emit SSE error when upstream returned 200 but stream had no content.
 					if (
 						statusCode >= 200 &&
 						statusCode < 300 &&
@@ -3625,14 +3732,18 @@ proxy.all('/*', async (c) => {
 							responsePreview: null,
 							latencyMs: Date.now() - startTime,
 							statusCode: 502,
+							errorMessage: errorMsg,
 							estimatedCost: calculateEstimatedCost(model, finalized.promptTokens || 0, 0),
 							messageRole: messageAnalysis.messageRole,
 							userMessageHash: messageAnalysis.messageHash,
 							actualToolCallsInResponse: hasActualToolCalls,
 						};
 						persistLogAndSession(logEntry, hasActualToolCalls, false);
-						// Throw to abort the streaming response — outer catch returns 502 JSON
-						throw new Error(errorMsg);
+						const errSse = `data: ${JSON.stringify({
+							error: { message: errorMsg, type: 'upstream_error' },
+						})}\n\ndata: [DONE]\n\n`;
+						controller.enqueue(new TextEncoder().encode(errSse));
+						return;
 					}
 
 					const billableTokens = resolveBillableTokens(
@@ -3766,7 +3877,9 @@ proxy.all('/*', async (c) => {
 		if (isResponsesApi && statusCode >= 200 && statusCode < 300) {
 			try {
 				const chatParsed = JSON.parse(responseBody);
-				backfillOpenAIResponseContent(chatParsed);
+				backfillOpenAIResponseContent(chatParsed, {
+					stripReasoning: shouldStripReasoningForIde(ide),
+				});
 				const responsesOutput: any[] = [];
 
 				if (chatParsed.choices && chatParsed.choices.length > 0) {
@@ -3823,7 +3936,9 @@ proxy.all('/*', async (c) => {
 		if (isAnthropicRequest && statusCode >= 200 && statusCode < 300) {
 			try {
 				const openaiParsed = JSON.parse(responseBody);
-				backfillOpenAIResponseContent(openaiParsed);
+				backfillOpenAIResponseContent(openaiParsed, {
+					stripReasoning: shouldStripReasoningForIde(ide),
+				});
 				const anthropicResp = convertOpenAIToAnthropicResponse(openaiParsed);
 				responseBody = JSON.stringify(anthropicResp);
 			} catch (convErr) {
@@ -3836,7 +3951,8 @@ proxy.all('/*', async (c) => {
 
 		try {
 			const parsed = JSON.parse(responseBody);
-			backfillOpenAIResponseContent(parsed);
+			const stripReasoning = shouldStripReasoningForIde(ide);
+			backfillOpenAIResponseContent(parsed, { stripReasoning });
 			responseBody = JSON.stringify(parsed);
 			appendToolsFromPayload(parsed);
 
@@ -3856,10 +3972,6 @@ proxy.all('/*', async (c) => {
 					? Math.max(estimateTokens(finalized.completionText), 1)
 					: 0;
 			responsePreview = finalized.completionText || null;
-
-		if (!completionTokens && !responsePreview && responseBody.length > 200) {
-			completionTokens = Math.max(estimateTokens(responseBody), 1);
-		}
 
 		// Guard: if upstream returned HTTP 200 but the response has zero visible content,
 		// return 502 so the client gets a meaningful error instead of "200 OK" with an

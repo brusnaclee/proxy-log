@@ -167,11 +167,17 @@ interface OpenAIResponse {
 
 export function convertResponseToOpenAI(anthropic: AnthropicResponse): OpenAIResponse {
   let content: string | null = null;
+  let reasoningContent: string | null = null;
   const toolCalls: OpenAIResponse["choices"][0]["message"]["tool_calls"] = [];
 
   for (const block of anthropic.content || []) {
     if (block.type === "text") {
       content = (content || "") + block.text;
+    } else if ((block as any).type === "thinking") {
+      const thinkingText = (block as any).thinking || "";
+      if (thinkingText) {
+        reasoningContent = (reasoningContent || "") + thinkingText;
+      }
     } else if (block.type === "tool_use") {
       toolCalls.push({
         id: block.id,
@@ -191,6 +197,19 @@ export function convertResponseToOpenAI(anthropic: AnthropicResponse): OpenAIRes
     stop_sequence: "stop",
   };
 
+  const message: OpenAIResponse["choices"][0]["message"] & {
+    reasoning_content?: string;
+  } = {
+    role: "assistant",
+    content: toolCalls.length > 0 && !content && !reasoningContent ? null : content,
+    ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+    ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
+  };
+
+  if (!message.content && reasoningContent) {
+    message.content = reasoningContent;
+  }
+
   return {
     id: anthropic.id,
     object: "chat.completion",
@@ -198,11 +217,7 @@ export function convertResponseToOpenAI(anthropic: AnthropicResponse): OpenAIRes
     model: anthropic.model,
     choices: [{
       index: 0,
-      message: {
-        role: "assistant",
-        content: toolCalls.length > 0 && !content ? null : content,
-        ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
-      },
+      message,
       finish_reason: finishReasonMap[anthropic.stop_reason] || "stop",
     }],
     usage: {
@@ -310,6 +325,24 @@ export function convertStreamEvent(line: string, state: StreamState): string[] {
           choices: [{
             index: 0,
             delta: { content: data.delta.text },
+            finish_reason: null,
+          }],
+        };
+        lines_out.push(`data: ${JSON.stringify(chunk)}`);
+      } else if (
+        data.delta?.type === "thinking_delta" &&
+        (data.delta?.thinking || data.delta?.text)
+      ) {
+        state.hasContent = true;
+        const thinkingText = data.delta.thinking || data.delta.text || "";
+        const chunk = {
+          id: state.id,
+          object: "chat.completion.chunk",
+          created: Math.floor(Date.now() / 1000),
+          model: state.model,
+          choices: [{
+            index: 0,
+            delta: { reasoning_content: thinkingText },
             finish_reason: null,
           }],
         };
