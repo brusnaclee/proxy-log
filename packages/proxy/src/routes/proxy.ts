@@ -144,14 +144,13 @@ function backfillOpenAIMessageContent<T extends { content?: unknown; reasoning_c
 	} else if (typeof msg?.content !== 'string' && rStr?.trim()) {
 		msg.content = rStr;
 	}
-
-	// Strip the reasoning fields after backfill so clients like OpenCode don't
-	// receive per-token reasoning_content and open a new "Thought" block for every
-	// word. The text is now visible via the content field.
-	if (hadBackfill) {
-		delete msg.reasoning_content;
-		delete msg.reasoning;
-	}
+	// NOTE: do NOT delete reasoning_content/reasoning after backfill.
+	// The backfill ensures content is visible for clients that don't understand
+	// reasoning_content. The reasoning field is preserved so clients that DO
+	// understand it (Cursor, Claude Code) can render thinking separately.
+	// OpenCode's per-token fragmentation is a client-side bug that upstream
+	// OpenCode must fix — we cannot resolve it from the proxy without breaking
+	// proper thinking display in other clients.
 	return message;
 }
 
@@ -168,22 +167,13 @@ function backfillOpenAIResponseContent(payload: any) {
 		typeof d?.reasoning_content === 'string' ? d.reasoning_content : undefined;
 	const rStr: string | undefined =
 		typeof d?.reasoning === 'string' ? d.reasoning : undefined;
-	const hadBackfill =
-		typeof d?.content !== 'string' &&
-		(Boolean(rcStr?.trim()) || Boolean(rStr?.trim()));
 
 	if (typeof d?.content !== 'string' && rcStr?.trim()) {
 		d.content = rcStr;
 	} else if (typeof d?.content !== 'string' && rStr?.trim()) {
 		d.content = rStr;
 	}
-
-	// Remove reasoning fields after backfill to prevent OpenCode from creating
-	// a new "Thought" block per streaming chunk.
-	if (hadBackfill) {
-		delete d.reasoning_content;
-		delete d.reasoning;
-	}
+	// Do NOT delete reasoning fields — same rationale as above.
 	return payload;
 }
 

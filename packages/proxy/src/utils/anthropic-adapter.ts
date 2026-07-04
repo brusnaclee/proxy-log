@@ -589,14 +589,8 @@ export function convertOpenAIToAnthropicResponse(openai: OpenAIResponse): Anthro
   // Some thinking models (gpt-5, deepseek-r1, etc.) return content in
   // `reasoning_content` and leave `content` empty. Pass reasoning through
   // as a thinking block so the client sees the response.
-  // Skip if content is already non-empty — prevents duplicate text blocks when
-  // the proxy backfill has already copied reasoning_content into content.
   const reasoningText = (message as any)?.reasoning_content || (message as any)?.reasoning;
-  if (
-    typeof reasoningText === "string" &&
-    reasoningText.length > 0 &&
-    !(typeof message?.content === "string" && message.content.length > 0)
-  ) {
+  if (typeof reasoningText === "string" && reasoningText.length > 0) {
     contentBlocks.push({ type: "text", text: reasoningText });
   }
   if (Array.isArray(message?.tool_calls)) {
@@ -770,30 +764,24 @@ export function convertOpenAIChunkToAnthropicEvents(chunk: string, state: Anthro
   }
 
   // Handle reasoning_content (thinking models like gpt-5, deepseek-r1).
-  // Skip if content is already populated — the proxy's backfill already moved
-  // reasoning_content into content and deleted the reasoning field, so we should
-  // not emit a duplicate text block here. Only emit if content is still empty.
-  if (
-    (typeof (delta as any).reasoning_content === "string" || typeof (delta as any).reasoning === "string") &&
-    !(typeof delta.content === "string" && delta.content.length > 0)
-  ) {
-    const reasoningText = (delta as any).reasoning_content || (delta as any).reasoning;
-    if (reasoningText && reasoningText.length > 0) {
-      if (!state.contentBlockOpen) {
-        out += sseEvent("content_block_start", {
-          type: "content_block_start",
-          index: state.contentBlockIndex,
-          content_block: { type: "text", text: "" },
-        });
-        state.contentBlockOpen = true;
-      }
-      out += sseEvent("content_block_delta", {
-        type: "content_block_delta",
+  // Emit as a text block so clients that understand reasoning_content see thinking.
+  // Do NOT skip when content is populated — backfill copies reasoning_content into
+  // content, but both fields should be emitted so the client can render them properly.
+  if (typeof (delta as any).reasoning_content === "string" && (delta as any).reasoning_content.length > 0) {
+    if (!state.contentBlockOpen) {
+      out += sseEvent("content_block_start", {
+        type: "content_block_start",
         index: state.contentBlockIndex,
-        delta: { type: "text_delta", text: reasoningText },
+        content_block: { type: "text", text: "" },
       });
-      state.textAccumulated += reasoningText;
+      state.contentBlockOpen = true;
     }
+    out += sseEvent("content_block_delta", {
+      type: "content_block_delta",
+      index: state.contentBlockIndex,
+      delta: { type: "text_delta", text: (delta as any).reasoning_content },
+    });
+    state.textAccumulated += (delta as any).reasoning_content;
   }
 
   // Handle tool calls
