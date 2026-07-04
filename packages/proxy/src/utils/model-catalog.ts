@@ -694,8 +694,8 @@ export async function getProviderForModel(modelId: string): Promise<any | null> 
       }
     }
 
-    // Fall back to any active provider
-    resolvedCandidates = allActive;
+    // Unknown model — do not route to a random active provider.
+    return null;
   }
 
   if (resolvedCandidates.length === 0) {

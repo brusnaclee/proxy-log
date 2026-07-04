@@ -297,6 +297,19 @@ const NEW_PROMPT_MIN_GAP_MS = 10 * 1000; // 10 seconds
 const SWITCH_PROMPT_MIN_GAP_MS = 60 * 1000; // 60 seconds
 const MAX_LOG_WRITE_QUEUE_SIZE = 20000;
 
+/** Keys used to match model_monitor rows against trial model ids. */
+function monitorKeyCandidates(modelId: string): string[] {
+	const lower = String(modelId || '').toLowerCase();
+	const keys = new Set<string>([lower, stripGpyPrefix(lower)]);
+	if (lower.startsWith('gpy/')) {
+		const rest = lower.slice(4);
+		keys.add(rest);
+		const slash = rest.indexOf('/');
+		if (slash > 0) keys.add(rest.slice(slash + 1));
+	}
+	return [...keys];
+}
+
 /** Strip a `gpy/<upstream>/` prefix and return the bare model id used by the monitor table. */
 function stripGpyPrefix(modelId: string): string {
   const lower = String(modelId || "").toLowerCase();
@@ -321,12 +334,13 @@ async function getRecentlyOfflineGpyModelIds(excludeModel: string, windowMs: num
         latestPerModel.set(r.modelId, { isOnline: !!r.isOnline, httpStatus: r.httpStatus || 0 });
       }
     }
-    const offline = new Set<string>();
-    const excludeBare = stripGpyPrefix(excludeModel);
     for (const [id, status] of latestPerModel.entries()) {
-      if (id === excludeBare) continue;
+      const idLower = id.toLowerCase();
+      if (monitorKeyCandidates(excludeModel).includes(idLower)) continue;
       if (!status.isOnline || status.httpStatus === 0 || (status.httpStatus >= 500 && status.httpStatus < 600)) {
-        offline.add(id);
+        for (const key of monitorKeyCandidates(id)) {
+          offline.add(key);
+        }
       }
     }
     return offline;
@@ -341,7 +355,10 @@ const NON_STREAMING_TIMEOUT_MS = 90 * 1000;
 const UPSTREAM_MAX_ATTEMPTS = 10;
 const UPSTREAM_RETRY_BACKOFF_MS = 1000;
 const TRANSIENT_MAX_ATTEMPTS = 8;
-const TRANSIENT_MAX_WALL_MS = 60_000;
+// Conduit models (e.g. gpt-5) often need 25–30s+ for a single non-stream response.
+const TRANSIENT_NON_STREAMING_ATTEMPT_MS = 45_000;
+// Allow multiple 502 retries plus one slow success within the wall clock.
+const TRANSIENT_MAX_WALL_MS = 120_000;
 
 function shouldStripReasoningForIde(ide: string): boolean {
 	return ide === 'OpenCode' || ide === 'OpenCode (VS Code)';
@@ -420,10 +437,56 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function pumpStreamBody(
+	body: ReadableStream<Uint8Array>,
+	writable: WritableStream<Uint8Array>,
+	onError?: (err: unknown) => Uint8Array | null,
+): Promise<void> {
+	const writer = writable.getWriter();
+	const reader = body.getReader();
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			if (value) await writer.write(value);
+		}
+		await writer.close();
+	} catch (err) {
+		console.error('[proxy-stream] pump error:', (err as Error)?.message || err);
+		if (onError) {
+			const bytes = onError(err);
+			if (bytes) {
+				try {
+					await writer.write(bytes);
+				} catch {}
+			}
+		}
+		try {
+			await writer.close();
+		} catch {}
+	} finally {
+		try {
+			reader.releaseLock();
+		} catch {}
+		try {
+			writer.releaseLock();
+		} catch {}
+	}
+}
+
+function buildStreamInterruptSse(modelName: string): Uint8Array {
+	const errSse = `data: ${JSON.stringify({
+		error: {
+			message: `Upstream stream for "${modelName}" was interrupted`,
+			type: 'upstream_error',
+		},
+	})}\n\ndata: [DONE]\n\n`;
+	return new TextEncoder().encode(errSse);
+}
+
 function isRetryableStatus(code: number): boolean {
+	// 401/429 are handled by fetchWithKeyRotation — do not retry same key here.
 	return (
-		code === 401 ||
-		code === 429 ||
 		code === 500 ||
 		code === 502 ||
 		code === 503 ||
@@ -474,14 +537,13 @@ async function fetchUpstreamWithRetry(
 		try {
 			// Combine client abort signal with timeout
 			const controller = new AbortController();
-			// Streaming gets full hour; non-streaming retry attempts get short
-			// timeout to fail fast on transient upstreams (avoid 10x wait).
-			const timeoutMs =
-				isStreaming && attempt === 1
-					? STREAMING_TIMEOUT_MS
-					: isTransientProvider
-						? Math.min(RETRY_ATTEMPT_TIMEOUT_MS, 15_000)
-						: RETRY_ATTEMPT_TIMEOUT_MS;
+			// Streaming gets full hour; conduit non-streaming needs longer per-attempt
+			// timeout because models like gpt-5 routinely take 25–30s.
+			const timeoutMs = isStreaming
+				? STREAMING_TIMEOUT_MS
+				: isTransientProvider
+					? TRANSIENT_NON_STREAMING_ATTEMPT_MS
+					: RETRY_ATTEMPT_TIMEOUT_MS;
 			const timeoutId = setTimeout(
 				() => controller.abort(new Error('Timeout')),
 				timeoutMs,
@@ -596,11 +658,10 @@ async function fetchWithKeyRotation(
 		);
 
 		if (response.status === 401) {
-			// Invalid key — mark and try the next one.
+			// Invalid key — rotate without permanently disabling the key.
 			console.warn(
-				`[key-rotation] Key ${keyResult.keyId} for provider ${providerId} returned 401, marking as invalid`,
+				`[key-rotation] Key ${keyResult.keyId} for provider ${providerId} returned 401, trying next key`,
 			);
-			await markKeyAsLimited(keyResult.keyId);
 			try {
 				await response.body?.cancel();
 			} catch {}
@@ -1455,14 +1516,25 @@ proxy.all('/*', async (c) => {
 			messages = [{ role: 'user', content: input }];
 		} else if (Array.isArray(input)) {
 			for (const item of input) {
-				if (item.role && item.content) {
-					// Standard message format
+				if (item.role && item.content !== undefined) {
 					messages.push({
-						role: item.role,
+						role: item.role === 'developer' ? 'system' : item.role,
 						content:
 							typeof item.content === 'string'
 								? item.content
 								: JSON.stringify(item.content),
+					});
+				} else if (
+					item.type === 'function_call_output' ||
+					item.type === 'tool_result'
+				) {
+					const output =
+						item.output ?? item.content ?? item.result ?? '';
+					messages.push({
+						role: 'tool',
+						tool_call_id: item.call_id || item.tool_call_id || item.id || '',
+						content:
+							typeof output === 'string' ? output : JSON.stringify(output),
 					});
 				} else if (item.type === 'message' && item.content) {
 					// Responses API message block
@@ -1532,6 +1604,11 @@ proxy.all('/*', async (c) => {
 		}
 	}
 	if (isAnthropicRequest && requestBody) {
+		const routeProvider = await getProviderForModel(model);
+		if (routeProvider?.endpointType === 'anthropic') {
+			// Native Anthropic client → Anthropic upstream: keep body as-is.
+			console.log(`[proxy] anthropic passthrough request for model=${model}`);
+		} else {
 		try {
 			const openaiBody = convertAnthropicToOpenAI(requestBody as any);
 			requestBody = openaiBody as any;
@@ -1546,6 +1623,7 @@ proxy.all('/*', async (c) => {
 					message: `Anthropic request translation failed: ${(err as Error).message}`,
 				}
 			}, 400);
+		}
 		}
 	}
 
@@ -1891,10 +1969,47 @@ proxy.all('/*', async (c) => {
 						const logModel = `auto (${candidate.modelId}) [stream]`;
 						const stripReasoning = shouldStripReasoningForIde(ide);
 						let openaiPassthroughBuffer = '';
+						let anthropicBuffer = '';
+						let autoHasActualToolCalls = false;
+						const anthropicStreamState = isAnthropicAuto
+							? createStreamState(`auto (${candidate.modelId})`)
+							: null;
 
 						const { readable, writable } = new TransformStream({
 							transform(chunk, controller) {
 								try {
+									if (isAnthropicAuto && anthropicStreamState) {
+										anthropicBuffer += decoder.decode(chunk, {
+											stream: true,
+										});
+										const split = splitAnthropicSseEvents(anthropicBuffer);
+										anthropicBuffer = split.remainder;
+										for (const event of split.events) {
+											const openaiLines = convertStreamEvent(
+												event,
+												anthropicStreamState,
+											);
+											for (const line of openaiLines) {
+												controller.enqueue(
+													new TextEncoder().encode(line + '\n\n'),
+												);
+												if (
+													line.startsWith('data: ') &&
+													line !== 'data: [DONE]'
+												) {
+													try {
+														const data = JSON.parse(line.slice(6));
+														if (detectToolCallsInResponse(data)) {
+															autoHasActualToolCalls = true;
+														}
+														consumeStreamPayload(acc, data);
+													} catch {}
+												}
+											}
+										}
+										return;
+									}
+
 									openaiPassthroughBuffer += decoder.decode(chunk, {
 										stream: true,
 									});
@@ -1935,13 +2050,30 @@ proxy.all('/*', async (c) => {
 									controller.enqueue(chunk);
 								}
 							},
-							flush() {
+							flush(controller) {
 								const finalized = finalizeCompletion(acc);
 								const rawCompletionTokens = finalized.completionTokens
 									? finalized.completionTokens
 									: finalized.completionText
 										? Math.max(estimateTokens(finalized.completionText), 1)
 										: 0;
+
+								if (
+									trialResponse.status >= 200 &&
+									trialResponse.status < 300 &&
+									rawCompletionTokens === 0 &&
+									!finalized.completionText &&
+									!autoHasActualToolCalls
+								) {
+									const errorMsg = `Auto model "${candidate.modelId}" returned empty streaming response`;
+									console.warn(`[auto-stream] ${errorMsg}`);
+									const errSse = `data: ${JSON.stringify({
+										error: { message: errorMsg, type: 'upstream_error' },
+									})}\n\ndata: [DONE]\n\n`;
+									controller.enqueue(new TextEncoder().encode(errSse));
+									return;
+								}
+
 								const billableTokens = resolveBillableTokens(
 									{
 										promptTokens: finalized.promptTokens,
@@ -2050,9 +2182,9 @@ proxy.all('/*', async (c) => {
 							},
 						});
 
-						trialResponse.body.pipeTo(writable).catch((err) => {
-							console.error('[auto-stream] pipeTo error:', err?.message || err);
-						});
+						void pumpStreamBody(trialResponse.body, writable, () =>
+							buildStreamInterruptSse(`auto (${candidate.modelId})`),
+						);
 						return new Response(readable, {
 							status: trialResponse.status,
 							headers: responseHeaders,
@@ -2232,7 +2364,7 @@ proxy.all('/*', async (c) => {
 		);
 	}
 
-	const targetProvider = await getProviderForModel(model);
+	let targetProvider = await getProviderForModel(model);
 	if (!targetProvider) {
 		return c.json(
 			{
@@ -2282,7 +2414,12 @@ proxy.all('/*', async (c) => {
 		const monitorRows = await db
 			.select()
 			.from(modelMonitor)
-			.where(eq(modelMonitor.modelId, upstreamModel))
+			.where(
+				and(
+					eq(modelMonitor.modelId, upstreamModel),
+					eq(modelMonitor.provider, targetProvider.name),
+				),
+			)
 			.orderBy(desc(modelMonitor.checkedAt))
 			.limit(20);
 
@@ -3087,9 +3224,9 @@ proxy.all('/*', async (c) => {
 	if (contentType) upstreamHeaders['Content-Type'] = contentType;
 
 	// Detect Anthropic provider
-	const isAnthropicProvider = targetProvider.endpointType === 'anthropic';
+	let isAnthropicProvider = targetProvider.endpointType === 'anthropic';
 	// Detect You.com provider (agents API)
-	const isYouComProvider = targetProvider.endpointType === 'youcom';
+	let isYouComProvider = targetProvider.endpointType === 'youcom';
 	let anthropicRequestBody: string | null = null;
 	let youcomRequestBody: string | null = null;
 	let youcomContext: {
@@ -3101,7 +3238,9 @@ proxy.all('/*', async (c) => {
 	let actualUpstreamPath = upstreamPath;
 
 	if (isAnthropicProvider) {
-		anthropicRequestBody = prepareAnthropicUpstreamBody(requestBody);
+		anthropicRequestBody = isAnthropicRequest
+			? JSON.stringify(requestBody)
+			: prepareAnthropicUpstreamBody(requestBody);
 		actualUpstreamUrl = resolveAnthropicUpstreamUrl(targetProvider.endpoint);
 	} else if (isYouComProvider) {
 		// Convert OpenAI request to you.com Agents format.
@@ -3135,6 +3274,18 @@ proxy.all('/*', async (c) => {
 				status: 200,
 				headers: { 'Content-Type': 'application/json' },
 			});
+		}
+
+		if (youcomRequest.cacheMiss) {
+			return c.json(
+				{
+					error: {
+						message: `you.com tool round-trip cache miss for tool_call_id "${youcomRequest.cacheMissToolCallId || 'unknown'}". Retry the prior agent run.`,
+						type: 'invalid_request_error',
+					},
+				},
+				400,
+			);
 		}
 
 		youcomRequestBody = JSON.stringify(youcomRequest.request);
@@ -3209,6 +3360,7 @@ proxy.all('/*', async (c) => {
 		// Only set when the body was already inspected for the empty-tool-use
 		// heuristic; otherwise upstreamResponse.body is left untouched.
 		let bufferedEmptyResponse: Response | null = null;
+		let trialForcedNonStreamForTools = false;
 
 		// Skip models that are known to be offline in the last 10 minutes. This
 		// prevents the trial user from waiting for a 25s timeout on each broken
@@ -3217,7 +3369,7 @@ proxy.all('/*', async (c) => {
 		// monitor flagged it (they may have just recovered).
 		const recentlyOffline = await getRecentlyOfflineGpyModelIds(originalModel, 10 * 60 * 1000);
 		const filteredModelsToTry = modelsToTry.filter(
-			(m) => !recentlyOffline.has(stripGpyPrefix(m)),
+			(m) => !monitorKeyCandidates(m).some((k) => recentlyOffline.has(k)),
 		);
 		// Restore user's explicit request at the front even if it's flagged offline.
 		const orderedModels = filteredModelsToTry;
@@ -3293,7 +3445,9 @@ proxy.all('/*', async (c) => {
 					attemptIsAnthropic = attemptProvider.endpointType === 'anthropic';
 					attemptIsYoucom = attemptProvider.endpointType === 'youcom';
 					if (attemptIsAnthropic) {
-						attemptAnthropicBody = prepareAnthropicUpstreamBody(requestBody);
+						attemptAnthropicBody = isAnthropicRequest
+							? JSON.stringify(requestBody)
+							: prepareAnthropicUpstreamBody(requestBody);
 						attemptActualUrl = resolveAnthropicUpstreamUrl(attemptProvider.endpoint);
 					} else if (attemptIsYoucom) {
 						const yc = convertRequestToYouCom(requestBody, attemptUpstreamModel);
@@ -3304,6 +3458,18 @@ proxy.all('/*', async (c) => {
 					}
 				}
 
+					const requestHasToolsForTrial =
+						Array.isArray(requestBody?.tools) && requestBody.tools.length > 0;
+					const attemptUsesStream =
+						isStreaming && !(keyRecord.isTrial && requestHasToolsForTrial);
+					if (keyRecord.isTrial && requestHasToolsForTrial && isStreaming && requestBody) {
+						requestBody = { ...requestBody, stream: false };
+						requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
+						trialForcedNonStreamForTools = true;
+					}
+
+				let fetchError: Error | null = null;
+				try {
 				const result = await fetchWithKeyRotation(
 					attemptProvider.id,
 					attemptProvider.name,
@@ -3336,12 +3502,26 @@ proxy.all('/*', async (c) => {
 									: (requestBodyBytes as any),
 						};
 					},
-					attemptIsYoucom ? false : isStreaming,
+					attemptIsYoucom ? false : attemptUsesStream,
 					attemptSignal,
 				);
 
 				upstreamResponse = result.response;
 				usedKeyId = result.keyId;
+				} catch (err: any) {
+					fetchError = err;
+					console.warn(
+						`[proxy] trial fetch error for ${pickModel}:`,
+						err?.message || err,
+					);
+					if (attemptModel !== '__auto__' && attemptModel !== 'auto') {
+						consecutiveNonRetryable += 1;
+						if (consecutiveNonRetryable >= consecutiveFailuresToSkipAhead) {
+							break;
+						}
+					}
+					continue;
+				}
 
 				if (upstreamResponse.ok) {
 					// Empty tool_use detection (trial + non-streaming + has tools):
@@ -3357,7 +3537,6 @@ proxy.all('/*', async (c) => {
 					let emptyToolUse = false;
 					if (
 						keyRecord.isTrial &&
-						!isStreaming &&
 						requestHasTools &&
 						upstreamResponse.body &&
 						(consecutiveEmptyToolUse === 0 || true)
@@ -3453,6 +3632,14 @@ proxy.all('/*', async (c) => {
 			throw new Error('All upstream attempts failed');
 		}
 
+		// Re-sync provider flags after trial/phantom fallback may have switched models.
+		const resolvedProvider = await getProviderForModel(model);
+		if (resolvedProvider) {
+			targetProvider = resolvedProvider;
+			isAnthropicProvider = targetProvider.endpointType === 'anthropic';
+			isYouComProvider = targetProvider.endpointType === 'youcom';
+		}
+
 		const latencyMs = Date.now() - startTime;
 		let statusCode = upstreamResponse.status;
 
@@ -3486,7 +3673,18 @@ proxy.all('/*', async (c) => {
 		// ΓöÇΓöÇΓöÇ 12. Handle Streaming Response ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 		// Note: you.com agents are non-streaming upstream; fake-streaming is
 		// handled in the non-streaming path below.
-		if (isStreaming && !isYouComProvider && upstreamResponse.body && statusCode < 400) {
+		const upstreamContentType =
+			upstreamResponse.headers.get('content-type') || '';
+		const upstreamIsEventStream =
+			upstreamContentType.includes('text/event-stream');
+		if (
+			isStreaming &&
+			!isYouComProvider &&
+			!trialForcedNonStreamForTools &&
+			upstreamIsEventStream &&
+			upstreamResponse.body &&
+			statusCode < 400
+		) {
 			const acc = makeAccumulator();
 			let hasActualToolCalls = false;
 			const decoder = new TextDecoder();
@@ -3504,8 +3702,10 @@ proxy.all('/*', async (c) => {
 			let anthropicPassthroughBuffer = '';
 			let openaiPassthroughBuffer = '';
 			let responsesBuffer = ''; // for Responses API SSE conversion
+			let clientAnthropicBuffer = '';
 			let responsesResponseId = `resp-${Date.now()}`;
 			let responsesSentCreated = false;
+			let responsesItemId = `msg-${Date.now()}`;
 
 			const { readable, writable } = new TransformStream({
 				transform(chunk, controller) {
@@ -3597,38 +3797,57 @@ proxy.all('/*', async (c) => {
 									(delta as any)?.reasoning_content ||
 									(delta as any)?.reasoning;
 								if (textDelta) {
-									const deltaEvent = `event: response.output_text.delta\ndata: ${JSON.stringify({ type: 'response.output_text.delta', item_id: `msg-${Date.now()}`, output_index: 0, content_index: 0, delta: textDelta })}\n\n`;
+									const deltaEvent = `event: response.output_text.delta\ndata: ${JSON.stringify({ type: 'response.output_text.delta', item_id: responsesItemId, output_index: 0, content_index: 0, delta: textDelta })}\n\n`;
 									controller.enqueue(new TextEncoder().encode(deltaEvent));
+								}
+								const toolDeltas = delta?.tool_calls;
+								if (Array.isArray(toolDeltas)) {
+									for (const tc of toolDeltas) {
+										if (tc?.id && tc?.function?.name) {
+											const toolEvent = `event: response.output_item.added\ndata: ${JSON.stringify({
+												type: 'response.output_item.added',
+												output_index: 0,
+												item: {
+													type: 'function_call',
+													id: tc.id,
+													name: tc.function.name,
+													arguments: tc.function.arguments || '',
+												},
+											})}\n\n`;
+											controller.enqueue(new TextEncoder().encode(toolEvent));
+											hasActualToolCalls = true;
+										}
+									}
 								}
 							} catch {}
 						}
 					} else if (isAnthropicRequest && clientAnthropicStreamState) {
-						// Anthropic SSE streaming: convert OpenAI chunks → Anthropic events
-						// (do NOT pass through the original OpenAI chunks — only emit the converted Anthropic events)
-						try {
-							const text = decoder.decode(chunk, { stream: true });
-							const lines = text.split('\n');
-							for (const line of lines) {
-								if (!line.startsWith('data:')) continue;
-								const payloadText = line.slice(5).trim();
-								if (payloadText === '[DONE]') {
-									const flushed = flushAnthropicStream(clientAnthropicStreamState);
-									if (flushed) controller.enqueue(new TextEncoder().encode(flushed));
-									continue;
-								}
-								if (!payloadText) continue;
-								try {
-									const data = JSON.parse(payloadText);
-									appendToolsFromPayload(data);
-									if (detectToolCallsInResponse(data)) hasActualToolCalls = true;
-									consumeStreamPayload(acc, data);
-									const converted = convertOpenAIChunkToAnthropicEvents(line, clientAnthropicStreamState);
-									if (converted) {
-										controller.enqueue(new TextEncoder().encode(converted));
-									}
-								} catch {}
+						clientAnthropicBuffer += decoder.decode(chunk, { stream: true });
+						const lines = clientAnthropicBuffer.split('\n');
+						clientAnthropicBuffer = lines.pop() || '';
+						for (const line of lines) {
+							if (!line.startsWith('data:')) continue;
+							const payloadText = line.slice(5).trim();
+							if (payloadText === '[DONE]') {
+								const flushed = flushAnthropicStream(clientAnthropicStreamState);
+								if (flushed) controller.enqueue(new TextEncoder().encode(flushed));
+								continue;
 							}
-						} catch {}
+							if (!payloadText) continue;
+							try {
+								const data = JSON.parse(payloadText);
+								appendToolsFromPayload(data);
+								if (detectToolCallsInResponse(data)) hasActualToolCalls = true;
+								consumeStreamPayload(acc, data);
+								const converted = convertOpenAIChunkToAnthropicEvents(
+									line.startsWith('data: ') ? line : `data: ${payloadText}`,
+									clientAnthropicStreamState,
+								);
+								if (converted) {
+									controller.enqueue(new TextEncoder().encode(converted));
+								}
+							} catch {}
+						}
 					} else {
 						// OpenAI streaming: pass through, but backfill text from
 						// reasoning_content so OpenAI-compatible IDEs don't show
@@ -3658,7 +3877,9 @@ proxy.all('/*', async (c) => {
 												`data: ${JSON.stringify(data)}\n`,
 											),
 										);
-									} catch {}
+									} catch {
+										controller.enqueue(new TextEncoder().encode(`${line}\n`));
+									}
 								} else {
 									controller.enqueue(new TextEncoder().encode(`${line}\n`));
 								}
@@ -3669,7 +3890,7 @@ proxy.all('/*', async (c) => {
 					}
 				},
 				flush(controller) {
-					if (isAnthropicRequest && clientAnthropicStreamState) {
+					if (isAnthropicRequest && clientAnthropicStreamState && !clientAnthropicStreamState.streamTerminated) {
 						const flushed = flushAnthropicStream(clientAnthropicStreamState);
 						if (flushed) {
 							controller.enqueue(new TextEncoder().encode(flushed));
@@ -3714,7 +3935,8 @@ proxy.all('/*', async (c) => {
 						statusCode >= 200 &&
 						statusCode < 300 &&
 						rawCompletionTokens === 0 &&
-						!finalized.completionText
+						!finalized.completionText &&
+						!hasActualToolCalls
 					) {
 						const errorMsg =
 							`Upstream model "${model}" returned empty streaming response (0 tokens)`;
@@ -3789,9 +4011,9 @@ proxy.all('/*', async (c) => {
 				},
 			});
 
-			upstreamResponse.body.pipeTo(writable).catch((err) => {
-				console.error('[proxy-stream] pipeTo error:', err?.message || err);
-			});
+			void pumpStreamBody(upstreamResponse.body, writable, () =>
+				buildStreamInterruptSse(model),
+			);
 
 			const responseHeaders: Record<string, string> = {
 				'Content-Type': 'text/event-stream',
@@ -3893,6 +4115,15 @@ proxy.all('/*', async (c) => {
 						});
 					}
 
+					const reasoningText =
+						choice.message?.reasoning_content || choice.message?.reasoning;
+					if (reasoningText) {
+						contentBlocks.push({
+							type: 'reasoning',
+							text: reasoningText,
+						});
+					}
+
 					if (choice.message?.tool_calls) {
 						for (const tc of choice.message.tool_calls) {
 							contentBlocks.push({
@@ -3980,7 +4211,8 @@ proxy.all('/*', async (c) => {
 			statusCode >= 200 &&
 			statusCode < 300 &&
 			completionTokens === 0 &&
-			!responsePreview
+			!responsePreview &&
+			!hasActualToolCalls
 		) {
 			const errMsg =
 				`Upstream model "${model}" returned empty non-streaming response`;
@@ -4115,10 +4347,10 @@ proxy.all('/*', async (c) => {
 		// you.com fake-streaming: client asked for stream:true but the agents API
 		// is non-streaming. Emit the converted answer as a short SSE sequence.
 		if (
-			isYouComProvider &&
 			isStreaming &&
 			statusCode >= 200 &&
-			statusCode < 300
+			statusCode < 300 &&
+			(isYouComProvider || trialForcedNonStreamForTools)
 		) {
 			try {
 				const openaiParsed = JSON.parse(responseBody);

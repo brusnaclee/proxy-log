@@ -130,6 +130,8 @@ interface OpenAIResponse {
 export interface ConvertRequestResult {
   request: YouComRequest | null;
   cachedAnswer: CachedToolAnswer | null;
+  cacheMiss?: boolean;
+  cacheMissToolCallId?: string;
   matchedToolName: string | null;
   lastUserText: string;
 }
@@ -231,6 +233,9 @@ export function resolveYouComTools(
       console.warn(
         `[youcom-adapter] express agent does not support research/compute; falling back to web_search.`,
       );
+      if (!out.some((t) => t.type === "web_search")) {
+        out.push({ type: "web_search" });
+      }
     }
   } else {
     if (matchedTypes.has("research")) {
@@ -294,10 +299,14 @@ export function convertRequestToYouCom(
           lastUserText: "",
         };
       }
-      // If the tool_call_id is unknown (cache miss or expired), keep going
-      // and let the upstream call proceed normally so the user still gets
-      // an answer instead of a 500.
-      break;
+      return {
+        request: null,
+        cachedAnswer: null,
+        cacheMiss: true,
+        cacheMissToolCallId: m.tool_call_id,
+        matchedToolName: null,
+        lastUserText: "",
+      };
     }
     // Stop scanning backwards once we hit a non-tool message
     if (m.role !== "tool") break;

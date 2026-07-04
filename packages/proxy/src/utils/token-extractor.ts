@@ -136,6 +136,7 @@ export function consumeStreamPayload(acc: CompletionAccumulator, data: any): voi
   if (typeof data.output_text === "string") acc.text += data.output_text;
   if (typeof data?.delta?.text === "string") acc.text += data.delta.text;
   if (data?.type === "content_block_delta" && data?.delta?.text) acc.text += data.delta.text;
+  if (data?.type === "content_block_delta" && data?.delta?.thinking) acc.text += data.delta.thinking;
   if (data?.type === "content_block_delta" && data?.delta?.partial_json) {
     appendToolArg(acc, data.index, data.delta.partial_json);
   }

@@ -29,13 +29,37 @@ interface AnthropicMessage {
 }
 
 interface AnthropicContentBlock {
-  type: "text" | "tool_use" | "tool_result";
+  type: "text" | "tool_use" | "tool_result" | "image" | "thinking";
   text?: string;
   id?: string;
   name?: string;
   input?: any;
   tool_use_id?: string;
   content?: string;
+  thinking?: string;
+  source?: { type: "base64"; media_type: string; data: string };
+}
+
+function openAIContentToAnthropic(content: OpenAIMessage["content"]): string | AnthropicContentBlock[] {
+  if (content == null) return "";
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const blocks: AnthropicContentBlock[] = [];
+  for (const part of content) {
+    if (part?.type === "text" && part.text) {
+      blocks.push({ type: "text", text: part.text });
+    } else if (part?.type === "image_url" && part.image_url?.url) {
+      const url = String(part.image_url.url);
+      const dataMatch = url.match(/^data:(image\/[^;]+);base64,(.+)$/);
+      if (dataMatch) {
+        blocks.push({
+          type: "image",
+          source: { type: "base64", media_type: dataMatch[1], data: dataMatch[2] },
+        });
+      }
+    }
+  }
+  return blocks.length > 0 ? blocks : "";
 }
 
 interface AnthropicRequest {
@@ -71,19 +95,34 @@ export function convertRequestToAnthropic(openai: OpenAIRequest): AnthropicReque
     if (msg.role === "user") {
       anthropicMessages.push({
         role: "user",
-        content: msg.content || "",
+        content: openAIContentToAnthropic(msg.content),
       });
     } else if (msg.role === "assistant") {
       const blocks: AnthropicContentBlock[] = [];
-      if (msg.content) {
+      if (typeof msg.content === "string" && msg.content) {
         blocks.push({ type: "text", text: msg.content });
+      } else if (Array.isArray(msg.content)) {
+        for (const part of msg.content as any[]) {
+          if (part?.type === "text" && part.text) blocks.push({ type: "text", text: part.text });
+          else if (part?.type === "thinking" && (part.thinking || part.text)) {
+            blocks.push({ type: "thinking", thinking: part.thinking || part.text });
+          }
+        }
+      }
+      const reasoning = (msg as any).reasoning_content || (msg as any).reasoning;
+      if (typeof reasoning === "string" && reasoning.length > 0) {
+        blocks.push({ type: "thinking", thinking: reasoning });
       }
       if (msg.tool_calls) {
         for (const tc of msg.tool_calls) {
           let input: any = {};
           try {
             input = JSON.parse(tc.function.arguments || "{}");
-          } catch {
+          } catch (err) {
+            console.warn(
+              `[anthropic-adapter] invalid tool arguments for ${tc.function.name}:`,
+              (err as Error).message,
+            );
             input = {};
           }
           blocks.push({
@@ -99,15 +138,25 @@ export function convertRequestToAnthropic(openai: OpenAIRequest): AnthropicReque
         content: blocks.length > 0 ? blocks : msg.content || "",
       });
     } else if (msg.role === "tool") {
-      // Tool result -> user message with tool_result content block
-      anthropicMessages.push({
-        role: "user",
-        content: [{
-          type: "tool_result",
-          tool_use_id: msg.tool_call_id,
-          content: msg.content || "",
-        }],
-      });
+      const toolBlock = {
+        type: "tool_result" as const,
+        tool_use_id: msg.tool_call_id || "",
+        content: msg.content || "",
+      };
+      const last = anthropicMessages[anthropicMessages.length - 1];
+      if (
+        last?.role === "user" &&
+        Array.isArray(last.content) &&
+        last.content.length > 0 &&
+        last.content.every((b) => b.type === "tool_result")
+      ) {
+        last.content.push(toolBlock);
+      } else {
+        anthropicMessages.push({
+          role: "user",
+          content: [toolBlock],
+        });
+      }
     }
   }
 
@@ -543,6 +592,9 @@ export function convertAnthropicToOpenAI(anthropic: AnthropicToOpenAIRequest): O
         const toolResults: Array<{ tool_call_id: string; content: string }> = [];
         for (const b of blocks) {
           if (b.type === "text" && b.text) textParts.push(b.text);
+          else if (b.type === "image" && b.source?.data) {
+            textParts.push(`[image:${b.source.media_type}]`);
+          }
           else if (b.type === "tool_result" && b.tool_use_id) {
             const resultContent = typeof b.content === "string"
               ? b.content
@@ -569,6 +621,9 @@ export function convertAnthropicToOpenAI(anthropic: AnthropicToOpenAIRequest): O
         const toolCalls: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }> = [];
         for (const b of blocks) {
           if (b.type === "text" && b.text) textParts.push(b.text);
+          else if (b.type === "thinking" && (b.thinking || b.text)) {
+            textParts.push(`[thinking]${b.thinking || b.text}`);
+          }
           else if (b.type === "tool_use" && b.id && b.name) {
             toolCalls.push({
               id: b.id,
@@ -619,12 +674,13 @@ export function convertOpenAIToAnthropicResponse(openai: OpenAIResponse): Anthro
   if (typeof message?.content === "string" && message.content.length > 0) {
     contentBlocks.push({ type: "text", text: message.content });
   }
-  // Some thinking models (gpt-5, deepseek-r1, etc.) return content in
-  // `reasoning_content` and leave `content` empty. Pass reasoning through
-  // as a thinking block so the client sees the response.
   const reasoningText = (message as any)?.reasoning_content || (message as any)?.reasoning;
-  if (typeof reasoningText === "string" && reasoningText.length > 0) {
-    contentBlocks.push({ type: "text", text: reasoningText });
+  if (
+    typeof reasoningText === "string" &&
+    reasoningText.length > 0 &&
+    reasoningText !== message?.content
+  ) {
+    contentBlocks.push({ type: "thinking", thinking: reasoningText } as AnthropicContentBlock);
   }
   if (Array.isArray(message?.tool_calls)) {
     for (const tc of message.tool_calls) {
@@ -685,12 +741,15 @@ export interface AnthropicStreamState {
   model: string;
   contentBlockIndex: number;
   contentBlockOpen: boolean;
+  thinkingBlockOpen: boolean;
   toolBlockOpen: boolean;
   toolIndex: number;
   stopReason: string | null;
   inputTokens: number;
   outputTokens: number;
   textAccumulated: string;
+  messageStarted: boolean;
+  streamTerminated: boolean;
 }
 
 export function createAnthropicStreamState(model: string, msgId?: string): AnthropicStreamState {
@@ -699,12 +758,15 @@ export function createAnthropicStreamState(model: string, msgId?: string): Anthr
     model,
     contentBlockIndex: 0,
     contentBlockOpen: false,
+    thinkingBlockOpen: false,
     toolBlockOpen: false,
     toolIndex: 0,
     stopReason: null,
     inputTokens: 0,
     outputTokens: 0,
     textAccumulated: "",
+    messageStarted: false,
+    streamTerminated: false,
   };
 }
 
@@ -721,11 +783,18 @@ export function convertOpenAIChunkToAnthropicEvents(chunk: string, state: Anthro
   const trimmed = chunk.replace(/^data:\s*/, "").trim();
   if (!trimmed || trimmed === "[DONE]") {
     if (trimmed === "[DONE]") {
+      if (state.streamTerminated) return "";
+      state.streamTerminated = true;
       // Flush: close any open content block, send message_delta + message_stop
       let out = "";
-      if (state.contentBlockOpen && state.textAccumulated.length > 0) {
+      if (state.contentBlockOpen || state.thinkingBlockOpen) {
         out += sseEvent("content_block_stop", { type: "content_block_stop", index: state.contentBlockIndex });
         state.contentBlockOpen = false;
+        state.thinkingBlockOpen = false;
+      }
+      if (state.toolBlockOpen) {
+        out += sseEvent("content_block_stop", { type: "content_block_stop", index: state.contentBlockIndex });
+        state.toolBlockOpen = false;
       }
       if (!state.stopReason) state.stopReason = "end_turn";
       out += sseEvent("message_delta", {
@@ -759,8 +828,9 @@ export function convertOpenAIChunkToAnthropicEvents(chunk: string, state: Anthro
     return out;
   }
 
-  // First chunk: emit message_start
-  if (choice.index === 0 && !state.contentBlockOpen && state.textAccumulated === "" && state.contentBlockIndex === 0 && state.toolBlockOpen === false) {
+  // First chunk: emit message_start once
+  if (!state.messageStarted) {
+    state.messageStarted = true;
     out += sseEvent("message_start", {
       type: "message_start",
       message: {
@@ -778,8 +848,25 @@ export function convertOpenAIChunkToAnthropicEvents(chunk: string, state: Anthro
 
   const delta = choice.delta || {};
 
+  const closeTextBlock = () => {
+    if (state.contentBlockOpen) {
+      out += sseEvent("content_block_stop", { type: "content_block_stop", index: state.contentBlockIndex });
+      state.contentBlockOpen = false;
+      state.contentBlockIndex++;
+    }
+  };
+
+  const closeThinkingBlock = () => {
+    if (state.thinkingBlockOpen) {
+      out += sseEvent("content_block_stop", { type: "content_block_stop", index: state.contentBlockIndex });
+      state.thinkingBlockOpen = false;
+      state.contentBlockIndex++;
+    }
+  };
+
   // Handle text content
   if (typeof delta.content === "string" && delta.content.length > 0) {
+    closeThinkingBlock();
     if (!state.contentBlockOpen) {
       out += sseEvent("content_block_start", {
         type: "content_block_start",
@@ -796,36 +883,31 @@ export function convertOpenAIChunkToAnthropicEvents(chunk: string, state: Anthro
     state.textAccumulated += delta.content;
   }
 
-  // Handle reasoning_content (thinking models like gpt-5, deepseek-r1).
-  // Emit as a text block so clients that understand reasoning_content see thinking.
-  // Do NOT skip when content is populated — backfill copies reasoning_content into
-  // content, but both fields should be emitted so the client can render them properly.
-  if (typeof (delta as any).reasoning_content === "string" && (delta as any).reasoning_content.length > 0) {
-    if (!state.contentBlockOpen) {
+  // Handle reasoning_content as thinking block (extended thinking clients)
+  const reasoningText = (delta as any).reasoning_content || (delta as any).reasoning;
+  if (typeof reasoningText === "string" && reasoningText.length > 0) {
+    closeTextBlock();
+    if (!state.thinkingBlockOpen) {
       out += sseEvent("content_block_start", {
         type: "content_block_start",
         index: state.contentBlockIndex,
-        content_block: { type: "text", text: "" },
+        content_block: { type: "thinking", thinking: "" },
       });
-      state.contentBlockOpen = true;
+      state.thinkingBlockOpen = true;
     }
     out += sseEvent("content_block_delta", {
       type: "content_block_delta",
       index: state.contentBlockIndex,
-      delta: { type: "text_delta", text: (delta as any).reasoning_content },
+      delta: { type: "thinking_delta", thinking: reasoningText },
     });
-    state.textAccumulated += (delta as any).reasoning_content;
+    state.textAccumulated += reasoningText;
   }
 
   // Handle tool calls
   if (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) {
     for (const tc of delta.tool_calls) {
-      // Close previous text block if open
-      if (state.contentBlockOpen) {
-        out += sseEvent("content_block_stop", { type: "content_block_stop", index: state.contentBlockIndex });
-        state.contentBlockOpen = false;
-        state.contentBlockIndex++;
-      }
+      closeTextBlock();
+      closeThinkingBlock();
       // Open tool_use block on first chunk (has id+name); subsequent chunks append arguments via input_json_delta
       const idx = typeof tc.index === "number" ? tc.index : state.toolIndex;
       if (tc.id && tc.function?.name && !state.toolBlockOpen) {
@@ -876,10 +958,16 @@ export function convertOpenAIChunkToAnthropicEvents(chunk: string, state: Anthro
  * Flush helper: emit any closing events for an incomplete stream.
  */
 export function flushAnthropicStream(state: AnthropicStreamState): string {
+  if (state.streamTerminated) return "";
+  state.streamTerminated = true;
   let out = "";
-  if (state.contentBlockOpen || state.toolBlockOpen) {
+  if (state.contentBlockOpen || state.thinkingBlockOpen) {
     out += sseEvent("content_block_stop", { type: "content_block_stop", index: state.contentBlockIndex });
     state.contentBlockOpen = false;
+    state.thinkingBlockOpen = false;
+  }
+  if (state.toolBlockOpen) {
+    out += sseEvent("content_block_stop", { type: "content_block_stop", index: state.contentBlockIndex });
     state.toolBlockOpen = false;
   }
   if (!state.stopReason) state.stopReason = "end_turn";
