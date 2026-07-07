@@ -182,6 +182,20 @@ function isToolResultContent(content: string): boolean {
 	// Generic MCP patterns
 	if (trimmed.includes("<ephemeral_message>")) return true;
 
+	// Hermes retry patterns (with date format)
+	if (trimmed.startsWith("[fri ") || trimmed.startsWith("[sat ") || trimmed.startsWith("[mon ") || trimmed.startsWith("[sun ")) {
+		if (trimmed.includes("retry after the previous model attempt")) return true;
+		if (trimmed.includes("subagent context")) return true;
+	}
+
+	// OpenClaw heartbeat patterns
+	if (trimmed.includes("openclaw heartbeat poll")) return true;
+
+	// Generic async delegation (Claude Code)
+	if (trimmed.includes("async delegation batch complete")) return true;
+	if (trimmed.includes("background fan-out")) return true;
+	if (trimmed.includes("consolidated results below")) return true;
+
 	return false;
 }
 

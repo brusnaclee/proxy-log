@@ -130,55 +130,76 @@ export function detectIdeFromContent(requestBody: any, transcriptSnapshot?: stri
 
 	// === OPENCLAW patterns ===
 	if (searchText.includes("openclaw")) return "OpenClaw";
-	// OpenClaw specific patterns (hidden in Node.js Client)
 	if (searchText.includes("[openclaw")) return "OpenClaw";
-	if (searchText.includes("[cron:")) return "OpenClaw"; // OpenClaw cron jobs
+	if (searchText.includes("[cron:")) return "OpenClaw";
 	if (searchText.includes("[openclaw heartbeat")) return "OpenClaw";
+	if (searchText.includes("read heartbeat")) return "OpenClaw";
 	if (searchText.includes("mt5") && searchText.includes("monitor")) return "OpenClaw";
-	if (searchText.includes("health check")) return "OpenClaw";
-	if (searchText.includes("read heartbeat")) return "OpenClaw"; // OpenClaw heartbeat tool
+	if (searchText.includes("whatsapp gateway")) return "OpenClaw"; // WhatsApp integration
 
 	// === HERMES patterns ===
-	if (searchText.includes("hermes") || searchText.includes("hermes-agent")) return "Hermes";
-	if (searchText.includes("[subagent context]")) return "Hermes"; // Hermes subagent
-	if (searchText.includes("[retry after the previous model attempt")) return "Hermes"; // Hermes retry
+	if (searchText.includes("hermes-agent")) return "Hermes";
+	if (searchText.includes("[subagent context]")) return "Hermes";
+	if (searchText.includes("[retry after the previous model attempt")) return "Hermes";
+	if (searchText.includes("hermes/cache/documents")) return "Hermes";
 
 	// === N8N Workflow ===
 	if (searchText.includes("n8n")) return "n8n Workflow";
 
 	// === ZED editor ===
-	if (searchText.includes("zed.dev") || searchText.includes("[zed]")) return "Zed";
+	if (searchText.includes("zed.dev")) return "Zed";
+	if (searchText.includes("[zed]")) return "Zed";
 
 	// === OPENCODEMULTI patterns ===
 	if (searchText.includes("you are opencode") || searchText.includes("you are an opencode")) return "OpenCode";
-	if (searchText.includes("interactive cli tool that helps")) return "OpenCode"; // OpenCode system prompt
+	if (searchText.includes("interactive cli tool that helps")) return "OpenCode";
 
-	// === CLAUDE CODE patterns ===
+	// === CLAUDE CODE patterns (specific markers) ===
 	if (searchText.includes("<session>") && searchText.includes("you are fixing pr")) return "Claude Code";
 	if (searchText.includes("<system_reminder>")) return "Claude Code";
 	if (searchText.includes("<current_user_request>")) return "Claude Code";
 	if (searchText.includes("<user_request>")) return "Claude Code";
-	if (searchText.includes("plan mode") && searchText.includes("plan file")) return "Claude Code";
+	if (searchText.includes("exited plan mode") || searchText.includes("re-entering plan mode")) return "Claude Code";
+	if (searchText.includes("exited auto mode") || searchText.includes("re-entering auto mode")) return "Claude Code";
 	if (searchText.includes("claudeMd") && searchText.includes("currentdate")) return "Claude Code";
-	if (searchText.includes("mcp server instructions")) return "Claude Code"; // Claude Code MCP
-	if (searchText.includes("ephemeral_message") || searchText.includes("<ephemeral_message>")) return "Claude Code";
+	if (searchText.includes("mcp server instructions")) return "Claude Code";
+	if (searchText.includes("async delegation batch complete")) return "Claude Code";
+	if (searchText.includes("background fan-out")) return "Claude Code";
+	if (searchText.includes("prompt limits global:")) return "Claude Code"; // Claude Code prompt display
+	if (searchText.includes("token limits harian")) return "Claude Code"; // Indonesian Claude Code
 
-	// === Continue extension ===
-	if (searchText.includes("continue")) return "Continue";
+	// === Continue extension (MCP-based IDE) ===
+	// Be more specific to avoid matching "continue" in normal text
+	if (searchText.includes("continue") && searchText.includes("mcp")) return "Continue";
+	if (searchText.includes("continue extension")) return "Continue";
+
+	// === ROO CODE patterns ===
+	if (searchText.includes("attempt_completion")) return "Roo Code";
+	if (searchText.includes("roocode")) return "Roo Code";
+	if (searchText.includes("roo-code")) return "Roo Code";
+
+	// === Cline patterns ===
+	if (searchText.includes("[read_file for")) return "Cline";
+	if (searchText.includes("[search_files for")) return "Cline";
+	if (searchText.includes("[execute_command for")) return "Cline";
+	if (searchText.includes("[write_to_file for")) return "Cline";
 
 	// === GENERIC AGENT patterns ===
 	if (searchText.includes("<system-message>") || searchText.includes("<system_message>")) return "Generic Agent";
-	if (searchText.includes("system message") && searchText.includes("timestamp=")) return "Generic Agent"; // WhatsApp/signal agent
-	if (searchText.includes("deeppresenter")) return "DeepPresenter Agent";
+	if (searchText.includes("deeppresenter")) return "DeepPresenter";
 	if (searchText.includes("brainstorm companion")) return "Brainstorm Companion";
 	if (searchText.includes("ralph agent")) return "Ralph Agent";
-	if (searchText.includes("[role:")) return "Generic Agent"; // Role-based agent
-	if (searchText.includes("session] you are fixing pr")) return "Claude Code";
+	if (searchText.includes("[role:")) return "Generic Agent";
 
 	// === 9Router / OmniRouter ===
-	if (searchText.includes("9router") || searchText.includes("9-router")) return "9Router";
-	if (searchText.includes("omnirouter") || searchText.includes("omni-router")) return "OmniRouter";
-	if (searchText.includes("via provider 9router")) return "9Router"; // Model switching via router
+	if (searchText.includes("via provider 9router")) return "9Router";
+	if (searchText.includes("active model for this chat has changed to")) return "9Router"; // Model switch via router
+
+	// === Gemini specific ===
+	if (searchText.includes("gemini") && searchText.includes("google")) return "Gemini";
+
+	// === MCP Client ===
+	if (searchText.includes("_mcp_server")) return "MCP Client";
 
 	// === Codex CLI ===
 	if (searchText.includes("codex desktop context") || searchText.includes("codex (desktop) app")) return "Codex CLI";
