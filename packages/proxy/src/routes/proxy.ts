@@ -137,11 +137,20 @@ function backfillOpenAIMessageContent<T extends { content?: unknown; reasoning_c
 		typeof msg?.reasoning_content === 'string' ? msg.reasoning_content : undefined;
 	const rStr: string | undefined =
 		typeof msg?.reasoning === 'string' ? msg.reasoning : undefined;
+	const contentStr: string | undefined = typeof msg?.content === 'string' ? msg.content : undefined;
 
+	// FIX: Only backfill content if it's missing AND reasoning_content is different
+	// If reasoning_content === content (identical), set content to null to avoid showing twice
 	if (typeof msg?.content !== 'string' && rcStr?.trim()) {
 		msg.content = rcStr;
+	} else if (contentStr && rcStr && contentStr === rcStr) {
+		// FIX: Identical content - this is a duplicate bug, set content to null
+		msg.content = null;
 	} else if (typeof msg?.content !== 'string' && rStr?.trim()) {
 		msg.content = rStr;
+	} else if (contentStr && rStr && contentStr === rStr) {
+		// FIX: Identical content with reasoning field too
+		msg.content = null;
 	}
 	// OpenCode renders reasoning_content as fragmented "Thought: Xms" lines.
 	// Strip only for OpenCode; Cursor/Claude Code keep reasoning fields intact.
@@ -168,11 +177,20 @@ function backfillOpenAIResponseContent(
 		typeof d?.reasoning_content === 'string' ? d.reasoning_content : undefined;
 	const rStr: string | undefined =
 		typeof d?.reasoning === 'string' ? d.reasoning : undefined;
+	const contentStr: string | undefined = typeof d?.content === 'string' ? d.content : undefined;
 
+	// FIX: Only backfill content if it's missing AND reasoning_content is different
+	// If reasoning_content === content (identical), set content to null to avoid showing twice
 	if (typeof d?.content !== 'string' && rcStr?.trim()) {
 		d.content = rcStr;
+	} else if (contentStr && rcStr && contentStr === rcStr) {
+		// FIX: Identical content - this is a duplicate bug, set content to null
+		d.content = null;
 	} else if (typeof d?.content !== 'string' && rStr?.trim()) {
 		d.content = rStr;
+	} else if (contentStr && rStr && contentStr === rStr) {
+		// FIX: Identical content with reasoning field too
+		d.content = null;
 	}
 	if (opts?.stripReasoning) {
 		delete d.reasoning_content;
@@ -943,6 +961,10 @@ async function resolveChatSession(params: {
 			isNewUserPrompt = true; // Always count new raw format prompts
 		} else if (params.messageAnalysis.assistantMessageCount > 0) {
 			isNewUserPrompt = true;
+		} else if (isToolChainFollowup) {
+			// FIX: Also check for tool chain followups here as a fallback
+			// This catches cases where the earlier detection might have missed
+			isNewUserPrompt = false;
 		} else {
 			isNewUserPrompt = toolCount > 0;
 		}
@@ -2622,6 +2644,13 @@ proxy.all('/*', async (c) => {
 			};
 		});
 
+	// FIX: Update hash cache IMMEDIATELY after session resolution to prevent race condition.
+	// Previously the hash was only updated AFTER the request completed, causing concurrent
+	// requests to all see the OLD hash and be incorrectly counted as new prompts.
+	if (messageAnalysis.messageHash) {
+		sessionHashCache.set(sessionInfo.sessionId, messageAnalysis.messageHash);
+	}
+
 	// Check for infinite tool loops removed as per user request to act as pure pass-through
 
 	// ΓöÇΓöÇΓöÇ 10. Prompt & Model Limit Checks ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
@@ -3706,6 +3735,9 @@ proxy.all('/*', async (c) => {
 			let responsesResponseId = `resp-${Date.now()}`;
 			let responsesSentCreated = false;
 			let responsesItemId = `msg-${Date.now()}`;
+			// FIX: Track SSE done events to drop duplicates
+			let openaiSawDone = false;
+			let anthropicSawDone = false;
 
 			const { readable, writable } = new TransformStream({
 				transform(chunk, controller) {
@@ -3857,9 +3889,16 @@ proxy.all('/*', async (c) => {
 							const lines = openaiPassthroughBuffer.split('\n');
 							openaiPassthroughBuffer = lines.pop() || '';
 							for (const line of lines) {
-								if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+								// FIX: Drop duplicate [DONE] events
+								if (line === 'data: [DONE]') {
+									if (openaiSawDone) continue; // Drop duplicate
+									openaiSawDone = true;
+									controller.enqueue(new TextEncoder().encode(`${line}\n`));
+									continue;
+								}
+								if (line.startsWith('data: ')) {
 									const payloadText = line.slice(6).trim();
-									if (!payloadText || payloadText === '[DONE]') {
+									if (!payloadText) {
 										controller.enqueue(new TextEncoder().encode(`${line}\n`));
 										continue;
 									}
@@ -3898,28 +3937,33 @@ proxy.all('/*', async (c) => {
 					} else if (openaiPassthroughBuffer) {
 						const finalLine = openaiPassthroughBuffer;
 						openaiPassthroughBuffer = '';
-						try {
-							if (
-								finalLine.startsWith('data: ') &&
-								finalLine.trim() !== 'data: [DONE]'
-							) {
-								const payloadText = finalLine.slice(6).trim();
-								if (payloadText) {
-									const data = backfillOpenAIResponseContent(
-										JSON.parse(payloadText),
-										{ stripReasoning },
-									);
-									controller.enqueue(
-										new TextEncoder().encode(
-											`data: ${JSON.stringify(data)}\n`,
-										),
-									);
+						// FIX: Drop duplicate [DONE] in flush
+						if (finalLine.trim() === 'data: [DONE]' && openaiSawDone) {
+							// Skip duplicate
+						} else {
+							try {
+								if (
+									finalLine.startsWith('data: ') &&
+									finalLine.trim() !== 'data: [DONE]'
+								) {
+									const payloadText = finalLine.slice(6).trim();
+									if (payloadText) {
+										const data = backfillOpenAIResponseContent(
+											JSON.parse(payloadText),
+											{ stripReasoning },
+										);
+										controller.enqueue(
+											new TextEncoder().encode(
+												`data: ${JSON.stringify(data)}\n`,
+											),
+										);
+									}
+								} else if (finalLine.length > 0) {
+									controller.enqueue(new TextEncoder().encode(finalLine));
 								}
-							} else if (finalLine.length > 0) {
+							} catch {
 								controller.enqueue(new TextEncoder().encode(finalLine));
 							}
-						} catch {
-							controller.enqueue(new TextEncoder().encode(finalLine));
 						}
 					}
 					const finalized = finalizeCompletion(acc);

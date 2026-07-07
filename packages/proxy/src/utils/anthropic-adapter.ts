@@ -532,6 +532,11 @@ export function buildAnthropicUpstreamHeaders(
         continue;
       }
       if (lower === "content-type") continue;
+      // FIX: Forward anthropic-beta-* headers to upstream
+      if (lower.startsWith("anthropic-beta")) {
+        headers[key] = value;
+        continue;
+      }
       headers[key] = value;
     }
   }
