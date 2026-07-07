@@ -22,6 +22,7 @@ import quotaGuardRoutes from "./routes/admin/quota-guard.js";
 import trialRoutes from "./routes/admin/trial.js";
 import recapRoutes from "./routes/admin/recap.js";
 import recapWebRoutes from "./routes/recap-web.js";
+import portalRoutes from "./routes/portal/index.js";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { initializeModelCatalogScheduler, initializeMetadataEnrichmentScheduler } from "./utils/model-catalog.js";
 import { initializeQuotaGuardScheduler } from "./utils/quota-guard.js";
@@ -85,9 +86,28 @@ app.route("/", internalAuditRoute);
 // ─── Proxy Routes (catch-all for /v1/*) ─────────────────────────────────────────
 app.route("/v1", proxyRoutes);
 
+// ─── User Portal API ───────────────────────────────────────────────────────────
+app.route("/portal/api", portalRoutes);
+
 // ─── Recap: public assets + animated web page (NO auth) ─────────────────────────
 app.use("/recap-assets/*", serveStatic({ root: "./public" }));
 app.route("/recap", recapWebRoutes);
+
+// ─── Portal SPA: serve from ./public/portal/ ──────────────────────────────────────
+// IMPORTANT: Must come AFTER all specific routes (/v1, /admin, /portal/api, /recap)
+// so that those paths are handled first and don't get caught by the SPA fallback.
+// When no static file matches, serve index.html for SPA client-side routing.
+// The /portal/* serves portal static assets (JS/CSS/images).
+// The root /* fallback serves portal index.html for / (the portal entry point).
+app.use("/portal/*", serveStatic({
+  root: "./public/portal",
+  rewriteRequestPath: (path) => path.startsWith("/portal") ? path.slice("/portal".length) || "/index.html" : "/index.html",
+}));
+// Root catch-all for SPA (portal at /) — must be last route
+app.use("/", serveStatic({
+  root: "./public/portal",
+  rewriteRequestPath: () => "/index.html",
+}));
 
 // ─── 404 Handler ────────────────────────────────────────────────────────────────
 app.notFound((c) => {

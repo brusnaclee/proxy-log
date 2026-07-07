@@ -5,6 +5,7 @@ import { eq, sql, and, desc } from "drizzle-orm";
 import { logEmitter } from "../../utils/event-emitter.js";
 import { parseToolJson } from "../../utils/telemetry.js";
 import { forceTranscriptCleanup, forceCleanMonth, getCleanupStatus } from "../../utils/cleanup.js";
+import { resolvePeriodRange, type PeriodKey } from "../../utils/counting.js";
 
 const logs = new Hono();
 
@@ -111,6 +112,7 @@ logs.get("/logs", async (c) => {
   const contextEvent = c.req.query("context_event");
   const from = c.req.query("from");
   const to = c.req.query("to");
+  const period = c.req.query("period") as PeriodKey | undefined;
 
   if (apiKeyId) conditions.push(eq(requestLogs.apiKeyId, parseInt(apiKeyId)));
   if (model) conditions.push(eq(requestLogs.model, model));
@@ -122,6 +124,17 @@ logs.get("/logs", async (c) => {
   if (contextEvent) conditions.push(eq(requestLogs.contextEvent, contextEvent));
   if (from) conditions.push(sql`created_at >= ${from}`);
   if (to) conditions.push(sql`created_at <= ${to}`);
+
+  // New period param (takes precedence over from/to)
+  if (period && ["today", "3d", "7d", "30d", "thisMonth", "lastMonth", "allTime"].includes(period)) {
+    const range = resolvePeriodRange(period);
+    conditions.push(sql`created_at >= ${range.start}`);
+    if (range.end) conditions.push(sql`created_at <= ${range.end}`);
+  } else if (!from && !to) {
+    // Default: last 7 days rolling
+    const defaultStart = new Date(Date.now() - 7 * 86400000);
+    conditions.push(sql`created_at >= ${defaultStart}`);
+  }
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 

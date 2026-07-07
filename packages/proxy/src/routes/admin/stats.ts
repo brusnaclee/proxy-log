@@ -6,6 +6,7 @@ import { getModelRates } from "../../utils/cost-calculator.js";
 import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, wibTodayStartSql, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, sanitizeRows } from "../../utils/counting.js";
 import { applyTokenMultiplierRows, getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { statsCache } from "../../utils/cache.js";
+import { resolvePeriodRange, chartDaysForPeriod, type PeriodKey } from "../../utils/counting.js";
 
 const stats = new Hono();
 
@@ -282,12 +283,17 @@ stats.get("/stats/overview", async (c) => {
 });
 
 stats.get("/stats/by-key", async (c) => {
-  const days = parseInt(c.req.query("days") || "0");
-  const cacheKey = `by-key:${days}`;
+  const period = c.req.query("period") as PeriodKey | undefined;
+  const legacyDays = parseInt(c.req.query("days") || "0");
+  const cacheKey = `by-key:${period || legacyDays}`;
   return c.json(await statsCache.getOrFetch(cacheKey, async () => {
-  const startDate = days > 0
-    ? new Date(Date.now() - days * 86400000)
-    : null;
+  let startDate: Date | null;
+  if (period && ["today", "3d", "7d", "30d", "thisMonth", "lastMonth", "allTime"].includes(period)) {
+    const range = resolvePeriodRange(period);
+    startDate = range.start;
+  } else {
+    startDate = legacyDays > 0 ? new Date(Date.now() - legacyDays * 86400000) : null;
+  }
 
   const allKeys = await db.select().from(apiKeys);
   const result = [];
@@ -334,13 +340,18 @@ stats.get("/stats/by-key", async (c) => {
 });
 
 stats.get("/stats/by-model", async (c) => {
-  const days = parseInt(c.req.query("days") || "0");
+  const period = c.req.query("period") as PeriodKey | undefined;
+  const legacyDays = parseInt(c.req.query("days") || "0");
   const apiKeyId = c.req.query("api_key_id") ? parseInt(c.req.query("api_key_id")!) : null;
-  const cacheKey = `by-model:${days}:${apiKeyId}`;
+  const cacheKey = `by-model:${period || legacyDays}:${apiKeyId}`;
   return c.json(await statsCache.getOrFetch(cacheKey, async () => {
-  const startDate = days > 0
-    ? new Date(Date.now() - days * 86400000)
-    : null;
+  let startDate: Date | null;
+  if (period && ["today", "3d", "7d", "30d", "thisMonth", "lastMonth", "allTime"].includes(period)) {
+    const range = resolvePeriodRange(period);
+    startDate = range.start;
+  } else {
+    startDate = legacyDays > 0 ? new Date(Date.now() - legacyDays * 86400000) : null;
+  }
 
   // Build WHERE fragments for raw SQL
   const dateFilter = startDate ? sql`AND created_at >= ${startDate}` : sql``;
@@ -392,10 +403,15 @@ stats.get("/stats/by-model", async (c) => {
 });
 
 stats.get("/stats/by-device", async (c) => {
-  const days = parseInt(c.req.query("days") || "0");
-  const startDate = days > 0
-    ? new Date(Date.now() - days * 86400000)
-    : null;
+  const period = c.req.query("period") as PeriodKey | undefined;
+  const legacyDays = parseInt(c.req.query("days") || "0");
+  let startDate: Date | null;
+  if (period && ["today", "3d", "7d", "30d", "thisMonth", "lastMonth", "allTime"].includes(period)) {
+    const range = resolvePeriodRange(period);
+    startDate = range.start;
+  } else {
+    startDate = legacyDays > 0 ? new Date(Date.now() - legacyDays * 86400000) : null;
+  }
 
   const dateFilter = startDate ? sql`AND created_at >= ${startDate}` : sql``;
 
@@ -436,12 +452,26 @@ stats.get("/stats/by-device", async (c) => {
 });
 
 stats.get("/stats/timeseries", async (c) => {
-  const period = c.req.query("period") || "daily";
+  // Support new ?period= key (today|3d|7d|30d|thisMonth|lastMonth|allTime)
+  // Fallback to legacy ?period=daily|hourly + ?days=N
+  const newPeriod = c.req.query("period") as PeriodKey | undefined;
+  const legacyPeriod = c.req.query("period") as string | undefined; // daily|hourly
   const days = parseInt(c.req.query("days") || "7");
-  const startDate = new Date(Date.now() - days * 86400000);
+  let startDate: Date;
+  let groupPeriod: "hourly" | "daily";
+
+  if (newPeriod && ["today", "3d", "7d", "30d", "thisMonth", "lastMonth", "allTime"].includes(newPeriod)) {
+    const range = resolvePeriodRange(newPeriod);
+    startDate = range.start;
+    groupPeriod = chartDaysForPeriod(newPeriod) <= 1 ? "hourly" : "daily";
+  } else {
+    startDate = new Date(Date.now() - days * 86400000);
+    groupPeriod = (legacyPeriod === "hourly") ? "hourly" : "daily";
+  }
+
   const startStr = toUtcStr(startDate);
 
-  const groupExpr = period === "hourly"
+  const groupExpr = groupPeriod === "hourly"
     ? sql`to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD HH24:00')`
     : sql`to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD')`;
 
@@ -474,12 +504,17 @@ stats.get("/stats/timeseries", async (c) => {
 
 // ─── Top Users ────────────────────────────────────────────────────────────────
 stats.get("/stats/top-users", async (c) => {
-  const days = parseInt(c.req.query("days") || "0");
-  const cacheKey = `top-users:${days}`;
+  const period = c.req.query("period") as PeriodKey | undefined;
+  const legacyDays = parseInt(c.req.query("days") || "0");
+  const cacheKey = `top-users:${period || legacyDays}`;
   return c.json(await statsCache.getOrFetch(cacheKey, async () => {
-  const startDate = days > 0
-    ? new Date(Date.now() - days * 86400000)
-    : null;
+  let startDate: Date | null;
+  if (period && ["today", "3d", "7d", "30d", "thisMonth", "lastMonth", "allTime"].includes(period)) {
+    const range = resolvePeriodRange(period);
+    startDate = range.start;
+  } else {
+    startDate = legacyDays > 0 ? new Date(Date.now() - legacyDays * 86400000) : null;
+  }
 
   const dateFilter = startDate ? sql`AND created_at >= ${startDate}` : sql``;
 

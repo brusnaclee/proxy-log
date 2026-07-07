@@ -5905,6 +5905,17 @@ client.once('clientReady', async () => {
 										(_, k) => notif[k] || '',
 									)
 								: `Admin sudah memperpanjang trial +${notif.days} hari. Baru berakhir: ${discordTime(notif.expiresAt, 'F')}`;
+						} else if (notif.type === 'portal_key_rotated') {
+							// Portal user self-served key rotation via /portal/api
+							title = '🔑 API Key Diperbarui';
+							color = 0xf59e0b;
+							dmText =
+								`⚠️ **API key Anda telah diperbarui melalui User Portal.**\n\n` +
+								`Jika ini bukan Anda, hubungi admin segera.\n\n` +
+								`**Key baru:** \`${notif.newKey || ''}\`\n` +
+								`**Nama key:** ${notif.keyName || 'N/A'}\n` +
+								`**Endpoint:** \`${notif.endpoint || ''}\`\n\n` +
+								`Pastikan perbarui API key di aplikasi/IDE Anda.`;
 						}
 						if (dmText)
 							await sendDMToUser(notif.discordUserId, title, dmText, color);

@@ -12,22 +12,26 @@ import {
 import { useRealtimeSSE } from "@/lib/use-realtime-sse";
 import { exportXlsx, buildModelsSection, fmtCost } from "@/lib/export-xlsx";
 import { formatCost } from "@/lib/utils";
+import { PeriodSelector, type PeriodKey } from "@/components/PeriodSelector";
 
-// â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-type PeriodKey = "today" | "7d" | "30d" | "allTime";
+// ─── Types ────────────────────────────────────────────────────────────────────
+type LocalPeriodKey = "today" | "3d" | "7d" | "30d" | "thisMonth" | "lastMonth" | "allTime";
 
-const PERIOD_OPTS: { key: PeriodKey; label: string }[] = [
+const PERIOD_OPTS: { key: LocalPeriodKey; label: string }[] = [
   { key: "today",   label: "Today"    },
-  { key: "7d",      label: "7 Days"   },
-  { key: "30d",     label: "30 Days"  },
+  { key: "7d",     label: "7 Days"   },
+  { key: "30d",    label: "30 Days"  },
   { key: "allTime", label: "All Time" },
 ];
 
-const CHART_DAYS: Record<PeriodKey, number> = {
-  today:   1,
-  "7d":    7,
-  "30d":   30,
-  allTime: 90, // show 90d timeseries for "all" view
+const CHART_DAYS: Record<LocalPeriodKey, number> = {
+  today:      1,
+  "3d":       3,
+  "7d":       7,
+  "30d":     30,
+  thisMonth: 62,
+  lastMonth: 62,
+  allTime:   90,
 };
 
 const TOOLTIP_STYLE = {
@@ -40,14 +44,14 @@ const TOOLTIP_STYLE = {
 const ITEM_STYLE  = { color: "hsl(var(--foreground))" };
 const LABEL_STYLE = { color: "hsl(var(--foreground))" };
 
-// â”€â”€ Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Component ────────────────────────────────────────────────────────────────
 export default function OverviewPage() {
   const [overview, setOverview]         = useState<OverviewStats | null>(null);
   const [timeseries, setTimeseries]     = useState<any[]>([]);
   const [modelStats, setModelStats]     = useState<any[]>([]);
   const [recentLogs, setRecentLogs]     = useState<LogEntry[]>([]);
-  const [period, setPeriod]             = useState<PeriodKey>("today");
-  const [chartPeriod, setChartPeriod]   = useState<PeriodKey>("7d"); // for charts only
+  const [period, setPeriod]             = useState<LocalPeriodKey>("today");
+  const [chartPeriod, setChartPeriod]   = useState<LocalPeriodKey>("7d"); // for charts only
   const [modelChartDays, setModelChartDays] = useState(7);
 
   // Search User State
@@ -72,14 +76,17 @@ export default function OverviewPage() {
     }
   };
 
-  // Map period â†’ overview sub-object
+  // Map period to overview sub-object
   const periodData = overview
     ? ({
-        today:   overview.today,
-        "7d":    overview.week,
-        "30d":   overview.month,
-        allTime: overview.allTime,
-      } as Record<PeriodKey, typeof overview.today>)[period]
+        today:      overview.today,
+        "3d":       overview.week,
+        "7d":       overview.week,
+        "30d":      overview.month,
+        thisMonth:  overview.month,
+        lastMonth:  overview.month,
+        allTime:    overview.allTime,
+      } as Record<LocalPeriodKey, typeof overview.today>)[period]
     : null;
 
   const loadData = useCallback(async () => {
@@ -119,9 +126,13 @@ export default function OverviewPage() {
     stats.byModel(modelChartDays).then(setModelStats).catch(() => {});
   }, [modelChartDays]);
 
-  // â”€â”€ Export â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── Export ─────────────────────────────────────────────────────────────────
   const handleExport = () => {
-    const activePeriodLabel = PERIOD_OPTS.find(o => o.key === period)?.label || "All Time";
+    const periodLabelMap: Record<LocalPeriodKey, string> = {
+      today: "Today", "3d": "Last 3 Days", "7d": "7 Days", "30d": "30 Days",
+      thisMonth: "This Month", lastMonth: "Last Month", allTime: "All Time",
+    };
+    const activePeriodLabel = periodLabelMap[period] || "All Time";
     const dateStr = new Date().toISOString().split("T")[0];
     const sheets = [];
 
@@ -149,7 +160,7 @@ export default function OverviewPage() {
     if (timeseries.length) {
       sheets.push({
         name: "Timeseries",
-        note: "Daily/hourly data  -  select columns and Insert â†’ Chart in Excel to visualize",
+        note: "Daily/hourly data  -  select columns and Insert Chart in Excel to visualize",
         headers: ["Period", "Requests", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost", "Unique Devices"],
         rows: timeseries.map(t => [
           t.period,
@@ -174,16 +185,17 @@ export default function OverviewPage() {
     });
   };
 
-  // â”€â”€ Period Toggle component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const PeriodToggle = ({
-    value, onChange, small = false
-  }: { value: PeriodKey | number; onChange: (v: any) => void; small?: boolean; options?: any[] }) => null;
+  // ─── Stat Cards ─────────────────────────────────────────────────────────────
 
-  // â”€â”€ Stat Cards â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  const periodLabelMap: Record<LocalPeriodKey, string> = {
+    today: "Today", "3d": "3 Days", "7d": "7 Days", "30d": "30 Days",
+    thisMonth: "This Month", lastMonth: "Last Month", allTime: "All Time",
+  };
+
   const dynamicCards = periodData
     ? [
         {
-          label: `Requests (${PERIOD_OPTS.find(o => o.key === period)?.label})`,
+          label: `Requests (${periodLabelMap[period]})`,
           value: formatNumber(periodData.requests),
           icon: Activity,
           sub: period === "allTime"
@@ -192,28 +204,28 @@ export default function OverviewPage() {
           color: "text-blue-400",
         },
         {
-          label: `Total Tokens (${PERIOD_OPTS.find(o => o.key === period)?.label})`,
+          label: `Total Tokens (${periodLabelMap[period]})`,
           value: formatNumber(periodData.tokens),
           icon: Coins,
           sub: `${formatNumber(overview?.allTime.tokens || 0)} all time`,
           color: "text-emerald-400",
         },
         {
-          label: `Input Tokens (${PERIOD_OPTS.find(o => o.key === period)?.label})`,
+          label: `Input Tokens (${periodLabelMap[period]})`,
           value: formatNumber(periodData.promptTokens || 0),
           icon: Coins,
           sub: `Cost: ${formatCost(periodData.promptCost || 0)}`,
           color: "text-cyan-400",
         },
         {
-          label: `Output Tokens (${PERIOD_OPTS.find(o => o.key === period)?.label})`,
+          label: `Output Tokens (${periodLabelMap[period]})`,
           value: formatNumber(periodData.completionTokens || 0),
           icon: Coins,
           sub: `Cost: ${formatCost(periodData.completionCost || 0)}`,
           color: "text-orange-400",
         },
         {
-          label: `Est. Cost (${PERIOD_OPTS.find(o => o.key === period)?.label})`,
+          label: `Est. Cost (${periodLabelMap[period]})`,
           value: formatCost((periodData.promptCost || 0) + (periodData.completionCost || 0)),
           icon: DollarSign,
           sub: `All time: ${formatCost((overview?.allTime.promptCost || 0) + (overview?.allTime.completionCost || 0))}`,
@@ -250,7 +262,7 @@ export default function OverviewPage() {
 
   const allCards = [...dynamicCards, ...staticCards];
 
-  // â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ─── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-6 sm:space-y-8">
       {/* Header */}
@@ -272,67 +284,53 @@ export default function OverviewPage() {
       {/* Period Toggle for stat cards */}
       <div className="flex items-center gap-2">
         <span className="text-sm text-muted-foreground">Period:</span>
-        <div className="flex gap-1">
-          {PERIOD_OPTS.map((o) => (
-            <button
-              key={o.key}
-              onClick={() => setPeriod(o.key)}
-              className={`px-3 py-1.5 text-xs rounded-md transition-colors font-medium ${
-                period === o.key
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted text-muted-foreground hover:text-foreground hover:bg-muted/80"
-              }`}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-        </div>
+        <PeriodSelector value={period} onChange={setPeriod} />
+      </div>
 
-        {/* User Search Feature */}
-        <Card className="border-border/50 bg-accent/20">
-          <CardContent className="p-4 flex flex-col md:flex-row gap-4 items-center justify-between">
-            <div>
-              <h3 className="font-medium flex items-center gap-2">
-                <Search className="w-4 h-4 text-primary" /> Cari Usage User
-              </h3>
-              <p className="text-xs text-muted-foreground mt-1">
-                Klik tombol di bawah untuk mencari data penggunaan API seorang user. Masukkan Discord User ID saat diminta.
-              </p>
-              {searchUserResult && (
-                <div className="mt-3 text-sm bg-background p-3 rounded border border-border">
-                  <p><strong>User:</strong> {searchUserResult.discordUsername || searchUserResult.discordUserId}</p>
-                  <p><strong>Status Key:</strong> {searchUserResult.isActive ? 'Aktif' : 'Nonaktif'}</p>
-                  <div className="mt-2 space-y-1">
-                    <p className="font-semibold">Prompt Limits:</p>
-                    <p>Global: {searchUserResult.promptLimit > 0 ? `${searchUserResult.promptUsed} / ${searchUserResult.promptLimit} (${searchUserResult.promptLimitWindow})` : 'Unlimited'}</p>
-                    <p className="font-semibold mt-1">Per-Model:</p>
-                    <ul className="list-disc list-inside pl-4 text-xs">
-                      {searchUserResult.modelUsage?.map((m: any) => (
-                        <li key={m.model}><code>{m.model}</code>: {m.used} / {m.limit > 0 ? m.limit : '∞'}</li>
-                      ))}
-                      {(!searchUserResult.modelUsage || searchUserResult.modelUsage.length === 0) && (
-                        <li>Default: {searchUserResult.perModelPromptLimit > 0 ? `${searchUserResult.perModelPromptLimit} (${searchUserResult.perModelPromptLimitWindow})` : 'Unlimited'}</li>
-                      )}
-                    </ul>
-                  </div>
-                  <div className="mt-2 space-y-1">
-                    <p className="font-semibold">Token Limits (Harian):</p>
-                    <p>Input: {formatNumber(searchUserResult.dailyInputUsed || 0)} / {searchUserResult.dailyInputTokenLimit > 0 ? formatNumber(searchUserResult.dailyInputTokenLimit) : 'Unlimited'}</p>
-                    <p>Output: {formatNumber(searchUserResult.dailyOutputUsed || 0)} / {searchUserResult.dailyOutputTokenLimit > 0 ? formatNumber(searchUserResult.dailyOutputTokenLimit) : 'Unlimited'}</p>
-                    <p>Total: {formatNumber(searchUserResult.dailyTokensUsed || 0)} / {searchUserResult.dailyTokenLimit > 0 ? formatNumber(searchUserResult.dailyTokenLimit) : 'Unlimited'}</p>
-                    <p>Bulanan: {formatNumber(searchUserResult.monthlyTokensUsed || 0)} / {searchUserResult.monthlyTokenLimit > 0 ? formatNumber(searchUserResult.monthlyTokenLimit) : 'Unlimited'}</p>
-                  </div>
+      {/* User Search Feature */}
+      <Card className="border-border/50 bg-accent/20">
+        <CardContent className="p-4 flex flex-col md:flex-row gap-4 items-center justify-between">
+          <div>
+            <h3 className="font-medium flex items-center gap-2">
+              <Search className="w-4 h-4 text-primary" /> Cari Usage User
+            </h3>
+            <p className="text-xs text-muted-foreground mt-1">
+              Klik tombol di bawah untuk mencari data penggunaan API seorang user. Masukkan Discord User ID saat diminta.
+            </p>
+            {searchUserResult && (
+              <div className="mt-3 text-sm bg-background p-3 rounded border border-border">
+                <p><strong>User:</strong> {searchUserResult.discordUsername || searchUserResult.discordUserId}</p>
+                <p><strong>Status Key:</strong> {searchUserResult.isActive ? 'Aktif' : 'Nonaktif'}</p>
+                <div className="mt-2 space-y-1">
+                  <p className="font-semibold">Prompt Limits:</p>
+                  <p>Global: {searchUserResult.promptLimit > 0 ? `${searchUserResult.promptUsed} / ${searchUserResult.promptLimit} (${searchUserResult.promptLimitWindow})` : 'Unlimited'}</p>
+                  <p className="font-semibold mt-1">Per-Model:</p>
+                  <ul className="list-disc list-inside pl-4 text-xs">
+                    {searchUserResult.modelUsage?.map((m: any) => (
+                      <li key={m.model}><code>{m.model}</code>: {m.used} / {m.limit > 0 ? m.limit : '∞'}</li>
+                    ))}
+                    {(!searchUserResult.modelUsage || searchUserResult.modelUsage.length === 0) && (
+                      <li>Default: {searchUserResult.perModelPromptLimit > 0 ? `${searchUserResult.perModelPromptLimit} (${searchUserResult.perModelPromptLimitWindow})` : 'Unlimited'}</li>
+                    )}
+                  </ul>
                 </div>
-              )}
-            </div>
-            <Button onClick={handleSearchUser} variant="secondary" size="sm">
-              <Search className="w-4 h-4 mr-2" /> Cari User
-            </Button>
-          </CardContent>
-        </Card>
+                <div className="mt-2 space-y-1">
+                  <p className="font-semibold">Token Limits (Harian):</p>
+                  <p>Input: {formatNumber(searchUserResult.dailyInputUsed || 0)} / {searchUserResult.dailyInputTokenLimit > 0 ? formatNumber(searchUserResult.dailyInputTokenLimit) : 'Unlimited'}</p>
+                  <p>Output: {formatNumber(searchUserResult.dailyOutputUsed || 0)} / {searchUserResult.dailyOutputTokenLimit > 0 ? formatNumber(searchUserResult.dailyOutputTokenLimit) : 'Unlimited'}</p>
+                  <p>Total: {formatNumber(searchUserResult.dailyTokensUsed || 0)} / {searchUserResult.dailyTokenLimit > 0 ? formatNumber(searchUserResult.dailyTokenLimit) : 'Unlimited'}</p>
+                  <p>Bulanan: {formatNumber(searchUserResult.monthlyTokensUsed || 0)} / {searchUserResult.monthlyTokenLimit > 0 ? formatNumber(searchUserResult.monthlyTokenLimit) : 'Unlimited'}</p>
+                </div>
+              </div>
+            )}
+          </div>
+          <Button onClick={handleSearchUser} variant="secondary" size="sm">
+            <Search className="w-4 h-4 mr-2" /> Cari User
+          </Button>
+        </CardContent>
+      </Card>
 
-        {/* Stats Cards */}
+      {/* Stats Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
         {allCards.map((card) => (
           <Card key={card.label} className="border-border/50">
@@ -355,21 +353,7 @@ export default function OverviewPage() {
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
               <CardTitle className="text-base font-medium">Requests Over Time</CardTitle>
-              <div className="flex gap-1">
-                {PERIOD_OPTS.map((o) => (
-                  <button
-                    key={o.key}
-                    onClick={() => setChartPeriod(o.key)}
-                    className={`px-2 py-1 text-xs rounded transition-colors ${
-                      chartPeriod === o.key
-                        ? "bg-accent text-accent-foreground font-medium"
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    {o.label === "All Time" ? "All" : o.label}
-                  </button>
-                ))}
-              </div>
+              <PeriodSelector value={chartPeriod} onChange={setChartPeriod} />
             </div>
           </CardHeader>
           <CardContent>
@@ -514,4 +498,3 @@ export default function OverviewPage() {
     </div>
   );
 }
-

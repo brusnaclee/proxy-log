@@ -104,3 +104,84 @@ export const NORMALIZE_MODEL_SQL = sql`CASE WHEN model LIKE 'auto (%)%' THEN 'au
 
 /** SQL expression: extract underlying model from "auto (model) [stream]" */
 export const RESOLVE_AUTO_MODEL_SQL = sql`CASE WHEN model LIKE 'auto (%)%' THEN TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) ELSE model END`;
+
+// ─── Period Range Helper (WIB-based) ──────────────────────────────────────────
+
+export type PeriodKey = "today" | "3d" | "7d" | "30d" | "thisMonth" | "lastMonth" | "allTime";
+
+/**
+ * Resolve a period key to a { start, end } date range based on WIB (UTC+7).
+ * Returns null for end when "allTime" (no upper bound).
+ */
+export function resolvePeriodRange(period: PeriodKey): { start: Date; end: Date | null } {
+  const now = new Date();
+  const wibOffset = 7 * 60 * 60 * 1000;
+  const wibNow = new Date(now.getTime() + wibOffset);
+
+  // WIB today midnight in UTC
+  const wibMidnight = new Date(wibNow);
+  wibMidnight.setUTCHours(0, 0, 0, 0);
+  const todayUtcMidnight = new Date(wibMidnight.getTime() - wibOffset);
+
+  switch (period) {
+    case "today": {
+      return { start: todayUtcMidnight, end: now };
+    }
+    case "3d": {
+      const start = new Date(todayUtcMidnight.getTime() - 2 * 86400000);
+      return { start, end: now };
+    }
+    case "7d": {
+      const start = new Date(todayUtcMidnight.getTime() - 6 * 86400000);
+      return { start, end: now };
+    }
+    case "30d": {
+      const start = new Date(todayUtcMidnight.getTime() - 29 * 86400000);
+      return { start, end: now };
+    }
+    case "thisMonth": {
+      const monthStart = new Date(todayUtcMidnight);
+      monthStart.setUTCDate(1);
+      return { start: new Date(monthStart.getTime() - wibOffset), end: now };
+    }
+    case "lastMonth": {
+      const prevMonth = new Date(todayUtcMidnight);
+      prevMonth.setUTCDate(1);
+      prevMonth.setUTCMonth(prevMonth.getUTCMonth() - 1);
+      const monthEnd = new Date(todayUtcMidnight);
+      monthEnd.setUTCDate(1);
+      return {
+        start: new Date(prevMonth.getTime() - wibOffset),
+        end: new Date(monthEnd.getTime() - wibOffset),
+      };
+    }
+    case "allTime":
+    default: {
+      return { start: new Date(0), end: null };
+    }
+  }
+}
+
+/** All available period options for the period selector UI. */
+export const PERIOD_OPTIONS: { key: PeriodKey; label: string }[] = [
+  { key: "today",     label: "Today" },
+  { key: "3d",        label: "3 Days" },
+  { key: "7d",         label: "7 Days" },
+  { key: "30d",       label: "30 Days" },
+  { key: "thisMonth", label: "This Month" },
+  { key: "lastMonth", label: "Last Month" },
+  { key: "allTime",   label: "All Time" },
+];
+
+/** Map period to chart days for timeseries granularity. */
+export function chartDaysForPeriod(period: PeriodKey): number {
+  switch (period) {
+    case "today":     return 1;
+    case "3d":        return 3;
+    case "7d":        return 7;
+    case "30d":       return 30;
+    case "thisMonth":
+    case "lastMonth": return 60;
+    case "allTime":   return 90;
+  }
+}

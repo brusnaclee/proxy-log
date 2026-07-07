@@ -466,3 +466,15 @@ export type NewCleanupState = typeof cleanupState.$inferInsert;
 export type NewMonthlyStats = typeof monthlyStats.$inferInsert;
 export type NewModelMetadata = typeof modelMetadata.$inferInsert;
 export type NewTrialUser = typeof trialUsers.$inferInsert;
+
+// ─── User Portal Settings ────────────────────────────────────────────────────────
+export const userPortalSettings = pgTable('user_portal_settings', {
+  discordUserId: text('discord_user_id').primaryKey(),
+  passwordHash: text('password_hash'), // null = auto-login (no password required)
+  passwordSetAt: timestamp('password_set_at'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+export type UserPortalSettings = typeof userPortalSettings.$inferSelect;
+export type NewUserPortalSettings = typeof userPortalSettings.$inferInsert;

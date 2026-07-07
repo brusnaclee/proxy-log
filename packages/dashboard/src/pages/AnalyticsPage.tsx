@@ -11,15 +11,9 @@ import {
 } from "recharts";
 import { useRealtimeSSE } from "@/lib/use-realtime-sse";
 import { exportXlsx, buildModelsSection, fmtCost } from "@/lib/export-xlsx";
+import { PeriodSelector, type PeriodKey } from "@/components/PeriodSelector";
 
 const COLORS = ["#818cf8", "#34d399", "#f59e0b", "#f87171", "#a78bfa", "#38bdf8", "#fb923c", "#e879f9"];
-
-const PERIOD_OPTIONS = [
-  { label: "1 Day",   days: 1  },
-  { label: "7 Days",  days: 7  },
-  { label: "30 Days", days: 30 },
-  { label: "All",     days: 0  },
-] as const;
 
 // Fix tooltip colours  -  must override itemStyle/labelStyle too
 const TOOLTIP_STYLE  = {
@@ -32,32 +26,25 @@ const TOOLTIP_STYLE  = {
 const ITEM_STYLE  = { color: "hsl(var(--foreground))" };
 const LABEL_STYLE = { color: "hsl(var(--foreground))" };
 
-function PeriodToggle({ value, onChange }: { value: number; onChange: (d: number) => void }) {
-  return (
-    <div className="flex gap-1">
-      {PERIOD_OPTIONS.map((o) => (
-        <button
-          key={o.days}
-          onClick={() => onChange(o.days)}
-          className={`px-2 py-1 text-xs rounded transition-colors ${
-            value === o.days ? "bg-accent text-accent-foreground font-medium" : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
+function daysFromPeriod(p: PeriodKey): number {
+  if (p === "allTime") return 0;
+  if (p === "today") return 1;
+  if (p === "3d") return 3;
+  if (p === "7d") return 7;
+  if (p === "30d") return 30;
+  return 7; // thisMonth/lastMonth fallback
 }
 
-function periodLabel(days: number): string {
-  if (days === 0) return "All Time";
-  if (days === 1) return "Last 1 Day";
-  return `Last ${days} Days`;
+function periodKeyToLabel(p: PeriodKey): string {
+  const labels: Record<PeriodKey, string> = {
+    today: "Today", "3d": "Last 3 Days", "7d": "Last 7 Days", "30d": "Last 30 Days",
+    thisMonth: "This Month", lastMonth: "Last Month", allTime: "All Time",
+  };
+  return labels[p];
 }
 
 export default function AnalyticsPage() {
-  const [days, setDays] = useState(7);
+  const [periodKey, setPeriodKey] = useState<PeriodKey>("7d");
   const [modelData,     setModelData]     = useState<any[]>([]);
   const [keyData,       setKeyData]       = useState<any[]>([]);
   const [deviceData,    setDeviceData]    = useState<any[]>([]);
@@ -68,7 +55,7 @@ export default function AnalyticsPage() {
   // Pie chart mode toggle
   const [modelChartMode, setModelChartMode] = useState<"tokens" | "requests">("tokens");
 
-  const loadData = useCallback(async (d = days) => {
+  const loadData = useCallback(async (d = daysFromPeriod(periodKey)) => {
     try {
       const tsdays = d === 0 ? 30 : d;
       const hrdays = d === 1 ? 1 : 2;
@@ -87,16 +74,16 @@ export default function AnalyticsPage() {
       setHourlyData(hourly);
       setTopUsersData(topUsers || { byRequests: [], byTokens: [] });
     } catch {}
-  }, [days]);
+  }, [periodKey]);
 
-  useEffect(() => { loadData(days); }, [days]);
+  useEffect(() => { loadData(daysFromPeriod(periodKey)); }, [periodKey]);
 
-  const handleSSEMessage = useCallback(() => { void loadData(days); }, [days, loadData]);
+  const handleSSEMessage = useCallback(() => { void loadData(daysFromPeriod(periodKey)); }, [periodKey, loadData]);
   useRealtimeSSE(handleSSEMessage, 900);
 
   // â”€â”€ Export â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleExport = () => {
-    const pl = periodLabel(days);
+    const pl = periodKeyToLabel(periodKey);
     const dateStr = new Date().toISOString().split("T")[0];
     const sheets = [];
 
@@ -199,7 +186,7 @@ export default function AnalyticsPage() {
           <p className="text-sm text-muted-foreground mt-1">Deep insights into your proxy usage patterns</p>
         </div>
         <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-          <PeriodToggle value={days} onChange={setDays} />
+          <PeriodSelector value={periodKey} onChange={setPeriodKey} />
           <Button variant="outline" size="sm" onClick={handleExport}>
             <Download className="h-4 w-4 mr-2" /> Export XLSX
           </Button>
@@ -408,7 +395,7 @@ export default function AnalyticsPage() {
         <Card className="border-border/50">
           <CardHeader className="pb-2">
             <CardTitle className="text-base font-medium">
-              Requests by Hour ({days === 1 ? "Last 24h" : "Last 48h"})
+              Requests by Hour ({periodKey === "today" ? "Last 24h" : "Last 48h"})
             </CardTitle>
           </CardHeader>
           <CardContent>
