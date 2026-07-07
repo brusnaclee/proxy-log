@@ -251,6 +251,25 @@ export function detectIdeFromContent(requestBody: any, transcriptSnapshot?: stri
 	if (searchText.includes("exited plan mode") || searchText.includes("re-entering plan mode")) return "Claude Code";
 	if (searchText.includes("exited auto mode") || searchText.includes("re-entering auto mode")) return "Claude Code";
 
+	// === ZCode IDE (Windows AI coding tool) ===
+	if (searchText.includes("zcode") || searchText.includes("z-code")) return "ZCode";
+	if (searchText.includes("using-superpowers")) return "ZCode";
+	if (searchText.includes("/superpowers/skill")) return "ZCode";
+	if (searchText.includes("fitstamp")) return "ZCode"; // ZCode Flutter projects
+
+	// === STAMP/FitStamp patterns ===
+	if (searchText.includes("fitstamp")) return "FitStamp";
+
+	// === Generic agent (non-Code) ===
+	if (searchText.includes("polymarket")) return "Polymarket Trader";
+	if (searchText.includes("quantitative trader")) return "Trading Bot";
+	if (searchText.includes("binary markets")) return "Trading Bot";
+
+	// === ZCode CLI ===
+	if (searchText.includes("/model")) return "ZCode";
+	if (searchText.includes("/init")) return "ZCode";
+	if (searchText.includes("<command-name>")) return "ZCode";
+
 	return null;
 }
 
@@ -258,7 +277,7 @@ export function detectIdeFromContent(requestBody: any, transcriptSnapshot?: stri
  * Normalize IDE/client name into a stable lowercase key for policy checks.
  */
 export function normalizeIdeName(ideName: string | null | undefined): string {
-  return (ideName || "unknown").trim().toLowerCase();
+	return (ideName || "unknown").trim().toLowerCase();
 }
 
 /**

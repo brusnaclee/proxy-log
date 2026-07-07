@@ -196,6 +196,11 @@ function isToolResultContent(content: string): boolean {
 	if (trimmed.includes("background fan-out")) return true;
 	if (trimmed.includes("consolidated results below")) return true;
 
+	// ZCode patterns
+	if (trimmed.includes("[using-superpowers]")) return true;
+	if (trimmed.includes("fitstamp")) return true;
+	if (trimmed.includes("[/using-superpowers]")) return true;
+
 	return false;
 }
 
