@@ -32,7 +32,7 @@ function getDeviceIcon(os: string) {
 }
 
 export default function KeysPage() {
-  const [keys, setKeys] = useState<any[]>([]);
+  const [keys, setKeys] = useState<KeyInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -40,7 +40,7 @@ export default function KeysPage() {
   const [creating, setCreating] = useState(false);
   const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
   const [expandedKey, setExpandedKey] = useState<number | null>(null);
-  const [devices, setDevices] = useState<any>({});
+  const [devices, setDevices] = useState<Record<number, Device[]>>({});
   const [loadingDevices, setLoadingDevices] = useState<Record<number, boolean>>({});
   const [rotating, setRotating] = useState<number | null>(null);
   const [rotatedKey, setRotatedKey] = useState<string | null>(null);
@@ -51,7 +51,7 @@ export default function KeysPage() {
     setLoading(true);
     api.keys
       .list()
-      .then((data) => setKeys(data as any))
+      .then((data) => setKeys(data))
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load keys"))
       .finally(() => setLoading(false));
   };

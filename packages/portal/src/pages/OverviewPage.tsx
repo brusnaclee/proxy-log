@@ -82,7 +82,7 @@ export default function OverviewPage() {
       api.stats.timeseries(period),
       api.stats.byModel(period),
       api.stats.byIde(period),
-    ] as [Promise<any>, Promise<any[]>, Promise<any[]>, Promise<any[]>)
+    ] as [Promise<any>, Promise<any[]>, Promise<any[]>, Promise<any[]>])
       .then(([statsRes, tsRes, modelRes, ideRes]) => {
         setStats(statsRes);
         setTimeseries(tsRes as TimeseriesItem[]);
