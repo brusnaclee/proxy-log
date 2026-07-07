@@ -240,6 +240,7 @@ export function analyzeRequestMessages(requestBody: any): MessageAnalysis {
         messageContent: input.substring(0, 500),
         userMessageCount: 1,
         assistantMessageCount: 0,
+        toolMessageCount: 0,
       };
     }
   }
@@ -278,6 +279,7 @@ export function analyzeRequestMessages(requestBody: any): MessageAnalysis {
       messageContent: content.substring(0, 500),
       userMessageCount: 1,
       assistantMessageCount: 0,
+      toolMessageCount: 0,
     };
   }
 
@@ -292,6 +294,7 @@ export function analyzeRequestMessages(requestBody: any): MessageAnalysis {
         messageContent: rawContent.substring(0, 500),
         userMessageCount: 1,
         assistantMessageCount: 0,
+        toolMessageCount: 0,
         isRawFormat: true,
       };
     }
@@ -302,6 +305,7 @@ export function analyzeRequestMessages(requestBody: any): MessageAnalysis {
       messageContent: null,
       userMessageCount: 0,
       assistantMessageCount: 0,
+      toolMessageCount: 0,
       isRawFormat: false,
     };
   }
