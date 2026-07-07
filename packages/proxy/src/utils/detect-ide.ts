@@ -119,22 +119,71 @@ export function detectIdeFromContent(requestBody: any, transcriptSnapshot?: stri
 		.join(" ")
 		.slice(0, 5000);
 
-	const searchText = (systemText + " " + transcript).toLowerCase();
+	// Also check user message content for patterns
+	const userMessages = messages
+		.filter((m: any) => m?.role === "user")
+		.map((m: any) => (typeof m?.content === "string" ? m.content : ""))
+		.join(" ")
+		.slice(0, 3000);
 
-	// OpenClaw — "running inside OpenClaw"
+	const searchText = (systemText + " " + userMessages + " " + transcript).toLowerCase();
+
+	// === OPENCLAW patterns ===
 	if (searchText.includes("openclaw")) return "OpenClaw";
+	// OpenClaw specific patterns (hidden in Node.js Client)
+	if (searchText.includes("[openclaw")) return "OpenClaw";
+	if (searchText.includes("[cron:")) return "OpenClaw"; // OpenClaw cron jobs
+	if (searchText.includes("[openclaw heartbeat")) return "OpenClaw";
+	if (searchText.includes("mt5") && searchText.includes("monitor")) return "OpenClaw";
+	if (searchText.includes("health check")) return "OpenClaw";
+	if (searchText.includes("read heartbeat")) return "OpenClaw"; // OpenClaw heartbeat tool
 
-	// Hermes Agent — Hermes-specific patterns
+	// === HERMES patterns ===
 	if (searchText.includes("hermes") || searchText.includes("hermes-agent")) return "Hermes";
+	if (searchText.includes("[subagent context]")) return "Hermes"; // Hermes subagent
+	if (searchText.includes("[retry after the previous model attempt")) return "Hermes"; // Hermes retry
+
+	// === N8N Workflow ===
 	if (searchText.includes("n8n")) return "n8n Workflow";
 
-	// Zed editor
+	// === ZED editor ===
 	if (searchText.includes("zed.dev") || searchText.includes("[zed]")) return "Zed";
 
-	// Codex CLI — "Codex desktop context" or "Codex (desktop) app" or codex sandbox_mode
+	// === OPENCODEMULTI patterns ===
+	if (searchText.includes("you are opencode") || searchText.includes("you are an opencode")) return "OpenCode";
+	if (searchText.includes("interactive cli tool that helps")) return "OpenCode"; // OpenCode system prompt
+
+	// === CLAUDE CODE patterns ===
+	if (searchText.includes("<session>") && searchText.includes("you are fixing pr")) return "Claude Code";
+	if (searchText.includes("<system_reminder>")) return "Claude Code";
+	if (searchText.includes("<current_user_request>")) return "Claude Code";
+	if (searchText.includes("<user_request>")) return "Claude Code";
+	if (searchText.includes("plan mode") && searchText.includes("plan file")) return "Claude Code";
+	if (searchText.includes("claudeMd") && searchText.includes("currentdate")) return "Claude Code";
+	if (searchText.includes("mcp server instructions")) return "Claude Code"; // Claude Code MCP
+	if (searchText.includes("ephemeral_message") || searchText.includes("<ephemeral_message>")) return "Claude Code";
+
+	// === Continue extension ===
+	if (searchText.includes("continue")) return "Continue";
+
+	// === GENERIC AGENT patterns ===
+	if (searchText.includes("<system-message>") || searchText.includes("<system_message>")) return "Generic Agent";
+	if (searchText.includes("system message") && searchText.includes("timestamp=")) return "Generic Agent"; // WhatsApp/signal agent
+	if (searchText.includes("deeppresenter")) return "DeepPresenter Agent";
+	if (searchText.includes("brainstorm companion")) return "Brainstorm Companion";
+	if (searchText.includes("ralph agent")) return "Ralph Agent";
+	if (searchText.includes("[role:")) return "Generic Agent"; // Role-based agent
+	if (searchText.includes("session] you are fixing pr")) return "Claude Code";
+
+	// === 9Router / OmniRouter ===
+	if (searchText.includes("9router") || searchText.includes("9-router")) return "9Router";
+	if (searchText.includes("omnirouter") || searchText.includes("omni-router")) return "OmniRouter";
+	if (searchText.includes("via provider 9router")) return "9Router"; // Model switching via router
+
+	// === Codex CLI ===
 	if (searchText.includes("codex desktop context") || searchText.includes("codex (desktop) app")) return "Codex CLI";
 
-	// Check tool names for IDE fingerprints
+	// === Tool-based detection ===
 	const tools: string[] = [];
 	if (Array.isArray(requestBody?.tools)) {
 		for (const t of requestBody.tools) {
@@ -144,29 +193,29 @@ export function detectIdeFromContent(requestBody: any, transcriptSnapshot?: stri
 	}
 	const toolSet = new Set(tools);
 
-	// Codex CLI — uses exec_command, apply_patch, codex_app
+	// Codex CLI
 	if (toolSet.has("codex_app") || (toolSet.has("apply_patch") && toolSet.has("exec_command"))) return "Codex CLI";
 
-	// OpenCode — uses TodoWrite, Skill, Glob, Grep, Agent (exact OpenCode toolset)
+	// OpenCode — uses TodoWrite, Skill, Glob, Grep, Agent
 	if (toolSet.has("todowrite") && toolSet.has("skill") && toolSet.has("glob")) return "OpenCode";
 	if (toolSet.has("todowrite") && toolSet.has("webfetch") && toolSet.has("bash")) return "OpenCode";
 
-	// Claude Code — uses Agent, TodoWrite, Bash but with TaskCreate/TaskGet
+	// Claude Code — uses Agent, TaskCreate/TaskGet
 	if (toolSet.has("taskcreate") && toolSet.has("taskget") && toolSet.has("bash")) return "Claude Code";
 
-	// Roo Code — uses apply_diff, attempt_completion, read_file, write_to_file
+	// Roo Code — uses apply_diff, attempt_completion
 	if (toolSet.has("apply_diff") && toolSet.has("attempt_completion") && toolSet.has("read_file")) return "Roo Code";
 
-	// Cline — uses read_file, write_to_file, execute_command, ask_followup_question (without apply_diff)
+	// Cline — uses ask_followup_question (without apply_diff)
 	if (toolSet.has("execute_command") && toolSet.has("read_file") && toolSet.has("ask_followup_question") && !toolSet.has("apply_diff")) return "Cline";
 
-	// Kiro — uses update_plan, get_goal, create_goal
+	// Kiro
 	if (toolSet.has("update_plan") && toolSet.has("get_goal")) return "Kiro";
 
-	// Windsurf — uses similar tools but with different naming
+	// Windsurf
 	if (toolSet.has("windsurf") || searchText.includes("windsurf")) return "Windsurf";
 
-	// Check system prompt for other IDE mentions
+	// === String-based system prompt checks ===
 	if (searchText.includes("running inside opencode") || searchText.includes("you are opencode")) return "OpenCode";
 	if (searchText.includes("claude code") || searchText.includes("claude desktop")) return "Claude Code";
 	if (searchText.includes("running inside cursor") || searchText.includes("cursor ide")) return "Cursor";
@@ -174,6 +223,12 @@ export function detectIdeFromContent(requestBody: any, transcriptSnapshot?: stri
 	if (searchText.includes("cline")) return "Cline";
 	if (searchText.includes("windsurf")) return "Windsurf";
 	if (searchText.includes("aider")) return "Aider";
+
+	// === Final fallback checks ===
+
+	// Check for any Claude Code unique markers in the full text
+	if (searchText.includes("exited plan mode") || searchText.includes("re-entering plan mode")) return "Claude Code";
+	if (searchText.includes("exited auto mode") || searchText.includes("re-entering auto mode")) return "Claude Code";
 
 	return null;
 }

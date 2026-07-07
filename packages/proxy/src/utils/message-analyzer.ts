@@ -146,6 +146,42 @@ function isToolResultContent(content: string): boolean {
 	if (trimmed.includes("[task]")) return true;
 	if (trimmed.includes("load agents, skills, references")) return true;
 
+	// === GENERIC AGENT / WORKFLOW patterns (from DB analysis) ===
+
+	// Claude Code session/plan patterns
+	if (trimmed.includes("<session>") && trimmed.includes("you are fixing pr")) return true;
+	if (trimmed.includes("exited plan mode") || trimmed.includes("re-entering plan mode")) return true;
+	if (trimmed.includes("exited auto mode") || trimmed.includes("re-entering auto mode")) return true;
+	if (trimmed.includes("claudeMd") && trimmed.includes("currentdate")) return true;
+	if (trimmed.includes("mcp server instructions")) return true;
+
+	// Generic system message wrappers
+	if (trimmed.includes("<system-message>") || trimmed.includes("<system_message>")) return true;
+	if (trimmed.includes("system message") && trimmed.includes("timestamp=")) return true;
+	if (trimmed.includes("[role:")) return true; // Role-based agent
+
+	// DeepPresenter / Ralph Agent
+	if (trimmed.includes("deeppresenter")) return true;
+	if (trimmed.includes("brainstorm companion")) return true;
+	if (trimmed.includes("ralph agent")) return true;
+
+	// WhatsApp/Signal agent patterns
+	if (trimmed.includes("whatsapp gateway disconnected")) return true;
+	if (trimmed.includes("whatsapp gateway connected as")) return true;
+
+	// Windows terminal patterns
+	if (trimmed.includes("windows powershell copyright")) return true;
+	if (trimmed.includes("install the latest powershell")) return true;
+
+	// Router patterns
+	if (trimmed.includes("via provider 9router")) return true;
+
+	// 9Router model switching
+	if (trimmed.includes("active model for this chat has changed to")) return true;
+
+	// Generic MCP patterns
+	if (trimmed.includes("<ephemeral_message>")) return true;
+
 	return false;
 }
 
