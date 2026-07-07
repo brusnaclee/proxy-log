@@ -44,59 +44,109 @@ export function isTitleGenRequest(requestBody: any): boolean {
  * inside a role="user" message. We detect these by looking at the content.
  */
 function isToolResultContent(content: string): boolean {
-  if (!content) return false;
-  const trimmed = content.trimStart().slice(0, 500).toLowerCase();
+	if (!content) return false;
+	const trimmed = content.trimStart().slice(0, 500).toLowerCase();
 
-  // Cursor: tool output like "Subagent is running...", "Wrote contents to ...",
-  // or raw file content "1| /* 2| * To change..." or "... N lines not shown ..."
-  if (/^\d+\|/.test(content.trimStart())) return true;                         // numbered file lines
-  if (trimmed.startsWith("subagent is running")) return true;                  // Cursor subagent
-  if (trimmed.startsWith("wrote contents to ")) return true;                   // Cursor write result
-  if (trimmed.startsWith("progress update recorded")) return true;             // Cursor progress
-  if (/^\.\.\.\s*\d+\s*lines?\s*not\s*shown/.test(content.trimStart())) return true; // truncated output
+	// Cursor: tool output like "Subagent is running...", "Wrote contents to ...",
+	// or raw file content "1| /* 2| * To change..." or "... N lines not shown ..."
+	if (/^\d+\|/.test(content.trimStart())) return true;                         // numbered file lines
+	if (trimmed.startsWith("subagent is running")) return true;                  // Cursor subagent
+	if (trimmed.startsWith("wrote contents to ")) return true;                   // Cursor write result
+	if (trimmed.startsWith("progress update recorded")) return true;             // Cursor progress
+	if (/^\.\.\.\s*\d+\s*lines?\s*not\s*shown/.test(content.trimStart())) return true; // truncated output
 
-  // Cline / Roo Code: tool results wrapped as user messages
-  // e.g. "[read_file for 'src/foo.ts'] Result: ..."
-  // e.g. "[replace_in_file for 'src/foo.ts'] Result: ..."
-  // e.g. "[execute_command for 'npm test'] Result: ..."
-  if (/^\[(?:read_file|list_files|search_files|write_to_file|replace_in_file|execute_command|apply_diff|apply_patch|browser_action|access_mcp_resource|web_search|web_fetch|list_code_definition_names|use_mcp_tool)\s+for\s+/.test(content.trimStart())) return true;
+	// Cline / Roo Code: tool results wrapped as user messages
+	// e.g. "[read_file for 'src/foo.ts'] Result: ..."
+	// e.g. "[replace_in_file for 'src/foo.ts'] Result: ..."
+	// e.g. "[execute_command for 'npm test'] Result: ..."
+	if (/^\[(?:read_file|list_files|search_files|write_to_file|replace_in_file|execute_command|apply_diff|apply_patch|browser_action|access_mcp_resource|web_search|web_fetch|list_code_definition_names|use_mcp_tool)\s+for\s+/.test(content.trimStart())) return true;
 
-  // Cline / Roo Code: "[ERROR] You did not use a tool..."
-  if (trimmed.startsWith("[error] you did not use a tool")) return true;
+	// Cline / Roo Code: "[ERROR] You did not use a tool..."
+	if (trimmed.startsWith("[error] you did not use a tool")) return true;
 
-  // Roo Code XML block for tool results (this specifically catches Roo Code's `<tool_response>` wrapping)
-  if (trimmed.startsWith("<tool_response>") || trimmed.includes("tool_response>")) return true;
-  if (/^<[\w_]+_response>/.test(trimmed)) return true; // e.g., <search_files_response>
+	// Roo Code XML block for tool results (this specifically catches Roo Code's `<tool_response>` wrapping)
+	if (trimmed.startsWith("<tool_response>") || trimmed.includes("tool_response>")) return true;
+	if (/^<[\w_]+_response>/.test(trimmed)) return true; // e.g., <search_files_response>
 
-  // Roo Code: summarization system operation
-  if (trimmed.startsWith("critical: this summarization request is a system operation")) return true;
+	// Roo Code: summarization system operation
+	if (trimmed.startsWith("critical: this summarization request is a system operation")) return true;
 
-  // OpenClaw: cron/subagent automated messages - these are system-initiated, not user prompts
-  // e.g. "[cron:uuid ...] ..." or "[Subagent Context] ..."
-  if (/^\[cron:[0-9a-f-]+/.test(content.trimStart())) return true;
-  if (trimmed.startsWith("[subagent context]")) return true;
-  // Retry messages from agent framework
-  if (trimmed.startsWith("[retry after the previous model attempt")) return true;
+	// OpenClaw: cron/subagent automated messages - these are system-initiated, not user prompts
+	// e.g. "[cron:uuid ...] ..." or "[Subagent Context] ..."
+	if (/^\[cron:[0-9a-f-]+/.test(content.trimStart())) return true;
+	if (trimmed.startsWith("[subagent context]")) return true;
+	// Retry messages from agent framework
+	if (trimmed.startsWith("[retry after the previous model attempt")) return true;
 
-  // Cline: ephemeral messages embedded in context (not a real user message)
-  if (trimmed.startsWith("step id:") && trimmed.includes("<ephemeral_message>")) return true;
+	// Cline: ephemeral messages embedded in context (not a real user message)
+	if (trimmed.startsWith("step id:") && trimmed.includes("<ephemeral_message>")) return true;
 
-  // Claude Desktop: tool result notifications wrapped as user
-  if (/^the file .+ has been (updated|created|written) successfully/i.test(content.trimStart())) return true;
+	// Claude Desktop: tool result notifications wrapped as user
+	if (/^the file .+ has been (updated|created|written) successfully/i.test(content.trimStart())) return true;
 
-  // OpenCode / Claude Code / generic tool wrappers
-  if (trimmed.startsWith("[tool result]")) return true;
-  if (trimmed.startsWith("tool result:")) return true;
-  if (trimmed.startsWith("called tool")) return true;
-  if (trimmed.startsWith("result of tool")) return true;
-  if (/^tool:\s*\w+/i.test(content.trimStart())) return true;
-  if (trimmed.includes("todowrite") && (trimmed.includes("successfully updated") || trimmed.includes("todos"))) return true;
+	// OpenCode / Claude Code / generic tool wrappers
+	if (trimmed.startsWith("[tool result]")) return true;
+	if (trimmed.startsWith("tool result:")) return true;
+	if (trimmed.startsWith("called tool")) return true;
+	if (trimmed.startsWith("result of tool")) return true;
+	if (/^tool:\s*\w+/i.test(content.trimStart())) return true;
+	if (trimmed.includes("todowrite") && (trimmed.includes("successfully updated") || trimmed.includes("todos"))) return true;
 
-  // Codex command output
-  if (trimmed.startsWith("command output:")) return true;
-  if (trimmed.startsWith("apply_patch result")) return true;
+	// Codex command output
+	if (trimmed.startsWith("command output:")) return true;
+	if (trimmed.startsWith("apply_patch result")) return true;
 
-  return false;
+	// === NEW PATTERNS FROM DATABASE ANALYSIS ===
+
+	// Hermes patterns - Hermes Agent system messages
+	if (trimmed.startsWith("[fri ") && trimmed.includes("[retry after the previous model attempt")) return true;
+	if (trimmed.startsWith("[subagent context]")) return true;
+	if (trimmed.includes("[hermes]")) return true;
+	if (trimmed.includes("hermes-agent")) return true;
+	// Hermes file notifications
+	if (trimmed.includes("[replied-to document")) return true;
+	if (trimmed.includes(".hermes/cache/documents")) return true;
+
+	// Zed editor patterns
+	if (trimmed.includes("[zed]") || trimmed.includes("zed.dev")) return true;
+
+	// OpenClaw extended patterns (already partially covered, adding more)
+	if (trimmed.startsWith("[openclaw")) return true;
+	if (trimmed.includes("[attempt_completion]")) return true;
+	if (trimmed.includes("[search-mode]")) return true;
+
+	// Antigravity patterns
+	if (trimmed.includes("antigravity")) return true;
+
+	// Generic continue pattern (Cline/Roo Code continuation)
+	if (trimmed.startsWith("continue")) return true;
+	if (trimmed.includes("<open_and_recently_viewed_files>")) return true;
+	if (trimmed.includes("<system-reminder>")) return true;
+	if (trimmed.includes("<environment_details>")) return true;
+	if (trimmed.includes("<user-prompt-submit-hook>")) return true;
+	if (trimmed.includes("<conversation-summary>")) return true;
+
+	// MCP tool patterns (Continue, Kilo, Windsurf)
+	if (trimmed.startsWith("[mcp_tool")) return true;
+	if (trimmed.includes("_mcp_server")) return true;
+	if (trimmed.includes("[tool_use")) return true;
+
+	// Windsurf patterns
+	if (trimmed.includes("[file modification]")) return true;
+	if (trimmed.includes("[search results]")) return true;
+
+	// Generic progress/task patterns
+	if (trimmed.includes("progress update recorded")) return true;
+	if (trimmed.includes("attached media from tool result")) return true;
+
+	// API/proxy related patterns (not user prompts)
+	if (trimmed.includes("cli-proxy-openai-compat")) return true;
+
+	// Claude Code extended patterns
+	if (trimmed.includes("[task]")) return true;
+	if (trimmed.includes("load agents, skills, references")) return true;
+
+	return false;
 }
 
 /**

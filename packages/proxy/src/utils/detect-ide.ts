@@ -18,59 +18,71 @@ interface IdeInfo {
 }
 
 const IDE_PATTERNS: [RegExp, string][] = [
-  // --- AI coding IDE/extensions (specific first) ---
-  [/roocode|roo-code|roo[\s-]?cline/i, "Roo Code"],
-  [/cline.*vscode/i, "Cline (VS Code)"],
-  [/cline/i, "Cline"],
-  [/codex.*vscode/i, "Codex (VS Code)"],
-  [/codex/i, "Codex"],
-  [/opencode.*vscode/i, "OpenCode (VS Code)"],
-  [/opencode/i, "OpenCode"],
-  [/cursor/i, "Cursor"],
-  [/pearai/i, "PearAI"],
-  [/windsurf/i, "Windsurf"],
-  [/continue.*vscode/i, "Continue (VS Code)"],
-  [/continue/i, "Continue"],
-  [/github-copilot|copilot/i, "GitHub Copilot"],
-  [/9router|9-router/i, "9router"],
-  [/omnirouter|omni-router/i, "OmniRouter"],
-  [/\bglm[-/]/i, "GLM"],
-  [/\bkiro\b/i, "Kiro"],
-  [/kilo/i, "Kilo"],
-  [/tabby/i, "Tabby IDE"],
-  [/codeium/i, "Codeium"],
-  [/cody|sourcegraph/i, "Cody (Sourcegraph)"],
-  [/supermaven/i, "Supermaven"],
-  [/swe-bench|swe-agent/i, "SWE-Agent"],
-  [/aider/i, "Aider"],
-  [/neovim|nvim/i, "Neovim"],
-  [/jetbrains|intellij|pycharm|webstorm|goland|rider|phpstorm|rubymine|clion|datagrip/i, "JetBrains"],
-  [/vscode|visual\s*studio\s*code/i, "VS Code"],
-  [/claude/i, "Claude Desktop"],
+	// --- AI coding IDE/extensions (specific first) ---
+	[/roocode|roo-code|roo[\s-]?cline/i, "Roo Code"],
+	[/cline.*vscode/i, "Cline (VS Code)"],
+	[/cline/i, "Cline"],
+	[/codex.*vscode/i, "Codex (VS Code)"],
+	[/codex/i, "Codex"],
+	[/opencode.*vscode/i, "OpenCode (VS Code)"],
+	[/opencode/i, "OpenCode"],
+	[/cursor/i, "Cursor"],
+	[/pearai/i, "PearAI"],
+	[/windsurf/i, "Windsurf"],
+	[/continue.*vscode/i, "Continue (VS Code)"],
+	[/continue/i, "Continue"],
+	[/github-copilot|copilot/i, "GitHub Copilot"],
+	[/9router|9-router/i, "9router"],
+	[/omnirouter|omni-router/i, "OmniRouter"],
+	[/\bglm[-/]/i, "GLM"],
+	[/\bkiro\b/i, "Kiro"],
+	[/kilo/i, "Kilo"],
+	[/tabby/i, "Tabby IDE"],
+	[/codeium/i, "Codeium"],
+	[/cody|sourcegraph/i, "Cody (Sourcegraph)"],
+	[/supermaven/i, "Supermaven"],
+	[/swe-bench|swe-agent/i, "SWE-Agent"],
+	[/aider/i, "Aider"],
+	[/neovim|nvim/i, "Neovim"],
+	[/jetbrains|intellij|pycharm|webstorm|goland|rider|phpstorm|rubymine|clion|datagrip/i, "JetBrains"],
+	[/vscode|visual\s*studio\s*code/i, "VS Code"],
+	[/claude.*desktop|claude-cli/i, "Claude Desktop"],
+	// Claude Code CLI (claude-cli/2.x external, cli)
+	[/claude-cli/i, "Claude Code"],
 
-  // --- Antigravity variants (IDE > Hub > CLI fallback) ---
-  [/antigravity\/ide/i, "Antigravity IDE"],
-  [/antigravity\/hub/i, "Antigravity Hub"],
-  [/antigravity/i, "Antigravity CLI"],
+	// === NEW PATTERNS FROM DATABASE ANALYSIS ===
 
-  // --- AI agent platforms / proxy clients ---
-  [/openclaw/i, "OpenClaw"],
-  [/cli-proxy-openai-compat/i, "OpenClaw"],
+	// Zed editor
+	[/zed[\/\s]/i, "Zed"],
+	[/zed\.dev/i, "Zed"],
 
-  // --- SDK / HTTP clients ---
-  [/openai-python/i, "OpenAI Python SDK"],
-  [/openai-node/i, "OpenAI Node SDK"],
-  [/python-requests|python\/requests/i, "Python Requests"],
-  [/axios/i, "Axios"],
-  [/node-fetch|undici/i, "Node Fetch"],
-  [/Go-http-client/i, "Go HTTP Client"],
-  [/curl/i, "curl"],
+	// OpenCode with ai-sdk runtime (ai-sdk/provider-utils/...)
+	[/opencode.*ai-sdk/i, "OpenCode"],
 
-  // --- Browser / shell (low priority, catch-all) ---
-  [/WindowsPowerShell|pwsh|PowerShell/i, "PowerShell"],
+	// Antigravity variants (IDE > Hub > CLI fallback)
+	[/antigravity\/ide/i, "Antigravity IDE"],
+	[/antigravity\/hub/i, "Antigravity Hub"],
+	[/antigravity/i, "Antigravity CLI"],
 
-  // --- Bare Node.js (very low priority — must be last) ---
-  [/^node$/i, "Node.js Client"],
+	// --- AI agent platforms / proxy clients ---
+	[/openclaw/i, "OpenClaw"],
+	[/cli-proxy-openai-compat/i, "OpenClaw"],
+
+	// --- SDK / HTTP clients ---
+	[/openai-python|python.*openai/i, "OpenAI Python SDK"],
+	[/openai.*node|openai\/js/i, "OpenAI Node SDK"],
+	[/openai\/(python|js|node)/i, "OpenAI SDK"],
+	[/python-requests|python\/requests/i, "Python Requests"],
+	[/axios/i, "Axios"],
+	[/node-fetch|undici/i, "Node Fetch"],
+	[/Go-http-client/i, "Go HTTP Client"],
+	[/curl/i, "curl"],
+
+	// --- Browser / shell (low priority, catch-all) ---
+	[/WindowsPowerShell|pwsh|PowerShell/i, "PowerShell"],
+
+	// --- Bare Node.js (very low priority — must be last) ---
+	[/^node$/i, "Node.js Client"],
 ];
 
 /**
@@ -96,64 +108,74 @@ export function detectIde(userAgent: string | null | undefined): string {
  * Call this ONLY when detectIde() returned "Unknown".
  */
 export function detectIdeFromContent(requestBody: any, transcriptSnapshot?: string): string | null {
-  if (!requestBody && !transcriptSnapshot) return null;
+	if (!requestBody && !transcriptSnapshot) return null;
 
-  // Check transcript / system messages for known IDE signatures
-  const transcript = transcriptSnapshot || "";
-  const messages: any[] = requestBody?.messages || requestBody?.input || [];
-  const systemText = messages
-    .filter((m: any) => m?.role === "system" || m?.role === "developer")
-    .map((m: any) => (typeof m?.content === "string" ? m.content : ""))
-    .join(" ")
-    .slice(0, 5000);
+	// Check transcript / system messages for known IDE signatures
+	const transcript = transcriptSnapshot || "";
+	const messages: any[] = requestBody?.messages || requestBody?.input || [];
+	const systemText = messages
+		.filter((m: any) => m?.role === "system" || m?.role === "developer")
+		.map((m: any) => (typeof m?.content === "string" ? m.content : ""))
+		.join(" ")
+		.slice(0, 5000);
 
-  const searchText = (systemText + " " + transcript).toLowerCase();
+	const searchText = (systemText + " " + transcript).toLowerCase();
 
-  // OpenClaw — "running inside OpenClaw"
-  if (searchText.includes("openclaw")) return "OpenClaw";
+	// OpenClaw — "running inside OpenClaw"
+	if (searchText.includes("openclaw")) return "OpenClaw";
 
-  // Codex CLI — "Codex desktop context" or "Codex (desktop) app" or codex sandbox_mode
-  if (searchText.includes("codex desktop context") || searchText.includes("codex (desktop) app")) return "Codex CLI";
+	// Hermes Agent — Hermes-specific patterns
+	if (searchText.includes("hermes") || searchText.includes("hermes-agent")) return "Hermes";
+	if (searchText.includes("n8n")) return "n8n Workflow";
 
-  // Check tool names for IDE fingerprints
-  const tools: string[] = [];
-  if (Array.isArray(requestBody?.tools)) {
-    for (const t of requestBody.tools) {
-      const name = t?.function?.name || t?.name || "";
-      if (name) tools.push(name.toLowerCase());
-    }
-  }
-  const toolSet = new Set(tools);
+	// Zed editor
+	if (searchText.includes("zed.dev") || searchText.includes("[zed]")) return "Zed";
 
-  // Codex CLI — uses exec_command, apply_patch, codex_app
-  if (toolSet.has("codex_app") || toolSet.has("apply_patch") && toolSet.has("exec_command")) return "Codex CLI";
+	// Codex CLI — "Codex desktop context" or "Codex (desktop) app" or codex sandbox_mode
+	if (searchText.includes("codex desktop context") || searchText.includes("codex (desktop) app")) return "Codex CLI";
 
-  // OpenCode — uses TodoWrite, Skill, Glob, Grep, Agent (exact OpenCode toolset)
-  if (toolSet.has("todowrite") && toolSet.has("skill") && toolSet.has("glob")) return "OpenCode";
-  if (toolSet.has("todowrite") && toolSet.has("webfetch") && toolSet.has("bash")) return "OpenCode";
+	// Check tool names for IDE fingerprints
+	const tools: string[] = [];
+	if (Array.isArray(requestBody?.tools)) {
+		for (const t of requestBody.tools) {
+			const name = t?.function?.name || t?.name || "";
+			if (name) tools.push(name.toLowerCase());
+		}
+	}
+	const toolSet = new Set(tools);
 
-  // Claude Code — uses Agent, TodoWrite, Bash but with TaskCreate/TaskGet
-  if (toolSet.has("taskcreate") && toolSet.has("taskget") && toolSet.has("bash")) return "Claude Code";
+	// Codex CLI — uses exec_command, apply_patch, codex_app
+	if (toolSet.has("codex_app") || (toolSet.has("apply_patch") && toolSet.has("exec_command"))) return "Codex CLI";
 
-  // Roo Code — uses apply_diff, attempt_completion, read_file, write_to_file
-  if (toolSet.has("apply_diff") && toolSet.has("attempt_completion") && toolSet.has("read_file")) return "Roo Code";
+	// OpenCode — uses TodoWrite, Skill, Glob, Grep, Agent (exact OpenCode toolset)
+	if (toolSet.has("todowrite") && toolSet.has("skill") && toolSet.has("glob")) return "OpenCode";
+	if (toolSet.has("todowrite") && toolSet.has("webfetch") && toolSet.has("bash")) return "OpenCode";
 
-  // Cline — uses read_file, write_to_file, execute_command, ask_followup_question (without apply_diff)
-  if (toolSet.has("execute_command") && toolSet.has("read_file") && toolSet.has("ask_followup_question") && !toolSet.has("apply_diff")) return "Cline";
+	// Claude Code — uses Agent, TodoWrite, Bash but with TaskCreate/TaskGet
+	if (toolSet.has("taskcreate") && toolSet.has("taskget") && toolSet.has("bash")) return "Claude Code";
 
-  // Kiro — uses update_plan, get_goal, create_goal
-  if (toolSet.has("update_plan") && toolSet.has("get_goal")) return "Kiro";
+	// Roo Code — uses apply_diff, attempt_completion, read_file, write_to_file
+	if (toolSet.has("apply_diff") && toolSet.has("attempt_completion") && toolSet.has("read_file")) return "Roo Code";
 
-  // Check system prompt for other IDE mentions
-  if (searchText.includes("running inside opencode") || searchText.includes("you are opencode")) return "OpenCode";
-  if (searchText.includes("claude code") || searchText.includes("claude desktop")) return "Claude Code";
-  if (searchText.includes("running inside cursor") || searchText.includes("cursor ide")) return "Cursor";
-  if (searchText.includes("roo code") || searchText.includes("roocode")) return "Roo Code";
-  if (searchText.includes("cline")) return "Cline";
-  if (searchText.includes("windsurf")) return "Windsurf";
-  if (searchText.includes("aider")) return "Aider";
+	// Cline — uses read_file, write_to_file, execute_command, ask_followup_question (without apply_diff)
+	if (toolSet.has("execute_command") && toolSet.has("read_file") && toolSet.has("ask_followup_question") && !toolSet.has("apply_diff")) return "Cline";
 
-  return null;
+	// Kiro — uses update_plan, get_goal, create_goal
+	if (toolSet.has("update_plan") && toolSet.has("get_goal")) return "Kiro";
+
+	// Windsurf — uses similar tools but with different naming
+	if (toolSet.has("windsurf") || searchText.includes("windsurf")) return "Windsurf";
+
+	// Check system prompt for other IDE mentions
+	if (searchText.includes("running inside opencode") || searchText.includes("you are opencode")) return "OpenCode";
+	if (searchText.includes("claude code") || searchText.includes("claude desktop")) return "Claude Code";
+	if (searchText.includes("running inside cursor") || searchText.includes("cursor ide")) return "Cursor";
+	if (searchText.includes("roo code") || searchText.includes("roocode")) return "Roo Code";
+	if (searchText.includes("cline")) return "Cline";
+	if (searchText.includes("windsurf")) return "Windsurf";
+	if (searchText.includes("aider")) return "Aider";
+
+	return null;
 }
 
 /**
