@@ -16,6 +16,7 @@ export default defineConfig({
       },
     },
   },
+  base: "/portal/",
   build: {
     outDir: "dist",
     emptyOutDir: true,

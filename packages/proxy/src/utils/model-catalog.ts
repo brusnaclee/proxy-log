@@ -763,6 +763,7 @@ const AUTO_MODEL_EXCLUDE_PATTERNS = [
   /-character$/i,      // Character/roleplay models
   /^express$/i,        // you.com Express agent (route explicitly, not via auto)
   /^advanced$/i,       // you.com Advanced agent (route explicitly, not via auto)
+  /^conduit\//i,       // Conduit transient upstream — never in auto pool
 ];
 
 export function isAutoCompatible(modelId: string): boolean {
