@@ -759,7 +759,6 @@ const AUTO_MODEL_EXCLUDE_PATTERNS = [
   /voicedesign/i,      // Voice design
   /voiceclone/i,       // Voice cloning
   /-realtime/i,        // Realtime streaming models (audio/video)
-  /^glm/i,             // GLM vendor models (glm-5.1, glm-z1, etc.)
   /-character$/i,      // Character/roleplay models
   /^express$/i,        // you.com Express agent (route explicitly, not via auto)
   /^advanced$/i,       // you.com Advanced agent (route explicitly, not via auto)
