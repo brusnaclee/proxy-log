@@ -98,6 +98,13 @@ async function main() {
   );
   console.log(dbUpdate.stdout || dbUpdate.stderr || 'No DB update output');
 
+  // 6b. Fix gpy provider API key (use working key from provider_api_keys table)
+  console.log('\n--- Fixing gpy provider API key ---');
+  const gpyKeyUpdate = await ssh.execCommand(
+    "sudo -u postgres psql -d monit_api -c \"UPDATE providers SET api_key = (SELECT api_key FROM provider_api_keys WHERE provider_id = 22 AND is_active = true AND is_limited = false LIMIT 1) WHERE name = 'gpy'\" 2>&1"
+  );
+  console.log(gpyKeyUpdate.stdout || gpyKeyUpdate.stderr || 'No gpy key update output');
+
   // 7. Restart PM2 Services
   console.log('\n--- Restarting PM2 services ---');
   const restart = await ssh.execCommand('pm2 restart proxy-api discord-bot dashboard', { cwd: projectDir });
