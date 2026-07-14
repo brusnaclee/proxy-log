@@ -1,6 +1,6 @@
 ﻿import { config as loadEnv } from "dotenv";
-import { existsSync } from "fs";
-import { resolve } from "path";
+import { existsSync, readFileSync } from "fs";
+import { resolve, join } from "path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
@@ -93,24 +93,64 @@ app.route("/portal/api", portalRoutes);
 app.use("/recap-assets/*", serveStatic({ root: "./public" }));
 app.route("/recap", recapWebRoutes);
 
-// ─── Portal SPA: serve from ./public/portal/ ──────────────────────────────────────
-// IMPORTANT: Must come AFTER all specific routes (/v1, /admin, /portal/api, /recap)
-// so that those paths are handled first and don't get caught by the SPA fallback.
-// When no static file matches, serve index.html for SPA client-side routing.
-// The /portal/* serves portal static assets (JS/CSS/images).
-// The root /* fallback serves portal index.html for / (the portal entry point).
+// ─── Portal SPA: static assets + SPA fallback ───────────────────────────────────
+// IMPORTANT: Must come AFTER /v1, /admin, /portal/api, /recap so API routes win.
+// /portal/* → JS/CSS/assets from ./public/portal/
+// Any other browser path (/, /login, /keys, …) → index.html for client routing.
 app.use("/portal/*", serveStatic({
   root: "./public/portal",
-  rewriteRequestPath: (path) => path.startsWith("/portal") ? path.slice("/portal".length) || "/index.html" : "/index.html",
+  rewriteRequestPath: (path) =>
+    path.startsWith("/portal") ? path.slice("/portal".length) || "/index.html" : "/index.html",
 }));
-// Root catch-all for SPA (portal at /) — must be last route
-app.use("/", serveStatic({
-  root: "./public/portal",
-  rewriteRequestPath: () => "/index.html",
-}));
+
+const PORTAL_INDEX_PATH = join(process.cwd(), "public", "portal", "index.html");
+const API_PREFIXES = ["/v1", "/admin", "/portal", "/recap", "/health", "/internal"];
+
+function isApiOrAssetPath(pathname: string): boolean {
+  return API_PREFIXES.some(
+    (p) => pathname === p || pathname.startsWith(p + "/"),
+  );
+}
+
+function servePortalIndex(c: any) {
+  try {
+    const html = readFileSync(PORTAL_INDEX_PATH, "utf8");
+    return c.html(html);
+  } catch {
+    return c.json({
+      error: {
+        message: "Portal not built. Run portal build and copy to public/portal.",
+        type: "not_found",
+      },
+    }, 404);
+  }
+}
+
+// Exact root
+app.get("/", (c) => servePortalIndex(c));
+
+// SPA client routes: /login, /keys, /activity, /settings, etc.
+// Must NOT catch /v1/*, /admin/*, /portal/*, /recap*, /health
+app.get("*", (c, next) => {
+  const pathname = new URL(c.req.url).pathname;
+  if (isApiOrAssetPath(pathname)) {
+    return next();
+  }
+  // Only serve SPA for navigation-style GETs (not API-ish Accept headers)
+  const accept = c.req.header("Accept") || "";
+  if (accept.includes("application/json") && !accept.includes("text/html")) {
+    return next();
+  }
+  return servePortalIndex(c);
+});
 
 // ─── 404 Handler ────────────────────────────────────────────────────────────────
 app.notFound((c) => {
+  const pathname = new URL(c.req.url).pathname;
+  // Browser navigations that somehow missed the SPA handler still get index.html
+  if (!isApiOrAssetPath(pathname) && c.req.method === "GET") {
+    return servePortalIndex(c);
+  }
   return c.json({
     error: {
       message: "Not found. Use /v1/* for API proxy or /admin/* for dashboard API.",

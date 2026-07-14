@@ -1,9 +1,14 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Tokito — Your Dashboard</title>
+    <style>
+      /* Critical fallback so white flash never shows before CSS loads */
+      html, body { margin: 0; background: #0c1117; color: #e8ecef; min-height: 100vh; }
+      #root { min-height: 100vh; }
+    </style>
   </head>
   <body>
     <div id="root"></div>
