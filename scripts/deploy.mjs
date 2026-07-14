@@ -98,10 +98,10 @@ async function main() {
   );
   console.log(dbUpdate.stdout || dbUpdate.stderr || 'No DB update output');
 
-  // 6b. Fix gpy provider API key (use working key from provider_api_keys table)
+  // 6b. Fix gpy provider API key (prefer non-limited, else any active key)
   console.log('\n--- Fixing gpy provider API key ---');
   const gpyKeyUpdate = await ssh.execCommand(
-    "sudo -u postgres psql -d monit_api -c \"UPDATE providers SET api_key = (SELECT api_key FROM provider_api_keys WHERE provider_id = 22 AND is_active = true AND is_limited = false LIMIT 1) WHERE name = 'gpy'\" 2>&1"
+    "sudo -u postgres psql -d monit_api -c \"UPDATE providers SET api_key = COALESCE((SELECT api_key FROM provider_api_keys WHERE provider_id = (SELECT id FROM providers WHERE name='gpy') AND is_active = true AND is_limited = false ORDER BY request_count ASC LIMIT 1), (SELECT api_key FROM provider_api_keys WHERE provider_id = (SELECT id FROM providers WHERE name='gpy') AND is_active = true ORDER BY request_count ASC LIMIT 1), api_key) WHERE name = 'gpy'\" 2>&1"
   );
   console.log(gpyKeyUpdate.stdout || gpyKeyUpdate.stderr || 'No gpy key update output');
 
