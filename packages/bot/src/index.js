@@ -132,6 +132,11 @@ const RECAP_PUBLIC_BASE_URL = (
 	PROXY_PUBLIC_BASE_URL ||
 	'https://api.tokito.xyz'
 ).replace(/\/$/, '');
+const PORTAL_DASHBOARD_URL = (
+	process.env.PORTAL_DASHBOARD_URL ||
+	RECAP_PUBLIC_BASE_URL ||
+	'https://api.tokito.xyz'
+).replace(/\/$/, '');
 const RECAP_DEBUG_INTERVAL_MS = 24 * 60 * 60 * 1000; // daily
 let recapState = {
 	panelMessageId: null,
@@ -2032,6 +2037,14 @@ function scheduleMidnightReset() {
 	scheduleNext();
 }
 
+function buildDashboardLinkButton(label = 'More di Dashboard') {
+	return new ButtonBuilder()
+		.setLabel(label)
+		.setEmoji('📊')
+		.setStyle(ButtonStyle.Link)
+		.setURL(PORTAL_DASHBOARD_URL);
+}
+
 function buildPanelRow() {
 	return new ActionRowBuilder().addComponents(
 		new ButtonBuilder()
@@ -2046,6 +2059,7 @@ function buildPanelRow() {
 			.setCustomId(PANEL_DETAILS)
 			.setLabel('Model Details')
 			.setStyle(ButtonStyle.Secondary),
+		buildDashboardLinkButton('Dashboard'),
 	);
 }
 
@@ -2054,7 +2068,8 @@ function buildPanelEmbed() {
 		.setTitle('API Checker Panel')
 		.setColor(0x3498db)
 		.setDescription(
-			'Monitoring endpoint Tokito untuk validasi status model AI dan performa respons secara berkala.',
+			'Monitoring endpoint Tokito untuk validasi status model AI dan performa respons secara berkala.\n\n' +
+				`Untuk detail lengkap (usage, keys, activity), buka [Dashboard](${PORTAL_DASHBOARD_URL}).`,
 		)
 		.addFields(
 			{
@@ -2066,7 +2081,7 @@ function buildPanelEmbed() {
 			{
 				name: 'How To Use',
 				value:
-					'Klik `Model Status` untuk melihat online/offline per model, atau `Latency Benchmark` untuk melihat waktu respons terbaru.',
+					'Klik `Model Status` untuk melihat online/offline per model, atau `Latency Benchmark` untuk melihat waktu respons terbaru. Klik `Dashboard` untuk lihat more di web portal.',
 				inline: false,
 			},
 		);
@@ -2126,6 +2141,13 @@ async function ensurePanelMessage() {
 
 	if (!shouldRecreate) {
 		saveTokitoState({ panelMessageId: currentPanel.id });
+		// Refresh embed + buttons in place (e.g. new Dashboard link)
+		await currentPanel
+			.edit({
+				embeds: [buildPanelEmbed()],
+				components: [buildPanelRow()],
+			})
+			.catch(() => {});
 		for (const msg of panelMessages.values()) {
 			if (msg.id !== currentPanel.id) await msg.delete().catch(() => {});
 		}
@@ -3754,6 +3776,7 @@ async function buildSearchEmbed() {
 	const lines = [
 		'Klik tombol **Lihat Usage Saya** untuk melihat penggunaan API Anda langsung (tanpa input ID).',
 		'Setelah itu, gunakan **Cari Usage User Lain** jika ingin cek user lain.',
+		`Untuk detail lebih lengkap (charts, keys, activity, models), buka **Dashboard**: ${PORTAL_DASHBOARD_URL}`,
 		'',
 		'**Global Prompt Limits:**',
 		`- Prompt Limit: ${fmt(limits.globalPromptLimit, 'req')} (${limits.globalPromptLimitWindow || '1d'})`,
@@ -3768,6 +3791,7 @@ async function buildSearchEmbed() {
 		'',
 		'_Per-user limits bervariasi per API key. Klik tombol untuk cek usage spesifik._',
 		'_Klik **See Model Limit** untuk lihat override per-model atau pattern._',
+		'_Klik **More di Dashboard** untuk buka portal web._',
 	];
 
 	return new EmbedBuilder()
@@ -3798,6 +3822,7 @@ function buildSearchRow(includeOther = false) {
 				.setStyle(ButtonStyle.Secondary),
 		);
 	}
+	buttons.push(buildDashboardLinkButton());
 	return new ActionRowBuilder().addComponents(...buttons);
 }
 
@@ -3818,6 +3843,7 @@ function buildUsageDetailRow(includeOther = false) {
 				.setStyle(ButtonStyle.Secondary),
 		);
 	}
+	buttons.push(buildDashboardLinkButton());
 	return new ActionRowBuilder().addComponents(...buttons);
 }
 function fmtGlobalModelLimitRow(r) {
@@ -4959,13 +4985,16 @@ async function refreshRankingEmbeds() {
 		console.error('[ranking] Edit userByTokens failed:', err.message);
 	}
 
-	// Embed 5: Search User (with refreshed limits)
+	// Embed 5: Search User (with refreshed limits + dashboard button)
 	try {
 		const msg = await channel.messages
 			.fetch(messages.searchUser)
 			.catch(() => null);
 		if (msg) {
-			await msg.edit({ embeds: [await buildSearchEmbed()] });
+			await msg.edit({
+				embeds: [await buildSearchEmbed()],
+				components: [buildSearchRow()],
+			});
 		}
 	} catch (err) {
 		console.error('[ranking] Edit searchUser failed:', err.message);
@@ -5460,6 +5489,7 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 			{ name: '📅 Hari Ini', value: periodField(today), inline: true },
 			{ name: '📆 Bulan Ini', value: periodField(month), inline: true },
 		)
+		.setFooter({ text: `More detail → ${PORTAL_DASHBOARD_URL}` })
 		.setTimestamp();
 
 	return embed;
