@@ -16,7 +16,14 @@ async function request<T>(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-    throw new Error(err.error || `HTTP ${res.status}`);
+    const raw = err?.error;
+    const message =
+      typeof raw === "string"
+        ? raw
+        : typeof raw?.message === "string"
+          ? raw.message
+          : `HTTP ${res.status}`;
+    throw new Error(message);
   }
 
   return res.json();

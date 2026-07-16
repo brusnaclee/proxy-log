@@ -22,10 +22,9 @@ export default function LoginPage() {
     try {
       const result = await api.auth.login(apiKey);
       if (result.requiresPassword) {
-        // Need password verification
+        if (result.discordUserId) setDiscordUserId(result.discordUserId);
         setStep("password");
       } else {
-        // Direct login success
         navigate("/");
       }
     } catch (err) {

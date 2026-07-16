@@ -90,6 +90,23 @@ export async function initializeDatabase() {
 		console.warn('⚠️ trial idempotent migration warning:', err?.message || err);
 	}
 
+	// User portal settings (password for portal login)
+	try {
+		await pool.query(`
+			CREATE TABLE IF NOT EXISTS user_portal_settings (
+				discord_user_id TEXT PRIMARY KEY,
+				password_hash TEXT,
+				password_set_at TIMESTAMP,
+				created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+				updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+			)
+		`);
+		await pool.query(`GRANT ALL PRIVILEGES ON TABLE user_portal_settings TO CURRENT_USER`).catch(() => undefined);
+		console.log('✅ Applied idempotent user_portal_settings migrations');
+	} catch (err: any) {
+		console.warn('⚠️ user_portal_settings migration warning:', err?.message || err);
+	}
+
 	// Push schema using drizzle-kit push equivalent at runtime:
 	// We rely on drizzle-kit push:pg being run before first start.
 	// But we still seed defaults below.
