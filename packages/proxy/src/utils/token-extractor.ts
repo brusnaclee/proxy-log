@@ -122,6 +122,8 @@ export function consumeStreamPayload(acc: CompletionAccumulator, data: any): voi
     if (message) {
       if (typeof message.content === "string") acc.text += message.content;
       if (Array.isArray(message.content)) acc.text += collectFromContentBlocks(message.content);
+      if (typeof message.reasoning === "string") acc.text += message.reasoning;
+      if (typeof message.reasoning_content === "string") acc.text += message.reasoning_content;
       if (Array.isArray(message.tool_calls)) {
         for (const tc of message.tool_calls) {
           const args = tc?.function?.arguments;

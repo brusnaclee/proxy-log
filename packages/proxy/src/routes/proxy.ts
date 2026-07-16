@@ -119,12 +119,25 @@ function tokenCountOpts(keyRecord: { isTrial: boolean }) {
 	return keyRecord.isTrial ? { isTrial: true as const } : undefined;
 }
 
-const TRANSIENT_UPSTREAM_PROVIDERS = new Set(['conduit', 'ozdoev']);
+const TRANSIENT_UPSTREAM_PROVIDERS = new Set(['conduit', 'ozdoev', 'phantomv2']);
 
 function isTransientUpstreamProvider(providerName: string | null | undefined) {
 	return TRANSIENT_UPSTREAM_PROVIDERS.has(
 		String(providerName || '').toLowerCase(),
 	);
+}
+
+/** Providers that speak both OpenAI chat + native Anthropic /v1/messages (e.g. amanai). */
+function providerSupportsNativeAnthropic(provider: {
+	name?: string | null;
+	endpoint?: string | null;
+	endpointType?: string | null;
+} | null | undefined): boolean {
+	if (!provider) return false;
+	if (provider.endpointType === 'anthropic') return true;
+	const name = String(provider.name || '').toLowerCase();
+	const endpoint = String(provider.endpoint || '').toLowerCase();
+	return name === 'phantomv2' || endpoint.includes('amanai.dev');
 }
 
 function backfillOpenAIMessageContent<T extends { content?: unknown; reasoning_content?: unknown; reasoning?: unknown } | null | undefined>(
@@ -139,18 +152,19 @@ function backfillOpenAIMessageContent<T extends { content?: unknown; reasoning_c
 		typeof msg?.reasoning === 'string' ? msg.reasoning : undefined;
 	const contentStr: string | undefined = typeof msg?.content === 'string' ? msg.content : undefined;
 
-	// FIX: Only backfill content if it's missing AND reasoning_content is different
-	// If reasoning_content === content (identical), set content to null to avoid showing twice
-	if (typeof msg?.content !== 'string' && rcStr?.trim()) {
+	// FIX: Only backfill content if it's missing OR empty whitespace.
+	// Never null-out content when it would leave the message empty — that caused
+	// Hermes/Claude Code empty bubbles and false 502s when reasoning == content.
+	const contentEmpty = typeof msg?.content !== 'string' || !String(msg.content).trim();
+	if (contentEmpty && rcStr?.trim()) {
 		msg.content = rcStr;
 	} else if (contentStr && rcStr && contentStr === rcStr) {
-		// FIX: Identical content - this is a duplicate bug, set content to null
-		msg.content = null;
-	} else if (typeof msg?.content !== 'string' && rStr?.trim()) {
+		// Duplicate reasoning — drop reasoning, keep content
+		delete msg.reasoning_content;
+	} else if (contentEmpty && rStr?.trim()) {
 		msg.content = rStr;
 	} else if (contentStr && rStr && contentStr === rStr) {
-		// FIX: Identical content with reasoning field too
-		msg.content = null;
+		delete msg.reasoning;
 	}
 	// OpenCode renders reasoning_content as fragmented "Thought: Xms" lines.
 	// Strip only for OpenCode; Cursor/Claude Code keep reasoning fields intact.
@@ -179,18 +193,16 @@ function backfillOpenAIResponseContent(
 		typeof d?.reasoning === 'string' ? d.reasoning : undefined;
 	const contentStr: string | undefined = typeof d?.content === 'string' ? d.content : undefined;
 
-	// FIX: Only backfill content if it's missing AND reasoning_content is different
-	// If reasoning_content === content (identical), set content to null to avoid showing twice
-	if (typeof d?.content !== 'string' && rcStr?.trim()) {
+	// FIX: Only backfill content if it's missing or empty. Never null-out to empty.
+	const contentEmpty = typeof d?.content !== 'string' || !String(d.content).trim();
+	if (contentEmpty && rcStr?.trim()) {
 		d.content = rcStr;
 	} else if (contentStr && rcStr && contentStr === rcStr) {
-		// FIX: Identical content - this is a duplicate bug, set content to null
-		d.content = null;
-	} else if (typeof d?.content !== 'string' && rStr?.trim()) {
+		delete d.reasoning_content;
+	} else if (contentEmpty && rStr?.trim()) {
 		d.content = rStr;
 	} else if (contentStr && rStr && contentStr === rStr) {
-		// FIX: Identical content with reasoning field too
-		d.content = null;
+		delete d.reasoning;
 	}
 	if (opts?.stripReasoning) {
 		delete d.reasoning_content;
@@ -661,7 +673,14 @@ async function fetchWithKeyRotation(
 		}
 
 		if (triedKeyIds.has(keyResult.keyId)) {
-			// Already tried this key (shouldn't happen with proper filtering, but safety)
+			// Only one (or few) keys — already tried this one. For transient
+			// 401/429, retry the same key with backoff instead of aborting the
+			// whole provider (which used to trigger silent auto→gemini fallback).
+			if (attempt < MAX_KEY_ATTEMPTS - 1) {
+				await sleep(UPSTREAM_RETRY_BACKOFF_MS * (attempt + 1));
+				triedKeyIds.delete(keyResult.keyId);
+				continue;
+			}
 			throw new Error('No new API keys available. All have been tried.');
 		}
 		triedKeyIds.add(keyResult.keyId);
@@ -1627,9 +1646,11 @@ proxy.all('/*', async (c) => {
 	}
 	if (isAnthropicRequest && requestBody) {
 		const routeProvider = await getProviderForModel(model);
-		if (routeProvider?.endpointType === 'anthropic') {
-			// Native Anthropic client → Anthropic upstream: keep body as-is.
-			console.log(`[proxy] anthropic passthrough request for model=${model}`);
+		if (providerSupportsNativeAnthropic(routeProvider)) {
+			// Native Anthropic client → upstream that supports /v1/messages: keep body as-is.
+			// Critical for phantomv2/amanai — translating to OpenAI then falling back to
+			// auto/gemini was producing wrong models and Chinese safety refusals.
+			console.log(`[proxy] anthropic passthrough request for model=${model} provider=${routeProvider?.name}`);
 		} else {
 		try {
 			const openaiBody = convertAnthropicToOpenAI(requestBody as any);
@@ -3252,8 +3273,10 @@ proxy.all('/*', async (c) => {
 	upstreamHeaders['x-forwarded-for'] = clientIp;
 	if (contentType) upstreamHeaders['Content-Type'] = contentType;
 
-	// Detect Anthropic provider
-	let isAnthropicProvider = targetProvider.endpointType === 'anthropic';
+	// Detect Anthropic provider (native endpointType OR dual OpenAI+Anthropic like amanai)
+	let isAnthropicProvider =
+		targetProvider.endpointType === 'anthropic' ||
+		(isAnthropicRequest && providerSupportsNativeAnthropic(targetProvider));
 	// Detect You.com provider (agents API)
 	let isYouComProvider = targetProvider.endpointType === 'youcom';
 	let anthropicRequestBody: string | null = null;
@@ -3355,9 +3378,10 @@ proxy.all('/*', async (c) => {
 				);
 			}
 			modelsToTry = built.models;
-		} else if (!keyRecord.isTrial && model !== 'auto') {
-			modelsToTry = [model, 'auto'];
 		} else {
+			// Phantom / normal keys: ONLY try the requested model.
+			// Do NOT silently fall back to `auto` (that was swapping Claude Code
+			// requests onto gemini/GLM and producing wrong/Chinese safety replies).
 			modelsToTry = [model];
 		}
 
@@ -3665,7 +3689,9 @@ proxy.all('/*', async (c) => {
 		const resolvedProvider = await getProviderForModel(model);
 		if (resolvedProvider) {
 			targetProvider = resolvedProvider;
-			isAnthropicProvider = targetProvider.endpointType === 'anthropic';
+			isAnthropicProvider =
+				targetProvider.endpointType === 'anthropic' ||
+				(isAnthropicRequest && providerSupportsNativeAnthropic(targetProvider));
 			isYouComProvider = targetProvider.endpointType === 'youcom';
 		}
 
@@ -4251,12 +4277,25 @@ proxy.all('/*', async (c) => {
 		// Guard: if upstream returned HTTP 200 but the response has zero visible content,
 		// return 502 so the client gets a meaningful error instead of "200 OK" with an
 		// empty bubble. This mirrors the streaming guard at lines 3586–3615.
+		// Count reasoning_content as visible — some models (GLM/Kimi via amanai) put
+		// output only there; emptying that into a hard 502 broke Hermes loops.
+		const hasReasoningOnly = (() => {
+			try {
+				const p = JSON.parse(responseBody);
+				const msg = p?.choices?.[0]?.message;
+				const rc = msg?.reasoning_content || msg?.reasoning;
+				return typeof rc === 'string' && rc.trim().length > 0;
+			} catch {
+				return false;
+			}
+		})();
 		if (
 			statusCode >= 200 &&
 			statusCode < 300 &&
 			completionTokens === 0 &&
 			!responsePreview &&
-			!hasActualToolCalls
+			!hasActualToolCalls &&
+			!hasReasoningOnly
 		) {
 			const errMsg =
 				`Upstream model "${model}" returned empty non-streaming response`;
