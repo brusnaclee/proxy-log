@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import Layout from "./components/Layout";
 import LoginPage from "./pages/LoginPage";
 import OverviewPage from "./pages/OverviewPage";
+import ModelsPage from "./pages/ModelsPage";
 import KeysPage from "./pages/KeysPage";
 import ActivityPage from "./pages/ActivityPage";
 import SettingsPage from "./pages/SettingsPage";
@@ -53,6 +54,7 @@ export default function App() {
         }
       >
         <Route index element={<OverviewPage />} />
+        <Route path="models" element={<ModelsPage />} />
         <Route path="keys" element={<KeysPage />} />
         <Route path="activity" element={<ActivityPage />} />
         <Route path="settings" element={<SettingsPage />} />

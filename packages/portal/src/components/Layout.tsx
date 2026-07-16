@@ -1,6 +1,6 @@
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
-import { LayoutDashboard, Key, Activity, Settings, LogOut, Menu, X, Zap } from "lucide-react";
+import { LayoutDashboard, Key, Activity, Settings, LogOut, Menu, X, Zap, Boxes } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
@@ -24,6 +24,7 @@ export default function Layout() {
 
   const navItems = [
     { to: "/", icon: LayoutDashboard, label: t("Overview"), end: true },
+    { to: "/models", icon: Boxes, label: t("Models") },
     { to: "/keys", icon: Key, label: t("Keys") },
     { to: "/activity", icon: Activity, label: t("Activity") },
     { to: "/settings", icon: Settings, label: t("Settings") },

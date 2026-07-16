@@ -44,6 +44,7 @@ export function formatDateWIB(dateStr: string): string {
 
 // Human-readable status label
 export function statusLabel(code: number): string {
+  if (code >= 200 && code < 300) return "OK";
   const labels: Record<number, string> = {
     401: "Unauthorized",
     403: "Forbidden",
@@ -52,7 +53,7 @@ export function statusLabel(code: number): string {
     502: "Bad Gateway",
     503: "Unavailable",
   };
-  return labels[code] || `Error ${code}`;
+  return labels[code] || `HTTP ${code}`;
 }
 
 // Detailed status explanation

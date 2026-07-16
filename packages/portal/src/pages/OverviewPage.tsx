@@ -9,7 +9,7 @@ import {
   ExternalLink, Info,
 } from "lucide-react";
 import { PeriodSelector, type PeriodKey } from "@/components/PeriodSelector";
-import { api, type MeResponse, type TopError, type ModelEntry, type RecapStatus } from "@/lib/api";
+import { api, type MeResponse, type TopError, type RecapStatus } from "@/lib/api";
 import { formatNumber, formatCost } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n";
 
@@ -86,13 +86,12 @@ export default function OverviewPage() {
   const [compare, setCompare] = useState<{ today: any; yesterday: any } | null>(null);
   const [forecast, setForecast] = useState<any>(null);
   const [user, setUser] = useState<MeResponse | null>(null);
-  const [modelsList, setModelsList] = useState<ModelEntry[]>([]);
   const [recap, setRecap] = useState<RecapStatus | null>(null);
+  const [expandedError, setExpandedError] = useState<number | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [cheatSheetOpen, setCheatSheetOpen] = useState(false);
-  const [modelsExpanded, setModelsExpanded] = useState(false);
   const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
 
   const fetchPeriodData = useCallback((p: string) => {
@@ -114,10 +113,9 @@ export default function OverviewPage() {
       api.stats.topErrors(period).catch(() => []),
       api.stats.compare().catch(() => null),
       api.stats.forecast().catch(() => null),
-      api.models.list().catch(() => []),
       api.recap.status().catch(() => null),
     ])
-      .then(([periodData, userData, errorsData, compareData, forecastData, modelsData, recapData]) => {
+      .then(([periodData, userData, errorsData, compareData, forecastData, recapData]) => {
         const [statsRes, tsRes, modelRes, ideRes] = periodData as [any, any[], any[], any[]];
         setStats(statsRes);
         setTimeseries(tsRes);
@@ -127,7 +125,6 @@ export default function OverviewPage() {
         setTopErrors(errorsData as TopError[]);
         setCompare(compareData as any);
         setForecast(forecastData as any);
-        setModelsList(modelsData as ModelEntry[]);
         setRecap(recapData as RecapStatus | null);
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load data"))
@@ -216,52 +213,87 @@ export default function OverviewPage() {
 
   const renderLimitsCard = () => {
     if (!user) return null;
-    const { limits, usageToday, deviceUsage, multipliers } = user;
-    const hasAnyLimit = limits.dailyTokenLimit > 0 || limits.monthlyTokenLimit > 0 || limits.maxDevices > 0;
-    if (!hasAnyLimit) return null;
+    const { limits, usageToday, usageMonth } = user;
+    const sourceLabel = (src?: string) => {
+      if (src === "override") return t("override");
+      if (src === "global") return t("global");
+      return "";
+    };
+
+    const bars: Array<{ label: string; value: number; max: number; sublabel?: string; source?: string }> = [];
+    if (limits.dailyTokenLimit > 0) {
+      bars.push({
+        label: t("Daily Limit"),
+        value: (usageToday.totalTokens ?? usageToday.promptTokens + usageToday.completionTokens),
+        max: limits.dailyTokenLimit,
+        sublabel: "tokens",
+        source: sourceLabel(limits.dailyTokenLimitSource),
+      });
+    }
+    if (limits.dailyInputTokenLimit > 0) {
+      bars.push({
+        label: t("Input Tokens"),
+        value: usageToday.promptTokens,
+        max: limits.dailyInputTokenLimit,
+        sublabel: "tokens",
+        source: sourceLabel(limits.dailyInputTokenLimitSource),
+      });
+    }
+    if (limits.dailyOutputTokenLimit > 0) {
+      bars.push({
+        label: t("Output Tokens"),
+        value: usageToday.completionTokens,
+        max: limits.dailyOutputTokenLimit,
+        sublabel: "tokens",
+        source: sourceLabel(limits.dailyOutputTokenLimitSource),
+      });
+    }
+    if (limits.monthlyTokenLimit > 0) {
+      bars.push({
+        label: t("Monthly Limit"),
+        value: usageMonth?.totalTokens ?? 0,
+        max: limits.monthlyTokenLimit,
+        sublabel: "tokens",
+        source: sourceLabel(limits.monthlyTokenLimitSource),
+      });
+    }
+    if (limits.promptLimit > 0) {
+      bars.push({
+        label: `${t("Prompt Limit")} (${limits.promptLimitWindow})`,
+        value: usageToday.promptCount ?? usageToday.requests,
+        max: limits.promptLimit,
+        sublabel: "prompts",
+        source: sourceLabel(limits.promptLimitSource),
+      });
+    }
+
+    const hasRate = limits.rateLimit > 0;
+    if (!bars.length && !hasRate) return null;
 
     return (
       <div className="bg-card border border-border rounded-xl p-4 space-y-3 animate-fade-in">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-medium text-foreground">{t("Usage Today")}</h3>
-          {user.accountType === "phantom" && (multipliers.input !== 1 || multipliers.output !== 1) && (
-            <span className="text-xs text-muted-foreground">
-              {t("Token Multiplier")}: ×{multipliers.input}↑ ×{multipliers.output}↓
-            </span>
-          )}
-        </div>
+        <h3 className="text-sm font-medium text-foreground">{t("Usage Today")}</h3>
         <div className="space-y-2">
-          {limits.dailyTokenLimit > 0 && (
-            <ProgressBar
-              label={t("Daily Limit")}
-              value={(usageToday.promptTokens + usageToday.completionTokens)}
-              max={limits.dailyTokenLimit}
-              sublabel="tokens"
-            />
-          )}
-          {limits.maxDevices > 0 && (
-            <ProgressBar
-              label={t("Devices")}
-              value={deviceUsage.used}
-              max={deviceUsage.max}
-              sublabel={t("devices")}
-            />
-          )}
-          {limits.dailyInputTokenLimit > 0 && (
-            <ProgressBar
-              label={t("Input Tokens")}
-              value={usageToday.promptTokens}
-              max={limits.dailyInputTokenLimit}
-              sublabel="tokens"
-            />
-          )}
-          {limits.dailyOutputTokenLimit > 0 && (
-            <ProgressBar
-              label={t("Output Tokens")}
-              value={usageToday.completionTokens}
-              max={limits.dailyOutputTokenLimit}
-              sublabel="tokens"
-            />
+          {bars.map((b) => (
+            <div key={b.label}>
+              <ProgressBar label={b.label} value={b.value} max={b.max} sublabel={b.sublabel} />
+              {b.source && (
+                <p className="text-[10px] text-muted-foreground mt-0.5 pl-0.5">
+                  {t("Source")}: {b.source}
+                </p>
+              )}
+            </div>
+          ))}
+          {hasRate && (
+            <div className="flex items-center justify-between text-xs pt-1 border-t border-border/50">
+              <span className="text-muted-foreground">{t("Rate Limit")}</span>
+              <span className="text-foreground">
+                {formatNumber(limits.rateLimit)} / {limits.rateLimitWindow}
+                {limits.rateLimitSource && limits.rateLimitSource !== "none" && (
+                  <span className="text-muted-foreground ml-1.5">({sourceLabel(limits.rateLimitSource)})</span>
+                )}
+              </span>
+            </div>
           )}
         </div>
       </div>
@@ -271,12 +303,8 @@ export default function OverviewPage() {
   const renderCompareStrip = () => {
     if (!compare) return null;
     const { today, yesterday } = compare;
-    const reqDiff = yesterday.requests > 0
-      ? Math.round(((today.requests - yesterday.requests) / yesterday.requests) * 100)
-      : 0;
-    const tokenDiff = yesterday.tokens > 0
-      ? Math.round(((today.tokens - yesterday.tokens) / yesterday.tokens) * 100)
-      : 0;
+    const pct = (cur: number, prev: number) =>
+      prev > 0 ? Math.round(((cur - prev) / prev) * 100) : 0;
 
     const DiffBadge = ({ val }: { val: number }) => (
       <span className={`text-xs font-medium ${val > 0 ? "text-green-400" : val < 0 ? "text-red-400" : "text-muted-foreground"}`}>
@@ -284,36 +312,27 @@ export default function OverviewPage() {
       </span>
     );
 
+    const cells = [
+      { label: t("Requests"), today: today.requests, yesterday: yesterday.requests, format: formatNumber, diff: pct(today.requests, yesterday.requests) },
+      { label: t("Input Tokens"), today: today.promptTokens, yesterday: yesterday.promptTokens, format: formatNumber, diff: pct(today.promptTokens, yesterday.promptTokens) },
+      { label: t("Output Tokens"), today: today.completionTokens, yesterday: yesterday.completionTokens, format: formatNumber, diff: pct(today.completionTokens, yesterday.completionTokens) },
+      { label: t("Est. Cost"), today: today.cost.total, yesterday: yesterday.cost.total, format: formatCost, diff: pct(today.cost.total, yesterday.cost.total) },
+    ];
+
     return (
       <div className="bg-card border border-border rounded-xl p-4 animate-fade-in">
         <h3 className="text-sm font-medium text-foreground mb-3">{t("Today vs Yesterday")}</h3>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div>
-            <p className="text-xs text-muted-foreground mb-0.5">{t("Requests")}</p>
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-lg font-semibold">{formatNumber(today.requests)}</span>
-              <DiffBadge val={reqDiff} />
+          {cells.map((c) => (
+            <div key={c.label}>
+              <p className="text-xs text-muted-foreground mb-0.5">{c.label}</p>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-lg font-semibold">{c.format(c.today)}</span>
+                <DiffBadge val={c.diff} />
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">{c.format(c.yesterday)} yesterday</p>
             </div>
-            <p className="text-xs text-muted-foreground mt-0.5">{formatNumber(yesterday.requests)} yesterday</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground mb-0.5">Tokens</p>
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-lg font-semibold">{formatNumber(today.tokens)}</span>
-              <DiffBadge val={tokenDiff} />
-            </div>
-            <p className="text-xs text-muted-foreground mt-0.5">{formatNumber(yesterday.tokens)} yesterday</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground mb-0.5">{t("Est. Cost")}</p>
-            <p className="text-lg font-semibold">{formatCost(today.cost.total)}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">{formatCost(yesterday.cost.total)} yesterday</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground mb-0.5">{t("Input Tokens")}</p>
-            <p className="text-lg font-semibold">{formatNumber(today.promptTokens)}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">{formatNumber(yesterday.promptTokens)} yesterday</p>
-          </div>
+          ))}
         </div>
       </div>
     );
@@ -354,102 +373,85 @@ export default function OverviewPage() {
     );
   };
 
-  const renderModelsSection = () => {
-    if (!modelsList.length) return null;
-    const displayList = modelsExpanded ? modelsList : modelsList.slice(0, 12);
-    return (
-      <div className="bg-card border border-border rounded-xl p-4 animate-fade-in">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-medium text-foreground">{t("Available Models")}</h3>
-          <span className="text-xs text-muted-foreground">{modelsList.length} models</span>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {displayList.map((m) => (
-            <div
-              key={m.id}
-              className={`group flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs transition-colors ${
-                m.online === false
-                  ? "border-red-400/20 bg-red-400/5 text-red-400/70"
-                  : m.online === true
-                    ? "border-green-400/20 bg-green-400/5 text-green-400"
-                    : "border-border bg-accent/30 text-muted-foreground"
-              }`}
-            >
-              <span
-                className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                  m.online === true ? "bg-green-400" : m.online === false ? "bg-red-400/60" : "bg-muted-foreground/40"
-                }`}
-              />
-              <span className="max-w-[180px] truncate">{m.id}</span>
-              <CopyButton text={m.id} />
-            </div>
-          ))}
-        </div>
-        {modelsList.length > 12 && (
-          <button
-            onClick={() => setModelsExpanded(!modelsExpanded)}
-            className="mt-3 text-xs text-primary hover:underline flex items-center gap-1"
-          >
-            {modelsExpanded ? (
-              <><ChevronUp className="w-3 h-3" /> Show less</>
-            ) : (
-              <><ChevronDown className="w-3 h-3" /> Show {modelsList.length - 12} more</>
-            )}
-          </button>
-        )}
-      </div>
-    );
-  };
-
-  const renderModelsUsed = () => {
-    if (!modelUsage.length) return null;
-    return (
-      <div className="bg-card border border-border rounded-xl p-4 animate-fade-in">
-        <h3 className="text-sm font-medium text-foreground mb-3">{t("Models You've Used")}</h3>
-        <div className="space-y-2">
-          {modelUsage.map((m) => {
-            const total = modelUsage.reduce((s, x) => s + x.tokens, 0);
-            const pct = total > 0 ? Math.round((m.tokens / total) * 100) : 0;
-            return (
-              <div key={m.model} className="flex items-center gap-3">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="text-foreground truncate max-w-[200px]">{m.model}</span>
-                    <span className="text-muted-foreground flex-shrink-0 ml-2">{formatNumber(m.tokens)} tok</span>
-                  </div>
-                  <div className="progress-bar-track">
-                    <div className="progress-bar-fill bg-primary" style={{ width: `${pct}%` }} />
-                  </div>
-                </div>
-                <span className="text-xs text-primary w-9 text-right flex-shrink-0">{pct}%</span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  };
-
   const renderTopErrors = () => {
     if (!topErrors.length) return null;
+
+    const buildDebugPaste = (err: TopError) => {
+      return [
+        `Status: ${err.statusCode}`,
+        `Count: ×${err.count}`,
+        err.model ? `Model: ${err.model}` : null,
+        err.ideDetected ? `IDE: ${err.ideDetected}` : null,
+        err.endpointPath ? `Endpoint: ${err.endpointPath}` : null,
+        "",
+        "=== Error ===",
+        err.errorMessage || err.errorSnippet || "(none)",
+        "",
+        "=== Request preview ===",
+        err.requestPreview || "(none)",
+        "",
+        "=== Upstream / response preview ===",
+        err.responsePreview || "(none)",
+      ].filter((l) => l !== null).join("\n");
+    };
+
     return (
       <div className="bg-card border border-border rounded-xl p-4 animate-fade-in">
         <div className="flex items-center gap-2 mb-3">
           <AlertTriangle className="w-4 h-4 text-yellow-400" />
           <h3 className="text-sm font-medium text-foreground">{t("Top Errors")}</h3>
+          <span className="text-[10px] text-muted-foreground ml-auto">{t("Click for details")}</span>
         </div>
         <div className="space-y-2">
-          {topErrors.slice(0, 5).map((err, i) => (
-            <div key={i} className="flex items-start gap-3 text-xs">
-              <span className={`px-1.5 py-0.5 rounded font-mono font-medium flex-shrink-0 ${
-                err.statusCode >= 500 ? "bg-red-400/10 text-red-400" : "bg-yellow-400/10 text-yellow-400"
-              }`}>
-                {err.statusCode}
-              </span>
-              <span className="text-muted-foreground truncate flex-1">{err.errorSnippet || "—"}</span>
-              <span className="text-foreground font-medium flex-shrink-0">×{err.count}</span>
-            </div>
-          ))}
+          {topErrors.slice(0, 8).map((err, i) => {
+            const open = expandedError === i;
+            return (
+              <div key={i} className="rounded-lg border border-border/60 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setExpandedError(open ? null : i)}
+                  className="w-full flex items-start gap-3 text-xs p-2.5 hover:bg-accent/40 transition-colors text-left"
+                >
+                  <span className={`px-1.5 py-0.5 rounded font-mono font-medium flex-shrink-0 ${
+                    err.statusCode >= 500 ? "bg-red-400/10 text-red-400" : "bg-yellow-400/10 text-yellow-400"
+                  }`}>
+                    {err.statusCode}
+                  </span>
+                  <span className="text-muted-foreground truncate flex-1">
+                    {err.errorSnippet || err.errorMessage || "—"}
+                  </span>
+                  <span className="text-foreground font-medium flex-shrink-0">×{err.count}</span>
+                  {open ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />}
+                </button>
+                {open && (
+                  <div className="px-3 pb-3 space-y-2 border-t border-border/50 bg-accent/20">
+                    <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground pt-2">
+                      {err.model && <span>Model: <span className="text-foreground font-mono">{err.model}</span></span>}
+                      {err.ideDetected && <span>IDE: <span className="text-foreground">{err.ideDetected}</span></span>}
+                      {err.endpointPath && <span>Endpoint: <span className="font-mono text-foreground">{err.endpointPath}</span></span>}
+                    </div>
+                    {err.requestPreview && (
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">{t("Request")}</p>
+                        <pre className="text-[11px] font-mono text-foreground/90 bg-background/60 border border-border rounded p-2 whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
+                          {err.requestPreview}
+                        </pre>
+                      </div>
+                    )}
+                    {(err.responsePreview || err.errorMessage) && (
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">{t("Upstream response")}</p>
+                        <pre className="text-[11px] font-mono text-red-300/90 bg-red-400/5 border border-red-400/10 rounded p-2 whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
+                          {err.responsePreview || err.errorMessage}
+                        </pre>
+                      </div>
+                    )}
+                    <CopyButton text={buildDebugPaste(err)} label={t("Copy for AI")} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
     );
@@ -691,14 +693,8 @@ export default function OverviewPage() {
             {renderModelChart()}
           </div>
 
-          {/* Models used breakdown */}
-          {renderModelsUsed()}
-
           {/* IDE breakdown */}
           {renderIdeBreakdown()}
-
-          {/* Available models */}
-          {renderModelsSection()}
 
           {/* Forecast ETA */}
           {renderForecast()}

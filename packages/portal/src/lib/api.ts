@@ -31,6 +31,8 @@ async function request<T>(
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+export type LimitSource = "override" | "global" | "none";
+
 export interface MeResponse {
   discordUserId: string;
   discordUsername: string | null;
@@ -51,26 +53,37 @@ export interface MeResponse {
     createdAt: string;
   }>;
   limits: {
-    maxDevices: number;
     dailyTokenLimit: number;
+    dailyTokenLimitSource?: LimitSource;
     monthlyTokenLimit: number;
+    monthlyTokenLimitSource?: LimitSource;
     dailyInputTokenLimit: number;
+    dailyInputTokenLimitSource?: LimitSource;
     dailyOutputTokenLimit: number;
+    dailyOutputTokenLimitSource?: LimitSource;
     rateLimit: number;
     rateLimitWindow: string;
+    rateLimitSource?: LimitSource;
     promptLimit: number;
     promptLimitWindow: string;
+    promptLimitSource?: LimitSource;
+    maxDevices?: number;
   };
   usageToday: {
     requests: number;
     promptTokens: number;
     completionTokens: number;
+    promptCount?: number;
+    totalTokens?: number;
   };
-  multipliers: {
+  usageMonth?: {
+    totalTokens: number;
+  };
+  multipliers?: {
     input: number;
     output: number;
   };
-  deviceUsage: {
+  deviceUsage?: {
     used: number;
     max: number;
   };
@@ -113,6 +126,13 @@ export interface TopError {
   statusCode: number;
   errorSnippet: string;
   count: number;
+  model?: string | null;
+  ideDetected?: string | null;
+  endpointPath?: string | null;
+  requestPreview?: string;
+  responsePreview?: string;
+  errorMessage?: string;
+  sampleAt?: string | null;
 }
 
 export interface CompareStats {
@@ -173,6 +193,8 @@ export interface LogItem {
   provider: string;
   endpointPath?: string | null;
   errorMessage?: string | null;
+  requestPreview?: string | null;
+  responsePreview?: string | null;
   latencyMs: number;
   statusCode: number;
   createdAt: string;
@@ -182,6 +204,8 @@ export interface ModelEntry {
   id: string;
   allowed: boolean;
   online: boolean | null;
+  checkedAt?: string | null;
+  lastCheckedMinutes?: number | null;
 }
 
 export interface RecapStatus {

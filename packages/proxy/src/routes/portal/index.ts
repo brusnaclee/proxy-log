@@ -13,7 +13,7 @@ import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { getRecapWindow } from "../../utils/recap-window.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
-import { parseTrialModelWhitelist } from "../../utils/trial-config.js";
+import { parseTrialModelWhitelist, resolveKeyDailyTokenLimit, resolveKeyPromptLimit } from "../../utils/trial-config.js";
 import { logEmitter } from "../../utils/event-emitter.js";
 import { randomBytes } from "crypto";
 
@@ -129,6 +129,19 @@ function sanitizeErrorMsg(msg: string | null | undefined): string {
     .replace(/Bearer\s+\S{6,}/g, "Bearer ***");
 }
 
+function sanitizePreview(text: string | null | undefined, maxLen = 2500): string {
+  if (!text) return "";
+  const cleaned = sanitizeErrorMsg(text);
+  return cleaned.length > maxLen ? cleaned.slice(0, maxLen) + "…" : cleaned;
+}
+
+function minutesAgo(date: Date | string | null | undefined): number | null {
+  if (!date) return null;
+  const t = date instanceof Date ? date.getTime() : new Date(date).getTime();
+  if (Number.isNaN(t)) return null;
+  return Math.max(0, Math.floor((Date.now() - t) / 60000));
+}
+
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
 portal.post("/auth/login", async (c) => {
@@ -216,7 +229,7 @@ portal.get("/me", async (c) => {
 
   const isTrial = await isTrialAccount(discordUserId);
   const primaryKey = userKeys.find(k => !k.isTrial && k.isActive) || userKeys.find(k => k.isActive) || userKeys[0];
-  const multipliers = getTokenMultipliers({ isTrial });
+  const config = (await db.select().from(adminConfig).limit(1))[0] ?? null;
 
   // Today's usage (WIB)
   const todayStart = wibTodayStartDate();
@@ -231,12 +244,45 @@ portal.get("/me", async (c) => {
     completionTokens: turnCompletionTokensSql(todayPw!, { isTrial }),
   }).from(requestLogs).where(todayPw))[0];
 
-  // Distinct devices across all user keys
-  const deviceUsageRow = (await db.execute(sql`
-    SELECT COUNT(DISTINCT fingerprint) as used
-    FROM devices
-    WHERE api_key_id IN (${userApiKeyIds(discordUserId)})
-  `)).rows[0] as any;
+  // Prompt count in effective prompt window (approx: counted requests today for portal display)
+  const promptCountToday = Number(usageToday?.requests || 0);
+
+  // This month usage (for monthly limit bar)
+  const monthRange = resolvePeriodRange("thisMonth");
+  const monthPw = and(
+    userWhere(discordUserId),
+    sql`created_at >= ${monthRange.start}`,
+    sql`status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL`,
+  );
+  const usageMonth = (await db.select({
+    tokens: turnTotalTokensSql(monthPw!, { isTrial }),
+  }).from(requestLogs).where(monthPw))[0];
+
+  const { limit: promptLimit, window: promptLimitWindow } = primaryKey
+    ? resolveKeyPromptLimit(primaryKey as any, config)
+    : { limit: 0, window: "1d" };
+  const dailyTokenLimit = primaryKey
+    ? resolveKeyDailyTokenLimit(primaryKey as any, config)
+    : 0;
+
+  const pickLimit = (keyVal: number | null | undefined, globalVal: number | null | undefined) => {
+    const k = Number(keyVal) || 0;
+    const g = Number(globalVal) || 0;
+    if (k > 0) return { value: k, source: "override" as const };
+    if (g > 0) return { value: g, source: "global" as const };
+    return { value: 0, source: "none" as const };
+  };
+
+  const dailyInput = pickLimit(primaryKey?.dailyInputTokenLimit, config?.globalDailyInputTokenLimit);
+  const dailyOutput = pickLimit(primaryKey?.dailyOutputTokenLimit, config?.globalDailyOutputTokenLimit);
+  const monthly = pickLimit(primaryKey?.monthlyTokenLimit, null);
+  const rate = pickLimit(primaryKey?.rateLimit, config?.globalRateLimit);
+  const dailyTok = dailyTokenLimit > 0
+    ? { value: dailyTokenLimit, source: (Number(primaryKey?.dailyTokenLimit) > 0 ? "override" : "global") as "override" | "global" | "none" }
+    : { value: 0, source: "none" as const };
+  const prompt = promptLimit > 0
+    ? { value: promptLimit, source: (Number(primaryKey?.promptLimit) > 0 ? "override" : "global") as "override" | "global" | "none" }
+    : { value: 0, source: "none" as const };
 
   // Trial expiry date
   let trialExpiresAt: string | null = null;
@@ -253,8 +299,9 @@ portal.get("/me", async (c) => {
   for (const k of userKeys) {
     if (k.pendingNotification) {
       try {
-        const notifs = JSON.parse(k.pendingNotification);
-        if (Array.isArray(notifs)) pendingNotifications.push(...notifs);
+        const parsed = JSON.parse(k.pendingNotification);
+        if (Array.isArray(parsed)) pendingNotifications.push(...parsed);
+        else if (parsed && typeof parsed === "object") pendingNotifications.push(parsed);
       } catch { /* ignore */ }
     }
   }
@@ -267,6 +314,7 @@ portal.get("/me", async (c) => {
     hasPassword: !!settings?.passwordHash,
     webhookUrl: settings?.webhookUrl ? maskWebhookUrl(settings.webhookUrl) : null,
     hasWebhook: !!(settings?.webhookUrl),
+    lastLoginAt: settings?.lastLoginAt ?? null,
     keyCount: userKeys.length,
     primaryKeyName: primaryKey?.name ?? null,
     keys: userKeys.map(k => ({
@@ -278,25 +326,30 @@ portal.get("/me", async (c) => {
       createdAt: k.createdAt,
     })),
     limits: {
-      maxDevices: primaryKey?.maxDevices || 0,
-      dailyTokenLimit: primaryKey?.dailyTokenLimit || 0,
-      monthlyTokenLimit: primaryKey?.monthlyTokenLimit || 0,
-      dailyInputTokenLimit: primaryKey?.dailyInputTokenLimit || 0,
-      dailyOutputTokenLimit: primaryKey?.dailyOutputTokenLimit || 0,
-      rateLimit: primaryKey?.rateLimit || 0,
-      rateLimitWindow: primaryKey?.rateLimitWindow || "1h",
-      promptLimit: primaryKey?.promptLimit || 0,
-      promptLimitWindow: primaryKey?.promptLimitWindow || "1d",
+      dailyTokenLimit: dailyTok.value,
+      dailyTokenLimitSource: dailyTok.source,
+      monthlyTokenLimit: monthly.value,
+      monthlyTokenLimitSource: monthly.source,
+      dailyInputTokenLimit: dailyInput.value,
+      dailyInputTokenLimitSource: dailyInput.source,
+      dailyOutputTokenLimit: dailyOutput.value,
+      dailyOutputTokenLimitSource: dailyOutput.source,
+      rateLimit: rate.value,
+      rateLimitWindow: primaryKey?.rateLimitWindow || config?.globalRateLimitWindow || "1h",
+      rateLimitSource: rate.source,
+      promptLimit: prompt.value,
+      promptLimitWindow,
+      promptLimitSource: prompt.source,
     },
     usageToday: {
       requests: usageToday?.requests || 0,
       promptTokens: usageToday?.promptTokens || 0,
       completionTokens: usageToday?.completionTokens || 0,
+      promptCount: promptCountToday,
+      totalTokens: (usageToday?.promptTokens || 0) + (usageToday?.completionTokens || 0),
     },
-    multipliers,
-    deviceUsage: {
-      used: Number((deviceUsageRow as any)?.used || 0),
-      max: primaryKey?.maxDevices || 0,
+    usageMonth: {
+      totalTokens: usageMonth?.tokens || 0,
     },
     pendingNotifications,
   });
@@ -462,24 +515,47 @@ portal.get("/stats/top-errors", async (c) => {
   const range = resolvePeriodRange(period);
 
   const rows = sanitizeRows((await db.execute(sql`
+    WITH grouped AS (
+      SELECT
+        status_code as "statusCode",
+        LEFT(COALESCE(error_message, ''), 200) as "errorSnippet",
+        COUNT(*)::int as count,
+        MAX(id) as "sampleId"
+      FROM request_logs
+      WHERE api_key_id IN (${userApiKeyIds(discordUserId)})
+        AND created_at >= ${range.start}
+        ${range.end ? sql`AND created_at <= ${range.end}` : sql``}
+        AND (status_code < 200 OR status_code > 299)
+      GROUP BY status_code, LEFT(COALESCE(error_message, ''), 200)
+      ORDER BY count DESC
+      LIMIT 20
+    )
     SELECT
-      status_code as "statusCode",
-      LEFT(error_message, 200) as "errorSnippet",
-      COUNT(*) as count
-    FROM request_logs
-    WHERE api_key_id IN (${userApiKeyIds(discordUserId)})
-      AND created_at >= ${range.start}
-      ${range.end ? sql`AND created_at <= ${range.end}` : sql``}
-      AND (status_code < 200 OR status_code > 299)
-      AND error_message IS NOT NULL
-    GROUP BY status_code, LEFT(error_message, 200)
-    ORDER BY count DESC
-    LIMIT 20
+      g."statusCode",
+      g."errorSnippet",
+      g.count,
+      r.model,
+      r.ide_detected as "ideDetected",
+      r.endpoint_path as "endpointPath",
+      r.request_preview as "requestPreview",
+      r.response_preview as "responsePreview",
+      r.error_message as "errorMessage",
+      r.created_at as "sampleAt"
+    FROM grouped g
+    LEFT JOIN request_logs r ON r.id = g."sampleId"
   `)).rows as any[], ["statusCode", "count"]);
 
   return c.json(rows.map(r => ({
-    ...r,
+    statusCode: r.statusCode,
     errorSnippet: sanitizeErrorMsg(r.errorSnippet),
+    count: r.count,
+    model: r.model || null,
+    ideDetected: r.ideDetected || null,
+    endpointPath: r.endpointPath || null,
+    requestPreview: sanitizePreview(r.requestPreview),
+    responsePreview: sanitizePreview(r.responsePreview),
+    errorMessage: sanitizeErrorMsg(r.errorMessage),
+    sampleAt: r.sampleAt || null,
   })));
 });
 
@@ -843,6 +919,8 @@ portal.get("/logs", async (c) => {
     provider: requestLogs.provider,
     endpointPath: requestLogs.endpointPath,
     errorMessage: requestLogs.errorMessage,
+    requestPreview: requestLogs.requestPreview,
+    responsePreview: requestLogs.responsePreview,
     latencyMs: requestLogs.latencyMs,
     statusCode: requestLogs.statusCode,
     createdAt: requestLogs.createdAt,
@@ -854,6 +932,8 @@ portal.get("/logs", async (c) => {
     data: rows.map(r => ({
       ...r,
       errorMessage: sanitizeErrorMsg(r.errorMessage),
+      requestPreview: sanitizePreview(r.requestPreview),
+      responsePreview: sanitizePreview(r.responsePreview),
     })),
     pagination: {
       page,
@@ -893,7 +973,13 @@ portal.get("/models", async (c) => {
         }
       }
 
-      return c.json(allowedIds.map(id => ({ id, allowed: true, online: null })));
+      return c.json(allowedIds.map(id => ({
+        id,
+        allowed: true,
+        online: null as boolean | null,
+        checkedAt: null as string | null,
+        lastCheckedMinutes: null as number | null,
+      })));
     }
 
     // Phantom: full catalog with online status from model_monitor
@@ -903,16 +989,23 @@ portal.get("/models", async (c) => {
       checkedAt: modelMonitor.checkedAt,
     }).from(modelMonitor).orderBy(desc(modelMonitor.checkedAt));
 
-    const monitorMap = new Map<string, boolean>();
+    const monitorMap = new Map<string, { online: boolean; checkedAt: Date }>();
     for (const row of monitorRows) {
-      if (!monitorMap.has(row.modelId)) monitorMap.set(row.modelId, row.isOnline);
+      if (!monitorMap.has(row.modelId)) {
+        monitorMap.set(row.modelId, { online: row.isOnline, checkedAt: row.checkedAt });
+      }
     }
 
-    return c.json(allModels.map(m => ({
-      id: m.id,
-      allowed: true,
-      online: monitorMap.has(m.id) ? monitorMap.get(m.id)! : null,
-    })));
+    return c.json(allModels.map(m => {
+      const mon = monitorMap.get(m.id);
+      return {
+        id: m.id,
+        allowed: true,
+        online: mon ? mon.online : null,
+        checkedAt: mon?.checkedAt?.toISOString() ?? null,
+        lastCheckedMinutes: mon ? minutesAgo(mon.checkedAt) : null,
+      };
+    }));
   } catch (err: any) {
     return c.json({ error: err?.message || "Failed to load models" }, 500);
   }
