@@ -23,6 +23,7 @@ import {
 	prepareAnthropicUpstreamBody,
 	splitAnthropicSseEvents,
 } from '../utils/anthropic-adapter.js';
+import { sanitizeUpstreamHeaders } from '../utils/upstream-headers.js';
 import {
 	buildCachedRoundTripResponse,
 	buildYouComStreamChunks,
@@ -1211,6 +1212,22 @@ proxy.all('/*', async (c) => {
 		)
 		.then((r) => r[0]);
 
+	// Same fingerprint on another key of this Discord user counts as a known device
+	// (account-level budget — creating N keys must not multiply maxDevices).
+	let accountKnownFingerprint = Boolean(existingDevice);
+	if (!accountKnownFingerprint && keyRecord.discordUserId) {
+		const sibling = await db.execute(sql`
+			SELECT d.id
+			FROM devices d
+			INNER JOIN api_keys k ON k.id = d.api_key_id
+			WHERE k.discord_user_id = ${keyRecord.discordUserId}
+			  AND d.fingerprint = ${fingerprint}
+			  AND d.is_blocked = false
+			LIMIT 1
+		`);
+		accountKnownFingerprint = (sibling.rows?.length || 0) > 0;
+	}
+
 	if (existingDevice?.isBlocked) {
 		return c.json(
 			{
@@ -1361,30 +1378,46 @@ proxy.all('/*', async (c) => {
 		}
 	}
 
-	// ΓöÇΓöÇΓöÇ 6. Max Devices Check ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+	// ΓöÇΓöÇΓöÇ 6. Max Devices Check (account-scoped when Discord-linked) ΓöÇΓöÇΓöÇ
 	if (keyRecord.maxDevices && keyRecord.maxDevices > 0) {
-		const deviceCount = await db
-			.select({ count: sql<number>`count(*)` })
-			.from(devices)
-			.where(
-				and(eq(devices.apiKeyId, keyRecord.id), eq(devices.isBlocked, false)),
-			)
-			.then((r) => r[0]);
+		let deviceCountNum = 0;
+		if (keyRecord.discordUserId) {
+			const acc = await db.execute(sql`
+				SELECT COUNT(DISTINCT d.fingerprint)::int AS count
+				FROM devices d
+				INNER JOIN api_keys k ON k.id = d.api_key_id
+				WHERE k.discord_user_id = ${keyRecord.discordUserId}
+				  AND k.is_active = true
+				  AND d.is_blocked = false
+			`);
+			deviceCountNum = Number((acc.rows?.[0] as any)?.count) || 0;
+		} else {
+			const deviceCount = await db
+				.select({ count: sql<number>`count(*)` })
+				.from(devices)
+				.where(
+					and(eq(devices.apiKeyId, keyRecord.id), eq(devices.isBlocked, false)),
+				)
+				.then((r) => r[0]);
+			deviceCountNum = Number(deviceCount?.count) || 0;
+		}
 
-		if (
-			deviceCount &&
-			deviceCount.count >= keyRecord.maxDevices &&
-			!existingDevice
-		) {
+		if (deviceCountNum >= keyRecord.maxDevices && !accountKnownFingerprint) {
 			if (keyRecord.provisionedBy === 'discord-bot' || keyRecord.isTrial || keyRecord.provisionedBy === 'trial-bot') {
-				// Generate a fresh active key, remove old device, queue DM+thread notification
 				const rotatedKey = keyRecord.isTrial ? generateTrialApiKey() : generateApiKey();
 				const newKeyPrefix = getKeyPrefix(rotatedKey);
 
-				// Remove all old devices for this key so the new device can register cleanly
-				await db.delete(devices).where(eq(devices.apiKeyId, keyRecord.id));
+				if (keyRecord.discordUserId) {
+					await db.execute(sql`
+						DELETE FROM devices
+						WHERE api_key_id IN (
+							SELECT id FROM api_keys WHERE discord_user_id = ${keyRecord.discordUserId}
+						)
+					`);
+				} else {
+					await db.delete(devices).where(eq(devices.apiKeyId, keyRecord.id));
+				}
 
-				// Register the new device immediately so they don't have to hit the limit again
 				await db.insert(devices).values({
 					apiKeyId: keyRecord.id,
 					fingerprint,
@@ -1396,7 +1429,6 @@ proxy.all('/*', async (c) => {
 					requestCount: 0,
 				});
 
-				// Update the key to the new value (stays active)
 				await db
 					.update(apiKeys)
 					.set({
@@ -1408,7 +1440,6 @@ proxy.all('/*', async (c) => {
 					})
 					.where(eq(apiKeys.id, keyRecord.id));
 
-				// Store pending notification for bot to pick up and send
 				const proxyEndpoint = `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || '3000'}`}/v1`;
 				const notification = {
 					type: keyRecord.isTrial ? 'trial_key_rotated' : 'new_device_detected',
@@ -1810,11 +1841,12 @@ proxy.all('/*', async (c) => {
 			'transfer-encoding',
 			'upgrade',
 		]);
-		const baseHeaders: Record<string, string> = {};
+		let baseHeaders: Record<string, string> = {};
 		for (const [k, v] of c.req.raw.headers.entries()) {
 			if (!blockedHeaders.has(k.toLowerCase())) baseHeaders[k] = v;
 		}
 		baseHeaders['x-forwarded-for'] = clientIp;
+		baseHeaders = sanitizeUpstreamHeaders(baseHeaders);
 
 		for (const candidate of onlineModels) {
 			// Resolve provider to get API key
@@ -2526,7 +2558,7 @@ proxy.all('/*', async (c) => {
 					upstreamPath2 = upstreamPath2.slice(3);
 				return `${upstreamBase2}${upstreamPath2}`;
 			})();
-		const upstreamHeaders2: Record<string, string> = {};
+		let upstreamHeaders2: Record<string, string> = {};
 		const blocked2 = new Set([
 			'host',
 			'content-length',
@@ -2543,6 +2575,7 @@ proxy.all('/*', async (c) => {
 		}
 		upstreamHeaders2['x-forwarded-for'] = clientIp;
 		if (contentType) upstreamHeaders2['Content-Type'] = contentType;
+		upstreamHeaders2 = sanitizeUpstreamHeaders(upstreamHeaders2);
 		try {
 			const titleGenBody = isAnthropicTitleGen
 				? prepareAnthropicUpstreamBody(requestBody)
@@ -3251,7 +3284,7 @@ proxy.all('/*', async (c) => {
 	};
 
 	// ΓöÇΓöÇΓöÇ 10. Forward Request to Upstream ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-	const upstreamHeaders: Record<string, string> = {};
+	let upstreamHeaders: Record<string, string> = {};
 	const blockedHeaders = new Set([
 		'host',
 		'content-length',
@@ -3272,6 +3305,7 @@ proxy.all('/*', async (c) => {
 
 	upstreamHeaders['x-forwarded-for'] = clientIp;
 	if (contentType) upstreamHeaders['Content-Type'] = contentType;
+	upstreamHeaders = sanitizeUpstreamHeaders(upstreamHeaders);
 
 	// Detect Anthropic provider (native endpointType OR dual OpenAI+Anthropic like amanai)
 	let isAnthropicProvider =
@@ -3655,6 +3689,21 @@ proxy.all('/*', async (c) => {
 				// through every other gpy model in the chain.
 				const isAbort = upstreamResponse.status === 0;
 				if (!isRetryableUpstreamStatus(upstreamResponse.status) || isAbort) {
+					let upstreamDetail = '';
+					try {
+						const peek = await upstreamResponse.clone().text();
+						upstreamDetail = peek.replace(/\s+/g, ' ').trim().slice(0, 160);
+					} catch {}
+					console.warn(
+						`[proxy] upstream ${pickModel} HTTP ${upstreamResponse.status}${upstreamDetail ? `: ${upstreamDetail}` : ''}`,
+					);
+					if (!fetchError) {
+						fetchError = new Error(
+							upstreamDetail
+								? `Upstream ${upstreamResponse.status}: ${upstreamDetail}`
+								: `Upstream HTTP ${upstreamResponse.status}`,
+						);
+					}
 					if (attemptModel !== '__auto__' && attemptModel !== 'auto') {
 						consecutiveNonRetryable += 1;
 						if (consecutiveNonRetryable >= consecutiveFailuresToSkipAhead) {
@@ -3685,7 +3734,11 @@ proxy.all('/*', async (c) => {
 		}
 
 		if (!fetchSucceeded) {
-			throw new Error('All upstream attempts failed');
+			throw new Error(
+				fetchError?.message
+					? `All upstream attempts failed (${fetchError.message})`
+					: 'All upstream attempts failed',
+			);
 		}
 
 		// Re-sync provider flags after trial/phantom fallback may have switched models.

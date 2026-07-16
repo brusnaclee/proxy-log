@@ -205,7 +205,7 @@ export const devices = pgTable('devices', {
 	requestCount: integer('request_count').notNull().default(0),
 	isBlocked: boolean('is_blocked').notNull().default(false),
 }, (table) => ({
-	apiKeyFingerprintIdx: index('idx_devices_api_key_fingerprint').on(table.apiKeyId, table.fingerprint),
+	apiKeyFingerprintIdx: uniqueIndex('idx_devices_api_key_fingerprint').on(table.apiKeyId, table.fingerprint),
 }));
 
 // ─── Providers ───────────────────────────────────────────────────────────────
@@ -472,6 +472,9 @@ export const userPortalSettings = pgTable('user_portal_settings', {
   discordUserId: text('discord_user_id').primaryKey(),
   passwordHash: text('password_hash'), // null = auto-login (no password required)
   passwordSetAt: timestamp('password_set_at'),
+  webhookUrl: text('webhook_url'),
+  webhookSecret: text('webhook_secret'),
+  lastLoginAt: timestamp('last_login_at'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });

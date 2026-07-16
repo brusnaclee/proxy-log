@@ -10,9 +10,9 @@ export function formatNumber(n: number): string {
   return n.toLocaleString();
 }
 
-// Format cents as dollars: 1234 -> "$12.34", 50 -> "$0.50"
-export function formatCost(cents: number): string {
-  return "$" + (cents / 100).toFixed(4);
+export function formatCost(microDollars: number | undefined | null): string {
+  if (!microDollars) return "$0.0000";
+  return "$" + (microDollars / 1_000_000).toFixed(4);
 }
 
 // Format relative time in Indonesian

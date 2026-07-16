@@ -3,16 +3,11 @@ import { useState, useEffect } from "react";
 import { LayoutDashboard, Key, Activity, Settings, LogOut, Menu, X, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
-
-const navItems = [
-  { to: "/", icon: LayoutDashboard, label: "Overview", end: true },
-  { to: "/keys", icon: Key, label: "Keys" },
-  { to: "/activity", icon: Activity, label: "Activity" },
-  { to: "/settings", icon: Settings, label: "Settings" },
-];
+import { useI18n } from "@/lib/i18n";
 
 export default function Layout() {
   const navigate = useNavigate();
+  const { t } = useI18n();
   const [user, setUser] = useState<any>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -23,12 +18,29 @@ export default function Layout() {
 
   const handleLogout = async () => {
     setLoggingOut(true);
-    try {
-      await api.auth.logout();
-    } catch {
-      // ignore
-    }
+    try { await api.auth.logout(); } catch { /* ignore */ }
     navigate("/login");
+  };
+
+  const navItems = [
+    { to: "/", icon: LayoutDashboard, label: t("Overview"), end: true },
+    { to: "/keys", icon: Key, label: t("Keys") },
+    { to: "/activity", icon: Activity, label: t("Activity") },
+    { to: "/settings", icon: Settings, label: t("Settings") },
+  ];
+
+  const accountType = user?.accountType;
+  const AccountBadge = () => {
+    if (!accountType) return null;
+    return (
+      <span className={`px-1.5 py-0.5 text-[10px] font-medium rounded-full ${
+        accountType === "phantom"
+          ? "bg-primary/15 text-primary"
+          : "bg-yellow-400/15 text-yellow-400"
+      }`}>
+        {accountType === "phantom" ? t("Phantom") : t("Trial")}
+      </span>
+    );
   };
 
   return (
@@ -55,9 +67,9 @@ export default function Layout() {
               end={end}
               className={({ isActive }) =>
                 cn(
-                  "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
+                  "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150",
                   isActive
-                    ? "bg-primary/10 text-primary"
+                    ? "bg-primary/10 text-primary shadow-sm"
                     : "text-muted-foreground hover:text-foreground hover:bg-accent"
                 )
               }
@@ -71,21 +83,26 @@ export default function Layout() {
         {/* User section */}
         <div className="p-4 border-t border-border">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
                 <span className="text-xs font-semibold text-primary">
                   {user?.discordUsername?.charAt(0).toUpperCase() || "U"}
                 </span>
               </div>
-              <span className="text-sm text-foreground truncate max-w-[100px]">
-                {user?.discordUsername || "..."}
-              </span>
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm text-foreground truncate max-w-[90px]">
+                    {user?.discordUsername || "..."}
+                  </span>
+                  <AccountBadge />
+                </div>
+              </div>
             </div>
             <button
               onClick={handleLogout}
               disabled={loggingOut}
               className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
-              title="Logout"
+              title={t("Logout")}
             >
               <LogOut className="w-4 h-4" />
             </button>
@@ -104,12 +121,13 @@ export default function Layout() {
             <span className="font-semibold text-foreground">Tokito</span>
           </div>
           <div className="flex items-center gap-2">
+            <AccountBadge />
             <span className="text-xs text-muted-foreground truncate max-w-[80px]">
               {user?.discordUsername}
             </span>
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="p-2 text-muted-foreground hover:text-foreground"
+              className="p-2 text-muted-foreground hover:text-foreground transition-colors"
             >
               {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
             </button>
@@ -118,7 +136,7 @@ export default function Layout() {
 
         {/* Mobile dropdown menu */}
         {mobileMenuOpen && (
-          <div className="lg:hidden absolute top-[57px] left-0 right-0 bg-card border-b border-border z-50 animate-fade-in">
+          <div className="lg:hidden absolute top-[57px] left-0 right-0 bg-card border-b border-border z-50 animate-slide-up">
             <nav className="p-4 space-y-1">
               {navItems.map(({ to, icon: Icon, label, end }) => (
                 <NavLink
@@ -145,7 +163,7 @@ export default function Layout() {
                 className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium text-red-400 hover:bg-red-400/10 transition-colors"
               >
                 <LogOut className="w-4 h-4" />
-                Logout
+                {t("Logout")}
               </button>
             </nav>
           </div>

@@ -28,7 +28,7 @@ const MODEL_COLORS   = ["#818cf8", "#34d399", "#f59e0b", "#f87171", "#a78bfa", "
 
 export default function KeyDetailPage() {
   const { id: idSlug } = useParams<{ id: string }>();
-  // Slug format is "{numericId}-{name-slug}" â€” extract just the numeric ID prefix
+  // Slug format is "{numericId}-{name-slug}" — extract just the numeric ID prefix
   const id = idSlug?.split("-")[0] ?? "";
   const navigate = useNavigate();
   const [keyData, setKeyData] = useState<ApiKeyDetail | null>(null);
@@ -1342,17 +1342,17 @@ export API_TIMEOUT_MS=500000`}
                       <td className="py-2 px-4">
                         <code className="text-xs font-mono">{d.fingerprint?.substring(0, 16)}...</code>
                       </td>
-                      <td className="py-2 px-4 text-sm">{d.ipAddress || "â€”"}</td>
-                      <td className="py-2 px-4 text-sm">{d.ideDetected || "â€”"}</td>
-                      <td className="py-2 px-4 text-sm">{d.osDetected || "â€”"}</td>
-                      <td className="py-2 px-4 text-xs">{d.deviceName || "â€”"}</td>
+                      <td className="py-2 px-4 text-sm">{d.ipAddress || "—"}</td>
+                      <td className="py-2 px-4 text-sm">{d.ideDetected || "—"}</td>
+                      <td className="py-2 px-4 text-sm">{d.osDetected || "—"}</td>
+                      <td className="py-2 px-4 text-xs">{d.deviceName || "—"}</td>
                       <td className="py-2 px-4 text-xs text-muted-foreground">
                         {d.firstSeen ? (
                           <>
                             <div>{formatDate(d.firstSeen)}</div>
                             <div className="text-[10px]">{formatRelativeTime(d.firstSeen)}</div>
                           </>
-                        ) : "â€”"}
+                        ) : "—"}
                       </td>
                       <td className="py-2 px-4 text-xs text-muted-foreground">
                         {d.lastSeen ? (
@@ -1360,7 +1360,7 @@ export API_TIMEOUT_MS=500000`}
                             <div>{formatDate(d.lastSeen)}</div>
                             <div className="text-[10px]">{formatRelativeTime(d.lastSeen)}</div>
                           </>
-                        ) : "â€”"}
+                        ) : "—"}
                       </td>
                       <td className="py-2 px-4 text-right font-mono">{d.requestCount}</td>
                       <td className="py-2 px-4 text-center">
@@ -1441,7 +1441,7 @@ export API_TIMEOUT_MS=500000`}
                         <div className="text-[10px]">{log.clientName || "-"}</div>
                       </td>
                       <td className="py-2 px-4 text-xs font-mono">{log.ipAddress}</td>
-                      <td className="py-2 px-4 text-xs">{(log.toolsUsed || []).length ? (log.toolsUsed || []).slice(0, 2).join(", ") : "â€”"}</td>
+                      <td className="py-2 px-4 text-xs">{(log.toolsUsed || []).length ? (log.toolsUsed || []).slice(0, 2).join(", ") : "—"}</td>
                       <td className="py-2 px-4 text-right font-mono text-xs">{formatNumber(log.totalTokens)}</td>
                       <td className="py-2 px-4 text-right text-xs text-muted-foreground">{log.latencyMs}ms</td>
                       <td className="py-2 px-4 text-center">
@@ -1480,7 +1480,7 @@ export API_TIMEOUT_MS=500000`}
                   {(keyData.analytics?.topDevices || []).map((d, idx) => (
                     <tr key={`top-device-${idx}`} className="border-b border-border/30 hover:bg-accent/30">
                       <td className="py-2 px-4 text-xs font-mono">{d.deviceFingerprint ? `${d.deviceFingerprint.substring(0, 16)}...` : "unknown"}</td>
-                      <td className="py-2 px-4 text-xs font-mono">{d.ipAddress || "â€”"}</td>
+                      <td className="py-2 px-4 text-xs font-mono">{d.ipAddress || "—"}</td>
                       <td className="py-2 px-4 text-xs">
                         <div>{d.ideDetected || "Unknown IDE"}</div>
                         <div className="text-[10px] text-muted-foreground">{d.osDetected || "Unknown OS"}</div>
@@ -1494,7 +1494,7 @@ export API_TIMEOUT_MS=500000`}
                             <div>{formatDate(d.lastSeen)}</div>
                             <div className="text-[10px]">{formatRelativeTime(d.lastSeen)}</div>
                           </>
-                        ) : "â€”"}
+                        ) : "—"}
                       </td>
                     </tr>
                   ))}
@@ -1542,7 +1542,7 @@ export API_TIMEOUT_MS=500000`}
                         <div className="font-medium truncate max-w-[220px]" title={s.sessionName || s.sessionId}>
                           {s.sessionName && s.sessionName.trim() ? s.sessionName : "Untitled Chat"}
                         </div>
-                        <div className="text-[10px] font-mono text-muted-foreground">{s.sessionId ? `${s.sessionId.substring(0, 16)}â€¦` : "â€”"}</div>
+                        <div className="text-[10px] font-mono text-muted-foreground">{s.sessionId ? `${s.sessionId.substring(0, 16)}…` : "—"}</div>
                       </td>
                       <td className="py-2 px-4 text-xs font-mono">{s.deviceFingerprint ? `${s.deviceFingerprint.substring(0, 16)}...` : "unknown"}</td>
                       <td className="py-2 px-4 text-xs"><code className="text-[10px] bg-accent/50 px-1.5 py-0.5 rounded">{s.model || "unknown"}</code></td>
@@ -1555,7 +1555,7 @@ export API_TIMEOUT_MS=500000`}
                             <div>{formatDate(s.lastSeenAt)}</div>
                             <div className="text-[10px]">{formatRelativeTime(s.lastSeenAt)}</div>
                           </>
-                        ) : "â€”"}
+                        ) : "—"}
                       </td>
                     </tr>
                   ))}
@@ -1664,7 +1664,7 @@ export API_TIMEOUT_MS=500000`}
           <Card className="border-border/50 mb-4">
             <CardHeader className="pb-2">
               <CardTitle className="text-base font-medium">
-                Model Usage Chart â€” {modelTabSort === "tokens" ? "By Tokens" : "By Requests"}
+                Model Usage Chart — {modelTabSort === "tokens" ? "By Tokens" : "By Requests"}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -1729,7 +1729,7 @@ export API_TIMEOUT_MS=500000`}
                       <td className="py-2 px-4 text-right font-mono text-xs text-blue-400">{formatNumber(m.promptTokens || 0)}</td>
                       <td className="py-2 px-4 text-right font-mono text-xs text-purple-400">{formatNumber(m.completionTokens || 0)}</td>
                       <td className="py-2 px-4 text-right font-mono text-xs font-semibold">{formatNumber(m.tokens || 0)}</td>
-                      <td className="py-2 px-4 text-right text-xs text-muted-foreground">{m.avgLatency ? `${m.avgLatency}ms` : "â€”"}</td>
+                      <td className="py-2 px-4 text-right text-xs text-muted-foreground">{m.avgLatency ? `${m.avgLatency}ms` : "—"}</td>
                       <td className="py-2 px-4 text-right font-mono text-xs text-emerald-400">{formatCost(m.estimatedCost || 0)}</td>
                     </tr>
                   ))}

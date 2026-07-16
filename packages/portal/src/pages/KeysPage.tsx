@@ -1,69 +1,80 @@
-import { useState, useEffect } from "react";
-import { Plus, RotateCcw, Trash2, Copy, Check, X, Monitor, Smartphone, Globe } from "lucide-react";
-import { api } from "@/lib/api";
+import { useState, useEffect, useCallback } from "react";
+import {
+  Plus, RotateCcw, Trash2, Copy, Check, X, Monitor, Smartphone, Globe,
+  ChevronDown, ChevronUp, AlertTriangle,
+} from "lucide-react";
+import { api, type KeyInfo, type DeviceInfo, type MeResponse } from "@/lib/api";
 import { formatRelativeTime } from "@/lib/utils";
-
-interface KeyInfo {
-  id: number;
-  name: string;
-  keyPrefix: string;
-  keyMasked: string;
-  isActive: boolean;
-  isTrial: boolean;
-  createdAt: string;
-  requestsToday: number;
-}
-
-interface Device {
-  fingerprint: string;
-  deviceName: string;
-  ideDetected: string;
-  osDetected: string;
-  requestCount: number;
-  lastSeen: string;
-  isBlocked: boolean;
-}
+import { useI18n } from "@/lib/i18n";
 
 function getDeviceIcon(os: string) {
-  const lower = os.toLowerCase();
-  if (lower.includes("windows")) return <Monitor className="w-4 h-4" />;
+  const lower = (os || "").toLowerCase();
+  if (lower.includes("windows") || lower.includes("mac") || lower.includes("linux")) return <Monitor className="w-4 h-4" />;
   if (lower.includes("android") || lower.includes("ios")) return <Smartphone className="w-4 h-4" />;
   return <Globe className="w-4 h-4" />;
 }
 
+interface ConfirmModal {
+  title: string;
+  message: string;
+  onConfirm: () => void;
+}
+
+function CopyInline({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const { t } = useI18n();
+  return (
+    <button
+      onClick={() => {
+        navigator.clipboard.writeText(text).catch(() => {});
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1800);
+      }}
+      className="inline-flex items-center gap-1 p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded transition-colors"
+      title={t("Copy")}
+    >
+      {copied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+    </button>
+  );
+}
+
 export default function KeysPage() {
+  const { t } = useI18n();
   const [keys, setKeys] = useState<KeyInfo[]>([]);
+  const [user, setUser] = useState<MeResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
   const [creating, setCreating] = useState(false);
   const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
+
   const [expandedKey, setExpandedKey] = useState<number | null>(null);
-  const [devices, setDevices] = useState<Record<number, Device[]>>({});
+  const [devices, setDevices] = useState<Record<number, DeviceInfo[]>>({});
   const [loadingDevices, setLoadingDevices] = useState<Record<number, boolean>>({});
+
   const [rotating, setRotating] = useState<number | null>(null);
   const [rotatedKey, setRotatedKey] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [deletingDevice, setDeletingDevice] = useState<{ keyId: number; fp: string } | null>(null);
 
-  const loadKeys = () => {
+  const [confirmModal, setConfirmModal] = useState<ConfirmModal | null>(null);
+
+  const loadKeys = useCallback(() => {
     setLoading(true);
-    api.keys
-      .list()
-      .then((data) => setKeys(data))
+    Promise.all([api.keys.list(), api.me()])
+      .then(([keysData, userData]) => {
+        setKeys(keysData);
+        setUser(userData);
+      })
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load keys"))
       .finally(() => setLoading(false));
-  };
-
-  useEffect(() => {
-    loadKeys();
   }, []);
+
+  useEffect(() => { loadKeys(); }, [loadKeys]);
 
   const handleCreateKey = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newKeyName.trim()) return;
-
     setCreating(true);
     try {
       const result = await api.keys.create(newKeyName.trim());
@@ -78,7 +89,7 @@ export default function KeysPage() {
     }
   };
 
-  const handleRotateKey = async (id: number) => {
+  const doRotateKey = async (id: number) => {
     setRotating(id);
     try {
       const result = await api.keys.rotate(id);
@@ -91,16 +102,24 @@ export default function KeysPage() {
     }
   };
 
+  const handleRotateKey = (key: KeyInfo) => {
+    setConfirmModal({
+      title: t("Confirm rotate"),
+      message: t("Are you sure you want to rotate this key? Your old key will be immediately invalidated."),
+      onConfirm: () => {
+        setConfirmModal(null);
+        doRotateKey(key.id);
+      },
+    });
+  };
+
   const loadDevices = async (keyId: number) => {
     if (expandedKey === keyId) {
       setExpandedKey(null);
       return;
     }
-
     setExpandedKey(keyId);
-
-    if (devices[keyId]) return;
-
+    // Always refetch on expand
     setLoadingDevices((prev) => ({ ...prev, [keyId]: true }));
     try {
       const result = await api.keys.devices(keyId);
@@ -112,25 +131,65 @@ export default function KeysPage() {
     }
   };
 
-  const handleDeleteDevice = async (keyId: number, fingerprint: string) => {
-    setDeletingDevice({ keyId, fp: fingerprint });
+  const doDeleteDevice = async (keyId: number, fingerprint: string) => {
     try {
       await api.keys.deleteDevice(keyId, fingerprint);
       setDevices((prev) => ({
         ...prev,
-        [keyId]: prev[keyId].filter((d) => d.fingerprint !== fingerprint),
+        [keyId]: (prev[keyId] || []).filter((d) => d.fingerprint !== fingerprint),
       }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete device");
-    } finally {
-      setDeletingDevice(null);
+      setError(err instanceof Error ? err.message : "Failed to revoke device");
     }
   };
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleDeleteDevice = (keyId: number, device: DeviceInfo) => {
+    setConfirmModal({
+      title: t("Confirm revoke"),
+      message: t("Are you sure you want to revoke this device? It will no longer be able to use this key."),
+      onConfirm: () => {
+        setConfirmModal(null);
+        doDeleteDevice(keyId, device.fingerprint);
+      },
+    });
+  };
+
+  const isTrial = user?.accountType === "trial";
+  const deviceUsage = user?.deviceUsage;
+
+  const RevealBanner = ({
+    keyStr, title, subtitle, color, onDismiss,
+  }: { keyStr: string; title: string; subtitle: string; color: "yellow" | "orange"; onDismiss: () => void }) => {
+    const [copied, setCopied] = useState(false);
+    const copy = () => {
+      navigator.clipboard.writeText(keyStr).catch(() => {});
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    };
+    const colorCls = color === "yellow"
+      ? "bg-yellow-400/10 border-yellow-400/20 text-yellow-400"
+      : "bg-orange-400/10 border-orange-400/20 text-orange-400";
+    return (
+      <div className={`border rounded-xl p-4 ${colorCls} animate-fade-in`}>
+        <div className="flex items-start gap-3">
+          <div className="flex-1">
+            <p className="text-sm font-medium mb-1">{title}</p>
+            <p className="text-xs text-muted-foreground mb-3">{subtitle}</p>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 bg-background px-3 py-2 rounded-lg text-sm text-foreground font-mono overflow-x-auto">
+                {keyStr}
+              </code>
+              <button onClick={copy} className="p-2 hover:bg-accent rounded-lg transition-colors">
+                {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4 text-muted-foreground" />}
+              </button>
+              <button onClick={onDismiss} className="p-2 hover:bg-accent rounded-lg transition-colors">
+                <X className="w-4 h-4 text-muted-foreground" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -138,96 +197,63 @@ export default function KeysPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold text-foreground">API Keys</h1>
-          <p className="text-sm text-muted-foreground">Manage your API keys and devices</p>
+          <h1 className="text-xl font-semibold text-foreground">{t("API Keys")}</h1>
+          <p className="text-sm text-muted-foreground">{t("Manage your API keys and devices")}</p>
         </div>
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground font-medium rounded-lg hover:bg-primary/90 transition-colors"
-        >
-          <Plus className="w-4 h-4" />
-          Create Key
-        </button>
+        {!isTrial && (
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground font-medium rounded-lg hover:bg-primary/90 transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            {t("Create Key")}
+          </button>
+        )}
+        {isTrial && (
+          <span className="text-xs text-muted-foreground italic">
+            Upgrade to Phantom to create additional keys
+          </span>
+        )}
       </div>
 
-      {/* Newly created key warning */}
-      {newlyCreatedKey && (
-        <div className="bg-yellow-400/10 border border-yellow-400/20 rounded-xl p-4">
-          <div className="flex items-start gap-3">
-            <div className="flex-1">
-              <p className="text-sm font-medium text-yellow-400 mb-1">
-                New API Key Created
-              </p>
-              <p className="text-xs text-muted-foreground mb-3">
-                Copy this key now. You will not be able to see it again.
-              </p>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 bg-background px-3 py-2 rounded-lg text-sm text-foreground font-mono overflow-x-auto">
-                  {newlyCreatedKey}
-                </code>
-                <button
-                  onClick={() => copyToClipboard(newlyCreatedKey)}
-                  className="p-2 hover:bg-accent rounded-lg transition-colors"
-                >
-                  {copied ? (
-                    <Check className="w-4 h-4 text-green-400" />
-                  ) : (
-                    <Copy className="w-4 h-4 text-muted-foreground" />
-                  )}
-                </button>
-                <button
-                  onClick={() => setNewlyCreatedKey(null)}
-                  className="p-2 hover:bg-accent rounded-lg transition-colors"
-                >
-                  <X className="w-4 h-4 text-muted-foreground" />
-                </button>
-              </div>
-            </div>
-          </div>
+      {/* Device usage strip */}
+      {deviceUsage && deviceUsage.max > 0 && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Monitor className="w-4 h-4" />
+          <span>{t("Devices")}: {deviceUsage.used} / {deviceUsage.max}</span>
         </div>
       )}
 
-      {/* Rotated key warning */}
+      {/* Newly created key */}
+      {newlyCreatedKey && (
+        <RevealBanner
+          keyStr={newlyCreatedKey}
+          title={t("new key created")}
+          subtitle="Copy this key now. You will not be able to see it again."
+          color="yellow"
+          onDismiss={() => setNewlyCreatedKey(null)}
+        />
+      )}
+
+      {/* Rotated key */}
       {rotatedKey && (
-        <div className="bg-orange-400/10 border border-orange-400/20 rounded-xl p-4">
-          <div className="flex items-start gap-3">
-            <div className="flex-1">
-              <p className="text-sm font-medium text-orange-400 mb-1">
-                Key Rotated Successfully
-              </p>
-              <p className="text-xs text-muted-foreground mb-3">
-                Your old key has been invalidated. Copy your new key below.
-              </p>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 bg-background px-3 py-2 rounded-lg text-sm text-foreground font-mono overflow-x-auto">
-                  {rotatedKey}
-                </code>
-                <button
-                  onClick={() => copyToClipboard(rotatedKey)}
-                  className="p-2 hover:bg-accent rounded-lg transition-colors"
-                >
-                  {copied ? (
-                    <Check className="w-4 h-4 text-green-400" />
-                  ) : (
-                    <Copy className="w-4 h-4 text-muted-foreground" />
-                  )}
-                </button>
-                <button
-                  onClick={() => setRotatedKey(null)}
-                  className="p-2 hover:bg-accent rounded-lg transition-colors"
-                >
-                  <X className="w-4 h-4 text-muted-foreground" />
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <RevealBanner
+          keyStr={rotatedKey}
+          title={t("Key rotated")}
+          subtitle="Your old key has been invalidated. Copy your new key below."
+          color="orange"
+          onDismiss={() => setRotatedKey(null)}
+        />
       )}
 
       {/* Error */}
       {error && (
-        <div className="p-3 bg-red-400/10 border border-red-400/20 rounded-lg text-red-400 text-sm">
+        <div className="p-3 bg-red-400/10 border border-red-400/20 rounded-lg text-red-400 text-sm flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
           {error}
+          <button onClick={() => setError("")} className="ml-auto p-0.5 hover:opacity-70">
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
 
@@ -244,46 +270,51 @@ export default function KeysPage() {
       ) : keys.length === 0 ? (
         <div className="bg-card border border-border rounded-xl p-8 text-center">
           <p className="text-muted-foreground">No API keys yet</p>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="mt-4 text-primary hover:underline text-sm"
-          >
-            Create your first key
-          </button>
+          {!isTrial && (
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="mt-4 text-primary hover:underline text-sm"
+            >
+              Create your first key
+            </button>
+          )}
         </div>
       ) : (
         <div className="space-y-3">
           {keys.map((key) => (
-            <div key={key.id} className="bg-card border border-border rounded-xl overflow-hidden">
-              {/* Key header */}
+            <div key={key.id} className="bg-card border border-border rounded-xl overflow-hidden animate-fade-in">
               <div className="p-4">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <h3 className="font-medium text-foreground">{key.name}</h3>
-                      <span
-                        className={`px-2 py-0.5 text-xs rounded-full ${
-                          key.isActive
-                            ? "bg-green-400/10 text-green-400"
-                            : "bg-muted text-muted-foreground"
-                        }`}
-                      >
+                      <span className={`px-2 py-0.5 text-xs rounded-full ${
+                        key.isActive ? "bg-green-400/10 text-green-400" : "bg-muted text-muted-foreground"
+                      }`}>
                         {key.isActive ? "Active" : "Inactive"}
                       </span>
+                      <span className={`px-2 py-0.5 text-xs rounded-full ${
+                        key.isTrial
+                          ? "bg-yellow-400/10 text-yellow-400"
+                          : "bg-primary/10 text-primary"
+                      }`}>
+                        {key.isTrial ? t("Trial") : t("Phantom")}
+                      </span>
                     </div>
-                    <p className="text-sm text-muted-foreground font-mono">
-                      {key.keyMasked}
-                    </p>
+                    <div className="flex items-center gap-1">
+                      <p className="text-sm text-muted-foreground font-mono">{key.keyMasked}</p>
+                      <CopyInline text={key.keyPrefix} />
+                    </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => handleRotateKey(key.id)}
+                      onClick={() => handleRotateKey(key)}
                       disabled={rotating === key.id}
                       className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors disabled:opacity-50"
-                      title="Rotate key"
+                      title={t("Rotate")}
                     >
                       <RotateCcw className={`w-3.5 h-3.5 ${rotating === key.id ? "animate-spin" : ""}`} />
-                      Rotate
+                      {t("Rotate")}
                     </button>
                   </div>
                 </div>
@@ -293,19 +324,21 @@ export default function KeysPage() {
                   <span>{key.requestsToday.toLocaleString()} requests today</span>
                 </div>
 
-                {/* Devices section */}
+                {/* Devices toggle */}
                 <button
                   onClick={() => loadDevices(key.id)}
                   className="flex items-center gap-1.5 mt-3 text-xs text-primary hover:underline"
                 >
                   {loadingDevices[key.id] ? (
-                    <span>Loading devices...</span>
+                    <span>Loading {t("Devices").toLowerCase()}...</span>
                   ) : (
                     <>
-                      <span>{devices[key.id]?.length || 0} device(s)</span>
-                      <span className="text-muted-foreground">
-                        {expandedKey === key.id ? "(hide)" : "(show)"}
-                      </span>
+                      <span>{devices[key.id]?.length ?? 0} {t("Devices").toLowerCase()}</span>
+                      {expandedKey === key.id ? (
+                        <ChevronUp className="w-3 h-3" />
+                      ) : (
+                        <ChevronDown className="w-3 h-3" />
+                      )}
                     </>
                   )}
                 </button>
@@ -313,7 +346,7 @@ export default function KeysPage() {
 
               {/* Devices list */}
               {expandedKey === key.id && (
-                <div className="border-t border-border bg-accent/30">
+                <div className="border-t border-border bg-accent/30 animate-fade-in">
                   {loadingDevices[key.id] ? (
                     <div className="p-4 text-sm text-muted-foreground">Loading...</div>
                   ) : !devices[key.id]?.length ? (
@@ -321,27 +354,47 @@ export default function KeysPage() {
                   ) : (
                     <div className="divide-y divide-border">
                       {devices[key.id].map((device) => (
-                        <div
-                          key={device.fingerprint}
-                          className="flex items-center justify-between p-4"
-                        >
-                          <div className="flex items-center gap-3">
-                            {getDeviceIcon(device.osDetected)}
-                            <div>
-                              <p className="text-sm text-foreground">{device.ideDetected}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {device.osDetected} • Last seen {formatRelativeTime(device.lastSeen)}
-                              </p>
+                        <div key={device.fingerprint} className="p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-start gap-3 flex-1 min-w-0">
+                              <div className="mt-0.5 text-muted-foreground">{getDeviceIcon(device.osDetected)}</div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm text-foreground">
+                                  {device.ideDetected || "Unknown IDE"}
+                                  {device.osDetected && (
+                                    <span className="text-muted-foreground ml-1">— {device.osDetected}</span>
+                                  )}
+                                </p>
+                                <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5 text-xs text-muted-foreground">
+                                  {device.ipAddress && (
+                                    <span>IP: {device.ipAddress}</span>
+                                  )}
+                                  {device.fingerprintShort && (
+                                    <span>FP: {device.fingerprintShort}</span>
+                                  )}
+                                  <span>
+                                    Last seen {formatRelativeTime(device.lastSeen)}
+                                  </span>
+                                  {device.firstSeen && (
+                                    <span>First seen {formatRelativeTime(device.firstSeen)}</span>
+                                  )}
+                                  <span>{device.requestCount.toLocaleString()} reqs</span>
+                                </div>
+                                {device.userAgentRaw && (
+                                  <p className="text-xs text-muted-foreground/60 mt-0.5 truncate max-w-xs" title={device.userAgentRaw}>
+                                    {device.userAgentRaw}
+                                  </p>
+                                )}
+                              </div>
                             </div>
+                            <button
+                              onClick={() => handleDeleteDevice(key.id, device)}
+                              className="p-2 text-muted-foreground hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors flex-shrink-0"
+                              title={t("Revoke")}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
                           </div>
-                          <button
-                            onClick={() => handleDeleteDevice(key.id, device.fingerprint)}
-                            disabled={deletingDevice?.fp === device.fingerprint}
-                            className="p-2 text-muted-foreground hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors disabled:opacity-50"
-                            title="Revoke device"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
                         </div>
                       ))}
                     </div>
@@ -358,22 +411,14 @@ export default function KeysPage() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-card border border-border rounded-xl p-6 w-full max-w-md animate-fade-in">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-foreground">Create API Key</h2>
-              <button
-                onClick={() => {
-                  setShowCreateModal(false);
-                  setNewKeyName("");
-                }}
-                className="p-1 hover:bg-accent rounded-lg transition-colors"
-              >
+              <h2 className="text-lg font-semibold text-foreground">{t("Create Key")}</h2>
+              <button onClick={() => { setShowCreateModal(false); setNewKeyName(""); }} className="p-1 hover:bg-accent rounded-lg transition-colors">
                 <X className="w-5 h-5 text-muted-foreground" />
               </button>
             </div>
             <form onSubmit={handleCreateKey} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-foreground mb-2">
-                  Key Name
-                </label>
+                <label className="block text-sm font-medium text-foreground mb-2">Key Name</label>
                 <input
                   type="text"
                   value={newKeyName}
@@ -387,23 +432,49 @@ export default function KeysPage() {
               <div className="flex gap-3">
                 <button
                   type="button"
-                  onClick={() => {
-                    setShowCreateModal(false);
-                    setNewKeyName("");
-                  }}
+                  onClick={() => { setShowCreateModal(false); setNewKeyName(""); }}
                   className="flex-1 py-2.5 border border-border text-foreground font-medium rounded-lg hover:bg-accent transition-colors"
                 >
-                  Cancel
+                  {t("Cancel")}
                 </button>
                 <button
                   type="submit"
                   disabled={creating || !newKeyName.trim()}
                   className="flex-1 py-2.5 bg-primary text-primary-foreground font-medium rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50"
                 >
-                  {creating ? "Creating..." : "Create"}
+                  {creating ? "Creating..." : t("Create Key")}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm modal */}
+      {confirmModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-card border border-border rounded-xl p-6 w-full max-w-sm animate-fade-in">
+            <div className="flex items-start gap-3 mb-4">
+              <AlertTriangle className="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <h2 className="text-base font-semibold text-foreground mb-1">{confirmModal.title}</h2>
+                <p className="text-sm text-muted-foreground">{confirmModal.message}</p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConfirmModal(null)}
+                className="flex-1 py-2 border border-border text-foreground font-medium rounded-lg hover:bg-accent transition-colors text-sm"
+              >
+                {t("Cancel")}
+              </button>
+              <button
+                onClick={confirmModal.onConfirm}
+                className="flex-1 py-2 bg-red-500 text-white font-medium rounded-lg hover:bg-red-600 transition-colors text-sm"
+              >
+                Confirm
+              </button>
+            </div>
           </div>
         </div>
       )}

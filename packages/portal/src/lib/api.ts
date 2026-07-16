@@ -29,73 +29,226 @@ async function request<T>(
   return res.json();
 }
 
-// Auth
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export interface MeResponse {
+  discordUserId: string;
+  discordUsername: string | null;
+  accountType: "trial" | "phantom";
+  trialExpiresAt: string | null;
+  hasPassword: boolean;
+  webhookUrl: string | null;
+  hasWebhook: boolean;
+  keyCount: number;
+  primaryKeyName: string | null;
+  lastLoginAt?: string | null;
+  keys: Array<{
+    id: number;
+    name: string;
+    keyPrefix: string;
+    isActive: boolean;
+    isTrial: boolean;
+    createdAt: string;
+  }>;
+  limits: {
+    maxDevices: number;
+    dailyTokenLimit: number;
+    monthlyTokenLimit: number;
+    dailyInputTokenLimit: number;
+    dailyOutputTokenLimit: number;
+    rateLimit: number;
+    rateLimitWindow: string;
+    promptLimit: number;
+    promptLimitWindow: string;
+  };
+  usageToday: {
+    requests: number;
+    promptTokens: number;
+    completionTokens: number;
+  };
+  multipliers: {
+    input: number;
+    output: number;
+  };
+  deviceUsage: {
+    used: number;
+    max: number;
+  };
+  pendingNotifications: any[];
+}
+
+export interface OverviewStats {
+  requests: number;
+  tokens: number;
+  promptTokens: number;
+  completionTokens: number;
+  sessions: number;
+  toolCalls: number;
+  cost: { prompt: number; completion: number; total: number };
+}
+
+export interface TimeseriesItem {
+  period: string;
+  requests: number;
+  tokens: number;
+  promptTokens: number;
+  completionTokens: number;
+}
+
+export interface ModelUsage {
+  model: string;
+  requests: number;
+  promptTokens: number;
+  completionTokens: number;
+  tokens: number;
+}
+
+export interface IdeUsage {
+  ide: string;
+  requests: number;
+  devices: number;
+}
+
+export interface TopError {
+  statusCode: number;
+  errorSnippet: string;
+  count: number;
+}
+
+export interface CompareStats {
+  requests: number;
+  tokens: number;
+  promptTokens: number;
+  completionTokens: number;
+  cost: { prompt: number; completion: number; total: number };
+}
+
+export interface ForecastItem {
+  status: "ok" | "exceeded" | "no_usage";
+  tokensUsed?: number;
+  limit?: number;
+  ratePerHour?: number;
+  ratePerDay?: number;
+  etaUtc?: string;
+  hoursRemaining?: number;
+  daysRemaining?: number;
+}
+
+export interface ForecastResponse {
+  forecast: { daily: ForecastItem | null; monthly: ForecastItem | null } | null;
+}
+
+export interface KeyInfo {
+  id: number;
+  name: string;
+  keyPrefix: string;
+  keyMasked: string;
+  isActive: boolean;
+  isTrial: boolean;
+  createdAt: string;
+  requestsToday: number;
+}
+
+export interface DeviceInfo {
+  fingerprint: string;
+  fingerprintShort: string;
+  deviceName: string;
+  ideDetected: string;
+  osDetected: string;
+  ipAddress: string | null;
+  userAgentRaw: string | null;
+  requestCount: number;
+  lastSeen: string;
+  firstSeen: string | null;
+  isBlocked: boolean;
+}
+
+export interface LogItem {
+  id?: number;
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  ideDetected: string;
+  provider: string;
+  endpointPath?: string | null;
+  errorMessage?: string | null;
+  latencyMs: number;
+  statusCode: number;
+  createdAt: string;
+}
+
+export interface ModelEntry {
+  id: string;
+  allowed: boolean;
+  online: boolean | null;
+}
+
+export interface RecapStatus {
+  isOpen: boolean;
+  openDate?: string | null;
+  closeDate?: string | null;
+  recapUrl: string | null;
+}
+
+export interface NotificationsResponse {
+  notifications: Array<{
+    type: string;
+    keyName?: string;
+    keyId?: number;
+    rotatedAt?: string;
+    [key: string]: any;
+  }>;
+  count: number;
+}
+
+// ─── Auth ─────────────────────────────────────────────────────────────────────
+
 export const auth = {
   login: (apiKey: string) =>
-    request<{ requiresPassword: boolean; discordUserId?: string; success?: boolean; autoLogin?: boolean }>("/auth/login", "POST", { apiKey }),
+    request<{ requiresPassword: boolean; discordUserId?: string; success?: boolean; autoLogin?: boolean }>(
+      "/auth/login", "POST", { apiKey }
+    ),
   verifyPassword: (discordUserId: string, password: string) =>
     request<{ success: boolean }>("/auth/verify-password", "POST", { discordUserId, password }),
   logout: () => request<{ success: boolean }>("/auth/logout", "POST"),
 };
 
-// Me
+// ─── Me ───────────────────────────────────────────────────────────────────────
+
 export function me() {
-  return request<{
-    discordUserId: string;
-    discordUsername: string | null;
-    hasPassword: boolean;
-    keyCount: number;
-    keys: Array<{ id: number; name: string; keyPrefix: string; isActive: boolean; isTrial: boolean; createdAt: string }>;
-    limits: {
-      maxDevices: number;
-      dailyTokenLimit: number;
-      monthlyTokenLimit: number;
-      dailyInputTokenLimit: number;
-      dailyOutputTokenLimit: number;
-      rateLimit: number;
-      rateLimitWindow: string;
-      promptLimit: number;
-      promptLimitWindow: string;
-    };
-  }>("/me", "GET");
+  return request<MeResponse>("/me", "GET");
 }
 
-// Stats
+// ─── Stats ────────────────────────────────────────────────────────────────────
+
 export const stats = {
   overview: (period: string) =>
-    request<{
-      requests: number;
-      tokens: number;
-      promptTokens: number;
-      completionTokens: number;
-      sessions: number;
-      toolCalls: number;
-      cost: { prompt: number; completion: number; total: number };
-    }>(`/stats/overview?period=${period}`, "GET"),
+    request<OverviewStats>(`/stats/overview?period=${period}`, "GET"),
 
   timeseries: (period: string) =>
-    request<Array<{ period: string; requests: number; tokens: number; promptTokens: number; completionTokens: number }>>(
-      `/stats/timeseries?period=${period}`, "GET"
-    ),
+    request<TimeseriesItem[]>(`/stats/timeseries?period=${period}`, "GET"),
 
   byModel: (period: string) =>
-    request<Array<{ model: string; requests: number; promptTokens: number; completionTokens: number; tokens: number }>>(
-      `/stats/by-model?period=${period}`, "GET"
-    ),
+    request<ModelUsage[]>(`/stats/by-model?period=${period}`, "GET"),
 
   byIde: (period: string) =>
-    request<Array<{ ide: string; requests: number; devices: number }>>(
-      `/stats/by-ide?period=${period}`, "GET"
-    ),
+    request<IdeUsage[]>(`/stats/by-ide?period=${period}`, "GET"),
+
+  topErrors: (period: string = "7d") =>
+    request<TopError[]>(`/stats/top-errors?period=${period}`, "GET"),
+
+  compare: () =>
+    request<{ today: CompareStats; yesterday: CompareStats }>("/stats/compare", "GET"),
+
+  forecast: () =>
+    request<ForecastResponse>("/stats/forecast", "GET"),
 };
 
-// Keys
+// ─── Keys ─────────────────────────────────────────────────────────────────────
+
 export const keys = {
-  list: () =>
-    request<Array<{
-      id: number; name: string; keyPrefix: string; keyMasked: string;
-      isActive: boolean; isTrial: boolean; createdAt: string; requestsToday: number;
-    }>>("/keys", "GET"),
+  list: () => request<KeyInfo[]>("/keys", "GET"),
 
   create: (name: string) =>
     request<{ id: number; name: string; key: string; keyPrefix: string }>("/keys", "POST", { name }),
@@ -104,10 +257,7 @@ export const keys = {
     request<{ success: boolean; key: string; keyPrefix: string }>(`/keys/${id}/rotate`, "POST"),
 
   devices: (keyId: number) =>
-    request<Array<{
-      fingerprint: string; deviceName: string; ideDetected: string;
-      osDetected: string; requestCount: number; lastSeen: string; isBlocked: boolean;
-    }>>(`/keys/${keyId}/devices`, "GET"),
+    request<DeviceInfo[]>(`/keys/${keyId}/devices`, "GET"),
 
   deleteDevice: (keyId: number, fingerprint: string) =>
     request<{ success: boolean }>(`/keys/${keyId}/devices/${fingerprint}`, "DELETE"),
@@ -116,26 +266,54 @@ export const keys = {
     request<{ success: boolean }>(`/keys/${keyId}/policies`, "PUT", data),
 };
 
-// Logs
+// ─── Logs ─────────────────────────────────────────────────────────────────────
+
 export const logs = {
   list: (period: string, limit = 50, page = 1) =>
     request<{
-      data: Array<{
-        model: string; promptTokens: number; completionTokens: number;
-        totalTokens: number; ideDetected: string; provider: string;
-        latencyMs: number; statusCode: number; createdAt: string;
-      }>;
+      data: LogItem[];
       pagination: { page: number; limit: number; total: number; totalPages: number };
     }>(`/logs?period=${period}&limit=${limit}&page=${page}`, "GET"),
 };
 
-// Settings
+// ─── Models ───────────────────────────────────────────────────────────────────
+
+export const models = {
+  list: () => request<ModelEntry[]>("/models", "GET"),
+};
+
+// ─── Recap ────────────────────────────────────────────────────────────────────
+
+export const recap = {
+  status: () => request<RecapStatus>("/recap/status", "GET"),
+};
+
+// ─── Notifications ────────────────────────────────────────────────────────────
+
+export const notifications = {
+  list: () => request<NotificationsResponse>("/notifications", "GET"),
+};
+
+// ─── Settings ─────────────────────────────────────────────────────────────────
+
 export const settings = {
   setPassword: (newPassword: string, currentPassword?: string) =>
     request<{ success: boolean }>("/settings/password", "PUT", { newPassword, currentPassword }),
+
   removePassword: () =>
     request<{ success: boolean }>("/settings/password", "DELETE"),
+
+  setWebhook: (url: string) =>
+    request<{ success: boolean; webhookUrl?: string; webhookSecret?: string; hasWebhook: boolean; removed?: boolean }>(
+      "/settings/webhook", "PUT", { url }
+    ),
+
+  removeWebhook: () =>
+    request<{ success: boolean; removed: boolean; hasWebhook: boolean }>(
+      "/settings/webhook", "PUT", { url: "" }
+    ),
 };
 
-// Root export
-export const api = { me, auth, stats, keys, logs, settings };
+// ─── Root export ──────────────────────────────────────────────────────────────
+
+export const api = { me, auth, stats, keys, logs, models, recap, notifications, settings };

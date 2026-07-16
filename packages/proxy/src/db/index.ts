@@ -102,9 +102,22 @@ export async function initializeDatabase() {
 			)
 		`);
 		await pool.query(`GRANT ALL PRIVILEGES ON TABLE user_portal_settings TO CURRENT_USER`).catch(() => undefined);
+		// New portal settings columns (idempotent)
+		await pool.query(`ALTER TABLE user_portal_settings ADD COLUMN IF NOT EXISTS webhook_url TEXT`);
+		await pool.query(`ALTER TABLE user_portal_settings ADD COLUMN IF NOT EXISTS webhook_secret TEXT`);
+		await pool.query(`ALTER TABLE user_portal_settings ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP`);
 		console.log('✅ Applied idempotent user_portal_settings migrations');
 	} catch (err: any) {
 		console.warn('⚠️ user_portal_settings migration warning:', err?.message || err);
+	}
+
+	// Unique index on devices(api_key_id, fingerprint) — prevents duplicate device rows
+	try {
+		await pool.query(`DROP INDEX IF EXISTS idx_devices_api_key_fingerprint`);
+		await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_api_key_fingerprint ON devices (api_key_id, fingerprint)`);
+		console.log('✅ Applied idempotent devices unique index migration');
+	} catch (err: any) {
+		console.warn('⚠️ devices unique index migration warning (may have duplicate data):', err?.message || err);
 	}
 
 	// Push schema using drizzle-kit push equivalent at runtime:

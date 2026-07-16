@@ -26,7 +26,7 @@ export function createPortalSession(c: Context, discordUserId: string): string {
 
   setCookie(c, "portal_session", sessionId, {
     httpOnly: true,
-    secure: false, // set to true in production with HTTPS
+    secure: process.env.NODE_ENV === "production" || process.env.COOKIE_SECURE === "1",
     sameSite: "Lax",
     maxAge: PORTAL_SESSION_TTL / 1000,
     path: "/",

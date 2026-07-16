@@ -46,9 +46,10 @@ const IDE_PATTERNS: [RegExp, string][] = [
 	[/neovim|nvim/i, "Neovim"],
 	[/jetbrains|intellij|pycharm|webstorm|goland|rider|phpstorm|rubymine|clion|datagrip/i, "JetBrains"],
 	[/vscode|visual\s*studio\s*code/i, "VS Code"],
-	[/claude.*desktop|claude-cli/i, "Claude Desktop"],
-	// Claude Code CLI (claude-cli/2.x external, cli)
+	// Claude Code CLI before Desktop — `claude-cli` must not map to Desktop
 	[/claude-cli/i, "Claude Code"],
+	[/claude.*code/i, "Claude Code"],
+	[/claude.*desktop/i, "Claude Desktop"],
 
 	// === NEW PATTERNS FROM DATABASE ANALYSIS ===
 

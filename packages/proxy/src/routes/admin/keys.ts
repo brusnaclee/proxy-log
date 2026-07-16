@@ -500,8 +500,8 @@ keys.delete("/keys/:id/devices/:fingerprint", async (c) => {
   const keyId = parseInt(c.req.param("id"));
   const fingerprint = c.req.param("fingerprint");
   await db.delete(allowedDevices).where(and(eq(allowedDevices.apiKeyId, keyId), eq(allowedDevices.fingerprint, fingerprint)));
-  await db.update(devices).set({ isBlocked: false }).where(and(eq(devices.apiKeyId, keyId), eq(devices.fingerprint, fingerprint)));
-  return c.json({ success: true, message: "Device removed from list" });
+  await db.delete(devices).where(and(eq(devices.apiKeyId, keyId), eq(devices.fingerprint, fingerprint)));
+  return c.json({ success: true, message: "Device deleted" });
 });
 
 keys.post("/keys/:id/policies/device", async (c) => {

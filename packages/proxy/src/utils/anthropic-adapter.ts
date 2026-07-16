@@ -546,6 +546,10 @@ export function buildAnthropicUpstreamHeaders(
   headers["anthropic-version"] = "2023-06-01";
   // Some dual OpenAI+Anthropic gateways (amanai) also accept Bearer.
   headers["Authorization"] = `Bearer ${apiKey}`;
+  // Neutral UA — amanai WAF blocks OpenAI/Python SDK fingerprints.
+  if (!headers["User-Agent"] && !headers["user-agent"]) {
+    headers["User-Agent"] = "TokitoProxy/1.0";
+  }
 
   return headers;
 }
