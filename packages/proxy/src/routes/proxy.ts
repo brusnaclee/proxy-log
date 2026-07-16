@@ -4132,8 +4132,15 @@ proxy.all('/*', async (c) => {
 		let finalizedUsage: any = {};
 		const acc = makeAccumulator();
 
-		// Convert Anthropic response to OpenAI format
-		if (isAnthropicProvider && statusCode >= 200 && statusCode < 300) {
+		// Convert Anthropic response to OpenAI format (OpenAI clients only).
+		// Claude Code / Anthropic SDK clients on dual providers (amanai) must
+		// receive native Anthropic JSON — do not round-trip through OpenAI.
+		if (
+			isAnthropicProvider &&
+			!isAnthropicRequest &&
+			statusCode >= 200 &&
+			statusCode < 300
+		) {
 			try {
 				const anthropicParsed = JSON.parse(responseBody);
 				const openaiResponse = convertResponseToOpenAI(anthropicParsed);
