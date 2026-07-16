@@ -161,6 +161,7 @@ export interface ForecastResponse {
 export interface KeyInfo {
   id: number;
   name: string;
+  key?: string;
   keyPrefix: string;
   keyMasked: string;
   isActive: boolean;

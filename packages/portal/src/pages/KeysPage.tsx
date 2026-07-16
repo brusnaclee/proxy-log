@@ -303,7 +303,7 @@ export default function KeysPage() {
                     </div>
                     <div className="flex items-center gap-1">
                       <p className="text-sm text-muted-foreground font-mono">{key.keyMasked}</p>
-                      <CopyInline text={key.keyPrefix} />
+                      <CopyInline text={key.key || key.keyMasked} />
                     </div>
                   </div>
                   <div className="flex items-center gap-2">

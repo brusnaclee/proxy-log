@@ -746,6 +746,7 @@ portal.get("/keys", async (c) => {
     result.push({
       id: key.id,
       name: key.name,
+      key: key.key,
       keyPrefix: key.keyPrefix,
       keyMasked: maskKey(key.key),
       isActive: key.isActive,
