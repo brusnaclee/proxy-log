@@ -103,6 +103,8 @@ const dict: Record<string, Record<Lang, string>> = {
   Input: { id: "Input", en: "Input" },
   Output: { id: "Output", en: "Output" },
   Error: { id: "Error", en: "Error" },
+  "Per-Model Prompt": { id: "Prompt per Model", en: "Per-Model Prompt" },
+  Resets: { id: "Reset", en: "Resets" },
   "Are you sure you want to rotate this key? Your old key will be immediately invalidated.": {
     id: "Yakin ingin merotasi kunci ini? Kunci lama akan langsung tidak berlaku.",
     en: "Are you sure you want to rotate this key? Your old key will be immediately invalidated.",

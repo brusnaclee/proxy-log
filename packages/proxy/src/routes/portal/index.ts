@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { db } from "../../db/index.js";
 import {
   apiKeys, requestLogs, devices, allowedDevices, allowedIdes,
-  chatSessions, userPortalSettings, trialUsers, adminConfig, modelMonitor,
+  chatSessions, userPortalSettings, trialUsers, adminConfig, modelMonitor, modelLimits,
 } from "../../db/schema.js";
 import { eq, sql, and, desc } from "drizzle-orm";
 import { generateApiKey, getKeyPrefix, sha256, maskKey } from "../../utils/crypto.js";
@@ -12,8 +12,9 @@ import { turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTo
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { getRecapWindow } from "../../utils/recap-window.js";
-import { getModelCatalogResponse } from "../../utils/model-catalog.js";
+import { getModelCatalogResponse, getOnlineModelsByLatency } from "../../utils/model-catalog.js";
 import { parseTrialModelWhitelist, resolveKeyDailyTokenLimit, resolveKeyPromptLimit } from "../../utils/trial-config.js";
+import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindowResetMs } from "../../utils/rate-limit.js";
 import { logEmitter } from "../../utils/event-emitter.js";
 import { randomBytes } from "crypto";
 
@@ -231,7 +232,7 @@ portal.get("/me", async (c) => {
   const primaryKey = userKeys.find(k => !k.isTrial && k.isActive) || userKeys.find(k => k.isActive) || userKeys[0];
   const config = (await db.select().from(adminConfig).limit(1))[0] ?? null;
 
-  // Today's usage (WIB)
+  // Today's usage (WIB) — same token aggregation as Discord usage embed
   const todayStart = wibTodayStartDate();
   const todayPw = and(
     userWhere(discordUserId),
@@ -243,9 +244,6 @@ portal.get("/me", async (c) => {
     promptTokens: turnPromptTokensSql(todayPw!, { isTrial }),
     completionTokens: turnCompletionTokensSql(todayPw!, { isTrial }),
   }).from(requestLogs).where(todayPw))[0];
-
-  // Prompt count in effective prompt window (approx: counted requests today for portal display)
-  const promptCountToday = Number(usageToday?.requests || 0);
 
   // This month usage (for monthly limit bar)
   const monthRange = resolvePeriodRange("thisMonth");
@@ -265,6 +263,80 @@ portal.get("/me", async (c) => {
     ? resolveKeyDailyTokenLimit(primaryKey as any, config)
     : 0;
 
+  // Prompt used = Discord checkPromptLimit (rolling window), NOT today's request count
+  let promptUsed = 0;
+  let promptResetAt: string | null = null;
+  let promptResetMins = 0;
+  if (primaryKey && promptLimit > 0) {
+    const plCheck = await checkPromptLimit(primaryKey.id, promptLimit, promptLimitWindow);
+    promptUsed = plCheck.used;
+    const windowMs = parseRateLimitWindow(promptLimitWindow);
+    const resetMs = await getWindowResetMs(primaryKey.id, windowMs);
+    promptResetMins = Math.ceil(resetMs / 60000);
+    promptResetAt = resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null;
+  }
+
+  // Per-model prompt usage (same as Discord /usage)
+  const modelUsageLimits: Array<{
+    model: string; used: number; limit: number; window: string; resetAt: string | null;
+  }> = [];
+  if (primaryKey && !isTrial) {
+    const todayModels = sanitizeRows((await db.execute(sql`
+      SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
+        COUNT(DISTINCT turn_id)::int as requests
+      FROM request_logs
+      WHERE api_key_id = ${primaryKey.id}
+        AND created_at >= ${todayStart}
+        AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+      GROUP BY 1
+      ORDER BY requests DESC
+      LIMIT 15
+    `)).rows as any[], ["requests"]);
+
+    const perKeyDefault = primaryKey.perModelPromptLimit || 0;
+    const perKeyWindow = primaryKey.perModelPromptLimitWindow || null;
+    const globalPerModel = config?.globalPerModelPromptLimit || 0;
+    const globalPerModelWindow = config?.globalPerModelPromptLimitWindow || "30m";
+
+    for (const tm of todayModels) {
+      if (!tm.model) continue;
+      const mlCheck = await checkModelPromptLimit(
+        primaryKey.id,
+        tm.model,
+        perKeyDefault,
+        perKeyWindow,
+        globalPerModel,
+        globalPerModelWindow,
+      );
+      const windowStr = perKeyWindow || globalPerModelWindow;
+      const windowMs = parseRateLimitWindow(windowStr);
+      const resetMs = await getWindowResetMs(primaryKey.id, windowMs, tm.model);
+      if (mlCheck.used > 0 || mlCheck.effectiveLimit > 0) {
+        modelUsageLimits.push({
+          model: tm.model,
+          used: mlCheck.used,
+          limit: mlCheck.effectiveLimit,
+          window: windowStr,
+          resetAt: resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null,
+        });
+      }
+    }
+
+    // Include configured global model limits even if unused today
+    const activeModelLimits = await db.select().from(modelLimits).where(eq(modelLimits.scope, "global"));
+    for (const am of activeModelLimits) {
+      if (!modelUsageLimits.find((m) => m.model === am.model) && (am.promptLimit || 0) > 0) {
+        modelUsageLimits.push({
+          model: am.model,
+          used: 0,
+          limit: am.promptLimit || 0,
+          window: perKeyWindow || globalPerModelWindow,
+          resetAt: null,
+        });
+      }
+    }
+  }
+
   const pickLimit = (keyVal: number | null | undefined, globalVal: number | null | undefined) => {
     const k = Number(keyVal) || 0;
     const g = Number(globalVal) || 0;
@@ -275,7 +347,8 @@ portal.get("/me", async (c) => {
 
   const dailyInput = pickLimit(primaryKey?.dailyInputTokenLimit, config?.globalDailyInputTokenLimit);
   const dailyOutput = pickLimit(primaryKey?.dailyOutputTokenLimit, config?.globalDailyOutputTokenLimit);
-  const monthly = pickLimit(primaryKey?.monthlyTokenLimit, null);
+  // Match Discord: key override OR global monthly
+  const monthly = pickLimit(primaryKey?.monthlyTokenLimit, config?.globalMonthlyTokenLimit);
   const rate = pickLimit(primaryKey?.rateLimit, config?.globalRateLimit);
   const dailyTok = dailyTokenLimit > 0
     ? { value: dailyTokenLimit, source: (Number(primaryKey?.dailyTokenLimit) > 0 ? "override" : "global") as "override" | "global" | "none" }
@@ -283,6 +356,19 @@ portal.get("/me", async (c) => {
   const prompt = promptLimit > 0
     ? { value: promptLimit, source: (Number(primaryKey?.promptLimit) > 0 ? "override" : "global") as "override" | "global" | "none" }
     : { value: 0, source: "none" as const };
+
+  // Daily / monthly reset timestamps (WIB midnight), same as Discord usage embed
+  const wibOffset = 7 * 60 * 60 * 1000;
+  const wibNow = new Date(Date.now() + wibOffset);
+  const tomorrowWib = new Date(wibNow);
+  tomorrowWib.setUTCDate(tomorrowWib.getUTCDate() + 1);
+  tomorrowWib.setUTCHours(0, 0, 0, 0);
+  const dailyResetAt = new Date(tomorrowWib.getTime() - wibOffset).toISOString();
+  const nextMonthWib = new Date(wibNow);
+  nextMonthWib.setUTCMonth(nextMonthWib.getUTCMonth() + 1);
+  nextMonthWib.setUTCDate(1);
+  nextMonthWib.setUTCHours(0, 0, 0, 0);
+  const monthlyResetAt = new Date(nextMonthWib.getTime() - wibOffset).toISOString();
 
   // Trial expiry date
   let trialExpiresAt: string | null = null;
@@ -340,17 +426,27 @@ portal.get("/me", async (c) => {
       promptLimit: prompt.value,
       promptLimitWindow,
       promptLimitSource: prompt.source,
+      perModelPromptLimit: isTrial ? 0 : ((primaryKey?.perModelPromptLimit && primaryKey.perModelPromptLimit > 0)
+        ? primaryKey.perModelPromptLimit
+        : (config?.globalPerModelPromptLimit || 0)),
+      perModelPromptLimitWindow: primaryKey?.perModelPromptLimitWindow || config?.globalPerModelPromptLimitWindow || "30m",
     },
     usageToday: {
       requests: usageToday?.requests || 0,
       promptTokens: usageToday?.promptTokens || 0,
       completionTokens: usageToday?.completionTokens || 0,
-      promptCount: promptCountToday,
+      // Rolling prompt window usage (matches Discord), NOT all-day requests
+      promptCount: promptUsed,
       totalTokens: (usageToday?.promptTokens || 0) + (usageToday?.completionTokens || 0),
     },
     usageMonth: {
       totalTokens: usageMonth?.tokens || 0,
     },
+    promptResetAt,
+    promptResetMins,
+    dailyResetAt,
+    monthlyResetAt,
+    modelUsageLimits,
     pendingNotifications,
   });
 });
@@ -964,7 +1060,6 @@ portal.get("/models", async (c) => {
       if (mode === "whitelist" && whitelist.length > 0) {
         allowedIds = whitelist;
       } else {
-        // all_gpy: models that belong to the gpy upstream
         allowedIds = allModels
           .filter(m => (m.owned_by || "").toLowerCase() === "gpy" || m.id.startsWith("gpy/") || m.id.startsWith("gpy:"))
           .map(m => m.id);
@@ -980,31 +1075,79 @@ portal.get("/models", async (c) => {
         online: null as boolean | null,
         checkedAt: null as string | null,
         lastCheckedMinutes: null as number | null,
+        latencyMs: null as number | null,
       })));
     }
 
-    // Phantom: full catalog with online status from model_monitor
-    const monitorRows = await db.select({
-      modelId: modelMonitor.modelId,
-      isOnline: modelMonitor.isOnline,
-      checkedAt: modelMonitor.checkedAt,
-    }).from(modelMonitor).orderBy(desc(modelMonitor.checkedAt));
+    // Same online source as Discord bot (/internal/models/details)
+    const [onlineModels, monitorRows] = await Promise.all([
+      getOnlineModelsByLatency(),
+      db.select({
+        modelId: modelMonitor.modelId,
+        isOnline: modelMonitor.isOnline,
+        checkedAt: modelMonitor.checkedAt,
+        latencyMs: modelMonitor.latencyMs,
+        httpStatus: modelMonitor.httpStatus,
+      }).from(modelMonitor).orderBy(desc(modelMonitor.checkedAt)),
+    ]);
 
-    const monitorMap = new Map<string, { online: boolean; checkedAt: Date }>();
+    const onlineMap = new Map<string, { latencyMs: number }>();
+    for (const m of onlineModels) {
+      onlineMap.set(m.modelId, { latencyMs: m.latencyMs });
+    }
+
+    // Latest monitor row per modelId (for last-check even when offline)
+    const monitorMap = new Map<string, { checkedAt: Date; isOnline: boolean; latencyMs: number | null }>();
     for (const row of monitorRows) {
       if (!monitorMap.has(row.modelId)) {
-        monitorMap.set(row.modelId, { online: row.isOnline, checkedAt: row.checkedAt });
+        monitorMap.set(row.modelId, {
+          checkedAt: row.checkedAt,
+          isOnline: row.isOnline,
+          latencyMs: row.latencyMs ?? null,
+        });
       }
     }
 
+    const lookupMonitor = (id: string) => {
+      if (monitorMap.has(id)) return monitorMap.get(id)!;
+      // Fallback: match by stripping leading provider segments
+      const parts = id.split("/");
+      for (let i = 1; i < parts.length; i++) {
+        const suffix = parts.slice(i).join("/");
+        if (monitorMap.has(suffix)) return monitorMap.get(suffix)!;
+      }
+      // Or monitor has longer prefix
+      for (const [mid, val] of monitorMap) {
+        if (mid.endsWith("/" + id) || mid === id || id.endsWith("/" + mid)) return val;
+      }
+      return null;
+    };
+
+    const lookupOnline = (id: string): { latencyMs: number } | null => {
+      if (onlineMap.has(id)) return onlineMap.get(id)!;
+      const parts = id.split("/");
+      for (let i = 1; i < parts.length; i++) {
+        const suffix = parts.slice(i).join("/");
+        if (onlineMap.has(suffix)) return onlineMap.get(suffix)!;
+      }
+      for (const [mid, val] of onlineMap) {
+        if (mid.endsWith("/" + id) || id.endsWith("/" + mid)) return val;
+      }
+      return null;
+    };
+
     return c.json(allModels.map(m => {
-      const mon = monitorMap.get(m.id);
+      const online = lookupOnline(m.id);
+      const mon = lookupMonitor(m.id);
+      // Match Discord: in online map → online; otherwise offline (not "unknown")
+      const isOnline = !!online;
       return {
         id: m.id,
         allowed: true,
-        online: mon ? mon.online : null,
+        online: isOnline,
         checkedAt: mon?.checkedAt?.toISOString() ?? null,
         lastCheckedMinutes: mon ? minutesAgo(mon.checkedAt) : null,
+        latencyMs: online?.latencyMs ?? mon?.latencyMs ?? null,
       };
     }));
   } catch (err: any) {

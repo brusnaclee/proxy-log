@@ -219,17 +219,17 @@ export default function OverviewPage() {
       if (src === "global") return t("global");
       return "";
     };
+    const formatReset = (iso?: string | null) => {
+      if (!iso) return "";
+      try {
+        const d = new Date(iso);
+        const hh = String(d.getHours()).padStart(2, "0");
+        const mm = String(d.getMinutes()).padStart(2, "0");
+        return `${t("Resets")} ${hh}:${mm}`;
+      } catch { return ""; }
+    };
 
-    const bars: Array<{ label: string; value: number; max: number; sublabel?: string; source?: string }> = [];
-    if (limits.dailyTokenLimit > 0) {
-      bars.push({
-        label: t("Daily Limit"),
-        value: (usageToday.totalTokens ?? usageToday.promptTokens + usageToday.completionTokens),
-        max: limits.dailyTokenLimit,
-        sublabel: "tokens",
-        source: sourceLabel(limits.dailyTokenLimitSource),
-      });
-    }
+    const bars: Array<{ label: string; value: number; max: number; sublabel?: string; source?: string; reset?: string }> = [];
     if (limits.dailyInputTokenLimit > 0) {
       bars.push({
         label: t("Input Tokens"),
@@ -237,6 +237,7 @@ export default function OverviewPage() {
         max: limits.dailyInputTokenLimit,
         sublabel: "tokens",
         source: sourceLabel(limits.dailyInputTokenLimitSource),
+        reset: formatReset(user.dailyResetAt),
       });
     }
     if (limits.dailyOutputTokenLimit > 0) {
@@ -246,6 +247,17 @@ export default function OverviewPage() {
         max: limits.dailyOutputTokenLimit,
         sublabel: "tokens",
         source: sourceLabel(limits.dailyOutputTokenLimitSource),
+        reset: formatReset(user.dailyResetAt),
+      });
+    }
+    if (limits.dailyTokenLimit > 0) {
+      bars.push({
+        label: t("Daily Limit"),
+        value: (usageToday.totalTokens ?? usageToday.promptTokens + usageToday.completionTokens),
+        max: limits.dailyTokenLimit,
+        sublabel: "tokens",
+        source: sourceLabel(limits.dailyTokenLimitSource),
+        reset: formatReset(user.dailyResetAt),
       });
     }
     if (limits.monthlyTokenLimit > 0) {
@@ -255,20 +267,23 @@ export default function OverviewPage() {
         max: limits.monthlyTokenLimit,
         sublabel: "tokens",
         source: sourceLabel(limits.monthlyTokenLimitSource),
+        reset: formatReset(user.monthlyResetAt),
       });
     }
     if (limits.promptLimit > 0) {
       bars.push({
         label: `${t("Prompt Limit")} (${limits.promptLimitWindow})`,
-        value: usageToday.promptCount ?? usageToday.requests,
+        value: usageToday.promptCount ?? 0,
         max: limits.promptLimit,
         sublabel: "prompts",
         source: sourceLabel(limits.promptLimitSource),
+        reset: formatReset(user.promptResetAt),
       });
     }
 
+    const modelLimits = (user.modelUsageLimits || []).filter((m) => m.limit > 0 || m.used > 0);
     const hasRate = limits.rateLimit > 0;
-    if (!bars.length && !hasRate) return null;
+    if (!bars.length && !hasRate && !modelLimits.length) return null;
 
     return (
       <div className="bg-card border border-border rounded-xl p-4 space-y-3 animate-fade-in">
@@ -277,13 +292,25 @@ export default function OverviewPage() {
           {bars.map((b) => (
             <div key={b.label}>
               <ProgressBar label={b.label} value={b.value} max={b.max} sublabel={b.sublabel} />
-              {b.source && (
-                <p className="text-[10px] text-muted-foreground mt-0.5 pl-0.5">
-                  {t("Source")}: {b.source}
-                </p>
-              )}
+              <div className="flex items-center gap-2 text-[10px] text-muted-foreground mt-0.5 pl-0.5">
+                {b.source && <span>{t("Source")}: {b.source}</span>}
+                {b.reset && <span>· {b.reset}</span>}
+              </div>
             </div>
           ))}
+          {modelLimits.length > 0 && (
+            <div className="pt-2 border-t border-border/50 space-y-1.5">
+              <p className="text-xs text-muted-foreground">{t("Per-Model Prompt")}</p>
+              {modelLimits.slice(0, 8).map((m) => (
+                <div key={m.model} className="flex items-center justify-between text-xs gap-2">
+                  <span className="font-mono text-foreground truncate flex-1">{m.model}</span>
+                  <span className={m.limit > 0 && m.used >= m.limit ? "text-red-400" : "text-muted-foreground"}>
+                    {m.used} / {m.limit > 0 ? m.limit : "∞"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
           {hasRate && (
             <div className="flex items-center justify-between text-xs pt-1 border-t border-border/50">
               <span className="text-muted-foreground">{t("Rate Limit")}</span>

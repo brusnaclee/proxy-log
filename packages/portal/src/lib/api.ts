@@ -67,6 +67,8 @@ export interface MeResponse {
     promptLimit: number;
     promptLimitWindow: string;
     promptLimitSource?: LimitSource;
+    perModelPromptLimit?: number;
+    perModelPromptLimitWindow?: string;
     maxDevices?: number;
   };
   usageToday: {
@@ -79,6 +81,17 @@ export interface MeResponse {
   usageMonth?: {
     totalTokens: number;
   };
+  promptResetAt?: string | null;
+  promptResetMins?: number;
+  dailyResetAt?: string | null;
+  monthlyResetAt?: string | null;
+  modelUsageLimits?: Array<{
+    model: string;
+    used: number;
+    limit: number;
+    window: string;
+    resetAt: string | null;
+  }>;
   multipliers?: {
     input: number;
     output: number;
@@ -207,6 +220,7 @@ export interface ModelEntry {
   online: boolean | null;
   checkedAt?: string | null;
   lastCheckedMinutes?: number | null;
+  latencyMs?: number | null;
 }
 
 export interface RecapStatus {

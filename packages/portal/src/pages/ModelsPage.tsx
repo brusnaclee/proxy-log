@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Copy, Check, ChevronDown, ChevronUp, Circle } from "lucide-react";
-import { PeriodSelector, type PeriodKey } from "@/components/PeriodSelector";
+import { PeriodSelector, PERIOD_OPTIONS, type PeriodKey } from "@/components/PeriodSelector";
 import { api, type ModelEntry, type ModelUsage } from "@/lib/api";
 import { formatNumber, formatRelativeTime } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n";
@@ -42,13 +42,15 @@ function statusMeta(m: ModelEntry, t: (k: string) => string) {
 
 export default function ModelsPage() {
   const { t } = useI18n();
-  const [period, setPeriod] = useState<PeriodKey>("7d");
+  const [period, setPeriod] = useState<PeriodKey>("today");
   const [modelsList, setModelsList] = useState<ModelEntry[]>([]);
   const [modelUsage, setModelUsage] = useState<ModelUsage[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(false);
   const [filter, setFilter] = useState<"all" | "online" | "offline">("all");
+
+  const periodLabel = PERIOD_OPTIONS.find((o) => o.key === period)?.label || period;
 
   useEffect(() => {
     setLoading(true);
@@ -76,12 +78,9 @@ export default function ModelsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold text-foreground">{t("Models")}</h1>
-          <p className="text-sm text-muted-foreground">{t("Model status and usage")}</p>
-        </div>
-        <PeriodSelector value={period} onChange={setPeriod} />
+      <div>
+        <h1 className="text-xl font-semibold text-foreground">{t("Models")}</h1>
+        <p className="text-sm text-muted-foreground">{t("Model status and usage")}</p>
       </div>
 
       {error && (
@@ -144,6 +143,12 @@ export default function ModelsPage() {
                           <span className={st.color}>{st.label}</span>
                           <span>·</span>
                           <span>{t("Last check")}: {lastCheckLabel(m, t)}</span>
+                          {m.latencyMs != null && m.online && (
+                            <>
+                              <span>·</span>
+                              <span>{m.latencyMs}ms</span>
+                            </>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -168,11 +173,14 @@ export default function ModelsPage() {
 
           {/* Models you've used (period-aware) */}
           <div className="bg-card border border-border rounded-xl p-4 animate-fade-in">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-medium text-foreground">{t("Models You've Used")}</h3>
-              <span className="text-xs text-muted-foreground">
-                {t("Period")}: {period}
-              </span>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
+              <div>
+                <h3 className="text-sm font-medium text-foreground">{t("Models You've Used")}</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {t("Period")}: {periodLabel}
+                </p>
+              </div>
+              <PeriodSelector value={period} onChange={setPeriod} />
             </div>
             {modelUsage.length === 0 ? (
               <p className="text-sm text-muted-foreground py-6 text-center">{t("No usage in this period")}</p>
