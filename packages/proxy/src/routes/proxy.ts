@@ -3495,7 +3495,10 @@ proxy.all('/*', async (c) => {
 					if (base.endsWith('/v1') && pathPart.startsWith('/v1/')) pathPart = pathPart.slice(3);
 					else if (base.endsWith('/v1') && pathPart === '/v1') pathPart = '';
 					attemptUpstreamUrl = `${base}${pathPart}`;
-					attemptIsAnthropic = attemptProvider.endpointType === 'anthropic';
+					attemptIsAnthropic =
+						attemptProvider.endpointType === 'anthropic' ||
+						(isAnthropicRequest &&
+							providerSupportsNativeAnthropic(attemptProvider));
 					attemptIsYoucom = attemptProvider.endpointType === 'youcom';
 					if (attemptIsAnthropic) {
 						attemptAnthropicBody = isAnthropicRequest
@@ -4233,8 +4236,9 @@ proxy.all('/*', async (c) => {
 			}
 		}
 
-		// Convert OpenAI Chat Completions response to Anthropic Messages format
-		if (isAnthropicRequest && statusCode >= 200 && statusCode < 300) {
+		// Convert OpenAI Chat Completions response to Anthropic Messages format.
+		// Skip when upstream already returned native Anthropic (passthrough).
+		if (isAnthropicRequest && statusCode >= 200 && statusCode < 300 && !isAnthropicProvider) {
 			try {
 				const openaiParsed = JSON.parse(responseBody);
 				backfillOpenAIResponseContent(openaiParsed, {

@@ -508,15 +508,13 @@ export function resolveAnthropicUpstreamUrl(endpoint: string): string {
   return `${upstreamBase}/v1/messages`;
 }
 
-/** Upstream headers for Anthropic — never forwards client Authorization. */
+/** Upstream headers for Anthropic — never forwards client Authorization / x-api-key. */
 export function buildAnthropicUpstreamHeaders(
   apiKey: string,
   extraHeaders?: Record<string, string>,
 ): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    "x-api-key": apiKey,
-    "anthropic-version": "2023-06-01",
   };
 
   if (extraHeaders) {
@@ -524,22 +522,30 @@ export function buildAnthropicUpstreamHeaders(
       const lower = key.toLowerCase();
       if (
         lower === "authorization" ||
+        lower === "x-api-key" ||
+        lower === "anthropic-version" ||
         lower === "host" ||
         lower === "content-length" ||
         lower === "content-encoding" ||
-        lower === "transfer-encoding"
+        lower === "transfer-encoding" ||
+        lower === "content-type"
       ) {
         continue;
       }
-      if (lower === "content-type") continue;
-      // FIX: Forward anthropic-beta-* headers to upstream
-      if (lower.startsWith("anthropic-beta")) {
+      // Forward anthropic-beta / anthropic-beta-* headers to upstream
+      if (lower === "anthropic-beta" || lower.startsWith("anthropic-beta")) {
         headers[key] = value;
         continue;
       }
       headers[key] = value;
     }
   }
+
+  // Always win over any client auth headers (Claude Code sends x-api-key=sk-proxy-…).
+  headers["x-api-key"] = apiKey;
+  headers["anthropic-version"] = "2023-06-01";
+  // Some dual OpenAI+Anthropic gateways (amanai) also accept Bearer.
+  headers["Authorization"] = `Bearer ${apiKey}`;
 
   return headers;
 }
