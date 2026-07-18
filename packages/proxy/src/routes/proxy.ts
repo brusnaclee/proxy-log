@@ -118,7 +118,7 @@ import {
 } from '../utils/trial-routing.js';
 import { isGpyProviderOrModel, resolveKeyDailyTokenLimit, resolveKeyPromptLimit } from '../utils/trial-config.js';
 import { queueTrialNotification } from '../utils/trial-notify.js';
-import { sseTextToOpenAICompletion, isPlaceholderEmptyAssistantText, messageHasUsableAssistantOutput } from '../utils/probe-validate.js';
+import { sseTextToOpenAICompletion } from '../utils/probe-validate.js';
 
 const proxy = new Hono();
 
@@ -376,7 +376,6 @@ function stripGpyPrefix(modelId: string): string {
 /** Lookup `gpy/*` model ids whose latest monitor check within `windowMs` is offline / non-200. */
 async function getRecentlyOfflineGpyModelIds(excludeModel: string, windowMs: number): Promise<Set<string>> {
   try {
-    const offline = new Set<string>();
     const since = new Date(Date.now() - windowMs);
     const rows = await db
       .select({ modelId: modelMonitor.modelId, isOnline: modelMonitor.isOnline, httpStatus: modelMonitor.httpStatus, checkedAt: modelMonitor.checkedAt })
@@ -2333,7 +2332,7 @@ proxy.all('/*', async (c) => {
 												consumeStreamPayload(acc, data);
 												controller.enqueue(
 													new TextEncoder().encode(
-														`data: ${JSON.stringify(data)}\n`,
+														`data: ${JSON.stringify(data)}\n\n`,
 													),
 												);
 											} catch {
@@ -2505,7 +2504,11 @@ proxy.all('/*', async (c) => {
 				try {
 					responseJson = JSON.parse(trialText);
 					const choice0 = responseJson?.choices?.[0];
-					hasContent = messageHasUsableAssistantOutput(choice0?.message);
+					const msgContent = choice0?.message?.content;
+					const toolCalls = choice0?.message?.tool_calls;
+					const reasoning =
+						choice0?.message?.reasoning_content || choice0?.message?.reasoning;
+					hasContent = !!(msgContent || toolCalls || reasoning);
 				} catch {
 					// Not JSON or unparseable — treat as no content
 				}
@@ -3783,17 +3786,9 @@ proxy.all('/*', async (c) => {
 
 					const requestHasToolsForTrial =
 						Array.isArray(requestBody?.tools) && requestBody.tools.length > 0;
-					// Force non-stream when tools are present for trial OR transient
-					// upstreams (phantom/conduit): they sometimes return 200 with
-					// content="[Empty message]". Buffering lets us detect + retry
-					// before Cursor/Hermes render an empty bubble.
-					const forceNonStreamForEmptyGuard =
-						isStreaming &&
-						requestHasToolsForTrial &&
-						(keyRecord.isTrial ||
-							isTransientUpstreamProvider(attemptProvider.name));
-					const attemptUsesStream = isStreaming && !forceNonStreamForEmptyGuard;
-					if (forceNonStreamForEmptyGuard && requestBody) {
+					const attemptUsesStream =
+						isStreaming && !(keyRecord.isTrial && requestHasToolsForTrial);
+					if (keyRecord.isTrial && requestHasToolsForTrial && isStreaming && requestBody) {
 						requestBody = { ...requestBody, stream: false };
 						requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
 						trialForcedNonStreamForTools = true;
@@ -3854,28 +3849,34 @@ proxy.all('/*', async (c) => {
 				}
 
 				if (upstreamResponse.ok) {
-					// Empty / placeholder detection when request has tools:
-					// some upstreams return HTTP 200 with empty content, or
-					// placeholder "[Empty message]", and no tool_calls.
-					// Retry (transient) or skip-ahead (trial) instead of
-					// letting Cursor/Hermes show Empty message.
+					// Empty tool_use detection (trial + non-streaming + has tools):
+					// some upstreams (e.g. tokito/glm-5.2) return HTTP 200 with
+					// choices[0].message.content empty AND no tool_calls when
+					// the client pushes back with a "you did not use a tool"
+					// retry message. Cline then loops forever asking for tool
+					// use that the model won't produce. To prevent wasted
+					// tokens and IDE stalls, treat that as a non-retryable
+					// failure and skip ahead to the next model in the chain.
 					const requestHasTools =
 						Array.isArray(requestBody?.tools) && requestBody.tools.length > 0;
-					const shouldPeekEmpty =
+					let emptyToolUse = false;
+					if (
+						keyRecord.isTrial &&
 						requestHasTools &&
 						upstreamResponse.body &&
-						(keyRecord.isTrial ||
-							isTransientUpstreamProvider(attemptProvider.name) ||
-							trialForcedNonStreamForTools);
-					let emptyToolUse = false;
-					if (shouldPeekEmpty) {
+						(consecutiveEmptyToolUse === 0 || true)
+					) {
 						try {
 							const cloned = upstreamResponse.clone();
 							const bodyText = await cloned.text();
 							try {
 								const parsed = JSON.parse(bodyText);
 								const msg = parsed?.choices?.[0]?.message;
-								if (!messageHasUsableAssistantOutput(msg)) {
+								const hasContent =
+									typeof msg?.content === 'string' && msg.content.length > 0;
+								const hasToolCalls =
+									Array.isArray(msg?.tool_calls) && msg.tool_calls.length > 0;
+								if (!hasContent && !hasToolCalls) {
 									emptyToolUse = true;
 								}
 							} catch {
@@ -3892,16 +3893,19 @@ proxy.all('/*', async (c) => {
 					if (emptyToolUse) {
 						consecutiveEmptyToolUse += 1;
 						console.log(
-							`[proxy] empty/placeholder response from ${pickModel} (key ${usedKeyId}); retrying`,
+							`[proxy] trial empty tool_use response from ${pickModel} (key ${usedKeyId}); skipping to next model`,
 						);
+						// Drain the unread body so the connection can be reused.
 						try {
 							await upstreamResponse.body?.cancel();
 						} catch {
 							/* ignore */
 						}
 						upstreamResponse = null as any;
-						// Trial: skip to next model immediately. Others: retry same model.
-						if (keyRecord.isTrial && consecutiveEmptyToolUse >= 1) {
+						// Trial users skip ahead on first empty tool_use response.
+						if (consecutiveEmptyToolUse >= 1) {
+							// Break out of inner attempt loop and outer model loop —
+							// fall through to __auto__ next iteration if available.
 							break;
 						}
 						continue;
@@ -4226,7 +4230,7 @@ proxy.all('/*', async (c) => {
 										consumeStreamPayload(acc, data);
 										controller.enqueue(
 											new TextEncoder().encode(
-												`data: ${JSON.stringify(data)}\n`,
+												`data: ${JSON.stringify(data)}\n\n`,
 											),
 										);
 									} catch {
@@ -4267,7 +4271,7 @@ proxy.all('/*', async (c) => {
 										);
 										controller.enqueue(
 											new TextEncoder().encode(
-												`data: ${JSON.stringify(data)}\n`,
+												`data: ${JSON.stringify(data)}\n\n`,
 											),
 										);
 									}
@@ -4296,16 +4300,13 @@ proxy.all('/*', async (c) => {
 					).toLowerCase();
 					const isValidTruncate =
 						streamFinishReason === 'length' || streamFinishReason === 'max_tokens';
-					const streamText = finalized.completionText || '';
-					const streamPlaceholderEmpty =
-						isPlaceholderEmptyAssistantText(streamText) && !hasActualToolCalls;
 					if (
 						statusCode >= 200 &&
 						statusCode < 300 &&
+						rawCompletionTokens === 0 &&
+						!finalized.completionText &&
 						!hasActualToolCalls &&
-						!isValidTruncate &&
-						(streamPlaceholderEmpty ||
-							(rawCompletionTokens === 0 && !finalized.completionText))
+						!isValidTruncate
 					) {
 						const errorMsg =
 							`Upstream returned empty content for ${model}. Prompt quota was NOT charged. Try again or switch model.`;
@@ -4608,43 +4609,47 @@ proxy.all('/*', async (c) => {
 		// Count reasoning_content as visible — some models (GLM/Kimi via amanai) put
 		// output only there; emptying that into a hard 502 broke Hermes loops.
 		// Do NOT treat finish_reason=length/max_tokens as empty (valid truncate).
-		// Also treat conduit placeholder "[Empty message]" as empty (4 tokens, useless).
-		const parsedForEmpty = (() => {
+		const hasReasoningOnly = (() => {
 			try {
-				return JSON.parse(responseBody);
+				const p = JSON.parse(responseBody);
+				const msg = p?.choices?.[0]?.message;
+				const rc = msg?.reasoning_content || msg?.reasoning;
+				return typeof rc === 'string' && rc.trim().length > 0;
 			} catch {
-				return null;
+				return false;
 			}
 		})();
-		const msgForEmpty = parsedForEmpty?.choices?.[0]?.message;
-		const hasUsableOut = messageHasUsableAssistantOutput(msgForEmpty);
-		const nonStreamFinishReason = String(
-			parsedForEmpty?.choices?.[0]?.finish_reason ||
-				parsedForEmpty?.stop_reason ||
-				'',
-		).toLowerCase();
+		const nonStreamFinishReason = (() => {
+			try {
+				const p = JSON.parse(responseBody);
+				return String(p?.choices?.[0]?.finish_reason || p?.stop_reason || '').toLowerCase();
+			} catch {
+				return '';
+			}
+		})();
 		const isValidTruncate =
 			nonStreamFinishReason === 'length' || nonStreamFinishReason === 'max_tokens';
 		if (
 			statusCode >= 200 &&
 			statusCode < 300 &&
+			completionTokens === 0 &&
+			!responsePreview &&
 			!hasActualToolCalls &&
-			!hasUsableOut &&
+			!hasReasoningOnly &&
 			!isValidTruncate
 		) {
 			const errMsg =
 				`Upstream returned empty content for ${model}. Prompt quota was NOT charged. Try again or switch model.`;
 			console.warn(`[proxy] ${errMsg}`);
-			const emptyTools = Array.from(toolNameSet);
 			const emptyLogEntry = {
 				...baseLogEntry,
 				promptTokens: finalizedUsage.promptTokens || 0,
 				completionTokens: 0,
 				totalTokens: finalizedUsage.promptTokens || 0,
 				cachedTokens: finalizedUsage.cachedTokens || 0,
-				toolCount: emptyTools.length,
-				hasToolCalls: emptyTools.length > 0,
-				toolsUsed: toToolJson(emptyTools),
+				toolCount: toolsUsed.length,
+				hasToolCalls: toolsUsed.length > 0,
+				toolsUsed: toToolJson(toolsUsed),
 				responsePreview: null,
 				latencyMs: Date.now() - startTime,
 				statusCode: 502,
@@ -4780,7 +4785,17 @@ proxy.all('/*', async (c) => {
 				// so the user gets a meaningful error instead of a silent 200 with
 				// an empty stream.
 				const choice = openaiParsed?.choices?.[0]?.message;
-				const isEmptyCompletion = !messageHasUsableAssistantOutput(choice);
+				const hasToolCalls = Array.isArray(choice?.tool_calls) && choice.tool_calls.length > 0;
+				const choiceContent =
+					choice?.content ||
+					choice?.reasoning_content ||
+					choice?.reasoning ||
+					'';
+				const upstreamTokens = openaiParsed?.usage?.completion_tokens;
+				const isEmptyCompletion =
+					!hasToolCalls &&
+					(!choiceContent || choiceContent.length === 0) &&
+					(upstreamTokens == null || upstreamTokens === 0);
 
 				if (isEmptyCompletion) {
 					errorMessage = `Upstream model "${model}" returned empty response (0 tokens)`;

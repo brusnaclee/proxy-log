@@ -595,24 +595,42 @@ async function resolveProviderById(providerId: number) {
   return p && p.isActive ? p : null;
 }
 
-/** Parse model id into optional forced provider name + upstream model id. */
+/**
+ * Parse model id into optional forced provider name + upstream model id.
+ *
+ * OpenCode often sends `proxyBrand/upstreamProvider/model` (e.g.
+ * `tokito/phantom/claude-opus-4.6`). Peel ALL leading segments that match
+ * active provider names and keep the innermost as the forced provider so
+ * traffic hits the real upstream instead of returning empty/wrong replies.
+ */
 export async function parseModelWithProvider(modelId: string): Promise<{ upstreamModel: string; forcedProviderName: string | null }> {
-  const slashIdx = modelId.indexOf("/");
-  if (slashIdx <= 0) {
-    return { upstreamModel: modelId, forcedProviderName: null };
+  const raw = String(modelId || "").trim();
+  if (!raw.includes("/")) {
+    return { upstreamModel: raw, forcedProviderName: null };
   }
 
-  const prefix = modelId.slice(0, slashIdx);
   const allProvs = await getActiveProviders();
-  const matched = allProvs.find((p) => p.name === prefix);
-  if (matched) {
-    return {
-      upstreamModel: modelId.slice(slashIdx + 1),
-      forcedProviderName: prefix,
-    };
+  const providerNames = new Set(allProvs.map((p) => String(p.name || "").toLowerCase()));
+
+  let rest = raw;
+  let forcedProviderName: string | null = null;
+
+  while (rest.includes("/")) {
+    const slashIdx = rest.indexOf("/");
+    const prefix = rest.slice(0, slashIdx);
+    if (!providerNames.has(prefix.toLowerCase())) break;
+    forcedProviderName = prefix;
+    rest = rest.slice(slashIdx + 1);
   }
 
-  return { upstreamModel: modelId, forcedProviderName: null };
+  if (!forcedProviderName) {
+    return { upstreamModel: raw, forcedProviderName: null };
+  }
+
+  return {
+    upstreamModel: rest || raw,
+    forcedProviderName,
+  };
 }
 
 function collectProviderIdsForModel(modelId: string, upstreamModel: string): number[] {
