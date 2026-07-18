@@ -101,6 +101,23 @@ export interface MeResponse {
     max: number;
   };
   pendingNotifications: any[];
+  tokenSaver?: {
+    global: {
+      rtk: boolean;
+      rtkMaxChars: number;
+      headroom: boolean;
+      caveman: boolean;
+      cavemanLevel: number;
+      ponytail: boolean;
+      ponytailLevel: string;
+    };
+    overrides: {
+      rtk: boolean | null;
+      headroom: boolean | null;
+      caveman: boolean | null;
+      ponytail: boolean | null;
+    };
+  };
 }
 
 export interface OverviewStats {
