@@ -1200,6 +1200,7 @@ const runtime = {
 	activeProviders: [],
 	modelRetryState: new Map(), // entryKey -> { retryCount, lastTestAt, suspendedUntil }
 	providerKeys: new Map(), // providerName -> [apiKey1, apiKey2, ...]
+	monitorTimersStarted: false,
 };
 
 function loadTokitoState() {
@@ -1783,11 +1784,21 @@ async function refreshLatencyFromProxy() {
 			const newLatency = new Map();
 
 			for (const row of result.data) {
+				const provider = row.provider;
+				const provKeys = runtime.providerKeys.get(provider) || [];
+				const prev = runtime.modelEntries.find(
+					(e) => e.modelId === row.modelId && e.provider === provider,
+				);
 				const entry = {
 					modelId: row.modelId,
-					provider: row.provider,
-					baseUrl: row.baseUrl || '',
-					apiKey: '',
+					provider,
+					baseUrl: row.baseUrl || prev?.baseUrl || '',
+					apiKey:
+						prev?.apiKey ||
+						provKeys[0] ||
+						'',
+					endpointType: prev?.endpointType || 'openai',
+					probeViaProxy: prev?.probeViaProxy,
 				};
 				newEntries.push(entry);
 				const key = entryKey(entry);
@@ -2071,26 +2082,43 @@ function applyModelRetryState(entry, latency) {
 	const key = entryKey(entry);
 	if (latency.ok) {
 		runtime.modelRetryState.delete(key);
-	} else if (latency.status === 429) {
+		return;
+	}
+	// Infra / config failures must NOT soft-suspend — otherwise the 10-min
+	// cadence stops probing real models for 24h (dashboard looks "stale").
+	const err = String(latency.error || '');
+	if (
+		latency.status === 0 &&
+		(/no keys/i.test(err) || /fetch failed|network|econn|enotfound/i.test(err))
+	) {
+		runtime.modelRetryState.set(key, {
+			retryCount: 0,
+			lastTestAt: new Date().toISOString(),
+			suspendedUntil: null,
+		});
+		return;
+	}
+	if (latency.status === 429) {
 		runtime.modelRetryState.set(key, {
 			retryCount: 0,
 			lastTestAt: new Date().toISOString(),
 			suspendedUntil: null,
 			isRateLimited: true,
 		});
-	} else {
-		const current = runtime.modelRetryState.get(key) || { retryCount: 0 };
-		const newRetryCount = current.retryCount + 1;
-		const suspendedUntil =
-			newRetryCount >= 3
-				? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
-				: null;
-		runtime.modelRetryState.set(key, {
-			retryCount: newRetryCount,
-			lastTestAt: new Date().toISOString(),
-			suspendedUntil,
-		});
+		return;
 	}
+	const current = runtime.modelRetryState.get(key) || { retryCount: 0 };
+	const newRetryCount = current.retryCount + 1;
+	// Soft-suspend only affects the *retry* sweep. Full 10-min sweep ignores it.
+	const suspendedUntil =
+		newRetryCount >= 3
+			? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+			: null;
+	runtime.modelRetryState.set(key, {
+		retryCount: newRetryCount,
+		lastTestAt: new Date().toISOString(),
+		suspendedUntil,
+	});
 }
 
 async function runSweepForProviderPrefix(matcher, label, opts = {}) {
@@ -2153,12 +2181,13 @@ async function sweepModelsParallel(entries, label) {
 
 // ─── Smart Retry: Full sweep — test ALL models, push results individually ─────
 
-async function runFullSweep() {
+async function runFullSweep(opts = {}) {
+	const ignoreSuspend = opts.ignoreSuspend !== false; // default TRUE for 10-min cadence
 	await pollModelStatus();
 	if (!runtime.modelEntries.length) return;
 
-	// Probe ALL models (no provider exclusions). Soft-suspend after 3 fails still applies.
-	const queue = runtime.modelEntries.filter((entry) => {
+	const queued = runtime.modelEntries.filter((entry) => {
+		if (ignoreSuspend) return true;
 		const key = entryKey(entry);
 		const retryState = runtime.modelRetryState.get(key);
 		if (retryState?.suspendedUntil) {
@@ -2168,12 +2197,20 @@ async function runFullSweep() {
 		return true;
 	});
 
-	await sweepModelsParallel(queue, 'full sweep');
+	const skipped = runtime.modelEntries.length - queued.length;
+	if (skipped > 0) {
+		console.log(
+			`[tokito-monitor] full sweep: skipping ${skipped} soft-suspended models`,
+		);
+	}
+
+	await sweepModelsParallel(queued, 'full sweep');
 }
 
 // ─── Smart Retry: Retry sweep — test only offline models that aren't suspended ─
 
 async function runRetrySweep() {
+	await pollModelStatus(); // refresh keys + model list before retry probes
 	if (!runtime.modelEntries.length) return;
 
 	const entriesToRetry = [];
@@ -6176,13 +6213,22 @@ client.once('clientReady', async () => {
 	}, 30 * 1000);
 
 	if (TOKITO_API_KEY) {
+		if (runtime.monitorTimersStarted) {
+			console.log('[tokito] Monitor timers already started — skipping re-init');
+		} else {
+		runtime.monitorTimersStarted = true;
 		console.log(
 			`[tokito] Monitor active. Panel Channel ID: ${TOKITO_CHANNEL_ID}`,
 		);
 		await ensurePanelMessage();
 		await pollModelStatus();
 		await recoverRetryState();
-		await runFullSweep();
+		// Clear stale soft-suspends so the first sweep after deploy re-probes everything
+		runtime.modelRetryState.clear();
+		try {
+			await proxyInternal('/admin/internal/monitor/models/state/reset', 'PATCH');
+		} catch (_) {}
+		await runFullSweep({ ignoreSuspend: true });
 
 		// Gpy/webnet: every 10 minutes, ignore 24h suspend — trial-critical models
 		// must be re-tested even if they have been failing for a long time.
@@ -6197,14 +6243,16 @@ client.once('clientReady', async () => {
 				.catch((err) => console.error('gpy startup sweep error:', err.message));
 		}, 15000);
 
-		// Full sweep: every 10 minutes (was 1 hour — faster detection of model recovery/down)
+		// Full sweep: every 10 minutes — ALWAYS re-test all models (ignore soft-suspend).
+		// Soft-suspend only reduces the *retry* sweep noise; dashboard freshness requires
+		// probing every model on this cadence.
 		setInterval(() => {
-			runFullSweep().catch((err) =>
+			runFullSweep({ ignoreSuspend: true }).catch((err) =>
 				console.error('runFullSweep error:', err.message),
 			);
 		}, 600000);
 
-		// Retry sweep: every 10 minutes (test only offline models)
+		// Retry sweep: every 10 minutes (test only offline models not yet soft-suspended)
 		setInterval(() => {
 			runRetrySweep().catch((err) =>
 				console.error('runRetrySweep error:', err.message),
@@ -6216,6 +6264,7 @@ client.once('clientReady', async () => {
 
 		// Daily inactive-member cleanup (00:00 WIB)
 		scheduleDailyInactiveMemberCleanup();
+		}
 	}
 
 	console.log('Antigravity Verification Bot is ready!');
