@@ -2686,9 +2686,10 @@ proxy.all('/*', async (c) => {
 	}
 
 	// ─── 8a. Model Monitor Check ─────────────────────────────────────────
-	// Block only when monitor has data for this model AND none of the latest checks are online.
-	// Trial users bypass offline gate (upstream retry handles failures).
-	// `conduit` provider bypasses offline gate too (conduit.ozdoev.net is transient upstream 502s).
+	// Hard-block ONLY when admin force-deactivated the model.
+	// Natural "offline" from sweeps is advisory (Discord/dashboard) — still
+	// forward to upstream so we never get UP_OK_PROXY_FAIL from a stale gate.
+	// Transient upstreams (conduit/phantom/…) already bypassed; trial keys too.
 	if (
 		!keyRecord.isTrial &&
 		!isTransientUpstreamProvider(targetProvider.name) &&
@@ -2708,10 +2709,11 @@ proxy.all('/*', async (c) => {
 			.limit(20);
 
 		if (monitorRows.length > 0) {
-			const hasOnline = monitorRows.some(
-				(row) => row.isOnline && row.httpStatus === 200,
-			);
-			if (!hasOnline) {
+			const forceDeactivated = monitorRows.some((row) => {
+				const msg = String(row.errorMessage || '');
+				return !row.isOnline && /force-deactivated/i.test(msg);
+			});
+			if (forceDeactivated) {
 				const onlineModels = await db
 					.select({ modelId: modelMonitor.modelId })
 					.from(modelMonitor)
