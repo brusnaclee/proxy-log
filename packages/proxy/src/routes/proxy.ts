@@ -376,6 +376,7 @@ function stripGpyPrefix(modelId: string): string {
 /** Lookup `gpy/*` model ids whose latest monitor check within `windowMs` is offline / non-200. */
 async function getRecentlyOfflineGpyModelIds(excludeModel: string, windowMs: number): Promise<Set<string>> {
   try {
+    const offline = new Set<string>();
     const since = new Date(Date.now() - windowMs);
     const rows = await db
       .select({ modelId: modelMonitor.modelId, isOnline: modelMonitor.isOnline, httpStatus: modelMonitor.httpStatus, checkedAt: modelMonitor.checkedAt })
