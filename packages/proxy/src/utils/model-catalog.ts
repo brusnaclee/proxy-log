@@ -5,6 +5,10 @@ import { providers, modelMonitor, providerApiKeys, modelMetadata, customModels }
 import { eq, and, desc, sql, asc } from "drizzle-orm";
 import { sanitizeProviderApiKey } from "./crypto.js";
 import { getFallbackMetadata } from "./model-metadata-fallback.js";
+import {
+  buildModelListAuthHeaders,
+  buildModelListCandidateUrls,
+} from "./probe-validate.js";
 
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 30_000; // Upstream combo is often slow on POST; give the GET enough headroom.
@@ -123,19 +127,25 @@ async function persistToDisk() {
 }
 
 function buildUpstreamAuthHeaders(apiKey: string, endpointType: string): Record<string, string> {
-  const headers: Record<string, string> = { Accept: "application/json" };
-  const cleanKey = sanitizeProviderApiKey(apiKey);
-  if (!cleanKey) return headers;
+  return buildModelListAuthHeaders(apiKey, endpointType);
+}
 
-  if (endpointType === "anthropic") {
-    headers["x-api-key"] = cleanKey;
-    headers["anthropic-version"] = "2023-06-01";
-    // Some Anthropic-compatible gateways (e.g. AeroLink) also accept Bearer on /v1/models.
-    headers.Authorization = "Bearer " + cleanKey;
-  } else {
-    headers.Authorization = "Bearer " + cleanKey;
-  }
-  return headers;
+async function getCatalogProbeKeys(providerId: number, legacyApiKey: string | null): Promise<string[]> {
+  const rows = await db
+    .select()
+    .from(providerApiKeys)
+    .where(
+      and(
+        eq(providerApiKeys.providerId, providerId),
+        eq(providerApiKeys.isActive, true),
+        eq(providerApiKeys.isLimited, false),
+      ),
+    )
+    .orderBy(asc(providerApiKeys.id));
+  const keys = rows.map((r) => sanitizeProviderApiKey(r.apiKey)).filter(Boolean);
+  const legacy = sanitizeProviderApiKey(legacyApiKey || "");
+  if (legacy && !keys.includes(legacy)) keys.push(legacy);
+  return keys.length ? keys : legacy ? [legacy] : [""];
 }
 
 async function fetchModelsFromUpstream(
@@ -245,36 +255,39 @@ export async function refreshModelCatalog(): Promise<void> {
         continue;
       }
 
-      const candidates = buildCandidateUrls(provider.endpoint);
+      const candidates = buildModelListCandidateUrls(provider.endpoint);
+      const probeKeys = await getCatalogProbeKeys(provider.id, provider.apiKey);
       let success = false;
       // Retry the upstream fetch up to 2x to ride out transient Cloudflare
-      // 524s / aborts. The single-attempt failure on slow upstreams was the
-      // most common cause of the model catalog being empty.
+      // 524s / aborts. Try every active provider API key.
       for (const url of candidates) {
-        for (let attempt = 0; attempt < 2 && !success; attempt++) {
-          try {
-            const models = await fetchModelsFromUpstream(
-              url,
-              provider.apiKey,
-              provider.id,
-              provider.endpointType || "openai",
-            );
-            for (const m of models) {
-              const existing = allModels.find((x) => x.id === m.id && x.provider_id === provider.id);
-              if (!existing) {
-                allModels.push(m);
+        for (const key of probeKeys) {
+          for (let attempt = 0; attempt < 2 && !success; attempt++) {
+            try {
+              const models = await fetchModelsFromUpstream(
+                url,
+                key,
+                provider.id,
+                provider.endpointType || "openai",
+              );
+              for (const m of models) {
+                const existing = allModels.find((x) => x.id === m.id && x.provider_id === provider.id);
+                if (!existing) {
+                  allModels.push(m);
+                }
+                appendProviderToMap(modelProviderMap, m.id, provider.id);
               }
-              appendProviderToMap(modelProviderMap, m.id, provider.id);
-            }
-            success = true;
-            break;
-          } catch (error: any) {
-            lastError = error?.message || "Unknown upstream fetch error";
-            if (attempt === 0) {
-              console.warn(`[model-catalog] fetch from ${provider.name} attempt 1 failed: ${lastError}, retrying once...`);
-              await new Promise((r) => setTimeout(r, 1500));
+              success = true;
+              break;
+            } catch (error: any) {
+              lastError = error?.message || "Unknown upstream fetch error";
+              if (attempt === 0) {
+                console.warn(`[model-catalog] fetch from ${provider.name} attempt 1 failed: ${lastError}, retrying once...`);
+                await new Promise((r) => setTimeout(r, 1500));
+              }
             }
           }
+          if (success) break;
         }
         if (success) break;
       }

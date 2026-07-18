@@ -116,6 +116,7 @@ import {
 } from '../utils/trial-routing.js';
 import { isGpyProviderOrModel, resolveKeyDailyTokenLimit, resolveKeyPromptLimit } from '../utils/trial-config.js';
 import { queueTrialNotification } from '../utils/trial-notify.js';
+import { sseTextToOpenAICompletion } from '../utils/probe-validate.js';
 
 const proxy = new Hono();
 
@@ -4402,6 +4403,22 @@ proxy.all('/*', async (c) => {
 		let finalizedUsage: any = {};
 		const acc = makeAccumulator();
 
+		// Some upstreams ignore stream:false and still return SSE. Convert to JSON.
+		{
+			const ct = upstreamResponse.headers.get('content-type') || '';
+			const looksSse =
+				ct.includes('text/event-stream') || /^\s*data:\s*/m.test(responseBody);
+			if (!isStreaming && looksSse && statusCode >= 200 && statusCode < 300) {
+				const converted = sseTextToOpenAICompletion(responseBody, model);
+				if (converted) {
+					console.warn(
+						`[proxy] upstream returned SSE despite stream:false for ${model}; converted to JSON`,
+					);
+					responseBody = converted;
+				}
+			}
+		}
+
 		// Convert Anthropic response to OpenAI format (OpenAI clients only).
 		// Claude Code / Anthropic SDK clients on dual providers (amanai) must
 		// receive native Anthropic JSON — do not round-trip through OpenAI.
@@ -4776,7 +4793,13 @@ proxy.all('/*', async (c) => {
 
 		return new Response(responseBody, {
 			status: statusCode,
-			headers: responseHeaders,
+			headers: {
+				...responseHeaders,
+				// Ensure clients get JSON when we converted SSE or upstream lied about content-type
+				...(!isStreaming
+					? { 'Content-Type': 'application/json; charset=utf-8' }
+					: {}),
+			},
 		});
 	} catch (error: any) {
 		const latencyMs = Date.now() - startTime;

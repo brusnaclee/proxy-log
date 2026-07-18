@@ -1335,29 +1335,75 @@ function sanitizeProviderApiKey(raw) {
 }
 
 async function fetchProviderModelList(prov) {
-	const base = prov.endpoint.replace(/\/+$/, '');
-	const candidates = [`${base}/models`, `${base}/v1/models`];
-	const cleanKey = sanitizeProviderApiKey(prov.apiKey);
-	const authAttempts = cleanKey ? [cleanKey, ''] : [''];
+	const base = String(prov.endpoint || '')
+		.replace(/\/+$/, '');
+	const endpointType = prov.endpointType || 'openai';
+	const candidates = [`${base}/v1/models`, `${base}/models`];
+	if (base.endsWith('/v1')) candidates.unshift(`${base}/models`);
+	const uniqueUrls = [...new Set(candidates)];
 
-	for (const url of candidates) {
-		for (const key of authAttempts) {
-			try {
-				const headers = { Accept: 'application/json' };
-				if (key) headers.Authorization = `Bearer ${key}`;
-				const res = await fetch(url, { headers });
-				if (!res.ok) continue;
-				const payload = await res.json();
-				const arr = Array.isArray(payload) ? payload : payload?.data || [];
-				if (arr.length === 0) continue;
-				return {
-					arr,
-					url,
-					baseUrl: base,
-					apiKey: key || cleanKey || prov.apiKey,
-				};
-			} catch (_) {}
+	const poolKeys = runtime.providerKeys.get(prov.name) || [];
+	const cleanPrimary = sanitizeProviderApiKey(prov.apiKey);
+	const keysToTry = [
+		...new Set([...poolKeys.map(sanitizeProviderApiKey), cleanPrimary].filter(Boolean)),
+		'', // last resort: unauthenticated (some public gateways)
+	];
+
+	const errors = [];
+	for (const url of uniqueUrls) {
+		for (const key of keysToTry) {
+			for (let attempt = 1; attempt <= 2; attempt++) {
+				try {
+					const controller = new AbortController();
+					const timeout = setTimeout(() => controller.abort(), 30_000);
+					const headers = { Accept: 'application/json' };
+					if (key) {
+						if (endpointType === 'anthropic') {
+							headers['x-api-key'] = key;
+							headers['anthropic-version'] = '2023-06-01';
+							headers.Authorization = `Bearer ${key}`;
+						} else {
+							headers.Authorization = `Bearer ${key}`;
+						}
+					}
+					const res = await fetch(url, {
+						headers,
+						signal: controller.signal,
+					});
+					clearTimeout(timeout);
+					if (!res.ok) {
+						errors.push(`${url} key=${key ? 'yes' : 'no'} HTTP ${res.status}`);
+						continue;
+					}
+					const payload = await res.json();
+					const arr = Array.isArray(payload)
+						? payload
+						: payload?.data || payload?.models || [];
+					if (!Array.isArray(arr) || arr.length === 0) {
+						errors.push(`${url} empty list`);
+						continue;
+					}
+					return {
+						arr,
+						url,
+						baseUrl: base,
+						apiKey: key || cleanPrimary || prov.apiKey,
+					};
+				} catch (err) {
+					errors.push(
+						`${url} attempt=${attempt}: ${err?.message || err}`,
+					);
+					if (attempt === 1) {
+						await new Promise((r) => setTimeout(r, 800));
+					}
+				}
+			}
 		}
+	}
+	if (errors.length) {
+		console.warn(
+			`[tokito-monitor] fetch models ${prov.name} failed: ${errors.slice(0, 4).join(' | ')}`,
+		);
 	}
 	return null;
 }
@@ -1419,19 +1465,21 @@ async function pollModelStatus() {
 				const provApiKey = provKeys[0] || prov.apiKey || '';
 				const proxyV1Base = PROXY_PUBLIC_BASE_URL.replace(/\/+$/, '') + '/v1';
 				for (const modelId of ['express', 'advanced']) {
-					const catalogId = `you/${modelId}`;
+					const catalogId = modelId; // bare id; provider column = youcom name
 					const entry = {
 						modelId: catalogId,
 						provider: prov.name,
 						baseUrl: proxyV1Base,
-						apiKey: provApiKey,
+						apiKey: TOKITO_API_KEY || provApiKey,
+						endpointType: 'openai',
+						probeViaProxy: true,
 					};
-					allModels.push(catalogId);
+					allModels.push(`${prov.name}/${catalogId}`);
 					runtime.modelEntries.push(entry);
 					runtime.modelProviderMap.set(catalogId, {
 						provider: prov.name,
 						baseUrl: proxyV1Base,
-						apiKey: provApiKey,
+						apiKey: TOKITO_API_KEY || provApiKey,
 					});
 				}
 				console.log(
@@ -1451,7 +1499,13 @@ async function pollModelStatus() {
 			for (const m of arr) {
 				const id = m.id || m.name;
 				allModels.push(id);
-				const entry = { modelId: id, provider: prov.name, baseUrl, apiKey };
+				const entry = {
+					modelId: id,
+					provider: prov.name,
+					baseUrl,
+					apiKey,
+					endpointType: prov.endpointType || 'openai',
+				};
 				runtime.modelEntries.push(entry);
 				runtime.modelProviderMap.set(id, {
 					provider: prov.name,
@@ -1506,6 +1560,7 @@ async function pollModelStatus() {
 									provider: prov.name,
 									baseUrl,
 									apiKey,
+									endpointType: prov.endpointType || 'openai',
 								};
 								runtime.modelEntries.push(entry);
 								runtime.modelProviderMap.set(id, {
@@ -1629,7 +1684,14 @@ async function ensureGpyModelEntries() {
 			) {
 				continue;
 			}
-			const entry = { modelId, provider, baseUrl: proxyV1Base, apiKey: '' };
+			const entry = {
+				modelId,
+				provider,
+				baseUrl: proxyV1Base,
+				apiKey: TOKITO_API_KEY || '',
+				endpointType: 'openai',
+				probeViaProxy: true,
+			};
 			runtime.modelEntries.push(entry);
 			if (!runtime.models.includes(modelId)) runtime.models.push(modelId);
 		}
@@ -1760,18 +1822,68 @@ async function runLatencyTest() {
 
 // ─── Smart Retry: Test a single model and return latency result ────────────────
 
+function isValidProbeBody(status, contentType, bodyText) {
+	if (status < 200 || status >= 300) return false;
+	const text = String(bodyText || '');
+	const ct = String(contentType || '').toLowerCase();
+	if (ct.includes('text/event-stream') || /^\s*data:\s*/m.test(text)) {
+		let hasContent = false;
+		for (const line of text.split(/\r?\n/)) {
+			const trimmed = line.trim();
+			if (!trimmed.startsWith('data:')) continue;
+			const data = trimmed.slice(5).trim();
+			if (!data || data === '[DONE]') continue;
+			try {
+				const j = JSON.parse(data);
+				if (j?.error) return false;
+				const delta = j?.choices?.[0]?.delta || {};
+				if (typeof delta.content === 'string' && delta.content.length > 0)
+					hasContent = true;
+				if (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0)
+					hasContent = true;
+				const fr = j?.choices?.[0]?.finish_reason;
+				if (fr) hasContent = true;
+			} catch {
+				/* ignore */
+			}
+		}
+		return hasContent;
+	}
+	try {
+		const j = JSON.parse(text);
+		if (j?.error) return false;
+		const msg = j?.choices?.[0]?.message;
+		if (typeof msg?.content === 'string' && msg.content.trim()) return true;
+		if (Array.isArray(msg?.tool_calls) && msg.tool_calls.length) return true;
+		if (typeof msg?.reasoning_content === 'string' && msg.reasoning_content.trim())
+			return true;
+		if (Array.isArray(j?.content) && j.content.length) return true;
+		const fr = String(j?.choices?.[0]?.finish_reason || j?.stop_reason || '').toLowerCase();
+		if (
+			['stop', 'end_turn', 'length', 'max_tokens'].includes(fr) &&
+			Array.isArray(j?.choices) &&
+			j.choices.length
+		) {
+			return true;
+		}
+		return false;
+	} catch {
+		return text.trim().length > 0;
+	}
+}
+
 async function testSingleModel(entry) {
 	const started = Date.now();
 	const baseUrl = entry.baseUrl;
 	const provider = entry.provider;
+	const endpointType = entry.endpointType || 'openai';
 
-	// Get all available keys for this provider — try every key on failure/429
 	const providerKeys = runtime.providerKeys.get(provider) || [];
 	const keysToTry = [
 		...new Set([entry.apiKey, ...providerKeys].filter(Boolean)),
 	];
 
-	let result = { ok: false, status: 0, body: { error: 'No keys' } };
+	let result = { ok: false, status: 0, body: { error: 'No keys' }, raw: '' };
 
 	for (let attempt = 1; attempt <= SWEEP_ATTEMPTS; attempt++) {
 		for (const apiKey of keysToTry) {
@@ -1781,31 +1893,71 @@ async function testSingleModel(entry) {
 					() => controller.abort(),
 					TOKITO_REQUEST_TIMEOUT_MS,
 				);
-				const res = await fetch(`${baseUrl}/chat/completions`, {
-					method: 'POST',
-					headers: {
-						Authorization: `Bearer ${apiKey}`,
+				let url;
+				let headers;
+				let body;
+				if (endpointType === 'anthropic') {
+					const base = baseUrl.replace(/\/+$/, '');
+					url = base.endsWith('/v1') ? `${base}/messages` : `${base}/v1/messages`;
+					headers = {
 						'Content-Type': 'application/json',
-					},
-					body: JSON.stringify({
+						'x-api-key': apiKey,
+						'anthropic-version': '2023-06-01',
+					};
+					body = JSON.stringify({
 						model: entry.modelId,
+						max_tokens: 8,
+						messages: [{ role: 'user', content: 'hi' }],
+					});
+				} else {
+					const base = baseUrl.replace(/\/+$/, '');
+					url = base.endsWith('/v1')
+						? `${base}/chat/completions`
+						: `${base}/v1/chat/completions`;
+					const proxyBase = String(PROXY_PUBLIC_BASE_URL || '').replace(
+						/\/+$/,
+						'',
+					);
+					const viaProxy =
+						entry.probeViaProxy ||
+						(proxyBase && base.startsWith(proxyBase));
+					const probeModel = viaProxy
+						? entry.modelId.includes('/')
+							? entry.modelId
+							: `${provider}/${entry.modelId}`
+						: entry.modelId;
+					headers = {
+						Authorization: `Bearer ${viaProxy && TOKITO_API_KEY ? TOKITO_API_KEY : apiKey}`,
+						'Content-Type': 'application/json',
+						'User-Agent': 'TokitoMonitor/1.0 (Windows NT 10.0; Win64; x64)',
+						'x-device-id': 'tokito-monitor-sweep',
+					};
+					body = JSON.stringify({
+						model: probeModel,
 						messages: [{ role: 'user', content: 'test' }],
-						max_tokens: 1,
+						max_tokens: 8,
 						temperature: 0,
-					}),
+						stream: false,
+					});
+				}
+				const res = await fetch(url, {
+					method: 'POST',
+					headers,
+					body,
 					signal: controller.signal,
 				});
 				clearTimeout(timeout);
 				const text = await res.text();
-				let body;
+				const ct = res.headers.get('content-type') || '';
+				let parsed;
 				try {
-					body = JSON.parse(text);
+					parsed = JSON.parse(text);
 				} catch (_) {
-					body = { raw: text };
+					parsed = { raw: text.slice(0, 200) };
 				}
-				result = { ok: res.ok, status: res.status, body };
+				result = { ok: res.ok, status: res.status, body: parsed, raw: text };
 
-				if (res.ok) {
+				if (res.ok && isValidProbeBody(res.status, ct, text)) {
 					return {
 						ok: true,
 						ms: Date.now() - started,
@@ -1815,11 +1967,17 @@ async function testSingleModel(entry) {
 						attempts: attempt,
 					};
 				}
-				// 401/403 on this key → try next key; 429 → next key; other → still try keys then retry
+				if (res.ok) {
+					result = {
+						ok: false,
+						status: res.status,
+						body: { error: 'Empty/invalid probe body' },
+						raw: text,
+					};
+				}
 				continue;
 			} catch (err) {
-				result = { ok: false, status: 0, body: { error: err.message } };
-				// Network/timeout: try next key, then next attempt
+				result = { ok: false, status: 0, body: { error: err.message }, raw: '' };
 				continue;
 			}
 		}

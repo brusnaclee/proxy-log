@@ -13,6 +13,7 @@ import {
   resetAllTestStates,
   type MonitorSnapshotRow,
 } from "../../utils/model-monitor-store.js";
+import { isValidProbeBody } from "../../utils/probe-validate.js";
 
 const monitor = new Hono();
 
@@ -71,12 +72,13 @@ function buildProbeRequest(
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({
-        model: modelId,
-        messages: [{ role: "user", content: "test" }],
-        max_tokens: 1,
-        temperature: 0,
-      }),
+        body: JSON.stringify({
+          model: modelId,
+          messages: [{ role: "user", content: "test" }],
+          max_tokens: 8,
+          temperature: 0,
+          stream: false,
+        }),
     },
   };
 }
@@ -627,11 +629,13 @@ monitor.post("/monitor/sweep", async (c) => {
                 const res = await fetch(probe.url, { ...probe.init, signal: controller.signal });
                 clearTimeout(timeout);
                 lastStatus = res.status;
-                if (res.ok) {
+                const text = await res.text();
+                const ct = res.headers.get("content-type") || "";
+                if (res.ok && isValidProbeBody(res.status, ct, text)) {
                   ok = true;
                   break;
                 }
-                lastError = `HTTP ${res.status}`;
+                lastError = res.ok ? "Empty/invalid probe body" : `HTTP ${res.status}`;
               } catch (err: any) {
                 lastStatus = 0;
                 lastError = err?.name === "AbortError" ? "Timeout" : (err?.message || "Network error");
