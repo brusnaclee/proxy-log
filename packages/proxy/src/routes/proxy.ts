@@ -13,7 +13,12 @@ import {
 	modelMonitor,
 	providers,
 	requestLogs,
+	userPortalSettings,
 } from '../db/schema.js';
+import {
+	applyTokenSavers,
+	resolveTokenSaverFlags,
+} from '../utils/token-saver/index.js';
 import {
 	convertResponseToOpenAI,
 	convertStreamEvent,
@@ -1125,6 +1130,40 @@ proxy.all('/*', async (c) => {
 		}
 
 		const catalog = await getFilteredModelCatalogResponse({ isTrial });
+		// Enrich with is_online from latest model_monitor (same source as portal/Discord).
+		try {
+			const onlineModels = await getOnlineModelsByLatency();
+			const onlineSet = new Set<string>();
+			for (const m of onlineModels) {
+				onlineSet.add(m.modelId);
+				const slash = m.modelId.indexOf('/');
+				if (slash > 0) onlineSet.add(m.modelId.slice(slash + 1));
+				if (m.provider) onlineSet.add(`${m.provider}/${m.modelId.includes('/') ? m.modelId.slice(m.modelId.indexOf('/') + 1) : m.modelId}`);
+			}
+			const isOnlineId = (id: string): boolean => {
+				if (id === 'auto') return onlineSet.size > 0;
+				if (onlineSet.has(id)) return true;
+				const parts = id.split('/');
+				for (let i = 1; i < parts.length; i++) {
+					if (onlineSet.has(parts.slice(i).join('/'))) return true;
+				}
+				for (const mid of onlineSet) {
+					if (mid.endsWith('/' + id) || id.endsWith('/' + mid)) return true;
+				}
+				return false;
+			};
+			if (Array.isArray((catalog as any)?.data)) {
+				(catalog as any).data = (catalog as any).data.map((m: any) => ({
+					...m,
+					is_online: isOnlineId(String(m?.id || '')),
+					// Ensure context_length key exists for OpenCode/Cline (may already be set by catalog).
+					context_length: m.context_length ?? m.max_context_length ?? null,
+					max_tokens: m.max_output_tokens ?? m.max_tokens ?? null,
+				}));
+			}
+		} catch (err) {
+			console.warn('[proxy] /v1/models is_online enrich failed:', (err as Error)?.message || err);
+		}
 		return c.json(catalog);
 	}
 
@@ -1698,6 +1737,55 @@ proxy.all('/*', async (c) => {
 				}
 			}, 400);
 		}
+		}
+	}
+
+	// ─── 7d. Token Saver pipeline (RTK → Headroom → Caveman → Ponytail) ─────
+	// Runs after Anthropic→OpenAI convert so both formats share one path.
+	// Header X-Token-Saver: off disables all; else user override > global default.
+	if (requestBody && Array.isArray((requestBody as any).messages)) {
+		try {
+			let userOverrides: {
+				tokenSaverRtkOverride?: boolean | null;
+				tokenSaverHeadroomOverride?: boolean | null;
+				tokenSaverCavemanOverride?: boolean | null;
+				tokenSaverPonytailOverride?: boolean | null;
+			} | null = null;
+			if (keyRecord.discordUserId) {
+				userOverrides =
+					(
+						await db
+							.select({
+								tokenSaverRtkOverride: userPortalSettings.tokenSaverRtkOverride,
+								tokenSaverHeadroomOverride: userPortalSettings.tokenSaverHeadroomOverride,
+								tokenSaverCavemanOverride: userPortalSettings.tokenSaverCavemanOverride,
+								tokenSaverPonytailOverride: userPortalSettings.tokenSaverPonytailOverride,
+							})
+							.from(userPortalSettings)
+							.where(eq(userPortalSettings.discordUserId, keyRecord.discordUserId))
+							.limit(1)
+					)[0] ?? null;
+			}
+			const tsFlags = resolveTokenSaverFlags(config as any, userOverrides, c.req.raw.headers);
+			const tsResult = await applyTokenSavers(requestBody, tsFlags);
+			if (
+				tsResult.rtk?.charsSaved ||
+				tsResult.headroom?.ok ||
+				tsResult.caveman ||
+				tsResult.ponytail
+			) {
+				requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
+				console.log(
+					`[token-saver] rtk=${tsFlags.rtk}` +
+						(tsResult.rtk ? `(saved=${tsResult.rtk.charsSaved})` : '') +
+						` headroom=${tsFlags.headroom}` +
+						` caveman=${tsFlags.caveman}` +
+						` ponytail=${tsFlags.ponytail}` +
+						(tsFlags.disabledByHeader ? ' (header-off)' : ''),
+				);
+			}
+		} catch (err) {
+			console.warn('[token-saver] apply failed (fail-open):', (err as Error)?.message || err);
 		}
 	}
 
@@ -4057,15 +4145,24 @@ proxy.all('/*', async (c) => {
 							: 0;
 
 					// Guard: emit SSE error when upstream returned 200 but stream had no content.
+					// Skip if finish_reason is length/max_tokens (valid truncate, not empty — OmniRoute #3572).
+					const streamFinishReason = String(
+						(finalized as any)?.finishReason ||
+							(finalized as any)?.finish_reason ||
+							'',
+					).toLowerCase();
+					const isValidTruncate =
+						streamFinishReason === 'length' || streamFinishReason === 'max_tokens';
 					if (
 						statusCode >= 200 &&
 						statusCode < 300 &&
 						rawCompletionTokens === 0 &&
 						!finalized.completionText &&
-						!hasActualToolCalls
+						!hasActualToolCalls &&
+						!isValidTruncate
 					) {
 						const errorMsg =
-							`Upstream model "${model}" returned empty streaming response (0 tokens)`;
+							`Upstream returned empty content for ${model}. Prompt quota was NOT charged. Try again or switch model.`;
 						console.warn(`[proxy] ${errorMsg}`);
 						const toolsList = Array.from(toolNameSet);
 						const logEntry = {
@@ -4088,7 +4185,12 @@ proxy.all('/*', async (c) => {
 						};
 						persistLogAndSession(logEntry, hasActualToolCalls, false);
 						const errSse = `data: ${JSON.stringify({
-							error: { message: errorMsg, type: 'upstream_error' },
+							error: {
+								message: errorMsg,
+								type: 'upstream_empty_response',
+								code: 'empty_upstream_response',
+								param: null,
+							},
 						})}\n\ndata: [DONE]\n\n`;
 						controller.enqueue(new TextEncoder().encode(errSse));
 						return;
@@ -4343,6 +4445,7 @@ proxy.all('/*', async (c) => {
 		// empty bubble. This mirrors the streaming guard at lines 3586–3615.
 		// Count reasoning_content as visible — some models (GLM/Kimi via amanai) put
 		// output only there; emptying that into a hard 502 broke Hermes loops.
+		// Do NOT treat finish_reason=length/max_tokens as empty (valid truncate).
 		const hasReasoningOnly = (() => {
 			try {
 				const p = JSON.parse(responseBody);
@@ -4353,16 +4456,27 @@ proxy.all('/*', async (c) => {
 				return false;
 			}
 		})();
+		const nonStreamFinishReason = (() => {
+			try {
+				const p = JSON.parse(responseBody);
+				return String(p?.choices?.[0]?.finish_reason || p?.stop_reason || '').toLowerCase();
+			} catch {
+				return '';
+			}
+		})();
+		const isValidTruncate =
+			nonStreamFinishReason === 'length' || nonStreamFinishReason === 'max_tokens';
 		if (
 			statusCode >= 200 &&
 			statusCode < 300 &&
 			completionTokens === 0 &&
 			!responsePreview &&
 			!hasActualToolCalls &&
-			!hasReasoningOnly
+			!hasReasoningOnly &&
+			!isValidTruncate
 		) {
 			const errMsg =
-				`Upstream model "${model}" returned empty non-streaming response`;
+				`Upstream returned empty content for ${model}. Prompt quota was NOT charged. Try again or switch model.`;
 			console.warn(`[proxy] ${errMsg}`);
 			const emptyLogEntry = {
 				...baseLogEntry,
@@ -4391,7 +4505,9 @@ proxy.all('/*', async (c) => {
 				{
 					error: {
 						message: errMsg,
-						type: 'upstream_error',
+						type: 'upstream_empty_response',
+						code: 'empty_upstream_response',
+						param: null,
 					},
 				},
 				502,

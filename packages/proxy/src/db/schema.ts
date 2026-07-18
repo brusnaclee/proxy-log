@@ -42,6 +42,15 @@ export const adminConfig = pgTable('admin_config', {
 	trialPanelMessageId: text('trial_panel_message_id'),
 	trialEmbedConfig: text('trial_embed_config').notNull().default('{}'),
 	trialDmTemplates: text('trial_dm_templates').notNull().default('{}'),
+	// ─── Token Saver (9router-style pipeline) ───────────────────────────────────
+	tokenSaverRtkEnabled: boolean('token_saver_rtk_enabled').notNull().default(true),
+	tokenSaverRtkMaxChars: integer('token_saver_rtk_max_chars').notNull().default(2000),
+	tokenSaverHeadroomEnabled: boolean('token_saver_headroom_enabled').notNull().default(false),
+	tokenSaverHeadroomUrl: text('token_saver_headroom_url').notNull().default(''),
+	tokenSaverCavemanEnabled: boolean('token_saver_caveman_enabled').notNull().default(false),
+	tokenSaverCavemanLevel: integer('token_saver_caveman_level').notNull().default(2),
+	tokenSaverPonytailEnabled: boolean('token_saver_ponytail_enabled').notNull().default(false),
+	tokenSaverPonytailLevel: text('token_saver_ponytail_level').notNull().default('lite'),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
 	updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
@@ -475,6 +484,11 @@ export const userPortalSettings = pgTable('user_portal_settings', {
   webhookUrl: text('webhook_url'),
   webhookSecret: text('webhook_secret'),
   lastLoginAt: timestamp('last_login_at'),
+  // ─── Token Saver overrides (tri-state: null = use global, true/false = override) ───
+  tokenSaverRtkOverride: boolean('token_saver_rtk_override'),
+  tokenSaverHeadroomOverride: boolean('token_saver_headroom_override'),
+  tokenSaverCavemanOverride: boolean('token_saver_caveman_override'),
+  tokenSaverPonytailOverride: boolean('token_saver_ponytail_override'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });

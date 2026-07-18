@@ -1909,13 +1909,8 @@ async function runFullSweep() {
 	await pollModelStatus();
 	if (!runtime.modelEntries.length) return;
 
-	// Skip `conduit` provider: it's transient (single request always fails on
-	// upstream 502). The proxy itself bypasses the offline gate for conduit
-	// and retries 10x per request, so we don't need to monitor it here.
+	// Probe ALL models (no provider exclusions). Soft-suspend after 3 fails still applies.
 	const queue = runtime.modelEntries.filter((entry) => {
-		if (['conduit', 'ozdoev'].includes((entry.provider || '').toLowerCase()))
-			return false;
-
 		const key = entryKey(entry);
 		const retryState = runtime.modelRetryState.get(key);
 		if (retryState?.suspendedUntil) {
@@ -1935,10 +1930,6 @@ async function runRetrySweep() {
 
 	const entriesToRetry = [];
 	for (const entry of runtime.modelEntries) {
-		// Skip `conduit` (see runFullSweep for rationale)
-		if (['conduit', 'ozdoev'].includes((entry.provider || '').toLowerCase()))
-			continue;
-
 		const key = entryKey(entry);
 		const retryState = runtime.modelRetryState.get(key);
 
@@ -5478,11 +5469,15 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 			`-# ℹ️ Tool follow-ups hanya dihitung 1x prompt per turn.\n\n` +
 			`**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}\nBulanan: ${monthlyTokenStr}`;
 
+	const tokenSaverHint =
+		`\n\n💡 **Token Saver** — hemat token Cline/Roo (compress tool dump). Atur di Dashboard → Settings: ${PORTAL_DASHBOARD_URL}`;
+
 	const embed = new EmbedBuilder()
 		.setTitle(`📊 Usage: ${displayName}`)
 		.setDescription(
 			`Discord ID: \`${discordUserId}\`\nAPI Key: \`${keyDisplay}\`\nStatus: ${isActive ? '🟢 Active' : '🔴 Inactive'}${trialBlock}\n\n` +
-				limitSection,
+				limitSection +
+				tokenSaverHint,
 		)
 		.setColor(isActive ? 0x57f287 : 0xff6b6b)
 		.addFields(

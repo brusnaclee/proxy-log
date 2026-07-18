@@ -25,6 +25,14 @@ settings.get("/settings/global", async (c) => {
     globalMonthlyTokenLimit: config.globalMonthlyTokenLimit || 0,
     globalDailyInputTokenLimit: config.globalDailyInputTokenLimit || 0,
     globalDailyOutputTokenLimit: config.globalDailyOutputTokenLimit || 0,
+    tokenSaverRtkEnabled: config.tokenSaverRtkEnabled ?? true,
+    tokenSaverRtkMaxChars: config.tokenSaverRtkMaxChars ?? 2000,
+    tokenSaverHeadroomEnabled: config.tokenSaverHeadroomEnabled ?? false,
+    tokenSaverHeadroomUrl: config.tokenSaverHeadroomUrl || "",
+    tokenSaverCavemanEnabled: config.tokenSaverCavemanEnabled ?? false,
+    tokenSaverCavemanLevel: config.tokenSaverCavemanLevel ?? 2,
+    tokenSaverPonytailEnabled: config.tokenSaverPonytailEnabled ?? false,
+    tokenSaverPonytailLevel: config.tokenSaverPonytailLevel || "lite",
   });
 });
 
@@ -42,10 +50,23 @@ settings.put("/settings/global", async (c) => {
   if (body.globalPromptLimitWindow !== undefined) updates.globalPromptLimitWindow = body.globalPromptLimitWindow || "1d";
   if (body.globalPerModelPromptLimit !== undefined) updates.globalPerModelPromptLimit = body.globalPerModelPromptLimit;
   if (body.globalPerModelPromptLimitWindow !== undefined) updates.globalPerModelPromptLimitWindow = body.globalPerModelPromptLimitWindow || "1d";
-    if (body.globalDailyTokenLimit !== undefined) updates.globalDailyTokenLimit = body.globalDailyTokenLimit;
+  if (body.globalDailyTokenLimit !== undefined) updates.globalDailyTokenLimit = body.globalDailyTokenLimit;
     if (body.globalMonthlyTokenLimit !== undefined) updates.globalMonthlyTokenLimit = body.globalMonthlyTokenLimit;
     if (body.globalDailyInputTokenLimit !== undefined) updates.globalDailyInputTokenLimit = body.globalDailyInputTokenLimit;
     if (body.globalDailyOutputTokenLimit !== undefined) updates.globalDailyOutputTokenLimit = body.globalDailyOutputTokenLimit;
+  if (body.tokenSaverRtkEnabled !== undefined) updates.tokenSaverRtkEnabled = !!body.tokenSaverRtkEnabled;
+  if (body.tokenSaverRtkMaxChars !== undefined) updates.tokenSaverRtkMaxChars = Math.max(200, Number(body.tokenSaverRtkMaxChars) || 2000);
+  if (body.tokenSaverHeadroomEnabled !== undefined) updates.tokenSaverHeadroomEnabled = !!body.tokenSaverHeadroomEnabled;
+  if (body.tokenSaverHeadroomUrl !== undefined) updates.tokenSaverHeadroomUrl = String(body.tokenSaverHeadroomUrl || "");
+  if (body.tokenSaverCavemanEnabled !== undefined) updates.tokenSaverCavemanEnabled = !!body.tokenSaverCavemanEnabled;
+  if (body.tokenSaverCavemanLevel !== undefined) {
+    updates.tokenSaverCavemanLevel = Math.max(1, Math.min(5, Number(body.tokenSaverCavemanLevel) || 2));
+  }
+  if (body.tokenSaverPonytailEnabled !== undefined) updates.tokenSaverPonytailEnabled = !!body.tokenSaverPonytailEnabled;
+  if (body.tokenSaverPonytailLevel !== undefined) {
+    const lvl = String(body.tokenSaverPonytailLevel || "lite").toLowerCase();
+    updates.tokenSaverPonytailLevel = ["lite", "full", "ultra"].includes(lvl) ? lvl : "lite";
+  }
 
   await db.update(adminConfig).set(updates).where(eq(adminConfig.id, config.id));
   configCache.invalidate("admin_config"); // invalidate cached config
@@ -252,6 +273,14 @@ settings.post("/settings/factory-reset", async (c) => {
       geminiApiKey: "",
       verifAutoEnabled: false,
       tokitoApiKey: "",
+      tokenSaverRtkEnabled: true,
+      tokenSaverRtkMaxChars: 2000,
+      tokenSaverHeadroomEnabled: false,
+      tokenSaverHeadroomUrl: "",
+      tokenSaverCavemanEnabled: false,
+      tokenSaverCavemanLevel: 2,
+      tokenSaverPonytailEnabled: false,
+      tokenSaverPonytailLevel: "lite",
       updatedAt: new Date(),
     }).where(eq(adminConfig.id, config.id));
 

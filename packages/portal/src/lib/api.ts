@@ -351,6 +351,17 @@ export const settings = {
     request<{ success: boolean; removed: boolean; hasWebhook: boolean }>(
       "/settings/webhook", "PUT", { url: "" }
     ),
+
+  getTokenSaver: () =>
+    request<{
+      global: { rtk: boolean; rtkMaxChars: number; headroom: boolean; caveman: boolean; cavemanLevel: number; ponytail: boolean; ponytailLevel: string };
+      overrides: { rtk: boolean | null; headroom: boolean | null; caveman: boolean | null; ponytail: boolean | null };
+    }>("/settings/token-saver", "GET"),
+
+  setTokenSaver: (overrides: { rtk?: boolean | null; headroom?: boolean | null; caveman?: boolean | null; ponytail?: boolean | null }) =>
+    request<{ success: boolean; overrides: { rtk: boolean | null; headroom: boolean | null; caveman: boolean | null; ponytail: boolean | null } }>(
+      "/settings/token-saver", "PUT", overrides
+    ),
 };
 
 // ─── Root export ──────────────────────────────────────────────────────────────

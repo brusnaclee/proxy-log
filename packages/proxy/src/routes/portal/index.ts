@@ -448,6 +448,23 @@ portal.get("/me", async (c) => {
     monthlyResetAt,
     modelUsageLimits,
     pendingNotifications,
+    tokenSaver: {
+      global: {
+        rtk: config?.tokenSaverRtkEnabled ?? true,
+        rtkMaxChars: config?.tokenSaverRtkMaxChars ?? 2000,
+        headroom: config?.tokenSaverHeadroomEnabled ?? false,
+        caveman: config?.tokenSaverCavemanEnabled ?? false,
+        cavemanLevel: config?.tokenSaverCavemanLevel ?? 2,
+        ponytail: config?.tokenSaverPonytailEnabled ?? false,
+        ponytailLevel: config?.tokenSaverPonytailLevel || "lite",
+      },
+      overrides: {
+        rtk: settings?.tokenSaverRtkOverride ?? null,
+        headroom: settings?.tokenSaverHeadroomOverride ?? null,
+        caveman: settings?.tokenSaverCavemanOverride ?? null,
+        ponytail: settings?.tokenSaverPonytailOverride ?? null,
+      },
+    },
   });
 });
 
@@ -1274,6 +1291,79 @@ portal.put("/settings/webhook", async (c) => {
     webhookUrl: maskWebhookUrl(webhookUrl),
     webhookSecret,
     hasWebhook: true,
+  });
+});
+
+// Token Saver per-user overrides (tri-state: null=default, true=on, false=off)
+portal.get("/settings/token-saver", async (c) => {
+  const discordUserId = getPortalDiscordUserId(c)!;
+  const [settings, config] = await Promise.all([
+    db.select().from(userPortalSettings).where(eq(userPortalSettings.discordUserId, discordUserId)).then(r => r[0] ?? null),
+    db.select().from(adminConfig).limit(1).then(r => r[0] ?? null),
+  ]);
+  return c.json({
+    global: {
+      rtk: config?.tokenSaverRtkEnabled ?? true,
+      rtkMaxChars: config?.tokenSaverRtkMaxChars ?? 2000,
+      headroom: config?.tokenSaverHeadroomEnabled ?? false,
+      caveman: config?.tokenSaverCavemanEnabled ?? false,
+      cavemanLevel: config?.tokenSaverCavemanLevel ?? 2,
+      ponytail: config?.tokenSaverPonytailEnabled ?? false,
+      ponytailLevel: config?.tokenSaverPonytailLevel || "lite",
+    },
+    overrides: {
+      rtk: settings?.tokenSaverRtkOverride ?? null,
+      headroom: settings?.tokenSaverHeadroomOverride ?? null,
+      caveman: settings?.tokenSaverCavemanOverride ?? null,
+      ponytail: settings?.tokenSaverPonytailOverride ?? null,
+    },
+  });
+});
+
+portal.put("/settings/token-saver", async (c) => {
+  const discordUserId = getPortalDiscordUserId(c)!;
+  const body = await c.req.json<{
+    rtk?: boolean | null;
+    headroom?: boolean | null;
+    caveman?: boolean | null;
+    ponytail?: boolean | null;
+  }>();
+
+  const normalize = (v: unknown): boolean | null => {
+    if (v === null || v === undefined || v === "default") return null;
+    if (v === true || v === "on" || v === "true") return true;
+    if (v === false || v === "off" || v === "false") return false;
+    return null;
+  };
+
+  const updates: Record<string, any> = { updatedAt: new Date() };
+  if (body.rtk !== undefined) updates.tokenSaverRtkOverride = normalize(body.rtk);
+  if (body.headroom !== undefined) updates.tokenSaverHeadroomOverride = normalize(body.headroom);
+  if (body.caveman !== undefined) updates.tokenSaverCavemanOverride = normalize(body.caveman);
+  if (body.ponytail !== undefined) updates.tokenSaverPonytailOverride = normalize(body.ponytail);
+
+  const settings = (await db.select().from(userPortalSettings).where(eq(userPortalSettings.discordUserId, discordUserId)))[0];
+  if (settings) {
+    await db.update(userPortalSettings).set(updates).where(eq(userPortalSettings.discordUserId, discordUserId));
+  } else {
+    await db.insert(userPortalSettings).values({
+      discordUserId,
+      tokenSaverRtkOverride: updates.tokenSaverRtkOverride ?? null,
+      tokenSaverHeadroomOverride: updates.tokenSaverHeadroomOverride ?? null,
+      tokenSaverCavemanOverride: updates.tokenSaverCavemanOverride ?? null,
+      tokenSaverPonytailOverride: updates.tokenSaverPonytailOverride ?? null,
+    });
+  }
+
+  const refreshed = (await db.select().from(userPortalSettings).where(eq(userPortalSettings.discordUserId, discordUserId)))[0];
+  return c.json({
+    success: true,
+    overrides: {
+      rtk: refreshed?.tokenSaverRtkOverride ?? null,
+      headroom: refreshed?.tokenSaverHeadroomOverride ?? null,
+      caveman: refreshed?.tokenSaverCavemanOverride ?? null,
+      ponytail: refreshed?.tokenSaverPonytailOverride ?? null,
+    },
   });
 });
 

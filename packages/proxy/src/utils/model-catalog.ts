@@ -578,61 +578,54 @@ function collectProviderIdsForModel(modelId: string, upstreamModel: string): num
 }
 
 async function isProviderOnlineForModel(providerName: string, upstreamModel: string): Promise<boolean> {
-  // Bypass: `conduit` provider is treated as always online since conduit.ozdoev.net
-  // is transient (upstream 502s frequently but recovers). Forcing offline causes
-  // bad UX for users. Real request will surface a fresh error from upstream.
-  if (providerName === "conduit" || providerName === "ozdoev") {
-    return true;
-  }
+	// Check exact match first
+	const latest = (await db
+		.select()
+		.from(modelMonitor)
+		.where(
+			and(
+				eq(modelMonitor.modelId, upstreamModel),
+				eq(modelMonitor.provider, providerName),
+			),
+		)
+		.orderBy(desc(modelMonitor.checkedAt))
+		.limit(1))[0];
 
-  // Check exact match first
-  const latest = (await db
-    .select()
-    .from(modelMonitor)
-    .where(
-      and(
-        eq(modelMonitor.modelId, upstreamModel),
-        eq(modelMonitor.provider, providerName),
-      ),
-    )
-    .orderBy(desc(modelMonitor.checkedAt))
-    .limit(1))[0];
+	if (latest) {
+		return Boolean(latest.isOnline) && latest.httpStatus === 200;
+	}
 
-  if (latest) {
-    return Boolean(latest.isOnline) && latest.httpStatus === 200;
-  }
+	// Also check with provider prefix (e.g., "mimo-v2.5-pro" -> "mimo/mimo-v2.5-pro")
+	const withPrefix = (await db
+		.select()
+		.from(modelMonitor)
+		.where(
+			and(
+				eq(modelMonitor.modelId, `${providerName}/${upstreamModel}`),
+				eq(modelMonitor.provider, providerName),
+			),
+		)
+		.orderBy(desc(modelMonitor.checkedAt))
+		.limit(1))[0];
 
-  // Also check with provider prefix (e.g., "mimo-v2.5-pro" -> "mimo/mimo-v2.5-pro")
-  const withPrefix = (await db
-    .select()
-    .from(modelMonitor)
-    .where(
-      and(
-        eq(modelMonitor.modelId, `${providerName}/${upstreamModel}`),
-        eq(modelMonitor.provider, providerName),
-      ),
-    )
-    .orderBy(desc(modelMonitor.checkedAt))
-    .limit(1))[0];
+	if (withPrefix) {
+		return Boolean(withPrefix.isOnline) && withPrefix.httpStatus === 200;
+	}
 
-  if (withPrefix) {
-    return Boolean(withPrefix.isOnline) && withPrefix.httpStatus === 200;
-  }
+	// Fallback: any monitor row for this model (legacy rows without provider)
+	const legacy = (await db
+		.select()
+		.from(modelMonitor)
+		.where(eq(modelMonitor.modelId, upstreamModel))
+		.orderBy(desc(modelMonitor.checkedAt))
+		.limit(1))[0];
 
-  // Fallback: any monitor row for this model (legacy rows without provider)
-  const legacy = (await db
-    .select()
-    .from(modelMonitor)
-    .where(eq(modelMonitor.modelId, upstreamModel))
-    .orderBy(desc(modelMonitor.checkedAt))
-    .limit(1))[0];
+	if (legacy) {
+		return Boolean(legacy.isOnline) && legacy.httpStatus === 200;
+	}
 
-  if (legacy) {
-    return Boolean(legacy.isOnline) && legacy.httpStatus === 200;
-  }
-
-  // No monitor data ? treat as eligible (don't block)
-  return true;
+	// No monitor data — treat as eligible (don't block first request)
+	return true;
 }
 
 function weightedRandomProvider(candidates: Array<{ provider: typeof providers.$inferSelect; priority: number }>) {

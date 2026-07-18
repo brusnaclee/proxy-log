@@ -31,6 +31,16 @@ export default function SettingsPage() {
   const [webhookSuccess, setWebhookSuccess] = useState("");
   const [webhookError, setWebhookError] = useState("");
 
+  // Token Saver (tri-state: null=default, true=on, false=off)
+  const [tsGlobal, setTsGlobal] = useState<any>(null);
+  const [tsRtk, setTsRtk] = useState<boolean | null>(null);
+  const [tsHeadroom, setTsHeadroom] = useState<boolean | null>(null);
+  const [tsCaveman, setTsCaveman] = useState<boolean | null>(null);
+  const [tsPonytail, setTsPonytail] = useState<boolean | null>(null);
+  const [tsSaving, setTsSaving] = useState(false);
+  const [tsSuccess, setTsSuccess] = useState("");
+  const [tsError, setTsError] = useState("");
+
   // SSE live updates
   const [realtimeEnabled, setRealtimeEnabled] = useState(() => {
     try { return localStorage.getItem(REALTIME_KEY) === "true"; } catch { return false; }
@@ -43,6 +53,13 @@ export default function SettingsPage() {
         setUser(data);
         setPasswordState(data.hasPassword ? "set" : "none");
         if (data.webhookUrl) setWebhookUrl(data.webhookUrl);
+        if (data.tokenSaver) {
+          setTsGlobal(data.tokenSaver.global);
+          setTsRtk(data.tokenSaver.overrides?.rtk ?? null);
+          setTsHeadroom(data.tokenSaver.overrides?.headroom ?? null);
+          setTsCaveman(data.tokenSaver.overrides?.caveman ?? null);
+          setTsPonytail(data.tokenSaver.overrides?.ponytail ?? null);
+        }
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load settings"))
       .finally(() => setLoading(false));
@@ -119,6 +136,61 @@ export default function SettingsPage() {
       setWebhookSaving(false);
     }
   };
+
+  const handleSaveTokenSaver = async () => {
+    setTsError(""); setTsSuccess("");
+    setTsSaving(true);
+    try {
+      const result = await api.settings.setTokenSaver({
+        rtk: tsRtk,
+        headroom: tsHeadroom,
+        caveman: tsCaveman,
+        ponytail: tsPonytail,
+      });
+      setTsRtk(result.overrides.rtk);
+      setTsHeadroom(result.overrides.headroom);
+      setTsCaveman(result.overrides.caveman);
+      setTsPonytail(result.overrides.ponytail);
+      setTsSuccess(t("Save") + " OK");
+    } catch (err) {
+      setTsError(err instanceof Error ? err.message : "Failed to save token saver");
+    } finally {
+      setTsSaving(false);
+    }
+  };
+
+  const TriState = ({
+    label, value, onChange, globalOn,
+  }: { label: string; value: boolean | null; onChange: (v: boolean | null) => void; globalOn: boolean }) => (
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 py-3 border-b border-border/40 last:border-0">
+      <div>
+        <div className="text-sm text-foreground font-medium">{label}</div>
+        <div className="text-xs text-muted-foreground">
+          {t("Default")}: {globalOn ? t("On") : t("Off")}
+        </div>
+      </div>
+      <div className="flex gap-1">
+        {([null, true, false] as const).map((opt) => {
+          const active = value === opt;
+          const labelText = opt === null ? t("Default") : opt ? t("On") : t("Off");
+          return (
+            <button
+              key={String(opt)}
+              type="button"
+              onClick={() => onChange(opt)}
+              className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${
+                active
+                  ? "bg-primary/15 border-primary/40 text-primary"
+                  : "border-border text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {labelText}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 
   const handleRemoveWebhook = async () => {
     setWebhookError(""); setWebhookSuccess("");
@@ -289,6 +361,36 @@ export default function SettingsPage() {
             )}
           </div>
         </form>
+      </div>
+
+      {/* Token Saver */}
+      <div className="bg-card border border-border rounded-xl p-6 animate-fade-in">
+        <h2 className="text-sm font-medium text-foreground mb-1">{t("Token Saver")}</h2>
+        <p className="text-xs text-muted-foreground mb-4">{t("Token Saver desc")}</p>
+        {tsSuccess && (
+          <div className="flex items-center gap-2 p-3 bg-green-400/10 border border-green-400/20 rounded-lg text-green-400 text-sm mb-3">
+            <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+            {tsSuccess}
+          </div>
+        )}
+        {tsError && (
+          <div className="flex items-center gap-2 p-3 bg-red-400/10 border border-red-400/20 rounded-lg text-red-400 text-sm mb-3">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            {tsError}
+          </div>
+        )}
+        <TriState label={t("RTK (tool compress)")} value={tsRtk} onChange={setTsRtk} globalOn={!!tsGlobal?.rtk} />
+        <TriState label={t("Headroom")} value={tsHeadroom} onChange={setTsHeadroom} globalOn={!!tsGlobal?.headroom} />
+        <TriState label={t("Caveman")} value={tsCaveman} onChange={setTsCaveman} globalOn={!!tsGlobal?.caveman} />
+        <TriState label={t("Ponytail")} value={tsPonytail} onChange={setTsPonytail} globalOn={!!tsGlobal?.ponytail} />
+        <button
+          type="button"
+          onClick={handleSaveTokenSaver}
+          disabled={tsSaving}
+          className="mt-4 px-4 py-2 bg-primary text-primary-foreground font-medium rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 text-sm"
+        >
+          {tsSaving ? "Saving..." : t("Save")}
+        </button>
       </div>
 
       {/* Live SSE toggle */}

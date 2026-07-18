@@ -439,6 +439,14 @@ export interface GlobalSettings {
   globalMonthlyTokenLimit: number;
   globalDailyInputTokenLimit: number;
   globalDailyOutputTokenLimit: number;
+  tokenSaverRtkEnabled?: boolean;
+  tokenSaverRtkMaxChars?: number;
+  tokenSaverHeadroomEnabled?: boolean;
+  tokenSaverHeadroomUrl?: string;
+  tokenSaverCavemanEnabled?: boolean;
+  tokenSaverCavemanLevel?: number;
+  tokenSaverPonytailEnabled?: boolean;
+  tokenSaverPonytailLevel?: string;
 }
 
 export interface ModelLimitEntry {

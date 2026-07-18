@@ -26,6 +26,14 @@ export default function SettingsPage() {
   const [globalMonthlyTokenLimit, setGlobalMonthlyTokenLimit] = useState(0);
   const [globalDailyInputTokenLimit, setGlobalDailyInputTokenLimit] = useState(0);
   const [globalDailyOutputTokenLimit, setGlobalDailyOutputTokenLimit] = useState(0);
+  const [tokenSaverRtkEnabled, setTokenSaverRtkEnabled] = useState(true);
+  const [tokenSaverRtkMaxChars, setTokenSaverRtkMaxChars] = useState(2000);
+  const [tokenSaverHeadroomEnabled, setTokenSaverHeadroomEnabled] = useState(false);
+  const [tokenSaverHeadroomUrl, setTokenSaverHeadroomUrl] = useState("");
+  const [tokenSaverCavemanEnabled, setTokenSaverCavemanEnabled] = useState(false);
+  const [tokenSaverCavemanLevel, setTokenSaverCavemanLevel] = useState(2);
+  const [tokenSaverPonytailEnabled, setTokenSaverPonytailEnabled] = useState(false);
+  const [tokenSaverPonytailLevel, setTokenSaverPonytailLevel] = useState("lite");
   const [globalModelLimits, setGlobalModelLimits] = useState<ModelLimitEntry[]>([]);
   const [modelCatalog, setModelCatalog] = useState<string[]>([]);
   const [newModelOverride, setNewModelOverride] = useState("");
@@ -101,6 +109,14 @@ export default function SettingsPage() {
       setGlobalMonthlyTokenLimit(g.globalMonthlyTokenLimit || 0);
       setGlobalDailyInputTokenLimit(g.globalDailyInputTokenLimit || 0);
       setGlobalDailyOutputTokenLimit(g.globalDailyOutputTokenLimit || 0);
+      setTokenSaverRtkEnabled(g.tokenSaverRtkEnabled ?? true);
+      setTokenSaverRtkMaxChars(g.tokenSaverRtkMaxChars ?? 2000);
+      setTokenSaverHeadroomEnabled(g.tokenSaverHeadroomEnabled ?? false);
+      setTokenSaverHeadroomUrl(g.tokenSaverHeadroomUrl || "");
+      setTokenSaverCavemanEnabled(g.tokenSaverCavemanEnabled ?? false);
+      setTokenSaverCavemanLevel(g.tokenSaverCavemanLevel ?? 2);
+      setTokenSaverPonytailEnabled(g.tokenSaverPonytailEnabled ?? false);
+      setTokenSaverPonytailLevel(g.tokenSaverPonytailLevel || "lite");
     } catch {}
 
     try {
@@ -125,7 +141,16 @@ export default function SettingsPage() {
         updates.upstreamApiKey = upstreamApiKey;
       }
       await settings.update(updates);
-      await globalSettings.update({ globalMaxDevices, globalPromptLimit, globalPromptLimitWindow, globalPerModelPromptLimit, globalPerModelPromptLimitWindow, globalDailyTokenLimit, globalMonthlyTokenLimit, globalDailyInputTokenLimit, globalDailyOutputTokenLimit });
+      await globalSettings.update({
+        globalMaxDevices, globalPromptLimit, globalPromptLimitWindow,
+        globalPerModelPromptLimit, globalPerModelPromptLimitWindow,
+        globalDailyTokenLimit, globalMonthlyTokenLimit,
+        globalDailyInputTokenLimit, globalDailyOutputTokenLimit,
+        tokenSaverRtkEnabled, tokenSaverRtkMaxChars,
+        tokenSaverHeadroomEnabled, tokenSaverHeadroomUrl,
+        tokenSaverCavemanEnabled, tokenSaverCavemanLevel,
+        tokenSaverPonytailEnabled, tokenSaverPonytailLevel,
+      });
       await request("/settings/bot", {
         method: "POST",
         body: JSON.stringify({
@@ -204,6 +229,95 @@ export default function SettingsPage() {
       )}
 
       <ProvidersManager />
+
+      {/* Token Saver (9router-style) */}
+      <Card className="border-border/50">
+        <CardHeader>
+          <CardTitle className="text-base">Token Saver</CardTitle>
+          <CardDescription>
+            Compress tool dumps and trim verbose replies before upstream (RTK → Headroom → Caveman → Ponytail). Clients can override via portal or header <code className="text-xs">X-Token-Saver: off</code>.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
+            <div>
+              <Label className="font-medium">RTK (compress tool output)</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">Truncate git/grep/ls/read dumps. Default ON — biggest saver for Cline/Roo.</p>
+            </div>
+            <Switch checked={tokenSaverRtkEnabled} onCheckedChange={setTokenSaverRtkEnabled} />
+          </div>
+          {tokenSaverRtkEnabled && (
+            <div>
+              <Label>RTK max chars per tool result</Label>
+              <Input
+                type="number"
+                value={tokenSaverRtkMaxChars}
+                onChange={(e) => setTokenSaverRtkMaxChars(parseInt(e.target.value) || 2000)}
+                className="mt-1 max-w-xs"
+              />
+            </div>
+          )}
+          <div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
+            <div>
+              <Label className="font-medium">Headroom</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">Optional external /v1/compress service. Fail-open on timeout.</p>
+            </div>
+            <Switch checked={tokenSaverHeadroomEnabled} onCheckedChange={setTokenSaverHeadroomEnabled} />
+          </div>
+          {tokenSaverHeadroomEnabled && (
+            <div>
+              <Label>Headroom URL</Label>
+              <Input
+                value={tokenSaverHeadroomUrl}
+                onChange={(e) => setTokenSaverHeadroomUrl(e.target.value)}
+                placeholder="https://headroom.example/v1/compress"
+                className="mt-1"
+              />
+            </div>
+          )}
+          <div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
+            <div>
+              <Label className="font-medium">Caveman</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">Inject terse-reply system prompt (levels 1–5).</p>
+            </div>
+            <Switch checked={tokenSaverCavemanEnabled} onCheckedChange={setTokenSaverCavemanEnabled} />
+          </div>
+          {tokenSaverCavemanEnabled && (
+            <div>
+              <Label>Caveman level (1–5)</Label>
+              <Input
+                type="number"
+                min={1}
+                max={5}
+                value={tokenSaverCavemanLevel}
+                onChange={(e) => setTokenSaverCavemanLevel(Math.max(1, Math.min(5, parseInt(e.target.value) || 2)))}
+                className="mt-1 max-w-xs"
+              />
+            </div>
+          )}
+          <div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
+            <div>
+              <Label className="font-medium">Ponytail</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">Skip acknowledgements / plan restatements in IDE agent loops.</p>
+            </div>
+            <Switch checked={tokenSaverPonytailEnabled} onCheckedChange={setTokenSaverPonytailEnabled} />
+          </div>
+          {tokenSaverPonytailEnabled && (
+            <div>
+              <Label>Ponytail level</Label>
+              <select
+                value={tokenSaverPonytailLevel}
+                onChange={(e) => setTokenSaverPonytailLevel(e.target.value)}
+                className="mt-1 flex h-9 w-full max-w-xs rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+              >
+                <option value="lite">lite</option>
+                <option value="full">full</option>
+                <option value="ultra">ultra</option>
+              </select>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Global & Upstream Configuration */}
       <Card className="border-border/50">
