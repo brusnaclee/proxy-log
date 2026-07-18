@@ -1,20 +1,17 @@
 // RTK (Real Token Killer) — compress tool_result / tool output content.
 //
-// Problem: Cline/Roo/OpenCode etc. dump full `git`, `grep`, `ls`, `read`, `cat`,
-// `find`, `tree`, `wc`, log tails, etc. into the messages array as tool_result
-// content. On a "read docs" turn this can balloon to millions of tokens before
-// the model even starts. Antigravity compresses client-side; other clients
-// don't. RTK compresses at the proxy layer so every client benefits.
+// Problem: Cline/Roo/OpenCode/Kilo dump full git/grep/ls/read/cat/find output
+// into messages. On long sessions this balloons to 100k–250k+ prompt tokens.
 //
-// Strategy: for content that looks like verbose tool output, keep head+tail
-// slices and drop the middle with a "…N chars truncated by RTK…" marker.
-//
-// Safety: never touch assistant tool_calls / arguments / write-edit tool
-// results — truncating those breaks Kilo/Cline apply_diff loops.
+// Strategy (aligned with headroom/rtk research 2026):
+//  1. Content-aware cleanup: strip ANSI, collapse blank lines, dedupe runs,
+//     minify JSON blobs.
+//  2. Head+tail truncate with age-based budgets (older tool dumps get smaller caps).
+//  3. Also compress Cline-style user-role tool dumps ([read_file for …]).
+//  4. Never touch assistant tool_calls / write-edit tool results.
 
 const TOOL_ROLES = new Set(['tool', 'function']);
 
-// Rough heuristic: tool_result names / patterns that are almost always huge dumps.
 const NOISY_TOOL_HINTS = [
 	/^git\b/i,
 	/^grep\b/i,
@@ -46,9 +43,17 @@ const NOISY_TOOL_HINTS = [
 	/^cmd\b/i,
 	/^exec\b/i,
 	/^run[_-]?command/i,
+	/^npm\b/i,
+	/^pnpm\b/i,
+	/^yarn\b/i,
+	/^cargo\b/i,
+	/^pytest\b/i,
+	/^docker\b/i,
+	/^kubectl\b/i,
+	/^webfetch\b/i,
+	/^browser_/i,
 ];
 
-// Write/edit tools must never be truncated — IDEs need full results to continue.
 const WRITE_TOOL_HINTS = [
 	/write[_-]?file/i,
 	/create[_-]?file/i,
@@ -73,32 +78,90 @@ const WRITE_TOOL_HINTS = [
 	/browser_type|browser_fill|browser_click/i,
 ];
 
+/** Cline / Roo paste tool dumps into the next user message. */
+const CLINE_USER_DUMP =
+	/\[(read_file|search_files|list_files|list_code_definition_names|execute_command|browser_action|ask_followup_question)\s+for\b/i;
+
 function isWriteToolName(name: unknown): boolean {
 	if (typeof name !== 'string' || !name) return false;
 	return WRITE_TOOL_HINTS.some((r) => r.test(name));
 }
 
 function isNoisyToolName(name: unknown): boolean {
-	if (typeof name !== 'string' || !name) return false; // unnamed → only compress if huge via content path
+	if (typeof name !== 'string' || !name) return false;
 	if (isWriteToolName(name)) return false;
 	return NOISY_TOOL_HINTS.some((r) => r.test(name));
 }
 
-function compressString(text: string, maxChars: number): { out: string; savedChars: number } {
-	if (typeof text !== 'string' || text.length <= maxChars) {
-		return { out: text, savedChars: 0 };
+/** Strip noise that burns tokens without helping the model decide. */
+export function cleanupToolText(text: string): string {
+	if (typeof text !== 'string' || text.length < 40) return text;
+	let out = text;
+	// ANSI escapes
+	out = out.replace(/\x1B\[[0-9;]*[A-Za-z]/g, '');
+	out = out.replace(/\x1B\][^\x07]*\x07/g, '');
+	// Windows / spinner junk
+	out = out.replace(/\r/g, '');
+	// Collapse 3+ blank lines → 1
+	out = out.replace(/\n{3,}/g, '\n\n');
+	// Dedupe consecutive identical lines (git status / log spam)
+	const lines = out.split('\n');
+	const deduped: string[] = [];
+	let prev = '';
+	let repeat = 0;
+	for (const line of lines) {
+		if (line === prev) {
+			repeat += 1;
+			continue;
+		}
+		if (repeat > 0 && prev !== '') {
+			deduped.push(`…(${repeat} identical lines omitted)…`);
+		}
+		deduped.push(line);
+		prev = line;
+		repeat = 0;
 	}
-	// Keep first 60% + last 30% of the budget so both the beginning (headers,
-	// tool intent) and the tail (final lines, exit codes) survive.
-	const headBudget = Math.floor(maxChars * 0.6);
-	const tailBudget = Math.floor(maxChars * 0.3);
+	if (repeat > 0 && prev !== '') {
+		deduped.push(`…(${repeat} identical lines omitted)…`);
+	}
+	out = deduped.join('\n');
+
+	// Minify JSON / JSONL blobs that are clearly structured dumps
+	const trimmed = out.trim();
+	if (
+		(trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+		(trimmed.startsWith('[') && trimmed.endsWith(']'))
+	) {
+		try {
+			const parsed = JSON.parse(trimmed);
+			out = JSON.stringify(parsed);
+		} catch {
+			/* keep cleaned text */
+		}
+	}
+	return out;
+}
+
+function headTailTruncate(text: string, maxChars: number): { out: string; savedChars: number } {
+	if (text.length <= maxChars) return { out: text, savedChars: 0 };
+	const headBudget = Math.floor(maxChars * 0.55);
+	const tailBudget = Math.floor(maxChars * 0.35);
 	const dropped = text.length - headBudget - tailBudget;
 	if (dropped <= 0) return { out: text, savedChars: 0 };
-	const head = text.slice(0, headBudget);
-	const tail = text.slice(text.length - tailBudget);
 	return {
-		out: `${head}\n…${dropped} chars truncated by RTK…\n${tail}`,
+		out: `${text.slice(0, headBudget)}\n…${dropped} chars truncated by RTK…\n${text.slice(text.length - tailBudget)}`,
 		savedChars: dropped,
+	};
+}
+
+function compressString(text: string, maxChars: number): { out: string; savedChars: number } {
+	if (typeof text !== 'string') return { out: text, savedChars: 0 };
+	const cleaned = cleanupToolText(text);
+	const cleanSaved = Math.max(0, text.length - cleaned.length);
+	const truncated = headTailTruncate(cleaned, maxChars);
+	return {
+		out: truncated.out,
+		savedChars: cleanSaved + truncated.savedChars,
 	};
 }
 
@@ -124,7 +187,6 @@ function compressContentField(
 					saved += r.savedChars;
 					return { ...p, content: r.out };
 				}
-				// Anthropic tool_result blocks: { type: 'tool_result', content: [...] }
 				if (p.type === 'tool_result' && Array.isArray(p.content)) {
 					const inner = compressContentField(p.content, maxChars);
 					saved += inner.savedChars;
@@ -138,7 +200,6 @@ function compressContentField(
 	return { out: content, savedChars: 0 };
 }
 
-/** Compress only Anthropic-style tool_result blocks inside a content array. */
 function compressToolResultBlocks(
 	content: unknown,
 	maxChars: number,
@@ -152,15 +213,17 @@ function compressToolResultBlocks(
 		if (!part || typeof part !== 'object') return part;
 		const p = part as any;
 		if (p.type !== 'tool_result') return part;
-		// Skip write tools referenced on the block itself when present
 		if (isWriteToolName(p.name) || isWriteToolName(p.tool_name)) return part;
 		const name = p.name || p.tool_name || toolNameHint;
+		const contentLen =
+			typeof p.content === 'string'
+				? p.content.length
+				: Array.isArray(p.content)
+					? JSON.stringify(p.content).length
+					: 0;
 		const shouldCompress =
-			isNoisyToolName(name) ||
-			(typeof p.content === 'string' && p.content.length > maxChars * 2) ||
-			(Array.isArray(p.content) && JSON.stringify(p.content).length > maxChars * 2);
-		if (!shouldCompress && name) return part;
-		if (!shouldCompress && !name) return part;
+			isNoisyToolName(name) || contentLen > maxChars * 1.5 || (!name && contentLen > maxChars);
+		if (!shouldCompress) return part;
 
 		const inner = compressContentField(p.content, maxChars);
 		if (inner.savedChars > 0) {
@@ -172,60 +235,94 @@ function compressToolResultBlocks(
 	return { out, savedChars: saved };
 }
 
+function looksLikeClineUserDump(content: unknown): boolean {
+	if (typeof content === 'string') return CLINE_USER_DUMP.test(content) || content.length > 8000;
+	if (Array.isArray(content)) {
+		return content.some(
+			(p) =>
+				p &&
+				typeof p === 'object' &&
+				typeof (p as any).text === 'string' &&
+				(CLINE_USER_DUMP.test((p as any).text) || (p as any).text.length > 8000),
+		);
+	}
+	return false;
+}
+
 export interface RtkStats {
 	messagesCompressed: number;
 	charsSaved: number;
 }
 
 /**
- * Compress noisy tool outputs in-place inside an OpenAI-format request body.
- * Returns stats; mutates `body.messages` directly.
- * Never mutates `tool_calls` / function arguments.
+ * Compress noisy tool outputs in-place. Mutates `body.messages`.
+ * Age-based: older tool dumps get tighter caps (more savings on long sessions).
  */
 export function applyRtk(body: any, maxChars: number): RtkStats {
 	const stats: RtkStats = { messagesCompressed: 0, charsSaved: 0 };
 	if (!body || !Array.isArray(body.messages)) return stats;
 	if (!(maxChars > 0)) return stats;
 
-	for (const msg of body.messages) {
+	const messages = body.messages as any[];
+	const n = messages.length;
+
+	for (let i = 0; i < n; i++) {
+		const msg = messages[i];
 		if (!msg || typeof msg !== 'object') continue;
-		const role = String((msg as any).role || '').toLowerCase();
+		const role = String(msg.role || '').toLowerCase();
 
-		// Never touch assistant messages that carry tool_calls structure.
-		if (role === 'assistant' && Array.isArray((msg as any).tool_calls)) {
-			continue;
-		}
+		// Never touch assistant tool_calls structure.
+		if (role === 'assistant' && Array.isArray(msg.tool_calls)) continue;
 
-		// Case 1: role: 'tool' / 'function' message with a `content` string.
+		// Newer messages (last ~6) keep fuller budget; older dumps get 40%.
+		const fromEnd = n - 1 - i;
+		const ageFactor = fromEnd <= 5 ? 1 : fromEnd <= 20 ? 0.55 : 0.35;
+		const budget = Math.max(400, Math.floor(maxChars * ageFactor));
+
 		if (TOOL_ROLES.has(role)) {
-			const name = (msg as any).name;
+			const name = msg.name;
 			if (isWriteToolName(name)) continue;
-			// Compress noisy tools, or unnamed dumps that are clearly huge.
-			const content = (msg as any).content;
+			const content = msg.content;
 			const contentLen =
 				typeof content === 'string'
 					? content.length
 					: Array.isArray(content)
 						? JSON.stringify(content).length
 						: 0;
-			if (!isNoisyToolName(name) && !(contentLen > maxChars * 2)) continue;
-			const r = compressContentField(content, maxChars);
+			if (!isNoisyToolName(name) && !(contentLen > budget * 1.5)) continue;
+			const r = compressContentField(content, budget);
 			if (r.savedChars > 0) {
-				(msg as any).content = r.out;
+				msg.content = r.out;
 				stats.messagesCompressed += 1;
 				stats.charsSaved += r.savedChars;
 			}
 			continue;
 		}
 
-		// Case 2: only compress tool_result blocks inside content arrays
-		// (Anthropic → OpenAI translation / native Anthropic passthrough shapes).
-		if (Array.isArray((msg as any).content)) {
-			const r = compressToolResultBlocks((msg as any).content, maxChars);
+		// Anthropic-style tool_result blocks inside content arrays
+		if (Array.isArray(msg.content)) {
+			const r = compressToolResultBlocks(msg.content, budget);
 			if (r.savedChars > 0) {
-				(msg as any).content = r.out;
+				msg.content = r.out;
 				stats.messagesCompressed += 1;
 				stats.charsSaved += r.savedChars;
+				continue;
+			}
+		}
+
+		// Cline/Roo: tool dumps embedded in user messages
+		if (role === 'user' && looksLikeClineUserDump(msg.content)) {
+			const contentLen =
+				typeof msg.content === 'string'
+					? msg.content.length
+					: JSON.stringify(msg.content || '').length;
+			if (contentLen > budget) {
+				const r = compressContentField(msg.content, budget);
+				if (r.savedChars > 0) {
+					msg.content = r.out;
+					stats.messagesCompressed += 1;
+					stats.charsSaved += r.savedChars;
+				}
 			}
 		}
 	}

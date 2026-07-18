@@ -131,14 +131,22 @@ function requestHasTools(body: any): boolean {
 	);
 }
 
+function isTinyChat(body: any): boolean {
+	if (!Array.isArray(body?.messages) || body.messages.length > 4) return false;
+	try {
+		return JSON.stringify(body.messages).length < 1500;
+	} catch {
+		return false;
+	}
+}
+
 /**
  * Apply the full Token Saver pipeline in-place on an OpenAI-format request body.
  * Order matches 9router: RTK → Headroom → Caveman → Ponytail.
  *
- * Research note (2026 practitioner reviews): Caveman can *increase* total tokens
- * on tool-heavy coding agents (~+7% in one benchmark) because it fights structured
- * tool loops. When tools are present we skip Caveman unless the admin set level ≥ 4
- * (explicit ultra-terse). RTK remains the high-ROI layer for shell/file dumps.
+ * Research note (2026): Caveman can raise total tokens on tool-heavy agents;
+ * skip it when tools are present unless level ≥ 4. Skip Caveman/Ponytail on
+ * tiny chats — the injected system lines would cost more than they save.
  */
 export async function applyTokenSavers(
 	body: any,
@@ -152,6 +160,7 @@ export async function applyTokenSavers(
 	if (!body || !Array.isArray(body.messages)) return result;
 
 	const hasTools = requestHasTools(body);
+	const tiny = isTinyChat(body);
 
 	if (flags.rtk) {
 		result.rtk = applyRtk(body, flags.rtkMaxChars);
@@ -159,13 +168,13 @@ export async function applyTokenSavers(
 	if (flags.headroom && flags.headroomUrl) {
 		result.headroom = await applyHeadroom(body, flags.headroomUrl);
 	}
-	// Skip caveman on tool-heavy agent turns unless ultra (level ≥ 4).
-	const allowCaveman = flags.caveman && (!hasTools || flags.cavemanLevel >= 4);
+	const allowCaveman =
+		flags.caveman && !tiny && (!hasTools || flags.cavemanLevel >= 4);
 	if (allowCaveman) {
 		result.caveman = applyCaveman(body, flags.cavemanLevel);
 	}
-	// Ponytail helps coding agents (less boilerplate around tools) — keep on.
-	if (flags.ponytail) {
+	// Ponytail helps long tool loops; skip on tiny one-shot chats.
+	if (flags.ponytail && !tiny) {
 		result.ponytail = applyPonytail(body, flags.ponytailLevel);
 	}
 	return result;

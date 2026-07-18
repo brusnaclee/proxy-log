@@ -98,8 +98,10 @@ export function generateFingerprint(
   if (machine && machine !== "unknown:") {
     return sha256(`machine:${machine}`);
   }
-  // Last resort when UA has no OS at all (rare CLI stubs)
-  return sha256(`ua:${normalizeUserAgent(userAgent) || "empty"}`);
+  // Many IDEs (Kilo / Cline / OpenCode / Roo) omit OS from UA entirely.
+  // Hashing the product name would split one PC into many device slots.
+  // Keep a single shared bucket per key for OS-less clients.
+  return sha256("machine:unknown:shared");
 }
 
 /** Legacy fingerprints we may still find in DB from older eras. */
