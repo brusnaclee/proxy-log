@@ -2193,7 +2193,6 @@ function createTokitoSession(userId, kind, access = null) {
 	return session;
 }
 
-const { StringSelectMenuBuilder } = require('discord.js');
 function buildTokitoRows(
 	kind,
 	sessionId,
