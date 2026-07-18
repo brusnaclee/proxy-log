@@ -88,6 +88,7 @@ import {
 	markKeyAsLimited,
 	stripProviderPrefix,
 } from '../utils/model-catalog.js';
+import { markProviderModelsOffline } from '../utils/model-monitor-store.js';
 import {
 	checkModelPromptLimit,
 	checkPromptLimit,
@@ -688,9 +689,21 @@ async function fetchWithKeyRotation(
 	const MAX_KEY_ATTEMPTS = 10; // don't loop forever
 	const triedKeyIds = new Set<number>();
 
+	const markOffline = async (reason: string) => {
+		try {
+			await markProviderModelsOffline(providerName, reason);
+		} catch (err) {
+			console.warn(
+				`[key-rotation] failed to mark ${providerName} offline:`,
+				err,
+			);
+		}
+	};
+
 	for (let attempt = 0; attempt < MAX_KEY_ATTEMPTS; attempt++) {
 		const keyResult = await getNextApiKey(providerId);
 		if (!keyResult) {
+			await markOffline('No usable API keys (all limited/invalid)');
 			throw new Error(
 				'All API keys for this provider are rate-limited. Reset keys in the dashboard.',
 			);
@@ -705,6 +718,7 @@ async function fetchWithKeyRotation(
 				triedKeyIds.delete(keyResult.keyId);
 				continue;
 			}
+			await markOffline('No new API keys available');
 			throw new Error('No new API keys available. All have been tried.');
 		}
 		triedKeyIds.add(keyResult.keyId);
@@ -744,6 +758,7 @@ async function fetchWithKeyRotation(
 		return { response, keyId: keyResult.keyId, apiKey: keyResult.apiKey };
 	}
 
+	await markOffline('All API keys exhausted');
 	throw new Error('All API keys exhausted after rate-limit retries.');
 }
 
@@ -2687,13 +2702,12 @@ proxy.all('/*', async (c) => {
 	}
 
 	// ─── 8a. Model Monitor Check ─────────────────────────────────────────
-	// Hard-block ONLY when admin force-deactivated the model.
-	// Natural "offline" from sweeps is advisory (Discord/dashboard) — still
-	// forward to upstream so we never get UP_OK_PROXY_FAIL from a stale gate.
-	// Transient upstreams (conduit/phantom/…) already bypassed; trial keys too.
+	// Online from live probe = safe to use. Offline = hard block so dashboard /
+	// Discord / client status stays truthful (no green + 502).
+	// Force-deactivated always blocks; natural offline blocks when checked
+	// within the last 30 minutes (avoids stale overnight gates).
 	if (
 		!keyRecord.isTrial &&
-		!isTransientUpstreamProvider(targetProvider.name) &&
 		upstreamModel &&
 		upstreamModel !== 'unknown'
 	) {
@@ -2707,14 +2721,23 @@ proxy.all('/*', async (c) => {
 				),
 			)
 			.orderBy(desc(modelMonitor.checkedAt))
-			.limit(20);
+			.limit(5);
 
 		if (monitorRows.length > 0) {
+			const latest = monitorRows[0];
 			const forceDeactivated = monitorRows.some((row) => {
 				const msg = String(row.errorMessage || '');
 				return !row.isOnline && /force-deactivated/i.test(msg);
 			});
-			if (forceDeactivated) {
+			const checkedAtMs = latest.checkedAt
+				? new Date(latest.checkedAt).getTime()
+				: 0;
+			const freshOffline =
+				!latest.isOnline &&
+				checkedAtMs > 0 &&
+				Date.now() - checkedAtMs < 30 * 60 * 1000;
+
+			if (forceDeactivated || freshOffline) {
 				const onlineModels = await db
 					.select({ modelId: modelMonitor.modelId })
 					.from(modelMonitor)

@@ -103,9 +103,9 @@ export default function Layout() {
             </div>
           )}
           {!sidebarCollapsed && realtimeEnabled && (
-            <div title="Realtime updates enabled" className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+            <div title="Dashboard realtime feed (bukan status model Online)" className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 live-dot"></span>
-              <span className="text-[9px] font-bold text-emerald-500 uppercase tracking-wider">Live</span>
+              <span className="text-[9px] font-bold text-emerald-500 uppercase tracking-wider">SSE</span>
             </div>
           )}
           {/* Mobile close button */}
@@ -227,9 +227,9 @@ export default function Layout() {
             <span className="text-sm font-bold">AI Proxy</span>
           </div>
           {realtimeEnabled && (
-            <div className="ml-auto flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+            <div title="Dashboard realtime feed (bukan status model Online)" className="ml-auto flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 live-dot"></span>
-              <span className="text-[9px] font-bold text-emerald-500 uppercase tracking-wider">Live</span>
+              <span className="text-[9px] font-bold text-emerald-500 uppercase tracking-wider">SSE</span>
             </div>
           )}
         </div>

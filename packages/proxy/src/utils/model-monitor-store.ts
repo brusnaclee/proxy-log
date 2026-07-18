@@ -214,6 +214,25 @@ export async function resetAllTestStates(): Promise<void> {
     .set({ retryCount: 0, suspendedUntil: null });
 }
 
+/**
+ * Flip all monitor rows for a provider to offline (e.g. no usable API keys).
+ * Keeps model list visible in Discord/dashboard but honest about usability.
+ */
+export async function markProviderModelsOffline(
+  providerName: string,
+  errorMessage: string,
+): Promise<void> {
+  await db
+    .update(modelMonitor)
+    .set({
+      isOnline: false,
+      httpStatus: 0,
+      errorMessage,
+      checkedAt: new Date(),
+    })
+    .where(eq(modelMonitor.provider, providerName));
+}
+
 /** Get 24 hours from now as ISO string (for suspension). */
 function get24HoursFromNowIso(): string {
   const d = new Date(Date.now() + 24 * 60 * 60 * 1000);

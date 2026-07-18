@@ -1348,8 +1348,15 @@ async function fetchProviderModelList(prov) {
 
 	const poolKeys = runtime.providerKeys.get(prov.name) || [];
 	const cleanPrimary = sanitizeProviderApiKey(prov.apiKey);
+	// Prefer usable (non-limited) pool keys. Legacy only if pool is empty
+	// (true legacy providers with no provider_api_keys rows yet).
 	const keysToTry = [
-		...new Set([...poolKeys.map(sanitizeProviderApiKey), cleanPrimary].filter(Boolean)),
+		...new Set(
+			(poolKeys.length > 0
+				? poolKeys.map(sanitizeProviderApiKey)
+				: [cleanPrimary]
+			).filter(Boolean),
+		),
 		'', // last resort: unauthenticated (some public gateways)
 	];
 
@@ -1508,10 +1515,7 @@ async function pollModelStatus() {
 							? prev
 							: [];
 					const provKeys = runtime.providerKeys.get(prov.name) || [];
-					const fallbackKey =
-						sanitizeProviderApiKey(prov.apiKey) ||
-						provKeys[0] ||
-						'';
+					const fallbackKey = provKeys[0] || '';
 					const baseUrl = String(prov.endpoint || '').replace(
 						/\/+$/,
 						'',
@@ -1549,6 +1553,11 @@ async function pollModelStatus() {
 							apiKey: fallbackKey,
 						});
 						retained++;
+					}
+					if (!fallbackKey) {
+						console.warn(
+							`[tokito-monitor] ${prov.name}: no usable API keys — retained models will stay Offline until keys are reset`,
+						);
 					}
 					console.warn(
 						`[tokito-monitor] retained ${retained} models for ${prov.name} (check API keys if 0)`,
@@ -1607,12 +1616,21 @@ async function pollModelStatus() {
 						console.log(
 							`[tokito-monitor] found ${customModels.length} custom models for provider: ${prov.name}`,
 						);
-						// Resolve API key: use provider's main apiKey as primary, then try keys from runtime.providerKeys
+						// Only usable (non-limited) pool keys — same as live traffic.
 						const provKeys = runtime.providerKeys.get(prov.name) || [];
 						const fallbackApiKey =
-							prov.apiKey || (provKeys.length > 0 ? provKeys[0] : '');
+							provKeys.length > 0
+								? provKeys[0]
+								: '';
 						// Resolve baseUrl: use provider's endpoint
 						const baseUrl = prov.endpoint || '';
+
+						if (!fallbackApiKey) {
+							console.warn(
+								`[tokito-monitor] skip custom models for ${prov.name}: no usable API keys`,
+							);
+							continue;
+						}
 
 						for (const cm of customModels) {
 							if (!cm.isActive) continue;
@@ -1958,9 +1976,9 @@ async function testSingleModel(entry) {
 	const endpointType = entry.endpointType || 'openai';
 
 	const providerKeys = runtime.providerKeys.get(provider) || [];
-	const keysToTry = [
-		...new Set([entry.apiKey, ...providerKeys].filter(Boolean)),
-	];
+	// Only keys that live traffic can use (non-limited). Never probe with
+	// entry.apiKey / legacy if those are marked limited — that caused false Online.
+	const keysToTry = [...new Set(providerKeys.filter(Boolean))];
 
 	let result = { ok: false, status: 0, body: { error: 'No keys' }, raw: '' };
 

@@ -80,15 +80,28 @@ async function getProviderProbeKey(providerId: number, legacyApiKey: string | nu
   return keys[0] || null;
 }
 
+/**
+ * Probe keys MUST match the pool used for live user traffic (getNextApiKey).
+ * Never use limited keys, and never fall back to legacy api_key when the
+ * provider already has rows in provider_api_keys (that caused false-Online:
+ * probe via legacy while traffic saw 0 usable keys → 502).
+ */
 async function getProviderProbeKeys(providerId: number, legacyApiKey: string | null): Promise<string[]> {
-  const rows = await db
+  const allActive = await db
     .select()
     .from(providerApiKeys)
-    .where(sql`${providerApiKeys.providerId} = ${providerId} AND ${providerApiKeys.isActive} = true AND ${providerApiKeys.isLimited} = false`)
+    .where(sql`${providerApiKeys.providerId} = ${providerId} AND ${providerApiKeys.isActive} = true`)
     .orderBy(providerApiKeys.id);
-  const keys = rows.map((r) => r.apiKey).filter(Boolean);
-  if (legacyApiKey && !keys.includes(legacyApiKey)) keys.push(legacyApiKey);
-  return keys;
+
+  if (allActive.length > 0) {
+    return allActive
+      .filter((r) => !r.isLimited)
+      .map((r) => r.apiKey)
+      .filter(Boolean);
+  }
+
+  // True legacy mode: no rows in provider_api_keys at all.
+  return legacyApiKey ? [legacyApiKey] : [];
 }
 
 const SWEEP_PROBE_TIMEOUT_MS = Number(process.env.SWEEP_PROBE_TIMEOUT_MS) || 180_000;

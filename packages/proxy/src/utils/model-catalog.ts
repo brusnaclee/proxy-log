@@ -131,21 +131,26 @@ function buildUpstreamAuthHeaders(apiKey: string, endpointType: string): Record<
 }
 
 async function getCatalogProbeKeys(providerId: number, legacyApiKey: string | null): Promise<string[]> {
-  const rows = await db
+  const allActive = await db
     .select()
     .from(providerApiKeys)
     .where(
       and(
         eq(providerApiKeys.providerId, providerId),
         eq(providerApiKeys.isActive, true),
-        eq(providerApiKeys.isLimited, false),
       ),
     )
     .orderBy(asc(providerApiKeys.id));
-  const keys = rows.map((r) => sanitizeProviderApiKey(r.apiKey)).filter(Boolean);
+
+  if (allActive.length > 0) {
+    return allActive
+      .filter((r) => !r.isLimited)
+      .map((r) => sanitizeProviderApiKey(r.apiKey))
+      .filter(Boolean);
+  }
+
   const legacy = sanitizeProviderApiKey(legacyApiKey || "");
-  if (legacy && !keys.includes(legacy)) keys.push(legacy);
-  return keys.length ? keys : legacy ? [legacy] : [""];
+  return legacy ? [legacy] : [""];
 }
 
 async function fetchModelsFromUpstream(
@@ -1008,21 +1013,24 @@ export async function checkProviderApiKeyHealth(
  * Falls back to the provider's legacy api_key column if no keys in the new table.
  */
 export async function getNextApiKey(providerId: number): Promise<{ keyId: number; apiKey: string } | null> {
-  const keys = await db
+  const activeRows = await db
     .select()
     .from(providerApiKeys)
     .where(
       and(
         eq(providerApiKeys.providerId, providerId),
-        eq(providerApiKeys.isLimited, false),
         eq(providerApiKeys.isActive, true),
       ),
     )
     .orderBy(asc(providerApiKeys.requestCount));
 
-  if (keys.length > 0) {
-    const chosen = keys[0];
-    // Increment requestCount and update lastUsedAt
+  // If the provider has key rows, ONLY use non-limited ones — never silently
+  // fall back to legacy api_key (that desynced monitor Online vs live 502).
+  if (activeRows.length > 0) {
+    const usable = activeRows.filter((k) => !k.isLimited);
+    if (usable.length === 0) return null;
+
+    const chosen = usable[0];
     await db
       .update(providerApiKeys)
       .set({
@@ -1034,7 +1042,7 @@ export async function getNextApiKey(providerId: number): Promise<{ keyId: number
     return { keyId: chosen.id, apiKey: chosen.apiKey };
   }
 
-  // Fallback: use the legacy api_key from the providers table
+  // True legacy mode: no rows in provider_api_keys.
   const provider = (await db.select().from(providers).where(eq(providers.id, providerId)))[0];
   if (provider?.apiKey) {
     return { keyId: -1, apiKey: provider.apiKey }; // -1 = legacy key

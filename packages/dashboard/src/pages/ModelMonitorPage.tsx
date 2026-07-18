@@ -225,7 +225,9 @@ export default function ModelMonitorPage() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Model Monitor</h1>
-          <p className="text-muted-foreground mt-1">Real-time status and latency benchmark for upstream AI models</p>
+          <p className="text-muted-foreground mt-1">
+            Online = live probe sukses dengan key yang sama dipakai user. Kalau Offline, request diblok (bukan false-green).
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <div className="flex bg-muted rounded-lg p-1 gap-1">
