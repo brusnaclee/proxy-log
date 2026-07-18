@@ -13,6 +13,8 @@ interface ProviderApiKey {
   isActive: boolean;
   isLimited: boolean;
   limitedAt: string | null;
+  lastError?: string | null;
+  lastCheckedAt?: string | null;
   requestCount: number;
   lastUsedAt: string | null;
 }
@@ -147,12 +149,18 @@ export function ProvidersManager() {
     const key = newKeyInputs[providerId];
     if (!key) return;
     try {
-      await request(`/providers/${providerId}/keys`, {
-        method: "POST",
-        body: JSON.stringify({ apiKey: key }),
-      });
+      const res = await request<{ success: boolean; health?: { ok: boolean; error?: string | null; modelCount?: number } }>(
+        `/providers/${providerId}/keys`,
+        {
+          method: "POST",
+          body: JSON.stringify({ apiKey: key }),
+        },
+      );
       setNewKeyInputs(prev => ({ ...prev, [providerId]: "" }));
       loadKeys(providerId);
+      if (res.health && !res.health.ok) {
+        alert(res.health.error || "Invalid API key — key saved but marked invalid");
+      }
     } catch (e: any) {
       alert("Error: " + e.message);
     }
@@ -295,9 +303,17 @@ export function ProvidersManager() {
   };
 
   const getKeyStatus = (k: ProviderApiKey) => {
-    if (!k.isActive) return { label: "Disabled", color: "bg-gray-500/20 text-gray-400" };
-    if (k.isLimited) return { label: "Limited", color: "bg-red-500/20 text-red-400" };
-    return { label: "Active", color: "bg-green-500/20 text-green-400" };
+    if (!k.isActive) return { label: "Disabled", color: "bg-gray-500/20 text-gray-400", detail: null as string | null };
+    if (k.lastError && /invalid api key|expired|http 401|http 403|forbidden/i.test(k.lastError)) {
+      return { label: k.lastError.includes("expired") ? "Expired" : "Invalid", color: "bg-orange-500/20 text-orange-400", detail: k.lastError };
+    }
+    if (k.isLimited) {
+      return { label: "Limited", color: "bg-red-500/20 text-red-400", detail: k.lastError || k.limitedAt };
+    }
+    if (k.lastError) {
+      return { label: "Error", color: "bg-amber-500/20 text-amber-400", detail: k.lastError };
+    }
+    return { label: "Active", color: "bg-green-500/20 text-green-400", detail: null };
   };
 
   return (
@@ -578,9 +594,17 @@ export function ProvidersManager() {
                             </div>
 
                             {/* Status badge */}
-                            <span className={`px-1.5 py-0.5 rounded text-xs whitespace-nowrap ${status.color}`}>
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-xs whitespace-nowrap ${status.color}`}
+                              title={status.detail || undefined}
+                            >
                               {status.label}
                             </span>
+                            {status.detail && (
+                              <span className="text-[10px] text-orange-400/90 truncate max-w-[140px]" title={status.detail}>
+                                {status.detail}
+                              </span>
+                            )}
 
                             {/* Stats */}
                             <span className="text-xs text-muted-foreground whitespace-nowrap">
@@ -594,6 +618,30 @@ export function ProvidersManager() {
 
                             {/* Action buttons */}
                             <div className="flex gap-1 ml-auto">
+                              {/* Check key against upstream /models */}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2"
+                                onClick={async () => {
+                                  try {
+                                    const res = await request<{ ok: boolean; error?: string | null; modelCount?: number }>(
+                                      `/providers/${p.id}/keys/${k.id}/check`,
+                                      { method: "POST" },
+                                    );
+                                    if (!res.ok) {
+                                      alert(res.error || "Invalid API key");
+                                    }
+                                    loadKeys(p.id);
+                                  } catch (e: any) {
+                                    alert("Check failed: " + e.message);
+                                  }
+                                }}
+                                title="Check key against upstream /models"
+                              >
+                                <RotateCcw className="w-3 h-3" />
+                              </Button>
+
                               {/* Enable/Disable toggle */}
                               <Button
                                 variant="ghost"
@@ -609,14 +657,14 @@ export function ProvidersManager() {
                                 )}
                               </Button>
 
-                              {/* Retry (only for limited keys) */}
-                              {k.isLimited && (
+                              {/* Retry (only for limited / invalid keys) */}
+                              {(k.isLimited || !!k.lastError) && (
                                 <Button
                                   variant="outline"
                                   size="sm"
                                   className="h-7 px-2"
                                   onClick={() => handleResetKey(p.id, k.id)}
-                                  title="Retry (reset limited status)"
+                                  title="Retry (clear limited / error status)"
                                 >
                                   <RotateCcw className="w-3 h-3 mr-1" /> Retry
                                 </Button>

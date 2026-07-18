@@ -19,10 +19,12 @@ interface IdeInfo {
 
 const IDE_PATTERNS: [RegExp, string][] = [
 	// --- AI coding IDE/extensions (specific first) ---
-	[/roocode|roo-code|roo[\s-]?cline/i, "Roo Code"],
+	[/roocode|roo[\s_-]?code|roo[\s-]?cline/i, "Roo Code"],
 	[/cline.*vscode/i, "Cline (VS Code)"],
 	[/cline/i, "Cline"],
-	[/codex.*vscode/i, "Codex (VS Code)"],
+	// Codex VS Code uses `codex_vscode/...` (underscore) in real UAs
+	[/codex[_-]?vscode|codex.*vscode/i, "Codex (VS Code)"],
+	[/codex[_-]?cli/i, "Codex CLI"],
 	[/codex/i, "Codex"],
 	[/opencode.*vscode/i, "OpenCode (VS Code)"],
 	[/opencode/i, "OpenCode"],
@@ -36,7 +38,8 @@ const IDE_PATTERNS: [RegExp, string][] = [
 	[/omnirouter|omni-router/i, "OmniRouter"],
 	[/\bglm[-/]/i, "GLM"],
 	[/\bkiro\b/i, "Kiro"],
-	[/kilo/i, "Kilo"],
+	[/kilo[\s_-]?code|kilo/i, "Kilo"],
+	[/zcode|z-code/i, "ZCode"],
 	[/tabby/i, "Tabby IDE"],
 	[/codeium/i, "Codeium"],
 	[/cody|sourcegraph/i, "Cody (Sourcegraph)"],
@@ -49,16 +52,11 @@ const IDE_PATTERNS: [RegExp, string][] = [
 	// Claude Code CLI before Desktop — `claude-cli` must not map to Desktop
 	[/claude-cli/i, "Claude Code"],
 	[/claude.*code/i, "Claude Code"],
-	[/claude.*desktop/i, "Claude Desktop"],
-
-	// === NEW PATTERNS FROM DATABASE ANALYSIS ===
+	[/claude.*desktop|claude-desktop/i, "Claude Desktop"],
 
 	// Zed editor
 	[/zed[\/\s]/i, "Zed"],
 	[/zed\.dev/i, "Zed"],
-
-	// OpenCode with ai-sdk runtime (ai-sdk/provider-utils/...)
-	[/opencode.*ai-sdk/i, "OpenCode"],
 
 	// Antigravity variants (IDE > Hub > CLI fallback)
 	[/antigravity\/ide/i, "Antigravity IDE"],
@@ -68,11 +66,13 @@ const IDE_PATTERNS: [RegExp, string][] = [
 	// --- AI agent platforms / proxy clients ---
 	[/openclaw/i, "OpenClaw"],
 	[/cli-proxy-openai-compat/i, "OpenClaw"],
+	[/hermes-agent|hermes\//i, "Hermes"],
 
 	// --- SDK / HTTP clients ---
-	[/openai-python|python.*openai/i, "OpenAI Python SDK"],
-	[/openai.*node|openai\/js/i, "OpenAI Node SDK"],
+	[/asyncopenai|openai\/python|openai-python/i, "OpenAI Python SDK"],
+	[/openai\/js|openai-node|openai.*node/i, "OpenAI Node SDK"],
 	[/openai\/(python|js|node)/i, "OpenAI SDK"],
+	[/python\/\d+\.\d+.*aiohttp|aiohttp\/\d/i, "Python aiohttp"],
 	[/python-requests|python\/requests/i, "Python Requests"],
 	[/axios/i, "Axios"],
 	[/node-fetch|undici/i, "Node Fetch"],
@@ -81,10 +81,29 @@ const IDE_PATTERNS: [RegExp, string][] = [
 
 	// --- Browser / shell (low priority, catch-all) ---
 	[/WindowsPowerShell|pwsh|PowerShell/i, "PowerShell"],
+	[/Mozilla\/5\.0.*Chrome|AppleWebKit.*Safari/i, "Browser Client"],
 
 	// --- Bare Node.js (very low priority — must be last) ---
 	[/^node$/i, "Node.js Client"],
 ];
+
+/** Generic UA labels that usually hide a real IDE — run content detection. */
+export const GENERIC_IDE_LABELS = new Set([
+	"unknown",
+	"node.js client",
+	"node fetch",
+	"openai sdk",
+	"openai python sdk",
+	"openai node sdk",
+	"python requests",
+	"python aiohttp",
+	"axios",
+	"curl",
+	"go http client",
+	"powershell",
+	"browser client",
+	"vs code",
+]);
 
 /**
  * Detect IDE/client from User-Agent string

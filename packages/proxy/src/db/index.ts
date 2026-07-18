@@ -318,6 +318,17 @@ export async function initializeDatabase() {
 		console.warn('⚠️  Could not ensure custom_models table:', err);
 	}
 
+	// provider_api_keys health columns (invalid key / last check)
+	try {
+		await pool.query(`
+			ALTER TABLE provider_api_keys ADD COLUMN IF NOT EXISTS last_error TEXT;
+			ALTER TABLE provider_api_keys ADD COLUMN IF NOT EXISTS last_checked_at TEXT;
+		`);
+		console.log('✅ provider_api_keys health columns ensured');
+	} catch (err) {
+		console.warn('⚠️  Could not ensure provider_api_keys health columns:', err);
+	}
+
 	console.log('✅ Database initialized successfully');
 }
 

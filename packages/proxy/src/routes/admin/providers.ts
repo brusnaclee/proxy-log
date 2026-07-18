@@ -2,7 +2,7 @@
 import { db } from "../../db/index.js";
 import { providers, customModels } from "../../db/schema.js";
 import { eq, desc } from "drizzle-orm";
-import { refreshModelCatalog, getProviderApiKeys, addProviderApiKey, resetKeyLimited, deleteApiKey, toggleKeyActive, updateApiKey } from "../../utils/model-catalog.js";
+import { refreshModelCatalog, getProviderApiKeys, addProviderApiKey, resetKeyLimited, deleteApiKey, toggleKeyActive, updateApiKey, checkProviderApiKeyHealth } from "../../utils/model-catalog.js";
 import { sanitizeProviderApiKey } from "../../utils/crypto.js";
 import { purgeMonitorForProvider } from "../../utils/model-monitor-store.js";
 
@@ -104,7 +104,41 @@ providersApi.post("/providers/:id/keys", async (c) => {
   if (!body.apiKey) return c.json({ error: "apiKey is required" }, 400);
 
   const keyId = await addProviderApiKey(id, body.apiKey);
-  return c.json({ success: true, keyId });
+  const health = await checkProviderApiKeyHealth(id, keyId);
+  void refreshModelCatalog();
+  return c.json({
+    success: true,
+    keyId,
+    health: {
+      ok: health.ok,
+      status: health.status,
+      error: health.error,
+      modelCount: health.modelCount,
+    },
+  });
+});
+
+// Probe a key against upstream /models and update health badge
+providersApi.post("/providers/:id/keys/:keyId/check", async (c) => {
+  const id = parseInt(c.req.param("id"));
+  const keyId = parseInt(c.req.param("keyId"));
+  const [existing] = await db.select().from(providers).where(eq(providers.id, id));
+  if (!existing) return c.json({ error: "Provider not found" }, 404);
+  const health = await checkProviderApiKeyHealth(id, keyId);
+  return c.json({ success: true, ...health });
+});
+
+// Check all keys for a provider
+providersApi.post("/providers/:id/keys/check-all", async (c) => {
+  const id = parseInt(c.req.param("id"));
+  const [existing] = await db.select().from(providers).where(eq(providers.id, id));
+  if (!existing) return c.json({ error: "Provider not found" }, 404);
+  const keys = await getProviderApiKeys(id);
+  const results = [];
+  for (const k of keys) {
+    results.push({ keyId: k.id, ...(await checkProviderApiKeyHealth(id, k.id)) });
+  }
+  return c.json({ success: true, results });
 });
 
 // Reset a key's limited status (Retry button)

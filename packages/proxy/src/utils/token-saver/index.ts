@@ -116,9 +116,29 @@ export function resolveTokenSaverFlags(
 	};
 }
 
+function requestHasTools(body: any): boolean {
+	if (Array.isArray(body?.tools) && body.tools.length > 0) return true;
+	if (!Array.isArray(body?.messages)) return false;
+	return body.messages.some(
+		(m: any) =>
+			Array.isArray(m?.tool_calls) ||
+			String(m?.role || '').toLowerCase() === 'tool' ||
+			(Array.isArray(m?.content) &&
+				m.content.some(
+					(p: any) =>
+						p?.type === 'tool_result' || p?.type === 'tool_use',
+				)),
+	);
+}
+
 /**
  * Apply the full Token Saver pipeline in-place on an OpenAI-format request body.
  * Order matches 9router: RTK → Headroom → Caveman → Ponytail.
+ *
+ * Research note (2026 practitioner reviews): Caveman can *increase* total tokens
+ * on tool-heavy coding agents (~+7% in one benchmark) because it fights structured
+ * tool loops. When tools are present we skip Caveman unless the admin set level ≥ 4
+ * (explicit ultra-terse). RTK remains the high-ROI layer for shell/file dumps.
  */
 export async function applyTokenSavers(
 	body: any,
@@ -131,15 +151,20 @@ export async function applyTokenSavers(
 	};
 	if (!body || !Array.isArray(body.messages)) return result;
 
+	const hasTools = requestHasTools(body);
+
 	if (flags.rtk) {
 		result.rtk = applyRtk(body, flags.rtkMaxChars);
 	}
 	if (flags.headroom && flags.headroomUrl) {
 		result.headroom = await applyHeadroom(body, flags.headroomUrl);
 	}
-	if (flags.caveman) {
+	// Skip caveman on tool-heavy agent turns unless ultra (level ≥ 4).
+	const allowCaveman = flags.caveman && (!hasTools || flags.cavemanLevel >= 4);
+	if (allowCaveman) {
 		result.caveman = applyCaveman(body, flags.cavemanLevel);
 	}
+	// Ponytail helps coding agents (less boilerplate around tools) — keep on.
 	if (flags.ponytail) {
 		result.ponytail = applyPonytail(body, flags.ponytailLevel);
 	}

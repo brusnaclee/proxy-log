@@ -172,7 +172,7 @@ async function fetchModelsFromUpstream(
         });
 
         if (!res.ok) {
-          lastError = "HTTP " + res.status;
+          lastError = "HTTP " + res.status + " " + (await res.text().catch(() => "")).slice(0, 160);
           continue;
         }
 
@@ -278,9 +278,29 @@ export async function refreshModelCatalog(): Promise<void> {
                 appendProviderToMap(modelProviderMap, m.id, provider.id);
               }
               success = true;
+              const kid = await findProviderKeyId(provider.id, key);
+              if (kid) {
+                await setProviderKeyHealth(kid, { ok: true });
+                await db
+                  .update(providerApiKeys)
+                  .set({ isLimited: false, limitedAt: null })
+                  .where(eq(providerApiKeys.id, kid));
+              }
               break;
             } catch (error: any) {
               lastError = error?.message || "Unknown upstream fetch error";
+              const kid = await findProviderKeyId(provider.id, key);
+              if (kid) {
+                await setProviderKeyHealth(kid, {
+                  ok: false,
+                  error: classifyUpstreamKeyError(
+                    /HTTP\s+(\d+)/i.test(lastError)
+                      ? Number(lastError.match(/HTTP\s+(\d+)/i)![1])
+                      : 0,
+                    lastError,
+                  ),
+                });
+              }
               if (attempt === 0) {
                 console.warn(`[model-catalog] fetch from ${provider.name} attempt 1 failed: ${lastError}, retrying once...`);
                 await new Promise((r) => setTimeout(r, 1500));
@@ -861,8 +881,124 @@ export interface ProviderApiKeyRow {
   isActive: boolean;
   isLimited: boolean;
   limitedAt: string | null;
+  lastError: string | null;
+  lastCheckedAt: string | null;
   requestCount: number;
   lastUsedAt: string | null;
+}
+
+/**
+ * Classify upstream /models probe failure into a short dashboard label.
+ */
+export function classifyUpstreamKeyError(status: number, bodyText: string): string {
+  const text = String(bodyText || "").toLowerCase();
+  if (status === 401 || status === 403) {
+    if (/kedaluwarsa|expired|expire/.test(text)) return "API key expired";
+    if (/invalid|unauthorized|authentication failed|auth_002|api key/.test(text)) {
+      return "Invalid API key";
+    }
+    return status === 403 ? "Forbidden (HTTP 403)" : "Invalid API key (HTTP 401)";
+  }
+  if (status === 429) return "Rate limited (HTTP 429)";
+  if (status >= 500) return `Upstream error (HTTP ${status})`;
+  if (status > 0) return `HTTP ${status}`;
+  return bodyText?.slice(0, 120) || "Probe failed";
+}
+
+export async function setProviderKeyHealth(
+  keyId: number,
+  opts: { ok: boolean; error?: string | null },
+): Promise<void> {
+  if (keyId < 0) return;
+  await db
+    .update(providerApiKeys)
+    .set({
+      lastError: opts.ok ? null : String(opts.error || "Unknown error").slice(0, 300),
+      lastCheckedAt: new Date().toISOString(),
+      // Auth failures also park the key like rate-limits so rotation skips them.
+      ...(opts.ok
+        ? {}
+        : /invalid api key|expired|http 401|http 403|forbidden/i.test(String(opts.error || ""))
+          ? { isLimited: true, limitedAt: new Date().toISOString() }
+          : {}),
+    })
+    .where(eq(providerApiKeys.id, keyId));
+}
+
+export async function findProviderKeyId(
+  providerId: number,
+  apiKey: string,
+): Promise<number | null> {
+  const clean = sanitizeProviderApiKey(apiKey);
+  if (!clean) return null;
+  const rows = await db
+    .select({ id: providerApiKeys.id, apiKey: providerApiKeys.apiKey })
+    .from(providerApiKeys)
+    .where(eq(providerApiKeys.providerId, providerId));
+  for (const r of rows) {
+    if (sanitizeProviderApiKey(r.apiKey) === clean) return r.id;
+  }
+  return null;
+}
+
+/**
+ * Probe a single provider API key against /models and update health columns.
+ */
+export async function checkProviderApiKeyHealth(
+  providerId: number,
+  keyId: number,
+): Promise<{ ok: boolean; status: number; error: string | null; modelCount: number }> {
+  const [prov] = await db.select().from(providers).where(eq(providers.id, providerId));
+  const [keyRow] = await db.select().from(providerApiKeys).where(eq(providerApiKeys.id, keyId));
+  if (!prov || !keyRow) {
+    return { ok: false, status: 0, error: "Provider/key not found", modelCount: 0 };
+  }
+  if (prov.endpointType === "youcom") {
+    await setProviderKeyHealth(keyId, { ok: true });
+    return { ok: true, status: 200, error: null, modelCount: 2 };
+  }
+  const urls = buildModelListCandidateUrls(prov.endpoint);
+  const endpointType = prov.endpointType || "openai";
+  let lastStatus = 0;
+  let lastBody = "";
+  for (const url of urls) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 20_000);
+      const res = await fetch(url, {
+        headers: buildModelListAuthHeaders(keyRow.apiKey, endpointType),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      const text = await res.text();
+      lastStatus = res.status;
+      lastBody = text;
+      if (!res.ok) continue;
+      let count = 0;
+      try {
+        const j = JSON.parse(text);
+        const arr = Array.isArray(j) ? j : j?.data || j?.models || [];
+        count = Array.isArray(arr) ? arr.length : 0;
+      } catch {
+        /* ignore */
+      }
+      if (count > 0) {
+        await setProviderKeyHealth(keyId, { ok: true });
+        // Clear limited if it was only from a previous auth fail and retry succeeds
+        await db
+          .update(providerApiKeys)
+          .set({ isLimited: false, limitedAt: null })
+          .where(eq(providerApiKeys.id, keyId));
+        return { ok: true, status: res.status, error: null, modelCount: count };
+      }
+    } catch (e: any) {
+      lastBody = e?.message || "Network error";
+      lastStatus = 0;
+    }
+  }
+  const error = classifyUpstreamKeyError(lastStatus, lastBody);
+  await setProviderKeyHealth(keyId, { ok: false, error });
+  return { ok: false, status: lastStatus, error, modelCount: 0 };
 }
 
 /**
@@ -930,6 +1066,7 @@ export async function resetKeyLimited(keyId: number): Promise<void> {
     .set({
       isLimited: false,
       limitedAt: null,
+      lastError: null,
     })
     .where(eq(providerApiKeys.id, keyId));
 }
@@ -982,6 +1119,8 @@ export async function getProviderApiKeys(providerId: number): Promise<ProviderAp
     isActive: Boolean(r.isActive),
     isLimited: Boolean(r.isLimited),
     limitedAt: r.limitedAt,
+    lastError: (r as any).lastError ?? null,
+    lastCheckedAt: (r as any).lastCheckedAt ?? null,
     requestCount: r.requestCount ?? 0,
     lastUsedAt: r.lastUsedAt,
   }));

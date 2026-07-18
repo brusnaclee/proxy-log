@@ -66,6 +66,7 @@ import {
 	detectIde,
 	detectIdeFromContent,
 	estimateTokens,
+	GENERIC_IDE_LABELS,
 	getClientIp,
 	normalizeIdeName,
 } from '../utils/detect-ide.js';
@@ -1892,9 +1893,9 @@ proxy.all('/*', async (c) => {
 	}
 
 	// ─── 7b. Content-based IDE fallback detection ──────────────────────────
-	// When User-Agent is generic (e.g. "node"), try to identify the IDE from
-	// the request body content (system prompt, tool names, transcript).
-	if (ide === 'Unknown' && requestBody) {
+	// Many real IDEs (OpenCode/Cline/Claude Code) send generic UAs like "node".
+	// Re-detect from body whenever UA-based label is generic.
+	if (requestBody && GENERIC_IDE_LABELS.has(normalizedIde)) {
 		const contentIde = detectIdeFromContent(requestBody, transcriptSnapshot);
 		if (contentIde) {
 			ide = contentIde;
