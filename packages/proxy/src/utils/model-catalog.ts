@@ -51,11 +51,11 @@ function buildCandidateUrls(upstreamEndpoint: string): string[] {
   if (!base) return [];
 
   const candidates = new Set<string>();
-  candidates.add(base + "/models");
-  candidates.add(base + "/v1/models");
-
   if (base.endsWith("/v1")) {
     candidates.add(base + "/models");
+  } else {
+    candidates.add(base + "/models");
+    candidates.add(base + "/v1/models");
   }
 
   return Array.from(candidates);

@@ -137,7 +137,12 @@ function tokenCountOpts(keyRecord: { isTrial: boolean }) {
 	return keyRecord.isTrial ? { isTrial: true as const } : undefined;
 }
 
-const TRANSIENT_UPSTREAM_PROVIDERS = new Set(['conduit', 'ozdoev', 'phantomv2']);
+const TRANSIENT_UPSTREAM_PROVIDERS = new Set([
+	'conduit',
+	'ozdoev',
+	'phantom',
+	'phantomv2',
+]);
 
 function isTransientUpstreamProvider(providerName: string | null | undefined) {
 	return TRANSIENT_UPSTREAM_PROVIDERS.has(

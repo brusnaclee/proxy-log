@@ -1339,7 +1339,10 @@ async function fetchProviderModelList(prov) {
 		.replace(/\/+$/, '');
 	const endpointType = prov.endpointType || 'openai';
 	const candidates = [`${base}/v1/models`, `${base}/models`];
-	if (base.endsWith('/v1')) candidates.unshift(`${base}/models`);
+	if (base.endsWith('/v1')) {
+		candidates.length = 0;
+		candidates.push(`${base}/models`);
+	}
 	const uniqueUrls = [...new Set(candidates)];
 
 	const poolKeys = runtime.providerKeys.get(prov.name) || [];

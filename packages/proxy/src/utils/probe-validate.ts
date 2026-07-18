@@ -26,8 +26,13 @@ export function buildModelListCandidateUrls(endpoint: string): string[] {
 	const base = String(endpoint || '')
 		.trim()
 		.replace(/\/+$/, '');
-	const urls = [`${base}/v1/models`, `${base}/models`];
-	if (base.endsWith('/v1')) urls.unshift(`${base}/models`);
+	// Avoid .../v1/v1/models when endpoint already ends with /v1
+	const urls: string[] = [];
+	if (base.endsWith('/v1')) {
+		urls.push(`${base}/models`);
+	} else {
+		urls.push(`${base}/v1/models`, `${base}/models`);
+	}
 	return [...new Set(urls)];
 }
 
