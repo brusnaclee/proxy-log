@@ -90,12 +90,23 @@ export function isValidProbeBody(
 		const content = msg?.content;
 		const tools = msg?.tool_calls;
 		const reasoning = msg?.reasoning_content || msg?.reasoning;
-		if (typeof content === 'string' && content.trim().length > 0) return true;
-		if (Array.isArray(content) && content.length > 0) return true;
+		if (typeof content === 'string' && content.trim().length > 0) {
+			if (!isPlaceholderEmptyAssistantText(content)) return true;
+		} else if (Array.isArray(content) && content.length > 0) return true;
 		if (Array.isArray(tools) && tools.length > 0) return true;
-		if (typeof reasoning === 'string' && reasoning.trim().length > 0) return true;
+		if (typeof reasoning === 'string' && reasoning.trim().length > 0) {
+			if (!isPlaceholderEmptyAssistantText(reasoning)) return true;
+		}
 		// Anthropic Messages JSON
 		if (Array.isArray(j?.content) && j.content.length > 0) return true;
+		// Reject known placeholder bodies even if usage.completion_tokens > 0
+		if (
+			typeof content === 'string' &&
+			isPlaceholderEmptyAssistantText(content) &&
+			!(Array.isArray(tools) && tools.length > 0)
+		) {
+			return false;
+		}
 		// Some gateways return {} with usage only — treat as weak success if usage present
 		if (j?.usage && (j.usage.completion_tokens > 0 || j.usage.output_tokens > 0)) return true;
 		// max_tokens:1 often returns empty content but valid finish_reason
@@ -107,6 +118,48 @@ export function isValidProbeBody(
 	} catch {
 		return text.trim().length > 0 && !/^error/i.test(text.trim());
 	}
+}
+
+/**
+ * Conduit / some gateways return HTTP 200 with placeholder text like
+ * "[Empty message]" (~4 tokens). Clients (Cursor/Hermes) still show Empty message.
+ * Treat those as empty so we can retry / 502 instead of passing junk through.
+ */
+export function isPlaceholderEmptyAssistantText(text: unknown): boolean {
+	if (text == null) return true;
+	if (typeof text !== 'string') return false;
+	const t = text.trim();
+	if (!t) return true;
+	if (/^\[?Empty message\]?\.?$/i.test(t)) return true;
+	if (/^Empty response\.?$/i.test(t)) return true;
+	if (/^\(no content\)$/i.test(t)) return true;
+	return false;
+}
+
+/** True when an OpenAI-style assistant message has usable text, reasoning, or tools. */
+export function messageHasUsableAssistantOutput(msg: any): boolean {
+	if (!msg || typeof msg !== 'object') return false;
+	if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) return true;
+	const content = msg.content;
+	if (typeof content === 'string' && !isPlaceholderEmptyAssistantText(content)) {
+		return true;
+	}
+	if (Array.isArray(content) && content.length > 0) {
+		for (const block of content) {
+			if (typeof block === 'string' && !isPlaceholderEmptyAssistantText(block)) {
+				return true;
+			}
+			if (block?.type === 'text' && !isPlaceholderEmptyAssistantText(block.text)) {
+				return true;
+			}
+			if (block?.type === 'tool_use' || block?.type === 'function') return true;
+		}
+	}
+	const reasoning = msg.reasoning_content || msg.reasoning;
+	if (typeof reasoning === 'string' && !isPlaceholderEmptyAssistantText(reasoning)) {
+		return true;
+	}
+	return false;
 }
 
 /**
