@@ -59,8 +59,8 @@ const dict: Record<string, Record<Lang, string>> = {
     en: "Truncates huge tool_result dumps (git, grep, ls, read, shell…). Keeps head+tail; drops the middle. Never touches write/edit/apply_diff or tool_calls structure.",
   },
   "RTK effect": {
-    id: "Efek: input ke model lebih kecil → kuota/token hemat di Cline/Roo/Kilo/OpenCode. Risiko: konteks tengah file panjang bisa hilang.",
-    en: "Effect: smaller model input → saves quota on Cline/Roo/Kilo/OpenCode. Risk: middle of long dumps may be missing.",
+    id: "Efek: input ke model lebih kecil → kuota/token hemat di Cline/Roo/Kilo/OpenCode. Risiko: konteks tengah file panjang bisa hilang. Contoh: output `git status` 50KB → ~2KB (head+tail).",
+    en: "Effect: smaller model input → saves quota on Cline/Roo/Kilo/OpenCode. Risk: middle of long dumps may be missing. Example: 50KB `git status` → ~2KB (head+tail).",
   },
   Headroom: { id: "Headroom", en: "Headroom" },
   "Headroom desc": {
@@ -68,8 +68,8 @@ const dict: Record<string, Record<Lang, string>> = {
     en: "POSTs messages to an external compress service (URL set by admin). 3s timeout; on failure the request continues uncompressed.",
   },
   "Headroom effect": {
-    id: "Efek: context history lebih pendek jika URL aktif. Tanpa URL admin = tidak ada efek meski Nyala.",
-    en: "Effect: shorter conversation context when admin URL is set. Without a URL, enabling does nothing.",
+    id: "Efek: context history lebih pendek jika URL aktif. Tanpa URL admin = tidak ada efek meski Nyala. Contoh: 40 pesan history → ~15 pesan ringkas.",
+    en: "Effect: shorter conversation context when admin URL is set. Without a URL, enabling does nothing. Example: 40 history messages → ~15 compressed.",
   },
   Caveman: { id: "Caveman", en: "Caveman" },
   "Caveman desc": {
@@ -77,8 +77,8 @@ const dict: Record<string, Record<Lang, string>> = {
     en: "Injects a system prompt so the model replies more tersely (admin sets level 1–5). Does not change tool calls.",
   },
   "Caveman effect": {
-    id: "Efek: output tokens turun. Risiko: gaya jawaban kasar/telegram; bisa mengganggu agent yang butuh penjelasan panjang. Default OFF.",
-    en: "Effect: fewer output tokens. Risk: terse/telegram style; can hurt agents that need long explanations. Default OFF.",
+    id: "Efek: output tokens turun. Risiko: gaya jawaban kasar/telegram; bisa mengganggu agent yang butuh penjelasan panjang. Default OFF. Contoh: paragraf panjang → 2–3 kalimat singkat.",
+    en: "Effect: fewer output tokens. Risk: terse/telegram style; can hurt agents that need long explanations. Default OFF. Example: long paragraph → 2–3 short sentences.",
   },
   Ponytail: { id: "Ponytail", en: "Ponytail" },
   "Ponytail desc": {
@@ -86,8 +86,8 @@ const dict: Record<string, Record<Lang, string>> = {
     en: "Anti-boilerplate system prompt for IDE agents: skip \"Sure!\", skip plan restatements, act directly (admin lite/full/ultra).",
   },
   "Ponytail effect": {
-    id: "Efek: loop Cline/Roo lebih hemat token chat. Risiko: kurang narasi/status. Default OFF.",
-    en: "Effect: leaner Cline/Roo agent loops. Risk: less narration/status text. Default OFF.",
+    id: "Efek: loop Cline/Roo lebih hemat token chat. Risiko: kurang narasi/status. Default OFF. Contoh: skip \"I'll read the file now…\" → langsung tool call.",
+    en: "Effect: leaner Cline/Roo agent loops. Risk: less narration/status text. Default OFF. Example: skip \"I'll read the file now…\" → go straight to tool call.",
   },
   "Live Updates": { id: "Pembaruan Langsung", en: "Live Updates" },
   "Portal Password": { id: "Kata Sandi Portal", en: "Portal Password" },

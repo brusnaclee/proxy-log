@@ -77,8 +77,14 @@ const TOKITO_LATENCY_INTERVAL_MS =
 	parseInt(process.env.TOKITO_LATENCY_INTERVAL_MS) || 600000;
 const TOKITO_PAGE_SIZE = parseInt(process.env.TOKITO_PAGE_SIZE) || 10;
 const TOKITO_REQUEST_TIMEOUT_MS =
-	parseInt(process.env.TOKITO_REQUEST_TIMEOUT_MS) || 600000;
-const SWEEP_CONCURRENCY = parseInt(process.env.SWEEP_CONCURRENCY) || 8;
+	parseInt(process.env.TOKITO_REQUEST_TIMEOUT_MS) || 180000; // 180s per attempt
+// 0 / unset = unlimited: fire ALL models at once (user request: concurrent all-in-one)
+const SWEEP_CONCURRENCY = (() => {
+	const raw = process.env.SWEEP_CONCURRENCY;
+	if (raw === undefined || raw === '' || raw === '0') return 0;
+	return Math.max(1, parseInt(raw) || 0);
+})();
+const SWEEP_ATTEMPTS = Math.max(1, parseInt(process.env.SWEEP_ATTEMPTS) || 3);
 const TOKITO_SESSION_TIMEOUT_MS =
 	parseInt(process.env.TOKITO_SESSION_TIMEOUT_MS) || 180000; // 3 minutes
 const TOKITO_FALLBACK_MAX_INDEX =
@@ -1759,65 +1765,77 @@ async function testSingleModel(entry) {
 	const baseUrl = entry.baseUrl;
 	const provider = entry.provider;
 
-	// Get all available keys for this provider
+	// Get all available keys for this provider — try every key on failure/429
 	const providerKeys = runtime.providerKeys.get(provider) || [];
-	// Use entry's apiKey as fallback, plus any additional keys from the pool
 	const keysToTry = [
-		entry.apiKey,
-		...providerKeys.filter((k) => k !== entry.apiKey),
+		...new Set([entry.apiKey, ...providerKeys].filter(Boolean)),
 	];
 
-	let result;
-	for (const apiKey of keysToTry) {
-		try {
-			const controller = new AbortController();
-			const timeout = setTimeout(
-				() => controller.abort(),
-				TOKITO_REQUEST_TIMEOUT_MS,
-			);
-			const res = await fetch(`${baseUrl}/chat/completions`, {
-				method: 'POST',
-				headers: {
-					Authorization: `Bearer ${apiKey}`,
-					'Content-Type': 'application/json',
-				},
-				body: JSON.stringify({
-					model: entry.modelId,
-					messages: [{ role: 'user', content: 'test' }],
-					max_tokens: 1,
-					temperature: 0,
-				}),
-				signal: controller.signal,
-			});
-			clearTimeout(timeout);
-			const text = await res.text();
-			let body;
-			try {
-				body = JSON.parse(text);
-			} catch (_) {
-				body = { raw: text };
-			}
-			result = { ok: res.ok, status: res.status, body };
+	let result = { ok: false, status: 0, body: { error: 'No keys' } };
 
-			// If 429, try next key
-			if (res.status === 429 && keysToTry.length > 1) {
+	for (let attempt = 1; attempt <= SWEEP_ATTEMPTS; attempt++) {
+		for (const apiKey of keysToTry) {
+			try {
+				const controller = new AbortController();
+				const timeout = setTimeout(
+					() => controller.abort(),
+					TOKITO_REQUEST_TIMEOUT_MS,
+				);
+				const res = await fetch(`${baseUrl}/chat/completions`, {
+					method: 'POST',
+					headers: {
+						Authorization: `Bearer ${apiKey}`,
+						'Content-Type': 'application/json',
+					},
+					body: JSON.stringify({
+						model: entry.modelId,
+						messages: [{ role: 'user', content: 'test' }],
+						max_tokens: 1,
+						temperature: 0,
+					}),
+					signal: controller.signal,
+				});
+				clearTimeout(timeout);
+				const text = await res.text();
+				let body;
+				try {
+					body = JSON.parse(text);
+				} catch (_) {
+					body = { raw: text };
+				}
+				result = { ok: res.ok, status: res.status, body };
+
+				if (res.ok) {
+					return {
+						ok: true,
+						ms: Date.now() - started,
+						checkedAt: Date.now(),
+						status: res.status,
+						error: null,
+						attempts: attempt,
+					};
+				}
+				// 401/403 on this key → try next key; 429 → next key; other → still try keys then retry
+				continue;
+			} catch (err) {
+				result = { ok: false, status: 0, body: { error: err.message } };
+				// Network/timeout: try next key, then next attempt
 				continue;
 			}
-			// Otherwise, use this result
-			break;
-		} catch (err) {
-			result = { ok: false, status: 0, body: { error: err.message } };
-			break; // Network error, don't retry with other keys
+		}
+		if (attempt < SWEEP_ATTEMPTS) {
+			await new Promise((r) => setTimeout(r, 400 * attempt));
 		}
 	}
 
 	const ms = Date.now() - started;
 	return {
-		ok: result.ok,
+		ok: false,
 		ms,
 		checkedAt: Date.now(),
 		status: result.status,
-		error: result.body?.error?.message || (result.ok ? null : 'Failed'),
+		error: result.body?.error?.message || result.body?.error || 'Failed',
+		attempts: SWEEP_ATTEMPTS,
 	};
 }
 
@@ -1876,11 +1894,14 @@ const GPY_WEBNET_MATCHER = (e) =>
 
 async function sweepModelsParallel(entries, label) {
 	if (!entries.length) return;
+	const concurrency =
+		SWEEP_CONCURRENCY <= 0 ? entries.length : SWEEP_CONCURRENCY;
 	console.log(
-		`[tokito-monitor] ${label}: testing ${entries.length} models (parallel, concurrency ${SWEEP_CONCURRENCY})`,
+		`[tokito-monitor] ${label}: testing ${entries.length} models concurrent` +
+			` (batch=${concurrency}, attempts=${SWEEP_ATTEMPTS}, timeout=${TOKITO_REQUEST_TIMEOUT_MS}ms)`,
 	);
-	for (let i = 0; i < entries.length; i += SWEEP_CONCURRENCY) {
-		const batch = entries.slice(i, i + SWEEP_CONCURRENCY);
+	for (let i = 0; i < entries.length; i += concurrency) {
+		const batch = entries.slice(i, i + concurrency);
 		const results = await Promise.allSettled(
 			batch.map(async (entry) => {
 				const latency = await testSingleModel(entry);

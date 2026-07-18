@@ -82,14 +82,23 @@ function buildProbeRequest(
 }
 
 async function getProviderProbeKey(providerId: number, legacyApiKey: string | null): Promise<string | null> {
-  const keys = await db
+  const keys = await getProviderProbeKeys(providerId, legacyApiKey);
+  return keys[0] || null;
+}
+
+async function getProviderProbeKeys(providerId: number, legacyApiKey: string | null): Promise<string[]> {
+  const rows = await db
     .select()
     .from(providerApiKeys)
     .where(sql`${providerApiKeys.providerId} = ${providerId} AND ${providerApiKeys.isActive} = true AND ${providerApiKeys.isLimited} = false`)
     .orderBy(providerApiKeys.id);
-  if (keys.length > 0) return keys[0].apiKey;
-  return legacyApiKey || null;
+  const keys = rows.map((r) => r.apiKey).filter(Boolean);
+  if (legacyApiKey && !keys.includes(legacyApiKey)) keys.push(legacyApiKey);
+  return keys;
 }
+
+const SWEEP_PROBE_TIMEOUT_MS = Number(process.env.SWEEP_PROBE_TIMEOUT_MS) || 180_000;
+const SWEEP_PROBE_ATTEMPTS = Math.max(1, Number(process.env.SWEEP_PROBE_ATTEMPTS) || 3);
 
 // Auth helper for bot pushing stats
 const checkInternal = (c: any) => {
@@ -542,7 +551,7 @@ monitor.post("/monitor/sweep", async (c) => {
         for (const url of urls) {
           try {
             const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 600000);
+            const timeout = setTimeout(() => controller.abort(), 30_000);
             const res = await fetch(url, {
               headers: buildModelListAuthHeaders(probeKey, endpointType),
               signal: controller.signal,
@@ -584,32 +593,72 @@ monitor.post("/monitor/sweep", async (c) => {
       }
 
       sweepProgress.total = allModels.length;
-      for (const m of allModels) {
-        let tested = false;
-        const probeKey = await getProviderProbeKey(m.providerId, m.apiKey);
-        if (!probeKey) continue;
 
-        try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 600000);
+      // Concurrent all-in-one probe (3 attempts × 180s timeout per model)
+      await Promise.allSettled(
+        allModels.map(async (m) => {
+          const keys = await getProviderProbeKeys(m.providerId, m.apiKey);
+          if (keys.length === 0) {
+            await upsertModelStatus({
+              modelId: m.modelId,
+              provider: m.providerName,
+              isOnline: false,
+              latencyMs: 0,
+              httpStatus: 0,
+              errorMessage: "No API key",
+              baseUrl: m.baseUrl,
+            });
+            sweepProgress.tested++;
+            sweepProgress.offline++;
+            return;
+          }
+
           const start = Date.now();
-          const probe = buildProbeRequest(m.baseUrl, m.endpointType, m.modelId, probeKey);
-          const res = await fetch(probe.url, { ...probe.init, signal: controller.signal });
-          clearTimeout(timeout);
-          const ms = Date.now() - start;
-          await upsertModelStatus({ modelId: m.modelId, provider: m.providerName, isOnline: res.ok, latencyMs: ms, httpStatus: res.status, errorMessage: res.ok ? null : `HTTP ${res.status}`, baseUrl: m.baseUrl });
-          sweepProgress.tested++;
-          if (res.ok) sweepProgress.online++; else if (res.status === 429) sweepProgress.rateLimited++; else sweepProgress.offline++;
-          tested = true;
-        } catch { /* fall through */ }
+          let lastStatus = 0;
+          let lastError = "Failed";
+          let ok = false;
 
-        if (!tested) {
-          await upsertModelStatus({ modelId: m.modelId, provider: m.providerName, isOnline: false, latencyMs: 0, httpStatus: 0, errorMessage: "Network error", baseUrl: m.baseUrl });
+          for (let attempt = 1; attempt <= SWEEP_PROBE_ATTEMPTS && !ok; attempt++) {
+            for (const key of keys) {
+              try {
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), SWEEP_PROBE_TIMEOUT_MS);
+                const probe = buildProbeRequest(m.baseUrl, m.endpointType, m.modelId, key);
+                const res = await fetch(probe.url, { ...probe.init, signal: controller.signal });
+                clearTimeout(timeout);
+                lastStatus = res.status;
+                if (res.ok) {
+                  ok = true;
+                  break;
+                }
+                lastError = `HTTP ${res.status}`;
+              } catch (err: any) {
+                lastStatus = 0;
+                lastError = err?.name === "AbortError" ? "Timeout" : (err?.message || "Network error");
+              }
+            }
+            if (!ok && attempt < SWEEP_PROBE_ATTEMPTS) {
+              await new Promise((r) => setTimeout(r, 400 * attempt));
+            }
+          }
+
+          const ms = Date.now() - start;
+          await upsertModelStatus({
+            modelId: m.modelId,
+            provider: m.providerName,
+            isOnline: ok,
+            latencyMs: ms,
+            httpStatus: lastStatus,
+            errorMessage: ok ? null : lastError,
+            baseUrl: m.baseUrl,
+          });
           sweepProgress.tested++;
-          sweepProgress.offline++;
-        }
-        await new Promise(r => setTimeout(r, 200));
-      }
+          if (ok) sweepProgress.online++;
+          else if (lastStatus === 429) sweepProgress.rateLimited++;
+          else sweepProgress.offline++;
+        }),
+      );
+
       sweepProgress.status = "completed";
     } catch (err: any) { sweepProgress.status = "error"; console.error("[sweep] Error:", err.message); }
     finally { sweepRunning = false; }
