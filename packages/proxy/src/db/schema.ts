@@ -356,6 +356,14 @@ export const modelMetadata = pgTable('model_metadata', {
 	outputModalities: text('output_modalities'),
 	supportedFeatures: text('supported_features'),
 	source: text('source').default('unknown'),
+	// Identity lock: advertised name injected as topmost system prompt so
+	// clients don't see upstream's real model (e.g. gpt-5.5-pro → Nemotron).
+	advertisedName: text('advertised_name'),
+	developer: text('developer'),
+	identityPrompt: text('identity_prompt'),
+	identityLocked: boolean('identity_locked').notNull().default(true),
+	enrichSource: text('enrich_source'),
+	enrichedAt: timestamp('enriched_at'),
 	updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
 

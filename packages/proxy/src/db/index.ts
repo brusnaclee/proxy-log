@@ -3,6 +3,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 import * as schema from './schema.js';
 import { migrateTokenSaverColumns } from './migrate-token-saver.js';
+import { migrateModelIdentityColumns } from './migrate-model-identity.js';
 
 const DATABASE_URL =
 	process.env.DATABASE_URL ||
@@ -114,6 +115,9 @@ export async function initializeDatabase() {
 
 	// Token Saver columns (admin_config + user_portal_settings)
 	await migrateTokenSaverColumns();
+
+	// Model identity profile columns (model_metadata)
+	await migrateModelIdentityColumns();
 
 	// Unique index on devices(api_key_id, fingerprint) — prevents duplicate device rows
 	try {

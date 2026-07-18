@@ -10,6 +10,7 @@
 	ModalBuilder,
 	TextInputBuilder,
 	TextInputStyle,
+	StringSelectMenuBuilder,
 } = require('discord.js');
 const fs = require('fs').promises;
 const path = require('path');
@@ -3824,6 +3825,11 @@ function buildUsageDetailRow(includeOther = false) {
 			.setLabel('See Model Limit')
 			.setEmoji('🎯')
 			.setStyle(ButtonStyle.Secondary),
+		new ButtonBuilder()
+			.setCustomId('ranking_token_saver')
+			.setLabel('Token Saver')
+			.setEmoji('💾')
+			.setStyle(ButtonStyle.Primary),
 	];
 	if (includeOther) {
 		buttons.push(
@@ -5470,7 +5476,7 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 			`**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}\nBulanan: ${monthlyTokenStr}`;
 
 	const tokenSaverHint =
-		`\n\n💡 **Token Saver** — hemat token Cline/Roo (compress tool dump). Atur di Dashboard → Settings: ${PORTAL_DASHBOARD_URL}`;
+		`\n\n💡 **Token Saver** — hemat token Cline/Roo (compress tool dump). Tekan tombol **Token Saver** di bawah, atau portal: ${PORTAL_DASHBOARD_URL}`;
 
 	const embed = new EmbedBuilder()
 		.setTitle(`📊 Usage: ${displayName}`)
@@ -5488,6 +5494,126 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 		.setTimestamp();
 
 	return embed;
+}
+
+function fmtTriState(override, globalOn) {
+	if (override === true) return '🟢 ON';
+	if (override === false) return '🔴 OFF';
+	return globalOn ? '⚪ Default (ON)' : '⚪ Default (OFF)';
+}
+
+async function handleTokenSaverPanel(interaction) {
+	await interaction.deferReply({ ephemeral: true });
+	const discordUserId = interaction.user.id;
+	let data;
+	try {
+		data = await proxyInternal(`/admin/internal/token-saver/${discordUserId}`);
+	} catch (err) {
+		await interaction.editReply({
+			content: `❌ Gagal load Token Saver: ${err.message || err}`,
+		});
+		return;
+	}
+
+	const g = data.global || {};
+	const o = data.overrides || {};
+	const embed = new EmbedBuilder()
+		.setTitle('💾 Token Saver')
+		.setDescription(
+			'Tri-state per fitur: **Default** (ikut global) / **ON** / **OFF**.\n' +
+				'RTK compress tool dump (git/grep/read). Headroom/Caveman/Ponytail default OFF agar agent tidak rusak.\n' +
+				`Portal: ${PORTAL_DASHBOARD_URL}/settings`,
+		)
+		.addFields(
+			{ name: 'RTK', value: fmtTriState(o.rtk, !!g.rtk), inline: true },
+			{ name: 'Headroom', value: fmtTriState(o.headroom, !!g.headroom), inline: true },
+			{ name: 'Caveman', value: fmtTriState(o.caveman, !!g.caveman), inline: true },
+			{ name: 'Ponytail', value: fmtTriState(o.ponytail, !!g.ponytail), inline: true },
+		)
+		.setColor(0x5865f2)
+		.setTimestamp();
+
+	const mkSelect = (feature, label) =>
+		new ActionRowBuilder().addComponents(
+			new StringSelectMenuBuilder()
+				.setCustomId(`ts_set:${feature}`)
+				.setPlaceholder(`${label}: pilih Default / ON / OFF`)
+				.addOptions(
+					{ label: `${label}: Default`, value: 'default', description: 'Ikuti setting global admin' },
+					{ label: `${label}: ON`, value: 'on' },
+					{ label: `${label}: OFF`, value: 'off' },
+				),
+		);
+
+	await interaction.editReply({
+		embeds: [embed],
+		components: [
+			mkSelect('rtk', 'RTK'),
+			mkSelect('headroom', 'Headroom'),
+			mkSelect('caveman', 'Caveman'),
+			mkSelect('ponytail', 'Ponytail'),
+		],
+	});
+}
+
+async function handleTokenSaverSelect(interaction) {
+	await interaction.deferUpdate();
+	const feature = interaction.customId.replace(/^ts_set:/, '');
+	const raw = interaction.values?.[0] || 'default';
+	const value = raw === 'on' ? true : raw === 'off' ? false : null;
+	const discordUserId = interaction.user.id;
+
+	if (!['rtk', 'headroom', 'caveman', 'ponytail'].includes(feature)) {
+		await interaction.followUp({ content: '❌ Fitur tidak dikenal.', ephemeral: true });
+		return;
+	}
+
+	try {
+		await proxyInternal(`/admin/internal/token-saver/${discordUserId}`, 'PUT', {
+			[feature]: value,
+		});
+		const data = await proxyInternal(`/admin/internal/token-saver/${discordUserId}`);
+		const g = data.global || {};
+		const o = data.overrides || {};
+		const embed = new EmbedBuilder()
+			.setTitle('💾 Token Saver')
+			.setDescription(`Updated **${feature}** → ${fmtTriState(value, !!g[feature])}`)
+			.addFields(
+				{ name: 'RTK', value: fmtTriState(o.rtk, !!g.rtk), inline: true },
+				{ name: 'Headroom', value: fmtTriState(o.headroom, !!g.headroom), inline: true },
+				{ name: 'Caveman', value: fmtTriState(o.caveman, !!g.caveman), inline: true },
+				{ name: 'Ponytail', value: fmtTriState(o.ponytail, !!g.ponytail), inline: true },
+			)
+			.setColor(0x57f287)
+			.setTimestamp();
+
+		const mkSelect = (feat, label) =>
+			new ActionRowBuilder().addComponents(
+				new StringSelectMenuBuilder()
+					.setCustomId(`ts_set:${feat}`)
+					.setPlaceholder(`${label}: pilih Default / ON / OFF`)
+					.addOptions(
+						{ label: `${label}: Default`, value: 'default' },
+						{ label: `${label}: ON`, value: 'on' },
+						{ label: `${label}: OFF`, value: 'off' },
+					),
+			);
+
+		await interaction.editReply({
+			embeds: [embed],
+			components: [
+				mkSelect('rtk', 'RTK'),
+				mkSelect('headroom', 'Headroom'),
+				mkSelect('caveman', 'Caveman'),
+				mkSelect('ponytail', 'Ponytail'),
+			],
+		});
+	} catch (err) {
+		await interaction.followUp({
+			content: `❌ Gagal simpan: ${err.message || err}`,
+			ephemeral: true,
+		});
+	}
 }
 
 async function canTrialUserViewTarget(callerId, targetId, targetData, guild) {
@@ -6317,6 +6443,19 @@ client.on('interactionCreate', async (interaction) => {
 				interaction.customId.startsWith('ranking_see_model_limits:'))
 		) {
 			await handleRankingSeeModelLimits(interaction);
+			return;
+		}
+
+		// ─── Token Saver panel (from Usage detail) ───────────────────────────
+		if (interaction.isButton() && interaction.customId === 'ranking_token_saver') {
+			await handleTokenSaverPanel(interaction);
+			return;
+		}
+		if (
+			interaction.isStringSelectMenu() &&
+			interaction.customId.startsWith('ts_set:')
+		) {
+			await handleTokenSaverSelect(interaction);
 			return;
 		}
 

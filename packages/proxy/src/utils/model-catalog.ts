@@ -1257,6 +1257,17 @@ export async function enrichModelMetadata(): Promise<void> {
 
       lastEnrichmentAt = Date.now();
       console.log(`[model-metadata] Enrichment complete: ${matched} OpenRouter, ${fallback} fallback, ${unknown} unknown`);
+
+      // Fill identity prompts for any model still missing them (all providers)
+      try {
+        const { ensureIdentityProfilesForCatalog } = await import("./model-identity.js");
+        const filled = await ensureIdentityProfilesForCatalog(ourModels);
+        if (filled > 0) {
+          console.log(`[model-metadata] Identity profiles filled: ${filled}`);
+        }
+      } catch (err: any) {
+        console.warn(`[model-metadata] Identity fill warning: ${err?.message || err}`);
+      }
     } catch (err: any) {
       console.error(`[model-metadata] Enrichment error: ${err.message}`);
     } finally {

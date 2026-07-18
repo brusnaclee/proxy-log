@@ -50,7 +50,12 @@ import {
 	generateSessionId,
 	getKeyPrefix,
 	sha256,
+	extractMachineHint,
 } from '../utils/crypto.js';
+import {
+	injectIdentityIntoBody,
+	resolveModelIdentity,
+} from '../utils/model-identity.js';
 import {
 	detectIde,
 	detectIdeFromContent,
@@ -1234,13 +1239,14 @@ proxy.all('/*', async (c) => {
 		c.req.header('x-real-ip') || '127.0.0.1',
 	);
 	const fingerprint = generateFingerprint(clientIp, userAgent, deviceId);
+	const machineHint = extractMachineHint(userAgent);
 	let ide = detectIde(userAgent);
 	const platformHint = platformHintRaw + ' ' + deviceName;
 	const osDetected = detectOperatingSystem(userAgent, platformHint);
 	let normalizedIde = normalizeIdeName(ide);
 
 	// ΓöÇΓöÇΓöÇ 4. Device Policy Check ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-	const existingDevice = await db
+	let existingDevice = await db
 		.select()
 		.from(devices)
 		.where(
@@ -1251,6 +1257,55 @@ proxy.all('/*', async (c) => {
 		)
 		.then((r) => r[0]);
 
+	// Merge legacy UA fingerprints / multi-IDE: reuse an existing account device
+	// on the same machine (OS+arch) so Cursor→Cline does not burn a new slot.
+	if (!existingDevice && machineHint && machineHint !== 'unknown:') {
+		const candidates = keyRecord.discordUserId
+			? await db.execute(sql`
+					SELECT d.*
+					FROM devices d
+					INNER JOIN api_keys k ON k.id = d.api_key_id
+					WHERE k.discord_user_id = ${keyRecord.discordUserId}
+					  AND d.is_blocked = false
+					ORDER BY d.last_seen DESC
+					LIMIT 40
+				`)
+			: await db.execute(sql`
+					SELECT d.*
+					FROM devices d
+					WHERE d.api_key_id = ${keyRecord.id}
+					  AND d.is_blocked = false
+					ORDER BY d.last_seen DESC
+					LIMIT 40
+				`);
+		const rows = (candidates.rows || []) as any[];
+		const match = rows.find((d) => {
+			if (deviceId && d.fingerprint === sha256(`device:${deviceId}`)) return true;
+			const hint = extractMachineHint(d.user_agent_raw || d.userAgentRaw || '');
+			return hint === machineHint && hint !== 'unknown:';
+		});
+		if (match) {
+			// Stick to the known fingerprint slot (avoid COUNT DISTINCT inflation).
+			existingDevice = {
+				id: match.id,
+				apiKeyId: match.api_key_id ?? match.apiKeyId,
+				fingerprint: match.fingerprint,
+				ipAddress: match.ip_address ?? match.ipAddress,
+				userAgentRaw: match.user_agent_raw ?? match.userAgentRaw,
+				osDetected: match.os_detected ?? match.osDetected,
+				deviceName: match.device_name ?? match.deviceName,
+				ideDetected: match.ide_detected ?? match.ideDetected,
+				firstSeen: match.first_seen ?? match.firstSeen,
+				lastSeen: match.last_seen ?? match.lastSeen,
+				requestCount: match.request_count ?? match.requestCount,
+				isBlocked: match.is_blocked ?? match.isBlocked,
+			} as typeof existingDevice;
+		}
+	}
+
+	// Prefer the stored fingerprint when we merged onto an existing machine slot
+	const effectiveFingerprint = existingDevice?.fingerprint || fingerprint;
+
 	// Same fingerprint on another key of this Discord user counts as a known device
 	// (account-level budget — creating N keys must not multiply maxDevices).
 	let accountKnownFingerprint = Boolean(existingDevice);
@@ -1260,7 +1315,7 @@ proxy.all('/*', async (c) => {
 			FROM devices d
 			INNER JOIN api_keys k ON k.id = d.api_key_id
 			WHERE k.discord_user_id = ${keyRecord.discordUserId}
-			  AND d.fingerprint = ${fingerprint}
+			  AND d.fingerprint = ${effectiveFingerprint}
 			  AND d.is_blocked = false
 			LIMIT 1
 		`);
@@ -1286,7 +1341,7 @@ proxy.all('/*', async (c) => {
 			.where(
 				and(
 					eq(allowedDevices.apiKeyId, keyRecord.id),
-					eq(allowedDevices.fingerprint, fingerprint),
+					eq(allowedDevices.fingerprint, effectiveFingerprint),
 					eq(allowedDevices.listType, 'allow'),
 				),
 			)
@@ -1306,7 +1361,7 @@ proxy.all('/*', async (c) => {
 			.where(
 				and(
 					eq(allowedDevices.apiKeyId, keyRecord.id),
-					eq(allowedDevices.fingerprint, fingerprint),
+					eq(allowedDevices.fingerprint, effectiveFingerprint),
 					eq(allowedDevices.listType, 'block'),
 				),
 			)
@@ -1459,7 +1514,7 @@ proxy.all('/*', async (c) => {
 
 				await db.insert(devices).values({
 					apiKeyId: keyRecord.id,
-					fingerprint,
+					fingerprint: effectiveFingerprint,
 					ipAddress: clientIp,
 					userAgentRaw: userAgent,
 					osDetected,
@@ -1789,6 +1844,22 @@ proxy.all('/*', async (c) => {
 		}
 	}
 
+	// ─── 7e. Model identity inject (topmost system — all models) ─────────────
+	// After Token Saver so caveman/ponytail stay below identity; before analyze.
+	if (requestBody && model && model !== 'auto' && model !== '__auto__') {
+		try {
+			const identity = await resolveModelIdentity(model);
+			if (identity?.identityPrompt) {
+				const injected = injectIdentityIntoBody(requestBody, identity.identityPrompt);
+				if (injected) {
+					requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
+				}
+			}
+		} catch (err) {
+			console.warn('[identity] inject failed (fail-open):', (err as Error)?.message || err);
+		}
+	}
+
 	// ─── 7b. Content-based IDE fallback detection ──────────────────────────
 	// When User-Agent is generic (e.g. "node"), try to identify the IDE from
 	// the request body content (system prompt, tool names, transcript).
@@ -1867,13 +1938,13 @@ proxy.all('/*', async (c) => {
 		}
 
 		// Resolve session for auto model (so it appears in session history)
-		const deviceLockKey = `${keyRecord.id}:${fingerprint}`;
+		const deviceLockKey = `${keyRecord.id}:${effectiveFingerprint}`;
 		const autoSessionResult = await withDeviceLock(deviceLockKey, async () => {
 			const sessionResult = await resolveChatSession({
 				apiKeyId: keyRecord.id,
 				apiKeyName: keyRecord.name,
 				ipAddress: clientIp,
-				deviceFingerprint: fingerprint,
+				deviceFingerprint: effectiveFingerprint,
 				ideDetected: ide,
 				provider: 'auto',
 				model: 'auto',
@@ -2073,12 +2144,31 @@ proxy.all('/*', async (c) => {
 				}
 			}
 
-			// Build body with this specific model
-			const trialBody = {
+			// Build body with this specific model (+ identity of selected model)
+			const trialBody: any = {
 				...requestBody,
 				model: candidate.modelId,
 				stream: wantedStream,
+				messages: Array.isArray((requestBody as any)?.messages)
+					? [...(requestBody as any).messages]
+					: (requestBody as any)?.messages,
 			};
+			if (typeof (requestBody as any)?.system === 'string') {
+				trialBody.system = (requestBody as any).system;
+			} else if (Array.isArray((requestBody as any)?.system)) {
+				trialBody.system = [...(requestBody as any).system];
+			}
+			try {
+				const pubId = candidate.provider
+					? `${candidate.provider}/${candidate.modelId}`
+					: candidate.modelId;
+				const identity = await resolveModelIdentity(pubId);
+				if (identity?.identityPrompt) {
+					injectIdentityIntoBody(trialBody, identity.identityPrompt);
+				}
+			} catch {
+				/* fail-open */
+			}
 			const trialBodyPayload = isAnthropicAuto
 				? prepareAnthropicUpstreamBody(trialBody)
 				: new TextEncoder().encode(JSON.stringify(trialBody));
@@ -2094,7 +2184,7 @@ proxy.all('/*', async (c) => {
 						body: trialBodyPayload as any,
 					},
 					wantedStream,
-					candidate.provider.name,
+					candidate.provider,
 					c.req.raw.signal,
 				);
 
@@ -2255,7 +2345,7 @@ proxy.all('/*', async (c) => {
 										osDetected,
 										clientName: clientName || ide,
 										ipAddress: clientIp,
-										deviceFingerprint: fingerprint,
+										deviceFingerprint: effectiveFingerprint,
 										ideDetected: ide,
 										provider: candidate.provider,
 										endpointPath: path,
@@ -2414,7 +2504,7 @@ proxy.all('/*', async (c) => {
 						osDetected,
 						clientName: clientName || ide,
 						ipAddress: clientIp,
-						deviceFingerprint: fingerprint,
+						deviceFingerprint: effectiveFingerprint,
 						ideDetected: ide,
 						provider: candidate.provider,
 						endpointPath: path,
@@ -2724,14 +2814,14 @@ proxy.all('/*', async (c) => {
 	// are serialized.  This prevents race conditions where two requests both
 	// see "no session" and create duplicate sessions, or both read stale hash.
 	const provider = targetProvider.name;
-	const deviceLockKey = `${keyRecord.id}:${fingerprint}`;
+	const deviceLockKey = `${keyRecord.id}:${effectiveFingerprint}`;
 	const { sessionInfo, isNewPrompt, consecutiveToolFollowups } =
 		await withDeviceLock(deviceLockKey, async () => {
 			const sessionInfo = await resolveChatSession({
 				apiKeyId: keyRecord.id,
 				apiKeyName: keyRecord.name,
 				ipAddress: clientIp,
-				deviceFingerprint: fingerprint,
+				deviceFingerprint: effectiveFingerprint,
 				ideDetected: ide,
 				provider,
 				model,
@@ -3355,7 +3445,7 @@ proxy.all('/*', async (c) => {
 		osDetected,
 		clientName: clientName || ide,
 		ipAddress: clientIp,
-		deviceFingerprint: fingerprint,
+		deviceFingerprint: effectiveFingerprint,
 		ideDetected: ide,
 		provider,
 		endpointPath: path,
@@ -3508,6 +3598,7 @@ proxy.all('/*', async (c) => {
 		}
 
 		let fetchSucceeded = false;
+		let fetchError: Error | null = null;
 		const originalModel = model;
 		// Trial users should not wait through 2 retries per model — one attempt
 		// per model, then skip-ahead to __auto__ on the first failure. Phantom
@@ -3646,7 +3737,6 @@ proxy.all('/*', async (c) => {
 						trialForcedNonStreamForTools = true;
 					}
 
-				let fetchError: Error | null = null;
 				try {
 				const result = await fetchWithKeyRotation(
 					attemptProvider.id,
@@ -3859,7 +3949,7 @@ proxy.all('/*', async (c) => {
 		} else {
 			await db.insert(devices).values({
 				apiKeyId: keyRecord.id,
-				fingerprint,
+				fingerprint: effectiveFingerprint,
 				ipAddress: clientIp,
 				userAgentRaw: userAgent,
 				osDetected,

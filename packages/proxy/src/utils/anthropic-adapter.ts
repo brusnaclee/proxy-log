@@ -7,7 +7,7 @@
 
 interface OpenAIMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
+  content: string | null | any[];
   tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>;
   tool_call_id?: string;
 }
@@ -20,6 +20,7 @@ interface OpenAIRequest {
   top_p?: number;
   stream?: boolean;
   tools?: Array<{ type: "function"; function: { name: string; description?: string; parameters?: any } }>;
+  tool_choice?: any;
   stop?: string | string[];
 }
 
@@ -71,23 +72,34 @@ interface AnthropicRequest {
   top_p?: number;
   stream?: boolean;
   tools?: Array<{ name: string; description?: string; input_schema: any }>;
+  tool_choice?: any;
   stop_sequences?: string[];
 }
 
 export function convertRequestToAnthropic(openai: OpenAIRequest): AnthropicRequest {
   const messages: OpenAIMessage[] = openai.messages || [];
 
-  // Extract system message
-  let system: string | undefined;
+  // Concat ALL system messages (identity + token-saver + client). Last-wins
+  // previously dropped identity when IDEs sent their own system prompt.
+  const systemParts: string[] = [];
   const nonSystemMessages: OpenAIMessage[] = [];
 
   for (const msg of messages) {
     if (msg.role === "system") {
-      system = typeof msg.content === "string" ? msg.content : undefined;
+      if (typeof msg.content === "string" && msg.content.trim()) {
+        systemParts.push(msg.content);
+      } else if (Array.isArray(msg.content)) {
+        const text = (msg.content as any[])
+          .map((p) => (typeof p?.text === "string" ? p.text : ""))
+          .filter(Boolean)
+          .join("\n");
+        if (text.trim()) systemParts.push(text);
+      }
     } else {
       nonSystemMessages.push(msg);
     }
   }
+  const system = systemParts.length > 0 ? systemParts.join("\n\n") : undefined;
 
   // Convert messages
   const anthropicMessages: AnthropicMessage[] = [];
@@ -176,6 +188,20 @@ export function convertRequestToAnthropic(openai: OpenAIRequest): AnthropicReque
     stop_sequences = Array.isArray(openai.stop) ? openai.stop : [openai.stop];
   }
 
+  // Map OpenAI tool_choice → Anthropic tool_choice
+  let tool_choice: any | undefined;
+  const tc = (openai as any).tool_choice;
+  if (tc !== undefined && tc !== null) {
+    if (tc === "auto") tool_choice = { type: "auto" };
+    else if (tc === "none") tool_choice = { type: "none" };
+    else if (tc === "required") tool_choice = { type: "any" };
+    else if (typeof tc === "object" && tc.type === "function" && tc.function?.name) {
+      tool_choice = { type: "tool", name: tc.function.name };
+    } else if (typeof tc === "object" && tc.type) {
+      tool_choice = tc;
+    }
+  }
+
   return {
     model: openai.model,
     max_tokens: openai.max_tokens || 4096,
@@ -185,6 +211,7 @@ export function convertRequestToAnthropic(openai: OpenAIRequest): AnthropicReque
     ...(openai.top_p !== undefined ? { top_p: openai.top_p } : {}),
     ...(openai.stream !== undefined ? { stream: openai.stream } : {}),
     ...(tools ? { tools } : {}),
+    ...(tool_choice ? { tool_choice } : {}),
     ...(stop_sequences ? { stop_sequences } : {}),
   };
 }
@@ -569,13 +596,15 @@ interface AnthropicToOpenAIMessage {
 
 interface AnthropicToOpenAIRequest {
   model: string;
-  messages: AnthropicToOpenAIMessage[];
+  messages: any[];
   max_tokens?: number;
   temperature?: number;
   top_p?: number;
   stream?: boolean;
-  tools?: Array<{ type: "function"; function: { name: string; description?: string; parameters?: any } }>;
+  tools?: Array<{ name: string; description?: string; input_schema?: any }>;
+  tool_choice?: any;
   stop?: string | string[];
+  stop_sequences?: string | string[];
   system?: string | Array<{ type: "text"; text: string; cache_control?: any }>;
 }
 
@@ -657,14 +686,26 @@ export function convertAnthropicToOpenAI(anthropic: AnthropicToOpenAIRequest): O
   }
 
   // Convert tools (Anthropic uses input_schema, OpenAI uses parameters)
-  const openaiTools = (anthropic.tools || []).map((t) => ({
+  const openaiTools = (anthropic.tools || []).map((t: any) => ({
     type: "function" as const,
     function: {
-      name: t.name,
-      description: t.description,
-      parameters: t.input_schema,
+      name: t.name || t.function?.name,
+      description: t.description || t.function?.description,
+      parameters: t.input_schema || t.function?.parameters || { type: "object", properties: {} },
     },
   }));
+
+  // Map Anthropic tool_choice → OpenAI
+  let tool_choice: any | undefined;
+  const atc = anthropic.tool_choice;
+  if (atc !== undefined && atc !== null) {
+    if (atc === "auto" || atc?.type === "auto") tool_choice = "auto";
+    else if (atc === "none" || atc?.type === "none") tool_choice = "none";
+    else if (atc?.type === "any") tool_choice = "required";
+    else if (atc?.type === "tool" && atc.name) {
+      tool_choice = { type: "function", function: { name: atc.name } };
+    }
+  }
 
   return {
     model: anthropic.model,
@@ -674,7 +715,8 @@ export function convertAnthropicToOpenAI(anthropic: AnthropicToOpenAIRequest): O
     top_p: anthropic.top_p,
     stream: anthropic.stream,
     tools: openaiTools.length > 0 ? openaiTools : undefined,
-    stop: anthropic.stop_sequences,
+    ...(tool_choice !== undefined ? { tool_choice } : {}),
+    stop: anthropic.stop_sequences || anthropic.stop,
   };
 }
 
@@ -757,7 +799,8 @@ export interface AnthropicStreamState {
   contentBlockIndex: number;
   contentBlockOpen: boolean;
   thinkingBlockOpen: boolean;
-  toolBlockOpen: boolean;
+  /** Per OpenAI tool_call index → Anthropic content block index */
+  openToolBlocks: Map<number, number>;
   toolIndex: number;
   stopReason: string | null;
   inputTokens: number;
@@ -774,7 +817,7 @@ export function createAnthropicStreamState(model: string, msgId?: string): Anthr
     contentBlockIndex: 0,
     contentBlockOpen: false,
     thinkingBlockOpen: false,
-    toolBlockOpen: false,
+    openToolBlocks: new Map(),
     toolIndex: 0,
     stopReason: null,
     inputTokens: 0,
@@ -806,11 +849,12 @@ export function convertOpenAIChunkToAnthropicEvents(chunk: string, state: Anthro
         out += sseEvent("content_block_stop", { type: "content_block_stop", index: state.contentBlockIndex });
         state.contentBlockOpen = false;
         state.thinkingBlockOpen = false;
+        state.contentBlockIndex++;
       }
-      if (state.toolBlockOpen) {
-        out += sseEvent("content_block_stop", { type: "content_block_stop", index: state.contentBlockIndex });
-        state.toolBlockOpen = false;
+      for (const [, blockIdx] of state.openToolBlocks) {
+        out += sseEvent("content_block_stop", { type: "content_block_stop", index: blockIdx });
       }
+      state.openToolBlocks.clear();
       if (!state.stopReason) state.stopReason = "end_turn";
       out += sseEvent("message_delta", {
         type: "message_delta",
@@ -918,17 +962,18 @@ export function convertOpenAIChunkToAnthropicEvents(chunk: string, state: Anthro
     state.textAccumulated += reasoningText;
   }
 
-  // Handle tool calls
+  // Handle tool calls (multi-tool: one Anthropic content block per OpenAI index)
   if (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) {
     for (const tc of delta.tool_calls) {
       closeTextBlock();
       closeThinkingBlock();
-      // Open tool_use block on first chunk (has id+name); subsequent chunks append arguments via input_json_delta
       const idx = typeof tc.index === "number" ? tc.index : state.toolIndex;
-      if (tc.id && tc.function?.name && !state.toolBlockOpen) {
+      let blockIdx = state.openToolBlocks.get(idx);
+      if (tc.id && tc.function?.name && blockIdx === undefined) {
+        blockIdx = state.contentBlockIndex;
         out += sseEvent("content_block_start", {
           type: "content_block_start",
-          index: state.contentBlockIndex,
+          index: blockIdx,
           content_block: {
             type: "tool_use",
             id: tc.id,
@@ -936,13 +981,14 @@ export function convertOpenAIChunkToAnthropicEvents(chunk: string, state: Anthro
             input: {},
           },
         });
-        state.toolBlockOpen = true;
-        state.toolIndex = idx;
+        state.openToolBlocks.set(idx, blockIdx);
+        state.toolIndex = Math.max(state.toolIndex, idx + 1);
+        state.contentBlockIndex++;
       }
-      if (tc.function?.arguments) {
+      if (tc.function?.arguments && blockIdx !== undefined) {
         out += sseEvent("content_block_delta", {
           type: "content_block_delta",
-          index: state.contentBlockIndex,
+          index: blockIdx,
           delta: {
             type: "input_json_delta",
             partial_json: tc.function.arguments,
@@ -954,12 +1000,16 @@ export function convertOpenAIChunkToAnthropicEvents(chunk: string, state: Anthro
 
   // Handle finish_reason
   if (choice.finish_reason) {
-    if (state.contentBlockOpen || state.toolBlockOpen) {
+    if (state.contentBlockOpen || state.thinkingBlockOpen) {
       out += sseEvent("content_block_stop", { type: "content_block_stop", index: state.contentBlockIndex });
       state.contentBlockOpen = false;
-      state.toolBlockOpen = false;
+      state.thinkingBlockOpen = false;
       state.contentBlockIndex++;
     }
+    for (const [, blockIdx] of state.openToolBlocks) {
+      out += sseEvent("content_block_stop", { type: "content_block_stop", index: blockIdx });
+    }
+    state.openToolBlocks.clear();
     state.stopReason =
       choice.finish_reason === "tool_calls" ? "tool_use" :
       choice.finish_reason === "length" ? "max_tokens" :
@@ -980,11 +1030,12 @@ export function flushAnthropicStream(state: AnthropicStreamState): string {
     out += sseEvent("content_block_stop", { type: "content_block_stop", index: state.contentBlockIndex });
     state.contentBlockOpen = false;
     state.thinkingBlockOpen = false;
+    state.contentBlockIndex++;
   }
-  if (state.toolBlockOpen) {
-    out += sseEvent("content_block_stop", { type: "content_block_stop", index: state.contentBlockIndex });
-    state.toolBlockOpen = false;
+  for (const [, blockIdx] of state.openToolBlocks) {
+    out += sseEvent("content_block_stop", { type: "content_block_stop", index: blockIdx });
   }
+  state.openToolBlocks.clear();
   if (!state.stopReason) state.stopReason = "end_turn";
   out += sseEvent("message_delta", {
     type: "message_delta",

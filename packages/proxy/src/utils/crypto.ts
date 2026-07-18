@@ -43,17 +43,34 @@ function normalizeUserAgent(ua: string): string {
 }
 
 /**
+ * OS + arch bucket for machine identity (ignores IDE / client product name).
+ * Prevents false key rotation when the same laptop opens Cline then Cursor.
+ */
+export function extractMachineHint(userAgent: string): string {
+  const ua = String(userAgent || '');
+  const osMatch = ua.match(/windows nt|windows|macintosh|mac os x|mac os|linux|android|iphone|ipad|cros/i);
+  const archMatch = ua.match(/x86_64|win64|wow64|amd64|arm64|aarch64|x64|i686|i386/i);
+  const os = (osMatch?.[0] || 'unknown').toLowerCase().replace(/\s+/g, '_');
+  const arch = (archMatch?.[0] || '').toLowerCase();
+  return `${os}:${arch}`;
+}
+
+/**
  * Generate a device fingerprint from IP, User-Agent, and optionally Device ID.
- * - If a device ID header is provided, use it (stable across networks).
- * - Otherwise, use normalized User-Agent only (no IP at all).
- *   This way the same laptop on different WiFi networks = same device.
+ * - If a device ID header is provided, use it alone (stable across IDEs/networks).
+ * - Otherwise, use OS+arch machine bucket (multi-IDE on same OS/arch = one device).
+ *   IP is never used (WiFi flips must not rotate keys).
  */
 export function generateFingerprint(ip: string, userAgent: string, deviceId: string = ""): string {
+  void ip; // kept for call-site compatibility; intentionally unused
   if (deviceId) {
-    return sha256(`device:${deviceId}:${normalizeUserAgent(userAgent)}`);
+    return sha256(`device:${deviceId}`);
   }
-  // Use ONLY normalized user-agent. No IP at all.
-  // Same app on same OS = same device, regardless of network.
+  const machine = extractMachineHint(userAgent);
+  if (machine && machine !== 'unknown:') {
+    return sha256(`machine:${machine}`);
+  }
+  // Last resort: normalized UA (legacy-ish) when we can't parse OS
   return sha256(`ua:${normalizeUserAgent(userAgent)}`);
 }
 

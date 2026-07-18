@@ -1,7 +1,7 @@
 ﻿import { Hono } from "hono";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { adminConfig, allowedDevices, allowedIdes, apiKeys, devices, requestLogs, modelLimits, providers, trialUsers } from "../../db/schema.js";
+import { adminConfig, allowedDevices, allowedIdes, apiKeys, devices, requestLogs, modelLimits, providers, trialUsers, userPortalSettings } from "../../db/schema.js";
 import { generateApiKey, getKeyPrefix, sha256 } from "../../utils/crypto.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
@@ -1253,6 +1253,106 @@ internal.get("/internal/user-key-type/:discordUserId", async (c) => {
     hasActiveApiKey: !!anyActiveKey,
     isActive: phantomKey ? true : (anyActiveKey ? anyActiveKey.isTrial === false : false),
     discordUserId,
+  });
+});
+
+/** Token Saver settings for Discord Usage panel (mirror portal). */
+internal.get("/internal/token-saver/:discordUserId", async (c) => {
+  const err = checkInternal(c);
+  if (err) return err;
+  const discordUserId = c.req.param("discordUserId");
+  if (!discordUserId) return c.json({ error: "discordUserId required" }, 400);
+
+  const [config] = await db.select().from(adminConfig).limit(1);
+  const [settings] = await db
+    .select()
+    .from(userPortalSettings)
+    .where(eq(userPortalSettings.discordUserId, discordUserId))
+    .limit(1);
+
+  return c.json({
+    discordUserId,
+    global: {
+      rtk: config?.tokenSaverRtkEnabled ?? true,
+      rtkMaxChars: config?.tokenSaverRtkMaxChars ?? 2000,
+      headroom: config?.tokenSaverHeadroomEnabled ?? false,
+      caveman: config?.tokenSaverCavemanEnabled ?? false,
+      cavemanLevel: config?.tokenSaverCavemanLevel ?? 2,
+      ponytail: config?.tokenSaverPonytailEnabled ?? false,
+      ponytailLevel: config?.tokenSaverPonytailLevel || "lite",
+    },
+    overrides: {
+      rtk: settings?.tokenSaverRtkOverride ?? null,
+      headroom: settings?.tokenSaverHeadroomOverride ?? null,
+      caveman: settings?.tokenSaverCavemanOverride ?? null,
+      ponytail: settings?.tokenSaverPonytailOverride ?? null,
+    },
+  });
+});
+
+internal.put("/internal/token-saver/:discordUserId", async (c) => {
+  const err = checkInternal(c);
+  if (err) return err;
+  const discordUserId = c.req.param("discordUserId");
+  if (!discordUserId) return c.json({ error: "discordUserId required" }, 400);
+
+  const body = await c.req.json<{
+    rtk?: boolean | null;
+    headroom?: boolean | null;
+    caveman?: boolean | null;
+    ponytail?: boolean | null;
+  }>().catch(() => ({} as any));
+
+  const normalize = (v: unknown): boolean | null => {
+    if (v === null || v === undefined || v === "default") return null;
+    if (v === true || v === "true" || v === "on") return true;
+    if (v === false || v === "false" || v === "off") return false;
+    return null;
+  };
+
+  const updates: Partial<typeof userPortalSettings.$inferInsert> = {
+    updatedAt: new Date(),
+  };
+  if (body.rtk !== undefined) updates.tokenSaverRtkOverride = normalize(body.rtk);
+  if (body.headroom !== undefined) updates.tokenSaverHeadroomOverride = normalize(body.headroom);
+  if (body.caveman !== undefined) updates.tokenSaverCavemanOverride = normalize(body.caveman);
+  if (body.ponytail !== undefined) updates.tokenSaverPonytailOverride = normalize(body.ponytail);
+
+  const [existing] = await db
+    .select()
+    .from(userPortalSettings)
+    .where(eq(userPortalSettings.discordUserId, discordUserId))
+    .limit(1);
+
+  if (existing) {
+    await db
+      .update(userPortalSettings)
+      .set(updates)
+      .where(eq(userPortalSettings.discordUserId, discordUserId));
+  } else {
+    await db.insert(userPortalSettings).values({
+      discordUserId,
+      tokenSaverRtkOverride: updates.tokenSaverRtkOverride ?? null,
+      tokenSaverHeadroomOverride: updates.tokenSaverHeadroomOverride ?? null,
+      tokenSaverCavemanOverride: updates.tokenSaverCavemanOverride ?? null,
+      tokenSaverPonytailOverride: updates.tokenSaverPonytailOverride ?? null,
+    });
+  }
+
+  const [refreshed] = await db
+    .select()
+    .from(userPortalSettings)
+    .where(eq(userPortalSettings.discordUserId, discordUserId))
+    .limit(1);
+
+  return c.json({
+    success: true,
+    overrides: {
+      rtk: refreshed?.tokenSaverRtkOverride ?? null,
+      headroom: refreshed?.tokenSaverHeadroomOverride ?? null,
+      caveman: refreshed?.tokenSaverCavemanOverride ?? null,
+      ponytail: refreshed?.tokenSaverPonytailOverride ?? null,
+    },
   });
 });
 

@@ -8,6 +8,9 @@
 //
 // Strategy: for content that looks like verbose tool output, keep head+tail
 // slices and drop the middle with a "…N chars truncated by RTK…" marker.
+//
+// Safety: never touch assistant tool_calls / arguments / write-edit tool
+// results — truncating those breaks Kilo/Cline apply_diff loops.
 
 const TOOL_ROLES = new Set(['tool', 'function']);
 
@@ -45,8 +48,35 @@ const NOISY_TOOL_HINTS = [
 	/^run[_-]?command/i,
 ];
 
+// Write/edit tools must never be truncated — IDEs need full results to continue.
+const WRITE_TOOL_HINTS = [
+	/write[_-]?file/i,
+	/create[_-]?file/i,
+	/edit[_-]?file/i,
+	/apply[_-]?diff/i,
+	/apply[_-]?patch/i,
+	/search[_-]?replace/i,
+	/str[_-]?replace/i,
+	/replace[_-]?in[_-]?file/i,
+	/insert[_-]?content/i,
+	/delete[_-]?file/i,
+	/rename[_-]?file/i,
+	/move[_-]?file/i,
+	/^write\b/i,
+	/^edit\b/i,
+	/^create\b/i,
+	/^patch\b/i,
+	/browser_type|browser_fill|browser_click/i,
+];
+
+function isWriteToolName(name: unknown): boolean {
+	if (typeof name !== 'string' || !name) return false;
+	return WRITE_TOOL_HINTS.some((r) => r.test(name));
+}
+
 function isNoisyToolName(name: unknown): boolean {
-	if (typeof name !== 'string' || !name) return true; // no name → assume noisy
+	if (typeof name !== 'string' || !name) return false; // unnamed → only compress if huge via content path
+	if (isWriteToolName(name)) return false;
 	return NOISY_TOOL_HINTS.some((r) => r.test(name));
 }
 
@@ -104,6 +134,40 @@ function compressContentField(
 	return { out: content, savedChars: 0 };
 }
 
+/** Compress only Anthropic-style tool_result blocks inside a content array. */
+function compressToolResultBlocks(
+	content: unknown,
+	maxChars: number,
+	toolNameHint?: string,
+): { out: unknown; savedChars: number } {
+	if (!Array.isArray(content)) return { out: content, savedChars: 0 };
+	if (isWriteToolName(toolNameHint)) return { out: content, savedChars: 0 };
+
+	let saved = 0;
+	const out = content.map((part) => {
+		if (!part || typeof part !== 'object') return part;
+		const p = part as any;
+		if (p.type !== 'tool_result') return part;
+		// Skip write tools referenced on the block itself when present
+		if (isWriteToolName(p.name) || isWriteToolName(p.tool_name)) return part;
+		const name = p.name || p.tool_name || toolNameHint;
+		const shouldCompress =
+			isNoisyToolName(name) ||
+			(typeof p.content === 'string' && p.content.length > maxChars * 2) ||
+			(Array.isArray(p.content) && JSON.stringify(p.content).length > maxChars * 2);
+		if (!shouldCompress && name) return part;
+		if (!shouldCompress && !name) return part;
+
+		const inner = compressContentField(p.content, maxChars);
+		if (inner.savedChars > 0) {
+			saved += inner.savedChars;
+			return { ...p, content: inner.out };
+		}
+		return part;
+	});
+	return { out, savedChars: saved };
+}
+
 export interface RtkStats {
 	messagesCompressed: number;
 	charsSaved: number;
@@ -112,6 +176,7 @@ export interface RtkStats {
 /**
  * Compress noisy tool outputs in-place inside an OpenAI-format request body.
  * Returns stats; mutates `body.messages` directly.
+ * Never mutates `tool_calls` / function arguments.
  */
 export function applyRtk(body: any, maxChars: number): RtkStats {
 	const stats: RtkStats = { messagesCompressed: 0, charsSaved: 0 };
@@ -122,11 +187,25 @@ export function applyRtk(body: any, maxChars: number): RtkStats {
 		if (!msg || typeof msg !== 'object') continue;
 		const role = String((msg as any).role || '').toLowerCase();
 
+		// Never touch assistant messages that carry tool_calls structure.
+		if (role === 'assistant' && Array.isArray((msg as any).tool_calls)) {
+			continue;
+		}
+
 		// Case 1: role: 'tool' / 'function' message with a `content` string.
 		if (TOOL_ROLES.has(role)) {
 			const name = (msg as any).name;
-			if (!isNoisyToolName(name)) continue;
-			const r = compressContentField((msg as any).content, maxChars);
+			if (isWriteToolName(name)) continue;
+			// Compress noisy tools, or unnamed dumps that are clearly huge.
+			const content = (msg as any).content;
+			const contentLen =
+				typeof content === 'string'
+					? content.length
+					: Array.isArray(content)
+						? JSON.stringify(content).length
+						: 0;
+			if (!isNoisyToolName(name) && !(contentLen > maxChars * 2)) continue;
+			const r = compressContentField(content, maxChars);
 			if (r.savedChars > 0) {
 				(msg as any).content = r.out;
 				stats.messagesCompressed += 1;
@@ -135,11 +214,10 @@ export function applyRtk(body: any, maxChars: number): RtkStats {
 			continue;
 		}
 
-		// Case 2: role: 'user'/'assistant' with tool_result blocks inside content array
-		// (Anthropic → OpenAI translation still leaves user turns with tool_result blocks
-		// when the request came through /v1/messages).
+		// Case 2: only compress tool_result blocks inside content arrays
+		// (Anthropic → OpenAI translation / native Anthropic passthrough shapes).
 		if (Array.isArray((msg as any).content)) {
-			const r = compressContentField((msg as any).content, maxChars);
+			const r = compressToolResultBlocks((msg as any).content, maxChars);
 			if (r.savedChars > 0) {
 				(msg as any).content = r.out;
 				stats.messagesCompressed += 1;

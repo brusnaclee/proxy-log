@@ -288,6 +288,41 @@ export default function SettingsPage() {
         </div>
       </div>
 
+      {/* Token Saver — placed right under Account so it's visible without scrolling */}
+      <div className="bg-card border border-border rounded-xl p-6 animate-fade-in border-primary/20">
+        <div className="flex items-center justify-between gap-2 mb-1">
+          <h2 className="text-sm font-medium text-foreground">{t("Token Saver")}</h2>
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
+            RTK default ON
+          </span>
+        </div>
+        <p className="text-xs text-muted-foreground mb-4">{t("Token Saver desc")}</p>
+        {tsSuccess && (
+          <div className="flex items-center gap-2 p-3 bg-green-400/10 border border-green-400/20 rounded-lg text-green-400 text-sm mb-3">
+            <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+            {tsSuccess}
+          </div>
+        )}
+        {tsError && (
+          <div className="flex items-center gap-2 p-3 bg-red-400/10 border border-red-400/20 rounded-lg text-red-400 text-sm mb-3">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            {tsError}
+          </div>
+        )}
+        <TriState label={t("RTK (tool compress)")} value={tsRtk} onChange={setTsRtk} globalOn={!!tsGlobal?.rtk} />
+        <TriState label={t("Headroom")} value={tsHeadroom} onChange={setTsHeadroom} globalOn={!!tsGlobal?.headroom} />
+        <TriState label={t("Caveman")} value={tsCaveman} onChange={setTsCaveman} globalOn={!!tsGlobal?.caveman} />
+        <TriState label={t("Ponytail")} value={tsPonytail} onChange={setTsPonytail} globalOn={!!tsGlobal?.ponytail} />
+        <button
+          type="button"
+          onClick={handleSaveTokenSaver}
+          disabled={tsSaving}
+          className="mt-4 px-4 py-2 bg-primary text-primary-foreground font-medium rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 text-sm"
+        >
+          {tsSaving ? "Saving..." : t("Save")}
+        </button>
+      </div>
+
       {/* Language toggle */}
       <div className="bg-card border border-border rounded-xl p-6 animate-fade-in">
         <h2 className="text-sm font-medium text-foreground mb-4">{t("Language")}</h2>
@@ -361,36 +396,6 @@ export default function SettingsPage() {
             )}
           </div>
         </form>
-      </div>
-
-      {/* Token Saver */}
-      <div className="bg-card border border-border rounded-xl p-6 animate-fade-in">
-        <h2 className="text-sm font-medium text-foreground mb-1">{t("Token Saver")}</h2>
-        <p className="text-xs text-muted-foreground mb-4">{t("Token Saver desc")}</p>
-        {tsSuccess && (
-          <div className="flex items-center gap-2 p-3 bg-green-400/10 border border-green-400/20 rounded-lg text-green-400 text-sm mb-3">
-            <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-            {tsSuccess}
-          </div>
-        )}
-        {tsError && (
-          <div className="flex items-center gap-2 p-3 bg-red-400/10 border border-red-400/20 rounded-lg text-red-400 text-sm mb-3">
-            <AlertCircle className="w-4 h-4 flex-shrink-0" />
-            {tsError}
-          </div>
-        )}
-        <TriState label={t("RTK (tool compress)")} value={tsRtk} onChange={setTsRtk} globalOn={!!tsGlobal?.rtk} />
-        <TriState label={t("Headroom")} value={tsHeadroom} onChange={setTsHeadroom} globalOn={!!tsGlobal?.headroom} />
-        <TriState label={t("Caveman")} value={tsCaveman} onChange={setTsCaveman} globalOn={!!tsGlobal?.caveman} />
-        <TriState label={t("Ponytail")} value={tsPonytail} onChange={setTsPonytail} globalOn={!!tsGlobal?.ponytail} />
-        <button
-          type="button"
-          onClick={handleSaveTokenSaver}
-          disabled={tsSaving}
-          className="mt-4 px-4 py-2 bg-primary text-primary-foreground font-medium rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 text-sm"
-        >
-          {tsSaving ? "Saving..." : t("Save")}
-        </button>
       </div>
 
       {/* Live SSE toggle */}
