@@ -5519,8 +5519,12 @@ async function handleTokenSaverPanel(interaction) {
 	const embed = new EmbedBuilder()
 		.setTitle('💾 Token Saver')
 		.setDescription(
-			'Tri-state per fitur: **Default** (ikut global) / **ON** / **OFF**.\n' +
-				'RTK compress tool dump (git/grep/read). Headroom/Caveman/Ponytail default OFF agar agent tidak rusak.\n' +
+			'Pipeline: **RTK → Headroom → Caveman → Ponytail** (sebelum upstream).\n\n' +
+				'• **RTK** — potong tool dump besar (git/grep/read). Hemat input. Default ON.\n' +
+				'• **Headroom** — compress eksternal (butuh URL admin). Default OFF.\n' +
+				'• **Caveman** — jawaban lebih singkat (system prompt). Bisa ubah gaya. Default OFF.\n' +
+				'• **Ponytail** — skip basa-basi agent IDE. Default OFF.\n\n' +
+				'Tri-state: **Default** (ikut admin) / **ON** / **OFF**.\n' +
 				`Portal: ${PORTAL_DASHBOARD_URL}/settings`,
 		)
 		.addFields(

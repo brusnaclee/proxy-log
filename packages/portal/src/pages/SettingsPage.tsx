@@ -160,34 +160,45 @@ export default function SettingsPage() {
   };
 
   const TriState = ({
-    label, value, onChange, globalOn,
-  }: { label: string; value: boolean | null; onChange: (v: boolean | null) => void; globalOn: boolean }) => (
-    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 py-3 border-b border-border/40 last:border-0">
-      <div>
-        <div className="text-sm text-foreground font-medium">{label}</div>
-        <div className="text-xs text-muted-foreground">
-          {t("Default")}: {globalOn ? t("On") : t("Off")}
+    label, desc, effect, value, onChange, globalOn,
+  }: {
+    label: string;
+    desc?: string;
+    effect?: string;
+    value: boolean | null;
+    onChange: (v: boolean | null) => void;
+    globalOn: boolean;
+  }) => (
+    <div className="flex flex-col gap-2 py-4 border-b border-border/40 last:border-0">
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-sm text-foreground font-medium">{label}</div>
+          <div className="text-xs text-muted-foreground mt-0.5">
+            {t("Default")}: {globalOn ? t("On") : t("Off")}
+          </div>
+          {desc && <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">{desc}</p>}
+          {effect && <p className="text-[11px] text-primary/80 mt-1 leading-relaxed">{effect}</p>}
         </div>
-      </div>
-      <div className="flex gap-1">
-        {([null, true, false] as const).map((opt) => {
-          const active = value === opt;
-          const labelText = opt === null ? t("Default") : opt ? t("On") : t("Off");
-          return (
-            <button
-              key={String(opt)}
-              type="button"
-              onClick={() => onChange(opt)}
-              className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${
-                active
-                  ? "bg-primary/15 border-primary/40 text-primary"
-                  : "border-border text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {labelText}
-            </button>
-          );
-        })}
+        <div className="flex gap-1 shrink-0">
+          {([null, true, false] as const).map((opt) => {
+            const active = value === opt;
+            const labelText = opt === null ? t("Default") : opt ? t("On") : t("Off");
+            return (
+              <button
+                key={String(opt)}
+                type="button"
+                onClick={() => onChange(opt)}
+                className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${
+                  active
+                    ? "bg-primary/15 border-primary/40 text-primary"
+                    : "border-border text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {labelText}
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -309,10 +320,38 @@ export default function SettingsPage() {
             {tsError}
           </div>
         )}
-        <TriState label={t("RTK (tool compress)")} value={tsRtk} onChange={setTsRtk} globalOn={!!tsGlobal?.rtk} />
-        <TriState label={t("Headroom")} value={tsHeadroom} onChange={setTsHeadroom} globalOn={!!tsGlobal?.headroom} />
-        <TriState label={t("Caveman")} value={tsCaveman} onChange={setTsCaveman} globalOn={!!tsGlobal?.caveman} />
-        <TriState label={t("Ponytail")} value={tsPonytail} onChange={setTsPonytail} globalOn={!!tsGlobal?.ponytail} />
+        <TriState
+          label={t("RTK (tool compress)")}
+          desc={t("RTK desc")}
+          effect={t("RTK effect")}
+          value={tsRtk}
+          onChange={setTsRtk}
+          globalOn={!!tsGlobal?.rtk}
+        />
+        <TriState
+          label={t("Headroom")}
+          desc={t("Headroom desc")}
+          effect={t("Headroom effect")}
+          value={tsHeadroom}
+          onChange={setTsHeadroom}
+          globalOn={!!tsGlobal?.headroom}
+        />
+        <TriState
+          label={t("Caveman")}
+          desc={t("Caveman desc")}
+          effect={t("Caveman effect")}
+          value={tsCaveman}
+          onChange={setTsCaveman}
+          globalOn={!!tsGlobal?.caveman}
+        />
+        <TriState
+          label={t("Ponytail")}
+          desc={t("Ponytail desc")}
+          effect={t("Ponytail effect")}
+          value={tsPonytail}
+          onChange={setTsPonytail}
+          globalOn={!!tsGlobal?.ponytail}
+        />
         <button
           type="button"
           onClick={handleSaveTokenSaver}

@@ -234,21 +234,34 @@ export default function SettingsPage() {
       <Card className="border-border/50">
         <CardHeader>
           <CardTitle className="text-base">Token Saver</CardTitle>
-          <CardDescription>
-            Compress tool dumps and trim verbose replies before upstream (RTK → Headroom → Caveman → Ponytail). Clients can override via portal or header <code className="text-xs">X-Token-Saver: off</code>.
+          <CardDescription className="space-y-2">
+            <p>
+              Global defaults for all users. Pipeline order: <strong>RTK → Headroom → Caveman → Ponytail</strong>.
+              Users can override per-feature in the portal (Default / On / Off). One-shot kill switch: header{" "}
+              <code className="text-xs">X-Token-Saver: off</code>.
+            </p>
+            <p className="text-xs">
+              RTK touches <em>input</em> (tool dumps). Caveman/Ponytail touch <em>style of output</em> via system prompts — keep them OFF unless you want terse agents.
+            </p>
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
-            <div>
+            <div className="pr-4">
               <Label className="font-medium">RTK (compress tool output)</Label>
-              <p className="text-xs text-muted-foreground mt-0.5">Truncate git/grep/ls/read dumps. Default ON — biggest saver for Cline/Roo.</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Truncates noisy tool_result content (git/grep/ls/read/shell). Keeps head+tail. Skips write/edit/apply tools and never mutates tool_calls JSON.
+              </p>
+              <p className="text-[11px] text-muted-foreground/80 mt-1">
+                Effect: biggest saver for Cline/Roo/Kilo. Risk: middle of a long dump is dropped. Recommended default: ON.
+              </p>
             </div>
             <Switch checked={tokenSaverRtkEnabled} onCheckedChange={setTokenSaverRtkEnabled} />
           </div>
           {tokenSaverRtkEnabled && (
             <div>
               <Label>RTK max chars per tool result</Label>
+              <p className="text-[11px] text-muted-foreground mb-1">Budget after which middle is truncated (min 200). Default 2000.</p>
               <Input
                 type="number"
                 value={tokenSaverRtkMaxChars}
@@ -258,9 +271,14 @@ export default function SettingsPage() {
             </div>
           )}
           <div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
-            <div>
+            <div className="pr-4">
               <Label className="font-medium">Headroom</Label>
-              <p className="text-xs text-muted-foreground mt-0.5">Optional external /v1/compress service. Fail-open on timeout.</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Optional external POST /compress service. 3s timeout, fail-open (request continues if service is down).
+              </p>
+              <p className="text-[11px] text-muted-foreground/80 mt-1">
+                Effect: further shortens message history. Without a URL below, enabling does nothing. Recommended default: OFF.
+              </p>
             </div>
             <Switch checked={tokenSaverHeadroomEnabled} onCheckedChange={setTokenSaverHeadroomEnabled} />
           </div>
@@ -276,9 +294,14 @@ export default function SettingsPage() {
             </div>
           )}
           <div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
-            <div>
+            <div className="pr-4">
               <Label className="font-medium">Caveman</Label>
-              <p className="text-xs text-muted-foreground mt-0.5">Inject terse-reply system prompt (levels 1–5).</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Injects a terse-reply system prompt (levels 1=light … 5=telegram). Does not alter tools — only reply style.
+              </p>
+              <p className="text-[11px] text-muted-foreground/80 mt-1">
+                Effect: fewer completion tokens. Risk: curt/odd prose; can confuse agents that need rich explanations. Recommended default: OFF.
+              </p>
             </div>
             <Switch checked={tokenSaverCavemanEnabled} onCheckedChange={setTokenSaverCavemanEnabled} />
           </div>
@@ -296,9 +319,14 @@ export default function SettingsPage() {
             </div>
           )}
           <div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
-            <div>
+            <div className="pr-4">
               <Label className="font-medium">Ponytail</Label>
-              <p className="text-xs text-muted-foreground mt-0.5">Skip acknowledgements / plan restatements in IDE agent loops.</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Injects anti-boilerplate for IDE agents: skip &quot;Sure!&quot;, skip plan restatements, act directly (lite / full / ultra).
+              </p>
+              <p className="text-[11px] text-muted-foreground/80 mt-1">
+                Effect: leaner agent loops (Cline/Roo). Risk: less narration. Recommended default: OFF.
+              </p>
             </div>
             <Switch checked={tokenSaverPonytailEnabled} onCheckedChange={setTokenSaverPonytailEnabled} />
           </div>
@@ -310,9 +338,9 @@ export default function SettingsPage() {
                 onChange={(e) => setTokenSaverPonytailLevel(e.target.value)}
                 className="mt-1 flex h-9 w-full max-w-xs rounded-md border border-input bg-transparent px-3 py-1 text-sm"
               >
-                <option value="lite">lite</option>
-                <option value="full">full</option>
-                <option value="ultra">ultra</option>
+                <option value="lite">lite — skip acks / plan echo</option>
+                <option value="full">full — + no post-tool summaries</option>
+                <option value="ultra">ultra — + never restate file contents</option>
               </select>
             </div>
           )}

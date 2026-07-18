@@ -47,16 +47,48 @@ const dict: Record<string, Record<Lang, string>> = {
   "Webhook URL": { id: "URL Webhook", en: "Webhook URL" },
   "Token Saver": { id: "Token Saver", en: "Token Saver" },
   "Token Saver desc": {
-    id: "Hemat token dengan compress tool dump & trim jawaban verbose. Default mengikuti setting admin. Override per fitur di bawah.",
-    en: "Save tokens by compressing tool dumps and trimming verbose replies. Defaults follow admin settings. Override each feature below.",
+    id: "Pipeline hemat token sebelum request ke upstream: RTK → Headroom → Caveman → Ponytail. Default mengikuti admin. Pilih Default / Nyala / Mati per fitur. Header X-Token-Saver: off mematikan semua untuk 1 request.",
+    en: "Token-saving pipeline before upstream: RTK → Headroom → Caveman → Ponytail. Defaults follow admin. Set Default / On / Off per feature. Header X-Token-Saver: off disables all for one request.",
   },
   Default: { id: "Default", en: "Default" },
   On: { id: "Nyala", en: "On" },
   Off: { id: "Mati", en: "Off" },
   "RTK (tool compress)": { id: "RTK (compress tool)", en: "RTK (tool compress)" },
+  "RTK desc": {
+    id: "Memotong isi tool_result yang besar (git, grep, ls, read, shell…). Head+tail disimpan; tengah dibuang. Tidak menyentuh write/edit/apply_diff atau struktur tool_calls.",
+    en: "Truncates huge tool_result dumps (git, grep, ls, read, shell…). Keeps head+tail; drops the middle. Never touches write/edit/apply_diff or tool_calls structure.",
+  },
+  "RTK effect": {
+    id: "Efek: input ke model lebih kecil → kuota/token hemat di Cline/Roo/Kilo/OpenCode. Risiko: konteks tengah file panjang bisa hilang.",
+    en: "Effect: smaller model input → saves quota on Cline/Roo/Kilo/OpenCode. Risk: middle of long dumps may be missing.",
+  },
   Headroom: { id: "Headroom", en: "Headroom" },
+  "Headroom desc": {
+    id: "Kirim messages ke layanan compress eksternal (URL di-set admin). Timeout 3 detik; gagal = request tetap jalan tanpa compress.",
+    en: "POSTs messages to an external compress service (URL set by admin). 3s timeout; on failure the request continues uncompressed.",
+  },
+  "Headroom effect": {
+    id: "Efek: context history lebih pendek jika URL aktif. Tanpa URL admin = tidak ada efek meski Nyala.",
+    en: "Effect: shorter conversation context when admin URL is set. Without a URL, enabling does nothing.",
+  },
   Caveman: { id: "Caveman", en: "Caveman" },
+  "Caveman desc": {
+    id: "Menyisipkan system prompt agar model menjawab lebih singkat (level 1–5 di-set admin). Tidak mengubah tool calls.",
+    en: "Injects a system prompt so the model replies more tersely (admin sets level 1–5). Does not change tool calls.",
+  },
+  "Caveman effect": {
+    id: "Efek: output tokens turun. Risiko: gaya jawaban kasar/telegram; bisa mengganggu agent yang butuh penjelasan panjang. Default OFF.",
+    en: "Effect: fewer output tokens. Risk: terse/telegram style; can hurt agents that need long explanations. Default OFF.",
+  },
   Ponytail: { id: "Ponytail", en: "Ponytail" },
+  "Ponytail desc": {
+    id: "System prompt anti-basa-basi untuk agent IDE: skip \"Sure!\", skip ulang rencana, langsung aksi (level lite/full/ultra di admin).",
+    en: "Anti-boilerplate system prompt for IDE agents: skip \"Sure!\", skip plan restatements, act directly (admin lite/full/ultra).",
+  },
+  "Ponytail effect": {
+    id: "Efek: loop Cline/Roo lebih hemat token chat. Risiko: kurang narasi/status. Default OFF.",
+    en: "Effect: leaner Cline/Roo agent loops. Risk: less narration/status text. Default OFF.",
+  },
   "Live Updates": { id: "Pembaruan Langsung", en: "Live Updates" },
   "Portal Password": { id: "Kata Sandi Portal", en: "Portal Password" },
   Account: { id: "Akun", en: "Account" },
