@@ -29,49 +29,91 @@ export function sha256(input: string): string {
 
 /**
  * Normalize a User-Agent string by stripping version numbers.
- * e.g. "Kilo-Code/7.3.12 ai-sdk/provider-utils/4.1" -> "Kilo-Code ai-sdk/provider-utils"
- * e.g. "Codex Desktop/0.133.0-alpha.1 (Windows 10.0.26200; x86_64)" -> "Codex Desktop (Windows; x86_64)"
- * This ensures the same app on the same machine generates the same fingerprint
- * even after IDE updates.
  */
 function normalizeUserAgent(ua: string): string {
   return ua
-    .replace(/\/[\d]+[\d.a-zA-Z_-]*/g, '')  // strip /version numbers
-    .replace(/\d+\.\d+[\d.]*/g, '')           // strip remaining version-like numbers
-    .replace(/\s+/g, ' ')                      // collapse whitespace
+    .replace(/\/[\d]+[\d.a-zA-Z_-]*/g, "")
+    .replace(/\d+\.\d+[\d.]*/g, "")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
 /**
  * OS + arch bucket for machine identity (ignores IDE / client product name).
- * Prevents false key rotation when the same laptop opens Cline then Cursor.
+ *
+ * WHY: Cursor / Kilo / OpenCode / Claude Code each send a different User-Agent.
+ * We intentionally drop the product name so they map to one slot on the same PC.
+ * We do NOT have a real hardware UUID from most IDEs — OS+arch is the best
+ * stable signal that does not flip when WiFi or IDE changes.
  */
-export function extractMachineHint(userAgent: string): string {
-  const ua = String(userAgent || '');
-  const osMatch = ua.match(/windows nt|windows|macintosh|mac os x|mac os|linux|android|iphone|ipad|cros/i);
-  const archMatch = ua.match(/x86_64|win64|wow64|amd64|arm64|aarch64|x64|i686|i386/i);
-  const os = (osMatch?.[0] || 'unknown').toLowerCase().replace(/\s+/g, '_');
-  const arch = (archMatch?.[0] || '').toLowerCase();
+export function extractMachineHint(
+  userAgent: string,
+  osDetected?: string | null,
+): string {
+  const ua = String(userAgent || "");
+  const osFromUa = ua.match(
+    /windows nt|windows|macintosh|mac os x|mac os|linux|android|iphone|ipad|cros/i,
+  )?.[0];
+  const archMatch = ua.match(
+    /x86_64|win64|wow64|amd64|arm64|aarch64|x64|i686|i386/i,
+  );
+
+  let os = (osFromUa || "").toLowerCase().replace(/\s+/g, "_");
+  if (!os && osDetected) {
+    const o = String(osDetected).toLowerCase();
+    if (/win/.test(o)) os = "windows";
+    else if (/mac|darwin|osx/.test(o)) os = "macintosh";
+    else if (/linux/.test(o)) os = "linux";
+    else if (/android/.test(o)) os = "android";
+    else if (/ios|iphone|ipad/.test(o)) os = "iphone";
+    else os = o.replace(/\s+/g, "_").slice(0, 32);
+  }
+  if (!os) os = "unknown";
+
+  const arch = (archMatch?.[0] || "").toLowerCase();
   return `${os}:${arch}`;
 }
 
 /**
- * Generate a device fingerprint from IP, User-Agent, and optionally Device ID.
- * - If a device ID header is provided, use it alone (stable across IDEs/networks).
- * - Otherwise, use OS+arch machine bucket (multi-IDE on same OS/arch = one device).
- *   IP is never used (WiFi flips must not rotate keys).
+ * Canonical device fingerprint = machine bucket only.
+ *
+ * Intentionally ignores:
+ * - IP (WiFi / VPN flips)
+ * - full User-Agent product name (IDE switches)
+ * - x-device-id header (many clients send it intermittently → would split slots)
+ *
+ * Same laptop on Windows x64 = one fingerprint across all IDEs.
+ * Tradeoff: two different Windows x64 PCs look like one machine (acceptable for
+ * personal Discord keys with maxDevices=1; abuse is handled by rate limits).
  */
-export function generateFingerprint(ip: string, userAgent: string, deviceId: string = ""): string {
-  void ip; // kept for call-site compatibility; intentionally unused
-  if (deviceId) {
-    return sha256(`device:${deviceId}`);
-  }
-  const machine = extractMachineHint(userAgent);
-  if (machine && machine !== 'unknown:') {
+export function generateFingerprint(
+  ip: string,
+  userAgent: string,
+  deviceId: string = "",
+  osDetected?: string | null,
+): string {
+  void ip;
+  void deviceId;
+  const machine = extractMachineHint(userAgent, osDetected);
+  if (machine && machine !== "unknown:") {
     return sha256(`machine:${machine}`);
   }
-  // Last resort: normalized UA (legacy-ish) when we can't parse OS
-  return sha256(`ua:${normalizeUserAgent(userAgent)}`);
+  // Last resort when UA has no OS at all (rare CLI stubs)
+  return sha256(`ua:${normalizeUserAgent(userAgent) || "empty"}`);
+}
+
+/** Legacy fingerprints we may still find in DB from older eras. */
+export function legacyFingerprintCandidates(
+  userAgent: string,
+  deviceId: string = "",
+): string[] {
+  const out: string[] = [];
+  if (deviceId) {
+    out.push(sha256(`device:${deviceId}`));
+    out.push(sha256(`device:${deviceId}:${normalizeUserAgent(userAgent)}`));
+  }
+  out.push(sha256(`ua:${normalizeUserAgent(userAgent)}`));
+  return out;
 }
 
 /**

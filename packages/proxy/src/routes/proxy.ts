@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, lte, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import * as zlib from 'zlib';
 import { db } from '../db/index.js';
@@ -46,12 +46,18 @@ import {
 import {
 	generateApiKey,
 	generateTrialApiKey,
-	generateFingerprint,
 	generateSessionId,
 	getKeyPrefix,
 	sha256,
 	extractMachineHint,
 } from '../utils/crypto.js';
+import {
+	canonicalFingerprintForRequest,
+	countDistinctMachines,
+	findSameMachineDevice,
+	normalizeDeviceRow,
+	siblingIdsToDeleteOnSameMachine,
+} from '../utils/device-slots.js';
 import {
 	injectIdentityIntoBody,
 	resolveModelIdentity,
@@ -1238,14 +1244,41 @@ proxy.all('/*', async (c) => {
 		c.req.raw.headers,
 		c.req.header('x-real-ip') || '127.0.0.1',
 	);
-	const fingerprint = generateFingerprint(clientIp, userAgent, deviceId);
-	const machineHint = extractMachineHint(userAgent);
 	let ide = detectIde(userAgent);
 	const platformHint = platformHintRaw + ' ' + deviceName;
 	const osDetected = detectOperatingSystem(userAgent, platformHint);
 	let normalizedIde = normalizeIdeName(ide);
 
-	// ΓöÇΓöÇΓöÇ 4. Device Policy Check ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+	// Canonical fingerprint = OS+arch only (IDE / device-id / IP ignored).
+	// Cursor→Kilo→OpenCode→Claude Code on the same PC share one slot.
+	const fingerprint = canonicalFingerprintForRequest(userAgent, osDetected, deviceId);
+	const machineHint = extractMachineHint(userAgent, osDetected);
+
+	// Load account (or key) device rows once — used for merge + count.
+	const accountDeviceRows = keyRecord.discordUserId
+		? ((
+				await db.execute(sql`
+					SELECT d.*
+					FROM devices d
+					INNER JOIN api_keys k ON k.id = d.api_key_id
+					WHERE k.discord_user_id = ${keyRecord.discordUserId}
+					  AND d.is_blocked = false
+					ORDER BY d.last_seen DESC
+					LIMIT 80
+				`)
+			).rows as any[])
+		: ((
+				await db.execute(sql`
+					SELECT d.*
+					FROM devices d
+					WHERE d.api_key_id = ${keyRecord.id}
+					  AND d.is_blocked = false
+					ORDER BY d.last_seen DESC
+					LIMIT 80
+				`)
+			).rows as any[]);
+
+	// Exact match on this key first
 	let existingDevice = await db
 		.select()
 		.from(devices)
@@ -1257,69 +1290,76 @@ proxy.all('/*', async (c) => {
 		)
 		.then((r) => r[0]);
 
-	// Merge legacy UA fingerprints / multi-IDE: reuse an existing account device
-	// on the same machine (OS+arch) so Cursor→Cline does not burn a new slot.
-	if (!existingDevice && machineHint && machineHint !== 'unknown:') {
-		const candidates = keyRecord.discordUserId
-			? await db.execute(sql`
-					SELECT d.*
-					FROM devices d
-					INNER JOIN api_keys k ON k.id = d.api_key_id
-					WHERE k.discord_user_id = ${keyRecord.discordUserId}
-					  AND d.is_blocked = false
-					ORDER BY d.last_seen DESC
-					LIMIT 40
-				`)
-			: await db.execute(sql`
-					SELECT d.*
-					FROM devices d
-					WHERE d.api_key_id = ${keyRecord.id}
-					  AND d.is_blocked = false
-					ORDER BY d.last_seen DESC
-					LIMIT 40
-				`);
-		const rows = (candidates.rows || []) as any[];
-		const match = rows.find((d) => {
-			if (deviceId && d.fingerprint === sha256(`device:${deviceId}`)) return true;
-			const hint = extractMachineHint(d.user_agent_raw || d.userAgentRaw || '');
-			return hint === machineHint && hint !== 'unknown:';
+	// Same machine via legacy fingerprint / different IDE UA
+	if (!existingDevice) {
+		const match = findSameMachineDevice(accountDeviceRows, {
+			canonicalFingerprint: fingerprint,
+			userAgent,
+			osDetected,
+			deviceId,
 		});
 		if (match) {
-			// Stick to the known fingerprint slot (avoid COUNT DISTINCT inflation).
-			existingDevice = {
-				id: match.id,
-				apiKeyId: match.api_key_id ?? match.apiKeyId,
-				fingerprint: match.fingerprint,
-				ipAddress: match.ip_address ?? match.ipAddress,
-				userAgentRaw: match.user_agent_raw ?? match.userAgentRaw,
-				osDetected: match.os_detected ?? match.osDetected,
-				deviceName: match.device_name ?? match.deviceName,
-				ideDetected: match.ide_detected ?? match.ideDetected,
-				firstSeen: match.first_seen ?? match.firstSeen,
-				lastSeen: match.last_seen ?? match.lastSeen,
-				requestCount: match.request_count ?? match.requestCount,
-				isBlocked: match.is_blocked ?? match.isBlocked,
-			} as typeof existingDevice;
+			existingDevice = normalizeDeviceRow(match) as any;
 		}
 	}
 
-	// Prefer the stored fingerprint when we merged onto an existing machine slot
-	const effectiveFingerprint = existingDevice?.fingerprint || fingerprint;
+	// Stick to one fingerprint slot; migrate legacy row → canonical hash
+	let effectiveFingerprint = existingDevice?.fingerprint || fingerprint;
+	if (existingDevice && existingDevice.fingerprint !== fingerprint) {
+		try {
+			await db
+				.update(devices)
+				.set({ fingerprint, lastSeen: new Date(), userAgentRaw: userAgent, osDetected, ideDetected: ide })
+				.where(eq(devices.id, existingDevice.id));
+			effectiveFingerprint = fingerprint;
+			existingDevice = { ...existingDevice, fingerprint };
+		} catch {
+			// Unique conflict: canonical row already exists — use that instead
+			const canonical = await db
+				.select()
+				.from(devices)
+				.where(
+					and(eq(devices.apiKeyId, keyRecord.id), eq(devices.fingerprint, fingerprint)),
+				)
+				.then((r) => r[0]);
+			if (canonical) {
+				existingDevice = canonical;
+				effectiveFingerprint = fingerprint;
+			}
+		}
+	}
 
-	// Same fingerprint on another key of this Discord user counts as a known device
-	// (account-level budget — creating N keys must not multiply maxDevices).
+	// Delete sibling duplicates on the same machine (old ua:/device:/ip-era rows)
+	if (existingDevice && machineHint && machineHint !== 'unknown:') {
+		const toDelete = siblingIdsToDeleteOnSameMachine(
+			accountDeviceRows,
+			existingDevice.id,
+			machineHint,
+		);
+		if (toDelete.length > 0) {
+			await db.delete(devices).where(inArray(devices.id, toDelete));
+			// Drop deleted ids from in-memory list used for counting
+			for (let i = accountDeviceRows.length - 1; i >= 0; i--) {
+				if (toDelete.includes(Number(accountDeviceRows[i].id))) {
+					accountDeviceRows.splice(i, 1);
+				}
+			}
+		}
+	}
+
 	let accountKnownFingerprint = Boolean(existingDevice);
-	if (!accountKnownFingerprint && keyRecord.discordUserId) {
-		const sibling = await db.execute(sql`
-			SELECT d.id
-			FROM devices d
-			INNER JOIN api_keys k ON k.id = d.api_key_id
-			WHERE k.discord_user_id = ${keyRecord.discordUserId}
-			  AND d.fingerprint = ${effectiveFingerprint}
-			  AND d.is_blocked = false
-			LIMIT 1
-		`);
-		accountKnownFingerprint = (sibling.rows?.length || 0) > 0;
+	if (!accountKnownFingerprint) {
+		const sibling = findSameMachineDevice(accountDeviceRows, {
+			canonicalFingerprint: fingerprint,
+			userAgent,
+			osDetected,
+			deviceId,
+		});
+		if (sibling) {
+			existingDevice = normalizeDeviceRow(sibling) as any;
+			accountKnownFingerprint = true;
+			effectiveFingerprint = fingerprint;
+		}
 	}
 
 	if (existingDevice?.isBlocked) {
@@ -1473,28 +1513,13 @@ proxy.all('/*', async (c) => {
 	}
 
 	// ΓöÇΓöÇΓöÇ 6. Max Devices Check (account-scoped when Discord-linked) ΓöÇΓöÇΓöÇ
+	// Count distinct *machines* (OS+arch), not raw fingerprint strings — legacy
+	// IP/UA/device-id rows on the same PC must not burn the slot.
 	if (keyRecord.maxDevices && keyRecord.maxDevices > 0) {
-		let deviceCountNum = 0;
-		if (keyRecord.discordUserId) {
-			const acc = await db.execute(sql`
-				SELECT COUNT(DISTINCT d.fingerprint)::int AS count
-				FROM devices d
-				INNER JOIN api_keys k ON k.id = d.api_key_id
-				WHERE k.discord_user_id = ${keyRecord.discordUserId}
-				  AND k.is_active = true
-				  AND d.is_blocked = false
-			`);
-			deviceCountNum = Number((acc.rows?.[0] as any)?.count) || 0;
-		} else {
-			const deviceCount = await db
-				.select({ count: sql<number>`count(*)` })
-				.from(devices)
-				.where(
-					and(eq(devices.apiKeyId, keyRecord.id), eq(devices.isBlocked, false)),
-				)
-				.then((r) => r[0]);
-			deviceCountNum = Number(deviceCount?.count) || 0;
-		}
+		let deviceCountNum = countDistinctMachines(accountDeviceRows);
+		// If this request is a known machine, it already sits inside the set.
+		// If brand-new machine, count would rise by 1 after insert — compare with
+		// accountKnownFingerprint below.
 
 		if (deviceCountNum >= keyRecord.maxDevices && !accountKnownFingerprint) {
 			if (keyRecord.provisionedBy === 'discord-bot' || keyRecord.isTrial || keyRecord.provisionedBy === 'trial-bot') {
