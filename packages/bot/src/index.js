@@ -1494,8 +1494,70 @@ async function pollModelStatus() {
 			const result = await fetchProviderModelList(prov);
 			if (!result) {
 				console.error(
-					`[tokito-monitor] failed to fetch models from ${prov.name}`,
+					`[tokito-monitor] failed to fetch models from ${prov.name} — soft-retaining previous monitor rows`,
 				);
+				try {
+					const prev = await proxyInternal(
+						'/admin/internal/monitor/models',
+						'GET',
+					);
+					const rows = Array.isArray(prev?.data)
+						? prev.data
+						: Array.isArray(prev)
+							? prev
+							: [];
+					const provKeys = runtime.providerKeys.get(prov.name) || [];
+					const fallbackKey =
+						sanitizeProviderApiKey(prov.apiKey) ||
+						provKeys[0] ||
+						'';
+					const baseUrl = String(prov.endpoint || '').replace(
+						/\/+$/,
+						'',
+					);
+					let retained = 0;
+					for (const row of rows) {
+						if (
+							String(row.provider || '').toLowerCase() !==
+							String(prov.name || '').toLowerCase()
+						) {
+							continue;
+						}
+						const id = row.modelId || row.model_id;
+						if (!id) continue;
+						if (
+							runtime.modelEntries.some(
+								(e) =>
+									e.modelId === id &&
+									e.provider === prov.name,
+							)
+						) {
+							continue;
+						}
+						allModels.push(id);
+						runtime.modelEntries.push({
+							modelId: id,
+							provider: prov.name,
+							baseUrl,
+							apiKey: fallbackKey,
+							endpointType: prov.endpointType || 'openai',
+						});
+						runtime.modelProviderMap.set(id, {
+							provider: prov.name,
+							baseUrl,
+							apiKey: fallbackKey,
+						});
+						retained++;
+					}
+					console.warn(
+						`[tokito-monitor] retained ${retained} models for ${prov.name} (check API keys if 0)`,
+					);
+				} catch (retainErr) {
+					console.error(
+						`[tokito-monitor] soft-retain failed for ${prov.name}:`,
+						retainErr?.message || retainErr,
+					);
+				}
 				continue;
 			}
 			const { arr, url, baseUrl, apiKey } = result;
@@ -1599,6 +1661,9 @@ async function pollModelStatus() {
 	}
 
 	runtime.models = allModels;
+
+	// Keep trial gpy list available even when gpy upstream /models is 401.
+	await ensureGpyModelEntries();
 
 	// Drop cached latency for providers no longer active
 	const validKeys = new Set(runtime.modelEntries.map(entryKey));

@@ -292,7 +292,27 @@ export async function refreshModelCatalog(): Promise<void> {
         if (success) break;
       }
       if (!success) {
-        console.error("Failed to fetch models from provider " + provider.name + ": ", lastError);
+        // Soft-retain: keep previous catalog rows for this provider so a transient
+        // /models 401/5xx does not wipe routable models from /v1/models + sweeps.
+        const retained = (cache.models || []).filter(
+          (m) => m.provider_id === provider.id,
+        );
+        for (const m of retained) {
+          const existing = allModels.find(
+            (x) => x.id === m.id && x.provider_id === provider.id,
+          );
+          if (!existing) allModels.push({ ...m });
+          appendProviderToMap(modelProviderMap, m.id, provider.id);
+        }
+        console.error(
+          "Failed to fetch models from provider " +
+            provider.name +
+            ": ",
+          lastError,
+          retained.length
+            ? `(retained ${retained.length} cached models)`
+            : "(no cache to retain)",
+        );
       }
 
       // Always merge custom models so they appear even when /v1/models fetch fails.

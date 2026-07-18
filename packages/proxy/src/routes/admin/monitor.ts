@@ -13,25 +13,17 @@ import {
   resetAllTestStates,
   type MonitorSnapshotRow,
 } from "../../utils/model-monitor-store.js";
-import { isValidProbeBody } from "../../utils/probe-validate.js";
+import {
+  isValidProbeBody,
+  buildModelListAuthHeaders,
+  buildModelListCandidateUrls,
+  extractModelsArray,
+} from "../../utils/probe-validate.js";
 
 const monitor = new Hono();
 
 function normalizeProviderBase(endpoint: string): string {
   return String(endpoint || "").trim().replace(/\/$/, "");
-}
-
-function buildModelListAuthHeaders(apiKey: string, endpointType: string): Record<string, string> {
-  const headers: Record<string, string> = { Accept: "application/json" };
-  if (!apiKey) return headers;
-  if (endpointType === "anthropic") {
-    headers["x-api-key"] = apiKey;
-    headers["anthropic-version"] = "2023-06-01";
-    headers.Authorization = `Bearer ${apiKey}`;
-  } else {
-    headers.Authorization = `Bearer ${apiKey}`;
-  }
-  return headers;
 }
 
 function buildProbeRequest(
@@ -535,6 +527,8 @@ monitor.post("/monitor/sweep", async (c) => {
 
   (async () => {
     try {
+      // Snapshot previous rows so soft-retain can re-probe when /models list fails.
+      const previousRows = await db.select().from(modelMonitor);
       // Clear ALL old model_monitor rows before sweep to remove stale data
       await db.delete(modelMonitor);
       await resetAllTestStates();
@@ -542,39 +536,68 @@ monitor.post("/monitor/sweep", async (c) => {
       const allModels: Array<{ modelId: string; providerName: string; providerId: number; baseUrl: string; apiKey: string; endpointType: string }> = [];
 
       for (const prov of activeProviders) {
-        const probeKey = await getProviderProbeKey(prov.id, prov.apiKey);
-        if (!probeKey) continue;
+        const probeKeys = await getProviderProbeKeys(prov.id, prov.apiKey);
+        if (probeKeys.length === 0) continue;
 
         const endpointType = prov.endpointType || "openai";
-        const base = normalizeProviderBase(prov.endpoint);
-        const urls = [`${base}/v1/models`, `${base}/models`];
-        if (base.endsWith("/v1")) urls.unshift(`${base}/models`);
+        const urls = buildModelListCandidateUrls(prov.endpoint);
+        let listed = false;
 
-        for (const url of urls) {
-          try {
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 30_000);
-            const res = await fetch(url, {
-              headers: buildModelListAuthHeaders(probeKey, endpointType),
-              signal: controller.signal,
-            });
-            clearTimeout(timeout);
-            if (!res.ok) continue;
-            const json = await res.json() as any;
-            const models = Array.isArray(json?.data) ? json.data : [];
-            if (models.length === 0) continue;
-            for (const m of models) {
-              allModels.push({
-                modelId: m.id,
-                providerName: prov.name,
-                providerId: prov.id,
-                baseUrl: prov.endpoint,
-                apiKey: probeKey,
-                endpointType,
+        outer: for (const url of urls) {
+          for (const key of probeKeys) {
+            try {
+              const controller = new AbortController();
+              const timeout = setTimeout(() => controller.abort(), 30_000);
+              const res = await fetch(url, {
+                headers: buildModelListAuthHeaders(key, endpointType),
+                signal: controller.signal,
               });
+              clearTimeout(timeout);
+              if (!res.ok) continue;
+              const json = (await res.json()) as any;
+              const models = extractModelsArray(json);
+              if (models.length === 0) continue;
+              for (const m of models) {
+                const mid = String(m?.id || m?.name || "").trim();
+                if (!mid) continue;
+                allModels.push({
+                  modelId: mid,
+                  providerName: prov.name,
+                  providerId: prov.id,
+                  baseUrl: prov.endpoint,
+                  apiKey: key,
+                  endpointType,
+                });
+              }
+              listed = true;
+              break outer;
+            } catch {
+              continue;
             }
-            break;
-          } catch { continue; }
+          }
+        }
+
+        if (!listed) {
+          const retained = previousRows.filter((r) => r.provider === prov.name);
+          for (const row of retained) {
+            allModels.push({
+              modelId: row.modelId,
+              providerName: prov.name,
+              providerId: prov.id,
+              baseUrl: prov.endpoint,
+              apiKey: probeKeys[0],
+              endpointType,
+            });
+          }
+          if (retained.length) {
+            console.warn(
+              `[monitor-sweep] ${prov.name}: /models list failed, retained ${retained.length} previous models for re-probe`,
+            );
+          } else {
+            console.warn(
+              `[monitor-sweep] ${prov.name}: /models list failed and no previous models to retain (check API keys)`,
+            );
+          }
         }
 
         // Also include custom models for this provider
@@ -587,7 +610,7 @@ monitor.post("/monitor/sweep", async (c) => {
               providerName: prov.name,
               providerId: prov.id,
               baseUrl: prov.endpoint,
-              apiKey: probeKey,
+              apiKey: probeKeys[0],
               endpointType,
             });
           }
