@@ -197,7 +197,34 @@ function backfillOpenAIMessageContent<T extends { content?: unknown; reasoning_c
 		delete msg.reasoning_content;
 		delete msg.reasoning;
 	}
+
+	// OpenAI-compatible IDEs (OpenCode/Cline/…) treat tool-only turns with
+	// content:"" as an empty text bubble ("Empty message"). Prefer null.
+	if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+		if (msg.content === '') msg.content = null;
+		normalizeToolCallArray(msg.tool_calls);
+	}
 	return message;
+}
+
+/**
+ * Phantom/9router/conduit often omit streaming tool_calls[].index.
+ * OpenAI SDKs accumulate by index — missing index → tools dropped → Empty message.
+ */
+function normalizeToolCallArray(toolCalls: any[]): void {
+	if (!Array.isArray(toolCalls)) return;
+	for (let i = 0; i < toolCalls.length; i++) {
+		const tc = toolCalls[i];
+		if (!tc || typeof tc !== 'object') continue;
+		if (tc.index == null || tc.index === '') tc.index = i;
+		if (!tc.type) tc.type = 'function';
+		if (!tc.function || typeof tc.function !== 'object') {
+			tc.function = { name: '', arguments: '' };
+		} else {
+			if (tc.function.name == null) tc.function.name = '';
+			if (tc.function.arguments == null) tc.function.arguments = '';
+		}
+	}
 }
 
 function backfillOpenAIResponseContent(
@@ -232,6 +259,12 @@ function backfillOpenAIResponseContent(
 	if (opts?.stripReasoning) {
 		delete d.reasoning_content;
 		delete d.reasoning;
+	}
+
+	if (Array.isArray(d.tool_calls) && d.tool_calls.length > 0) {
+		normalizeToolCallArray(d.tool_calls);
+		// Don't emit empty content alongside tool deltas — some IDEs create a blank text part.
+		if (d.content === '') delete d.content;
 	}
 	return payload;
 }
