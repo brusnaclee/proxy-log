@@ -619,6 +619,7 @@ export async function parseModelWithProvider(modelId: string): Promise<{ upstrea
     const slashIdx = rest.indexOf("/");
     const prefix = rest.slice(0, slashIdx);
     if (!providerNames.has(prefix.toLowerCase())) break;
+    // Keep client prefix for now; canonicalize to DB name below.
     forcedProviderName = prefix;
     rest = rest.slice(slashIdx + 1);
   }
@@ -627,9 +628,13 @@ export async function parseModelWithProvider(modelId: string): Promise<{ upstrea
     return { upstreamModel: raw, forcedProviderName: null };
   }
 
+  // Case-insensitive: client may send rtx/... while DB name is RTX
+  const canonical = allProvs.find(
+    (p) => String(p.name || "").toLowerCase() === forcedProviderName!.toLowerCase(),
+  );
   return {
     upstreamModel: rest || raw,
-    forcedProviderName,
+    forcedProviderName: canonical?.name || forcedProviderName,
   };
 }
 
@@ -798,8 +803,11 @@ export function stripProviderPrefixSync(modelId: string, providerNames: Set<stri
   const slashIdx = modelId.indexOf("/");
   if (slashIdx <= 0) return modelId;
   const prefix = modelId.slice(0, slashIdx);
-  if (providerNames.has(prefix)) {
-    return modelId.slice(slashIdx + 1);
+  const lower = prefix.toLowerCase();
+  for (const name of providerNames) {
+    if (name === prefix || name.toLowerCase() === lower) {
+      return modelId.slice(slashIdx + 1);
+    }
   }
   return modelId;
 }
@@ -885,7 +893,9 @@ export async function getOnlineModelsByLatency(): Promise<Array<{
 
   return rows
     .map((r) => r.model_monitor)
-    .filter((d) => d.isOnline && d.httpStatus === 200 && d.provider && isResolvable(d.modelId, d.provider))
+    // Published catalog flag only — not probe httpStatus.
+    // In notif_only, admin ON must appear in /v1/models + Discord even if probe is Fail.
+    .filter((d) => d.isOnline && d.provider && isResolvable(d.modelId, d.provider))
     .sort((a, b) => (a.latencyMs ?? 999999) - (b.latencyMs ?? 999999))
     .map((d) => ({
       modelId: d.modelId,

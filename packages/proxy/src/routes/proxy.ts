@@ -1197,7 +1197,8 @@ proxy.all('/*', async (c) => {
 		}
 
 		const catalog = await getFilteredModelCatalogResponse({ isTrial });
-		// Enrich with is_online from latest model_monitor (same source as portal/Discord).
+		// Client catalog = Published ON only (same source as Discord / access gate).
+		// Admin Model Monitor still lists all; OFF models are hidden here and blocked on chat.
 		try {
 			const onlineModels = await getOnlineModelsByLatency();
 			const onlineSet = new Set<string>();
@@ -1205,7 +1206,12 @@ proxy.all('/*', async (c) => {
 				onlineSet.add(m.modelId);
 				const slash = m.modelId.indexOf('/');
 				if (slash > 0) onlineSet.add(m.modelId.slice(slash + 1));
-				if (m.provider) onlineSet.add(`${m.provider}/${m.modelId.includes('/') ? m.modelId.slice(m.modelId.indexOf('/') + 1) : m.modelId}`);
+				if (m.provider) {
+					const bare = m.modelId.includes('/')
+						? m.modelId.slice(m.modelId.indexOf('/') + 1)
+						: m.modelId;
+					onlineSet.add(`${m.provider}/${bare}`);
+				}
 			}
 			const isOnlineId = (id: string): boolean => {
 				if (id === 'auto') return onlineSet.size > 0;
@@ -1220,16 +1226,22 @@ proxy.all('/*', async (c) => {
 				return false;
 			};
 			if (Array.isArray((catalog as any)?.data)) {
-				(catalog as any).data = (catalog as any).data.map((m: any) => ({
-					...m,
-					is_online: isOnlineId(String(m?.id || '')),
-					// Ensure context_length key exists for OpenCode/Cline (may already be set by catalog).
-					context_length: m.context_length ?? m.max_context_length ?? null,
-					max_tokens: m.max_output_tokens ?? m.max_tokens ?? null,
-				}));
+				(catalog as any).data = (catalog as any).data
+					.filter((m: any) => {
+						const id = String(m?.id || '');
+						if (id === 'auto') return true;
+						return isOnlineId(id);
+					})
+					.map((m: any) => ({
+						...m,
+						is_online: true,
+						// Ensure context_length key exists for OpenCode/Cline (may already be set by catalog).
+						context_length: m.context_length ?? m.max_context_length ?? null,
+						max_tokens: m.max_output_tokens ?? m.max_tokens ?? null,
+					}));
 			}
 		} catch (err) {
-			console.warn('[proxy] /v1/models is_online enrich failed:', (err as Error)?.message || err);
+			console.warn('[proxy] /v1/models published-online filter failed:', (err as Error)?.message || err);
 		}
 		return c.json(catalog);
 	}
@@ -2074,6 +2086,7 @@ proxy.all('/*', async (c) => {
 			'host',
 			'content-length',
 			'content-encoding',
+			'content-type',
 			'authorization',
 			'cookie',
 			'connection',
@@ -2086,6 +2099,7 @@ proxy.all('/*', async (c) => {
 			if (!blockedHeaders.has(k.toLowerCase())) baseHeaders[k] = v;
 		}
 		baseHeaders['x-forwarded-for'] = clientIp;
+		if (contentType) baseHeaders['content-type'] = contentType;
 		baseHeaders = sanitizeUpstreamHeaders(baseHeaders);
 
 		for (const candidate of onlineModels) {
@@ -2133,7 +2147,7 @@ proxy.all('/*', async (c) => {
 			if (!isAnthropicAuto) {
 				upstreamHeaders['Authorization'] = `Bearer ${trialKeyResult.apiKey}`;
 			}
-			if (contentType) upstreamHeaders['Content-Type'] = contentType;
+			if (contentType) upstreamHeaders['content-type'] = contentType;
 
 			// Check per-model prompt limit for this candidate before sending request.
 			// If exceeded, skip to next candidate model.
@@ -2776,7 +2790,7 @@ proxy.all('/*', async (c) => {
 				return c.json(
 					{
 						error: {
-							message: `Model "${model}" is currently offline. Try another model.`,
+							message: `Model "${model}" is offline (Published OFF). It is hidden from /v1/models until turned ON in Model Monitor.`,
 							type: 'model_offline',
 							available_models: uniqueOnline,
 						},
@@ -2818,6 +2832,7 @@ proxy.all('/*', async (c) => {
 			'host',
 			'content-length',
 			'content-encoding',
+			'content-type',
 			'authorization',
 			'cookie',
 			'connection',
@@ -2829,7 +2844,7 @@ proxy.all('/*', async (c) => {
 			if (!blocked2.has(k.toLowerCase())) upstreamHeaders2[k] = v;
 		}
 		upstreamHeaders2['x-forwarded-for'] = clientIp;
-		if (contentType) upstreamHeaders2['Content-Type'] = contentType;
+		if (contentType) upstreamHeaders2['content-type'] = contentType;
 		upstreamHeaders2 = sanitizeUpstreamHeaders(upstreamHeaders2);
 		try {
 			const titleGenBody = isAnthropicTitleGen
@@ -3544,6 +3559,7 @@ proxy.all('/*', async (c) => {
 		'host',
 		'content-length',
 		'content-encoding',
+		'content-type',
 		'authorization',
 		'cookie',
 		'connection',
@@ -3559,7 +3575,7 @@ proxy.all('/*', async (c) => {
 	}
 
 	upstreamHeaders['x-forwarded-for'] = clientIp;
-	if (contentType) upstreamHeaders['Content-Type'] = contentType;
+	if (contentType) upstreamHeaders['content-type'] = contentType;
 	upstreamHeaders = sanitizeUpstreamHeaders(upstreamHeaders);
 
 	// Detect Anthropic provider (native endpointType OR dual OpenAI+Anthropic like amanai)
@@ -3832,7 +3848,7 @@ proxy.all('/*', async (c) => {
 						if (attemptIsYoucom) {
 							delete headers['content-type'];
 							delete headers['accept'];
-							headers['Content-Type'] = 'application/json';
+							headers['content-type'] = 'application/json';
 							headers['Authorization'] = `Bearer ${apiKey}`;
 						} else {
 							headers['Authorization'] = `Bearer ${apiKey}`;

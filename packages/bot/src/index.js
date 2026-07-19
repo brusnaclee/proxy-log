@@ -2685,6 +2685,12 @@ function listModels(
 			apiKey: '',
 		};
 		items.unshift(autoEntry);
+		// Public Discord panel: Published ON only (same as /v1/models).
+		// Offline/OFF stay in runtime.modelEntries for sweeps, but hidden from users.
+		items = items.filter((e) => {
+			if (e.modelId === 'auto') return true;
+			return Boolean(runtime.latency.get(entryKey(e))?.ok);
+		});
 	}
 
 	if (upstreamProvider !== 'all') {
@@ -2878,7 +2884,10 @@ function buildTokitoEmbed(kind, session) {
 
 	const summaryEntries = session.trialMode
 		? listModels(kind, 'gpy', session.modelVendor, session.sortMode, session)
-		: runtime.modelEntries.filter((e) => e.modelId !== 'auto');
+		: runtime.modelEntries.filter((e) => {
+				if (e.modelId === 'auto') return false;
+				return Boolean(runtime.latency.get(entryKey(e))?.ok);
+			});
 
 	if (session.trialMode) {
 		online = summaryEntries.length;
