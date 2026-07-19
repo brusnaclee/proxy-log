@@ -143,6 +143,14 @@ export default function ModelMonitorPage() {
     loadData();
   }, [loadData]);
 
+  // Soft realtime: pick up models seeded by key-check / catalog scheduler
+  useEffect(() => {
+    const t = setInterval(() => {
+      void loadData();
+    }, 30_000);
+    return () => clearInterval(t);
+  }, [loadData]);
+
   const loadCatalog = useCallback(async () => {
     setCatalogLoading(true);
     try {

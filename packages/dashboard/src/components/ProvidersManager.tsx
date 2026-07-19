@@ -15,6 +15,7 @@ interface ProviderApiKey {
   limitedAt: string | null;
   lastError?: string | null;
   lastCheckedAt?: string | null;
+  lastModelCount?: number;
   requestCount: number;
   lastUsedAt: string | null;
 }
@@ -124,12 +125,21 @@ export function ProvidersManager() {
 
   const handleAdd = async () => {
     try {
-      await request("/providers", {
+      const res = await request<{
+        success: boolean;
+        health?: { ok: boolean; error?: string | null; modelCount?: number };
+        catalog?: { listed: number; seeded: number };
+      }>("/providers", {
         method: "POST",
         body: JSON.stringify({ name, endpoint, apiKey, priority, endpointType }),
       });
       setName(""); setEndpoint(""); setApiKey(""); setPriority(1); setEndpointType("openai");
       loadProviders();
+      if (res.health && !res.health.ok) {
+        alert(res.health.error || "Provider saved but API key failed /models check");
+      } else if (res.catalog) {
+        alert(`Provider added. Key OK — ${res.catalog.listed} models synced to Model Monitor (${res.catalog.seeded} new). Publish ON di Monitor untuk expose ke client.`);
+      }
     } catch (e: any) {
       alert("Error: " + e.message);
     }
@@ -149,7 +159,11 @@ export function ProvidersManager() {
     const key = newKeyInputs[providerId];
     if (!key) return;
     try {
-      const res = await request<{ success: boolean; health?: { ok: boolean; error?: string | null; modelCount?: number } }>(
+      const res = await request<{
+        success: boolean;
+        health?: { ok: boolean; error?: string | null; modelCount?: number };
+        catalog?: { listed: number; seeded: number };
+      }>(
         `/providers/${providerId}/keys`,
         {
           method: "POST",
@@ -158,8 +172,11 @@ export function ProvidersManager() {
       );
       setNewKeyInputs(prev => ({ ...prev, [providerId]: "" }));
       loadKeys(providerId);
+      loadProviders();
       if (res.health && !res.health.ok) {
         alert(res.health.error || "Invalid API key — key saved but marked invalid");
+      } else if (res.catalog) {
+        alert(`Key OK — ${res.catalog.listed} models in catalog (${res.catalog.seeded} new).`);
       }
     } catch (e: any) {
       alert("Error: " + e.message);
@@ -197,13 +214,23 @@ export function ProvidersManager() {
   const handleUpdateKey = async (providerId: number, keyId: number) => {
     if (!editValue) return;
     try {
-      await request(`/providers/${providerId}/keys/${keyId}`, {
+      const res = await request<{
+        success: boolean;
+        health?: { ok: boolean; error?: string | null; modelCount?: number };
+        catalog?: { listed: number; seeded: number } | null;
+      }>(`/providers/${providerId}/keys/${keyId}`, {
         method: "PUT",
         body: JSON.stringify({ apiKey: editValue }),
       });
       setEditingKey(null);
       setEditValue("");
       loadKeys(providerId);
+      loadProviders();
+      if (res.health && !res.health.ok) {
+        alert(res.health.error || "Key updated but failed /models check");
+      } else if (res.catalog) {
+        alert(`Key updated & OK — ${res.catalog.listed} models in catalog (${res.catalog.seeded} new).`);
+      }
     } catch (e: any) {
       alert("Error: " + e.message);
     }
@@ -313,27 +340,41 @@ export function ProvidersManager() {
     if (k.lastError) {
       return { label: "Error", color: "bg-amber-500/20 text-amber-400", detail: k.lastError };
     }
-    return { label: "Active", color: "bg-green-500/20 text-green-400", detail: null };
+    if (k.lastCheckedAt && (k.lastModelCount || 0) > 0) {
+      return {
+        label: `Valid · ${k.lastModelCount} models`,
+        color: "bg-green-500/20 text-green-400",
+        detail: "Key can list /models — synced to Model Monitor",
+      };
+    }
+    if (k.lastCheckedAt) {
+      return { label: "Valid · empty list", color: "bg-emerald-500/20 text-emerald-400", detail: "Key OK but /models returned 0" };
+    }
+    return { label: "Unchecked", color: "bg-slate-500/20 text-slate-400", detail: "Click refresh to probe /models" };
   };
 
   return (
     <Card className="border-border/50 mt-6">
       <CardHeader>
         <CardTitle className="text-base">Upstream Providers</CardTitle>
-        <CardDescription>Configure multiple upstream APIs. Models will be fetched from all active providers.</CardDescription>
+        <CardDescription>
+          Add upstream + valid API key → auto-fetch /models into Model Monitor.
+          Key badge shows Valid when probe OK; catalog count shows models ready to Publish ON.
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="space-y-4">
-          <div className="grid grid-cols-6 gap-2 border-b border-border/50 pb-2 mb-2 text-sm font-medium text-muted-foreground">
+          <div className="grid grid-cols-7 gap-2 border-b border-border/50 pb-2 mb-2 text-sm font-medium text-muted-foreground">
             <div className="col-span-1">Name</div>
             <div className="col-span-2">Endpoint</div>
             <div className="col-span-1">Type</div>
             <div className="col-span-1">Priority</div>
+            <div className="col-span-1">Catalog</div>
             <div className="col-span-1 text-right">Actions</div>
           </div>
           {providers.map((p) => (
             <div key={p.id}>
-              <div className="grid grid-cols-6 gap-2 items-center border-b border-border/50 pb-2">
+              <div className="grid grid-cols-7 gap-2 items-center border-b border-border/50 pb-2">
                 <div className="col-span-1 truncate flex items-center gap-1">
                   <button onClick={() => toggleExpand(p.id)} className="p-0.5 hover:bg-muted rounded">
                     {expandedProvider === p.id ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
@@ -508,6 +549,21 @@ export function ProvidersManager() {
                     </div>
                   )}
                 </div>
+                <div className="col-span-1">
+                  {(p.catalogModelCount || 0) > 0 ? (
+                    <span
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-cyan-500/15 text-cyan-400"
+                      title="Models in Model Monitor — Publish ON to expose to clients"
+                    >
+                      <Box className="w-3 h-3" />
+                      {p.catalogModelCount}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground" title="No models in catalog yet — check a valid API key">
+                      —
+                    </span>
+                  )}
+                </div>
                 <div className="col-span-1 text-right flex justify-end gap-1">
                   <Button
                     variant={p.isActive ? "default" : "outline"}
@@ -534,6 +590,34 @@ export function ProvidersManager() {
                   <div className="flex items-center gap-2 mb-3">
                     <Key className="w-4 h-4 text-muted-foreground" />
                     <span className="text-sm font-medium">API Keys (load-balanced rotation)</span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 ml-auto text-xs"
+                      onClick={async () => {
+                        try {
+                          const res = await request<{
+                            results: Array<{ ok: boolean; modelCount?: number }>;
+                            catalog?: { listed: number; seeded: number } | null;
+                          }>(`/providers/${p.id}/keys/check-all`, { method: "POST" });
+                          const ok = (res.results || []).filter((r) => r.ok).length;
+                          if (res.catalog) {
+                            alert(
+                              `Checked ${res.results.length} keys (${ok} OK). Catalog: ${res.catalog.listed} models (${res.catalog.seeded} new).`,
+                            );
+                          } else {
+                            alert(`Checked ${res.results.length} keys — ${ok} valid.`);
+                          }
+                          loadKeys(p.id);
+                          loadProviders();
+                        } catch (e: any) {
+                          alert("Check all failed: " + e.message);
+                        }
+                      }}
+                      title="Probe all keys and sync /models to catalog"
+                    >
+                      <RotateCcw className="w-3 h-3 mr-1" /> Check all → sync catalog
+                    </Button>
                   </div>
 
                   {(providerKeys[p.id] || []).length === 0 ? (
@@ -625,19 +709,31 @@ export function ProvidersManager() {
                                 className="h-7 px-2"
                                 onClick={async () => {
                                   try {
-                                    const res = await request<{ ok: boolean; error?: string | null; modelCount?: number }>(
+                                    const res = await request<{
+                                      ok: boolean;
+                                      error?: string | null;
+                                      modelCount?: number;
+                                      catalog?: { listed: number; seeded: number } | null;
+                                    }>(
                                       `/providers/${p.id}/keys/${k.id}/check`,
                                       { method: "POST" },
                                     );
                                     if (!res.ok) {
                                       alert(res.error || "Invalid API key");
+                                    } else if (res.catalog) {
+                                      alert(
+                                        `Key OK — ${res.modelCount ?? 0} models listed. Catalog: ${res.catalog.listed} total (${res.catalog.seeded} new). Publish ON di Model Monitor.`,
+                                      );
+                                    } else {
+                                      alert(`Key OK — ${res.modelCount ?? 0} models listed.`);
                                     }
                                     loadKeys(p.id);
+                                    loadProviders();
                                   } catch (e: any) {
                                     alert("Check failed: " + e.message);
                                   }
                                 }}
-                                title="Check key against upstream /models"
+                                title="Check key → auto-sync /models to Model Monitor"
                               >
                                 <RotateCcw className="w-3 h-3" />
                               </Button>

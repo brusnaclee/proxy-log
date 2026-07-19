@@ -243,6 +243,8 @@ export const providerApiKeys = pgTable('provider_api_keys', {
 	/** Last probe/list error message (e.g. "Invalid API key", "HTTP 401"). */
 	lastError: text('last_error'),
 	lastCheckedAt: text('last_checked_at'),
+	/** Models returned by last successful /models probe (0 = never or empty). */
+	lastModelCount: integer('last_model_count').default(0),
 	requestCount: integer('request_count').notNull().default(0),
 	lastUsedAt: text('last_used_at'),
 	createdAt: timestamp('created_at').notNull().defaultNow(),

@@ -1032,6 +1032,7 @@ export interface ProviderApiKeyRow {
   limitedAt: string | null;
   lastError: string | null;
   lastCheckedAt: string | null;
+  lastModelCount: number;
   requestCount: number;
   lastUsedAt: string | null;
 }
@@ -1056,7 +1057,7 @@ export function classifyUpstreamKeyError(status: number, bodyText: string): stri
 
 export async function setProviderKeyHealth(
   keyId: number,
-  opts: { ok: boolean; error?: string | null },
+  opts: { ok: boolean; error?: string | null; modelCount?: number },
 ): Promise<void> {
   if (keyId < 0) return;
   await db
@@ -1064,9 +1065,10 @@ export async function setProviderKeyHealth(
     .set({
       lastError: opts.ok ? null : String(opts.error || "Unknown error").slice(0, 300),
       lastCheckedAt: new Date().toISOString(),
+      ...(typeof opts.modelCount === "number" ? { lastModelCount: opts.modelCount } : {}),
       // Auth failures also park the key like rate-limits so rotation skips them.
       ...(opts.ok
-        ? {}
+        ? { isLimited: false, limitedAt: null }
         : /invalid api key|expired|http 401|http 403|forbidden/i.test(String(opts.error || ""))
           ? { isLimited: true, limitedAt: new Date().toISOString() }
           : {}),
@@ -1103,7 +1105,7 @@ export async function checkProviderApiKeyHealth(
     return { ok: false, status: 0, error: "Provider/key not found", modelCount: 0 };
   }
   if (prov.endpointType === "youcom") {
-    await setProviderKeyHealth(keyId, { ok: true });
+    await setProviderKeyHealth(keyId, { ok: true, modelCount: 2 });
     return { ok: true, status: 200, error: null, modelCount: 2 };
   }
   const urls = buildModelListCandidateUrls(prov.endpoint);
@@ -1132,12 +1134,7 @@ export async function checkProviderApiKeyHealth(
         /* ignore */
       }
       if (count > 0) {
-        await setProviderKeyHealth(keyId, { ok: true });
-        // Clear limited if it was only from a previous auth fail and retry succeeds
-        await db
-          .update(providerApiKeys)
-          .set({ isLimited: false, limitedAt: null })
-          .where(eq(providerApiKeys.id, keyId));
+        await setProviderKeyHealth(keyId, { ok: true, modelCount: count });
         return { ok: true, status: res.status, error: null, modelCount: count };
       }
     } catch (e: any) {
@@ -1146,7 +1143,7 @@ export async function checkProviderApiKeyHealth(
     }
   }
   const error = classifyUpstreamKeyError(lastStatus, lastBody);
-  await setProviderKeyHealth(keyId, { ok: false, error });
+  await setProviderKeyHealth(keyId, { ok: false, error, modelCount: 0 });
   return { ok: false, status: lastStatus, error, modelCount: 0 };
 }
 
@@ -1273,6 +1270,7 @@ export async function getProviderApiKeys(providerId: number): Promise<ProviderAp
     limitedAt: r.limitedAt,
     lastError: (r as any).lastError ?? null,
     lastCheckedAt: (r as any).lastCheckedAt ?? null,
+    lastModelCount: Number((r as any).lastModelCount ?? 0) || 0,
     requestCount: r.requestCount ?? 0,
     lastUsedAt: r.lastUsedAt,
   }));

@@ -327,6 +327,7 @@ export async function initializeDatabase() {
 		await pool.query(`
 			ALTER TABLE provider_api_keys ADD COLUMN IF NOT EXISTS last_error TEXT;
 			ALTER TABLE provider_api_keys ADD COLUMN IF NOT EXISTS last_checked_at TEXT;
+			ALTER TABLE provider_api_keys ADD COLUMN IF NOT EXISTS last_model_count INTEGER DEFAULT 0;
 		`);
 		console.log('✅ provider_api_keys health columns ensured');
 	} catch (err) {

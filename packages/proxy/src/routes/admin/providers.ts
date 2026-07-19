@@ -1,7 +1,7 @@
 ﻿import { Hono } from "hono";
 import { db } from "../../db/index.js";
 import { providers, customModels } from "../../db/schema.js";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import { refreshModelCatalog, getProviderApiKeys, addProviderApiKey, resetKeyLimited, deleteApiKey, toggleKeyActive, updateApiKey, checkProviderApiKeyHealth, syncProviderToMonitor } from "../../utils/model-catalog.js";
 import { sanitizeProviderApiKey } from "../../utils/crypto.js";
 import { purgeMonitorForProvider, renameProviderInMonitor } from "../../utils/model-monitor-store.js";
@@ -10,7 +10,18 @@ const providersApi = new Hono();
 
 providersApi.get("/providers", async (c) => {
   const list = await db.select().from(providers).orderBy(desc(providers.priority));
-  return c.json(list);
+  // Enrich with catalog model counts so dashboard can show "ready to configure"
+  const counts = (await db.execute(sql`
+    SELECT provider, COUNT(*)::int AS cnt
+    FROM model_monitor
+    WHERE provider IS NOT NULL
+    GROUP BY provider
+  `)).rows as Array<{ provider: string; cnt: number }>;
+  const countMap = new Map(counts.map((r) => [r.provider, Number(r.cnt) || 0]));
+  return c.json(list.map((p) => ({
+    ...p,
+    catalogModelCount: countMap.get(p.name) || 0,
+  })));
 });
 
 // Get a single provider by ID
@@ -36,14 +47,26 @@ providersApi.post("/providers", async (c) => {
   }).returning();
 
   // Also add the key to the providerApiKeys table for rotation
-  await addProviderApiKey(result.id, body.apiKey);
+  const keyId = await addProviderApiKey(result.id, body.apiKey);
+  const health = await checkProviderApiKeyHealth(result.id, keyId);
 
   await refreshModelCatalog();
-  if (result.isActive) {
-    void syncProviderToMonitor(result.id);
+  let catalog = { provider: result.name, seeded: 0, listed: 0 };
+  if (result.isActive && health.ok) {
+    catalog = await syncProviderToMonitor(result.id);
   }
 
-  return c.json({ success: true, provider: result });
+  return c.json({
+    success: true,
+    provider: result,
+    health: {
+      ok: health.ok,
+      status: health.status,
+      error: health.error,
+      modelCount: health.modelCount,
+    },
+    catalog,
+  });
 });
 
 providersApi.put("/providers/:id", async (c) => {
@@ -117,7 +140,10 @@ providersApi.post("/providers/:id/keys", async (c) => {
   const keyId = await addProviderApiKey(id, body.apiKey);
   const health = await checkProviderApiKeyHealth(id, keyId);
   await refreshModelCatalog();
-  if (existing.isActive) void syncProviderToMonitor(id);
+  let catalog = { provider: existing.name, seeded: 0, listed: 0 };
+  if (existing.isActive && health.ok) {
+    catalog = await syncProviderToMonitor(id);
+  }
   return c.json({
     success: true,
     keyId,
@@ -127,17 +153,24 @@ providersApi.post("/providers/:id/keys", async (c) => {
       error: health.error,
       modelCount: health.modelCount,
     },
+    catalog,
   });
 });
 
-// Probe a key against upstream /models and update health badge
+// Probe a key against upstream /models and update health badge.
+// On success, auto-ingest /models into Model Monitor catalog.
 providersApi.post("/providers/:id/keys/:keyId/check", async (c) => {
   const id = parseInt(c.req.param("id"));
   const keyId = parseInt(c.req.param("keyId"));
   const [existing] = await db.select().from(providers).where(eq(providers.id, id));
   if (!existing) return c.json({ error: "Provider not found" }, 404);
   const health = await checkProviderApiKeyHealth(id, keyId);
-  return c.json({ success: true, ...health });
+  let catalog = null as null | { provider: string; seeded: number; listed: number };
+  if (health.ok && existing.isActive) {
+    await refreshModelCatalog();
+    catalog = await syncProviderToMonitor(id);
+  }
+  return c.json({ success: true, ...health, catalog });
 });
 
 // Check all keys for a provider
@@ -147,10 +180,18 @@ providersApi.post("/providers/:id/keys/check-all", async (c) => {
   if (!existing) return c.json({ error: "Provider not found" }, 404);
   const keys = await getProviderApiKeys(id);
   const results = [];
+  let anyOk = false;
   for (const k of keys) {
-    results.push({ keyId: k.id, ...(await checkProviderApiKeyHealth(id, k.id)) });
+    const h = await checkProviderApiKeyHealth(id, k.id);
+    if (h.ok) anyOk = true;
+    results.push({ keyId: k.id, ...h });
   }
-  return c.json({ success: true, results });
+  let catalog = null as null | { provider: string; seeded: number; listed: number };
+  if (anyOk && existing.isActive) {
+    await refreshModelCatalog();
+    catalog = await syncProviderToMonitor(id);
+  }
+  return c.json({ success: true, results, catalog });
 });
 
 // Reset a key's limited status (Retry button)
@@ -167,13 +208,31 @@ providersApi.patch("/providers/:id/keys/:keyId/toggle", async (c) => {
   return c.json({ success: true, isActive: newActive });
 });
 
-// Update a key's value (Edit key)
+// Update a key's value (Edit key) — re-probe and sync catalog if valid
 providersApi.put("/providers/:id/keys/:keyId", async (c) => {
+  const id = parseInt(c.req.param("id"));
   const keyId = parseInt(c.req.param("keyId"));
+  const [existing] = await db.select().from(providers).where(eq(providers.id, id));
+  if (!existing) return c.json({ error: "Provider not found" }, 404);
   const body = await c.req.json<{ apiKey: string }>();
   if (!body.apiKey) return c.json({ error: "apiKey is required" }, 400);
   await updateApiKey(keyId, body.apiKey);
-  return c.json({ success: true });
+  const health = await checkProviderApiKeyHealth(id, keyId);
+  let catalog = null as null | { provider: string; seeded: number; listed: number };
+  if (health.ok && existing.isActive) {
+    await refreshModelCatalog();
+    catalog = await syncProviderToMonitor(id);
+  }
+  return c.json({
+    success: true,
+    health: {
+      ok: health.ok,
+      status: health.status,
+      error: health.error,
+      modelCount: health.modelCount,
+    },
+    catalog,
+  });
 });
 
 // Delete a key (Delete button)
