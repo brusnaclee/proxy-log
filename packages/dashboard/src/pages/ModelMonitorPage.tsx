@@ -15,7 +15,8 @@ function modelVendorOf(modelId: string) {
 export default function ModelMonitorPage() {
   const [activeTab, setActiveTab] = useState<"monitor" | "catalog">("monitor");
   const [data, setData] = useState<ModelMonitorEntry[]>([]);
-  const [summary, setSummary] = useState({ total: 0, online: 0, offline: 0, timeout: 0 });
+  const [summary, setSummary] = useState({ total: 0, online: 0, offline: 0, timeout: 0, probeOk: 0 });
+  const [monitorAutoMode, setMonitorAutoMode] = useState<string>("notif_only");
   const [loading, setLoading] = useState(true);
   const [upstreamFilter, setUpstreamFilter] = useState("all");
   const [modelVendorFilter, setModelVendorFilter] = useState("all");
@@ -41,7 +42,16 @@ export default function ModelMonitorPage() {
             // Realtime refresh: pull model table every tick
             const res = await monitor.getModels();
             setData(res.data);
-            setSummary(res.summary);
+            setSummary({
+              total: res.summary.total,
+              online: res.summary.online,
+              offline: res.summary.offline,
+              timeout: res.summary.timeout,
+              probeOk: res.summary.probeOk ?? 0,
+            });
+            if (res.monitorAutoMode || res.summary.monitorAutoMode) {
+              setMonitorAutoMode(String(res.monitorAutoMode || res.summary.monitorAutoMode));
+            }
           }
           if (progress.status !== "running") {
             clearInterval(interval);
@@ -65,7 +75,7 @@ export default function ModelMonitorPage() {
   const [bulkLoading, setBulkLoading] = useState(false);
 
   const handleActivate = async (d: ModelMonitorEntry) => {
-    if (!confirm(`Force-activate model "${d.modelId}"? Next sweep will verify the real status.`)) return;
+    if (!confirm(`Publish ON for "${d.modelId}"? This shows in Discord & client catalogs until you turn it OFF.`)) return;
     try {
       await monitor.activate(d.modelId, d.provider || "");
       await loadData();
@@ -76,7 +86,7 @@ export default function ModelMonitorPage() {
   };
 
   const handleDeactivate = async (d: ModelMonitorEntry) => {
-    if (!confirm(`Force-deactivate model "${d.modelId}"? Next sweep will verify the real status.`)) return;
+    if (!confirm(`Publish OFF for "${d.modelId}"? Sticky until you turn it ON again (sweeps will not re-enable it).`)) return;
     try {
       await monitor.deactivate(d.modelId, d.provider || "");
       await loadData();
@@ -98,7 +108,16 @@ export default function ModelMonitorPage() {
     try {
       const res = await monitor.getModels();
       setData(res.data);
-      setSummary(res.summary);
+      setSummary({
+        total: res.summary.total,
+        online: res.summary.online,
+        offline: res.summary.offline,
+        timeout: res.summary.timeout,
+        probeOk: res.summary.probeOk ?? 0,
+      });
+      if (res.monitorAutoMode || res.summary.monitorAutoMode) {
+        setMonitorAutoMode(String(res.monitorAutoMode || res.summary.monitorAutoMode));
+      }
     } catch {}
     setLoading(false);
   }, []);
@@ -226,7 +245,8 @@ export default function ModelMonitorPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Model Monitor</h1>
           <p className="text-muted-foreground mt-1">
-            Online = live probe sukses dengan key yang sama dipakai user. Kalau Offline, request diblok (bukan false-green).
+            Published ON/OFF = Discord &amp; client catalog + access.
+            Probe = live reachability indicator (Settings mode: <span className="font-mono text-foreground">{monitorAutoMode}</span>).
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -498,7 +518,8 @@ export default function ModelMonitorPage() {
                   <th className="text-left py-3 px-4 font-medium text-muted-foreground">Model</th>
                   <th className="text-left py-3 px-4 font-medium text-muted-foreground">Upstream</th>
                   <th className="text-left py-3 px-4 font-medium text-muted-foreground">Vendor</th>
-                  <th className="text-center py-3 px-4 font-medium text-muted-foreground">Status</th>
+                  <th className="text-center py-3 px-4 font-medium text-muted-foreground">Published</th>
+                  <th className="text-center py-3 px-4 font-medium text-muted-foreground">Probe</th>
                   <th className="text-right py-3 px-4 font-medium text-muted-foreground">Latency</th>
                   <th className="text-left py-3 px-4 font-medium text-muted-foreground">HTTP</th>
                   <th className="text-left py-3 px-4 font-medium text-muted-foreground">Last Checked</th>
@@ -513,11 +534,19 @@ export default function ModelMonitorPage() {
                     <td className="py-3 px-4 text-xs text-muted-foreground">{modelVendorOf(d.modelId)}</td>
                     <td className="py-3 px-4 text-center">
                       <Badge variant={d.isOnline ? "success" : "destructive"} className="text-[10px]">
-                        {d.isOnline ? "Online" : "Offline"}
+                        {d.isOnline ? "ON" : "OFF"}
+                      </Badge>
+                      {d.forceDeactivated && (
+                        <div className="text-[9px] text-amber-500 mt-0.5">manual</div>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      <Badge variant={d.probeOk ? "success" : "secondary"} className="text-[10px]">
+                        {d.probeOk ? "OK" : "Fail"}
                       </Badge>
                     </td>
                     <td className="py-3 px-4 text-right">
-                      {d.isOnline ? (
+                      {d.latencyMs != null && d.latencyMs > 0 ? (
                         <div className="flex items-center justify-end gap-2">
                           <span className="font-mono text-xs">{d.latencyMs}ms</span>
                           <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden flex justify-end">
@@ -557,7 +586,7 @@ export default function ModelMonitorPage() {
                 ))}
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="text-center py-12 text-muted-foreground">
+                    <td colSpan={9} className="text-center py-12 text-muted-foreground">
                       No model data available.
                     </td>
                   </tr>

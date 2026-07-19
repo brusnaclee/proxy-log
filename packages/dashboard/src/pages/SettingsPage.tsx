@@ -69,6 +69,7 @@ export default function SettingsPage() {
   const [geminiApiKey, setGeminiApiKey] = useState("");
   const [verifAutoEnabled, setVerifAutoEnabled] = useState(false);
   const [tokitoApiKey, setTokitoApiKey] = useState("");
+  const [monitorAutoMode, setMonitorAutoMode] = useState<"off" | "notif_only" | "auto">("notif_only");
 
   useEffect(() => {
     loadSettings();
@@ -87,6 +88,8 @@ export default function SettingsPage() {
       setGeminiApiKey(b.geminiApiKey || "");
       setVerifAutoEnabled(Boolean(b.verifAutoEnabled));
       setTokitoApiKey(b.tokitoApiKey || "");
+      const mode = String(b.monitorAutoMode || "notif_only");
+      setMonitorAutoMode(mode === "off" || mode === "auto" || mode === "notif_only" ? mode : "notif_only");
     } catch {}
   };
 
@@ -163,6 +166,7 @@ export default function SettingsPage() {
           geminiApiKey,
           verifAutoEnabled,
           tokitoApiKey,
+          monitorAutoMode,
         }),
       });
       setMessage("Settings saved successfully");
@@ -859,6 +863,39 @@ export default function SettingsPage() {
             <div>
               <Label>Owner/Admin Role ID</Label>
               <Input value={ownerGroupyRoleId} onChange={(e) => setOwnerGroupyRoleId(e.target.value)} placeholder="13546..." className="mt-1" />
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-border/50 space-y-3">
+            <div>
+              <Label className="text-base">Model Monitor Auto Mode</Label>
+              <p className="text-xs text-muted-foreground mt-1">
+                Controls whether 10-min probes can publish Online/Offline to Discord &amp; client catalogs.
+                Default is Notif only (manual ON/OFF publishes; probes only notify admin).
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {(
+                [
+                  { id: "off" as const, label: "Off", desc: "No auto 10-min test" },
+                  { id: "notif_only" as const, label: "Notif only", desc: "Probe notifies admin; catalog = manual" },
+                  { id: "auto" as const, label: "On (auto)", desc: "Probe auto publishes ON/OFF" },
+                ]
+              ).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setMonitorAutoMode(opt.id)}
+                  className={`px-3 py-2 rounded-lg border text-left min-w-[140px] transition-colors ${
+                    monitorAutoMode === opt.id
+                      ? "border-violet-500 bg-violet-500/10 text-foreground"
+                      : "border-border/50 hover:bg-accent/40 text-muted-foreground"
+                  }`}
+                >
+                  <div className="text-sm font-medium text-foreground">{opt.label}</div>
+                  <div className="text-[10px] mt-0.5">{opt.desc}</div>
+                </button>
+              ))}
             </div>
           </div>
         </CardContent>

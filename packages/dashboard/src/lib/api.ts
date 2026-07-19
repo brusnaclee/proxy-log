@@ -395,11 +395,21 @@ export interface ModelMonitorEntry {
   errorMessage: string | null;
   baseUrl: string | null;
   checkedAt: string;
+  probeOk?: boolean;
+  forceDeactivated?: boolean;
 }
 
 export interface ModelMonitorResponse {
   data: ModelMonitorEntry[];
-  summary: { total: number; online: number; offline: number; timeout: number };
+  summary: {
+    total: number;
+    online: number;
+    offline: number;
+    timeout: number;
+    probeOk?: number;
+    monitorAutoMode?: string;
+  };
+  monitorAutoMode?: string;
 }
 
 export const monitor = {

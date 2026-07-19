@@ -4,6 +4,7 @@ import pg from 'pg';
 import * as schema from './schema.js';
 import { migrateTokenSaverColumns } from './migrate-token-saver.js';
 import { migrateModelIdentityColumns } from './migrate-model-identity.js';
+import { migrateMonitorAutoModeColumn } from './migrate-monitor-auto-mode.js';
 
 const DATABASE_URL =
 	process.env.DATABASE_URL ||
@@ -118,6 +119,9 @@ export async function initializeDatabase() {
 
 	// Model identity profile columns (model_metadata)
 	await migrateModelIdentityColumns();
+
+	// Monitor auto mode (off | notif_only | auto)
+	await migrateMonitorAutoModeColumn();
 
 	// Unique index on devices(api_key_id, fingerprint) — prevents duplicate device rows
 	try {

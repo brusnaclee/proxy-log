@@ -1742,6 +1742,42 @@ async function pushSingleModelStatus(entry, latencyResult) {
 	}
 }
 
+async function fetchMonitorAutoMode() {
+	try {
+		const data = await proxyInternal(
+			'/admin/internal/monitor/auto-mode',
+			'GET',
+		);
+		const mode = String(data?.mode || 'notif_only').toLowerCase();
+		if (mode === 'off' || mode === 'auto' || mode === 'notif_only') return mode;
+	} catch (_) {}
+	return 'notif_only';
+}
+
+/** Models force-OFF by admin — still probe-safe to skip to save upstream quota. */
+async function getForceDeactivatedKeys() {
+	const keys = new Set();
+	try {
+		const prev = await proxyInternal(
+			'/admin/internal/monitor/models',
+			'GET',
+		);
+		const rows = Array.isArray(prev?.data)
+			? prev.data
+			: Array.isArray(prev)
+				? prev
+				: [];
+		for (const row of rows) {
+			const msg = String(row.errorMessage || row.error_message || '');
+			const online = row.isOnline ?? row.is_online;
+			if (!online && /force-deactivated/i.test(msg)) {
+				keys.add(`${row.provider || ''}:${row.modelId || row.model_id}`);
+			}
+		}
+	} catch (_) {}
+	return keys;
+}
+
 /** Refresh runtime.latency from proxy database (for fresh data on button click). */
 async function ensureGpyModelEntries() {
 	const hasGpy = runtime.modelEntries.some(
@@ -2140,15 +2176,25 @@ function applyModelRetryState(entry, latency) {
 }
 
 async function runSweepForProviderPrefix(matcher, label, opts = {}) {
+	const mode = await fetchMonitorAutoMode();
+	if (mode === 'off' && !opts.force) {
+		console.log(
+			`[tokito-monitor] ${label} skipped (monitorAutoMode=off)`,
+		);
+		return;
+	}
 	await pollModelStatus();
 	if (!runtime.modelEntries.length) return;
 	const filtered = runtime.modelEntries.filter((e) => matcher(e));
 	if (!filtered.length) return;
+	const forcedOff = await getForceDeactivatedKeys();
 	// For gpy 10min cadence we DO NOT honor suspendedUntil — trial-critical
 	// models must be re-tested every 10 minutes regardless of how many times
 	// they previously failed (otherwise they would be skipped for 24h after
 	// 3 consecutive failures like the standard retry sweep).
 	const queue = filtered.filter((entry) => {
+		const fk = `${entry.provider || ''}:${entry.modelId}`;
+		if (forcedOff.has(fk)) return false;
 		if (opts.ignoreSuspend) return true;
 		const key = entryKey(entry);
 		const retryState = runtime.modelRetryState.get(key);
@@ -2201,10 +2247,20 @@ async function sweepModelsParallel(entries, label) {
 
 async function runFullSweep(opts = {}) {
 	const ignoreSuspend = opts.ignoreSuspend !== false; // default TRUE for 10-min cadence
+	const mode = await fetchMonitorAutoMode();
+	if (mode === 'off' && !opts.force) {
+		console.log(
+			'[tokito-monitor] full sweep skipped (monitorAutoMode=off)',
+		);
+		return;
+	}
 	await pollModelStatus();
 	if (!runtime.modelEntries.length) return;
 
+	const forcedOff = await getForceDeactivatedKeys();
 	const queued = runtime.modelEntries.filter((entry) => {
+		const fk = `${entry.provider || ''}:${entry.modelId}`;
+		if (forcedOff.has(fk)) return false;
 		if (ignoreSuspend) return true;
 		const key = entryKey(entry);
 		const retryState = runtime.modelRetryState.get(key);
@@ -2218,7 +2274,7 @@ async function runFullSweep(opts = {}) {
 	const skipped = runtime.modelEntries.length - queued.length;
 	if (skipped > 0) {
 		console.log(
-			`[tokito-monitor] full sweep: skipping ${skipped} soft-suspended models`,
+			`[tokito-monitor] full sweep: skipping ${skipped} soft-suspended/force-OFF models`,
 		);
 	}
 
@@ -2228,11 +2284,21 @@ async function runFullSweep(opts = {}) {
 // ─── Smart Retry: Retry sweep — test only offline models that aren't suspended ─
 
 async function runRetrySweep() {
+	const mode = await fetchMonitorAutoMode();
+	if (mode === 'off') {
+		console.log(
+			'[tokito-monitor] retry sweep skipped (monitorAutoMode=off)',
+		);
+		return;
+	}
 	await pollModelStatus(); // refresh keys + model list before retry probes
 	if (!runtime.modelEntries.length) return;
 
+	const forcedOff = await getForceDeactivatedKeys();
 	const entriesToRetry = [];
 	for (const entry of runtime.modelEntries) {
+		const fk = `${entry.provider || ''}:${entry.modelId}`;
+		if (forcedOff.has(fk)) continue;
 		const key = entryKey(entry);
 		const retryState = runtime.modelRetryState.get(key);
 
@@ -6246,7 +6312,15 @@ client.once('clientReady', async () => {
 		try {
 			await proxyInternal('/admin/internal/monitor/models/state/reset', 'PATCH');
 		} catch (_) {}
-		await runFullSweep({ ignoreSuspend: true });
+		const bootMode = await fetchMonitorAutoMode();
+		console.log(`[tokito-monitor] monitorAutoMode=${bootMode}`);
+		if (bootMode !== 'off') {
+			await runFullSweep({ ignoreSuspend: true });
+		} else {
+			console.log(
+				'[tokito-monitor] startup full sweep skipped (monitorAutoMode=off)',
+			);
+		}
 
 		// Gpy/webnet: every 10 minutes, ignore 24h suspend — trial-critical models
 		// must be re-tested even if they have been failing for a long time.
@@ -6263,7 +6337,7 @@ client.once('clientReady', async () => {
 
 		// Full sweep: every 10 minutes — ALWAYS re-test all models (ignore soft-suspend).
 		// Soft-suspend only reduces the *retry* sweep noise; dashboard freshness requires
-		// probing every model on this cadence.
+		// probing every model on this cadence. Mode=off skips inside runFullSweep.
 		setInterval(() => {
 			runFullSweep({ ignoreSuspend: true }).catch((err) =>
 				console.error('runFullSweep error:', err.message),

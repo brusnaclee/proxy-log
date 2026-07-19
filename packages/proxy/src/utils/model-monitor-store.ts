@@ -1,5 +1,5 @@
 import { db } from "../db/index.js";
-import { modelMonitor, modelTestState, providers } from "../db/schema.js";
+import { adminConfig, modelMonitor, modelTestState, providers } from "../db/schema.js";
 import { eq, and, sql } from "drizzle-orm";
 
 /**
@@ -7,6 +7,8 @@ import { eq, and, sql } from "drizzle-orm";
  * No time-based stale cutoff — the smart retry system controls when models are tested.
  */
 export const MONITOR_STALE_MINUTES = 60 * 24; // 24 hours (effectively "no stale cutoff")
+
+export type MonitorAutoMode = "off" | "notif_only" | "auto";
 
 export type MonitorSnapshotRow = {
   modelId: string;
@@ -18,6 +20,29 @@ export type MonitorSnapshotRow = {
   baseUrl: string | null;
   checkedAt: Date;
 };
+
+export type UpsertModelStatusSource = "sweep" | "admin";
+
+export function isForceDeactivatedMessage(msg: string | null | undefined): boolean {
+  return /force-deactivated/i.test(String(msg || ""));
+}
+
+export function normalizeMonitorAutoMode(raw: unknown): MonitorAutoMode {
+  const mode = String(raw || "notif_only").toLowerCase();
+  if (mode === "off" || mode === "auto" || mode === "notif_only") return mode;
+  return "notif_only";
+}
+
+export async function getMonitorAutoMode(): Promise<MonitorAutoMode> {
+  const [config] = await db.select().from(adminConfig).limit(1);
+  return normalizeMonitorAutoMode(config?.monitorAutoMode);
+}
+
+/** Probe looks healthy (for admin indicator), independent of published is_online. */
+export function isProbeOk(httpStatus: number | null | undefined): boolean {
+  const s = Number(httpStatus) || 0;
+  return s >= 200 && s < 300;
+}
 
 export async function getActiveProviderNames(): Promise<Set<string>> {
   const rows = await db
@@ -32,16 +57,29 @@ export async function purgeMonitorForProvider(providerName: string): Promise<voi
   await db.delete(modelTestState).where(eq(modelTestState.provider, providerName));
 }
 
-/** Replace entire monitor table with the latest bot snapshot (active providers only). */
+/**
+ * Upsert probe/snapshot rows without wiping manual published state.
+ * Never deletes the table — preserves force-OFF and notif_only catalog.
+ */
 export async function replaceModelMonitorSnapshot(
   values: MonitorSnapshotRow[],
 ): Promise<number> {
   const activeNames = await getActiveProviderNames();
   const filtered = values.filter((v) => v.provider && activeNames.has(v.provider));
 
-  await db.delete(modelMonitor);
-  if (filtered.length > 0) {
-    await db.insert(modelMonitor).values(filtered);
+  for (const v of filtered) {
+    await upsertModelStatus(
+      {
+        modelId: v.modelId,
+        provider: v.provider,
+        isOnline: v.isOnline,
+        latencyMs: v.latencyMs,
+        httpStatus: v.httpStatus,
+        errorMessage: v.errorMessage,
+        baseUrl: v.baseUrl,
+      },
+      { source: "sweep" },
+    );
   }
   return filtered.length;
 }
@@ -57,25 +95,31 @@ const MAX_RETRIES = 3;
 
 /**
  * Upsert a single model's status into model_monitor, and update model_test_state
- * for retry tracking. Called by the bot after each individual model test.
+ * for retry tracking.
  *
- * - If online: upsert into model_monitor, clear retry state (retryCount=0, suspendedUntil=null)
- * - If offline: upsert into model_monitor, increment retryCount
- * - If retryCount >= MAX_RETRIES: set suspendedUntil to next midnight (Asia/Jakarta)
+ * source=admin: always writes published is_online (manual catalog for Discord/client).
+ * source=sweep:
+ *   - force-deactivated rows: probe fields only (keep published OFF + force message)
+ *   - notif_only / off: probe fields only (never flip published is_online)
+ *   - auto: probe result writes published is_online
  */
-export async function upsertModelStatus(params: {
-  modelId: string;
-  provider: string | null;
-  isOnline: boolean;
-  latencyMs: number;
-  httpStatus: number;
-  errorMessage: string | null;
-  baseUrl: string | null;
-}): Promise<void> {
+export async function upsertModelStatus(
+  params: {
+    modelId: string;
+    provider: string | null;
+    isOnline: boolean;
+    latencyMs: number;
+    httpStatus: number;
+    errorMessage: string | null;
+    baseUrl: string | null;
+  },
+  opts: { source?: UpsertModelStatusSource } = {},
+): Promise<void> {
+  const source: UpsertModelStatusSource = opts.source || "sweep";
   const now = new Date();
   const nowStr = now.toISOString().replace("T", " ").substring(0, 19);
+  const mode = source === "admin" ? "auto" : await getMonitorAutoMode();
 
-  // Upsert into model_monitor: find existing row by modelId+provider
   const existing = await db
     .select()
     .from(modelMonitor)
@@ -88,17 +132,49 @@ export async function upsertModelStatus(params: {
       ),
     )
     .limit(1)
-    .then(rows => rows[0]);
+    .then((rows) => rows[0]);
+
+  const existingForced = existing
+    ? isForceDeactivatedMessage(existing.errorMessage)
+    : false;
+  const adminForced = source === "admin" && isForceDeactivatedMessage(params.errorMessage);
+
+  let nextOnline = params.isOnline;
+  let nextError = params.errorMessage;
+
+  if (source === "sweep") {
+    if (existingForced) {
+      // Sticky manual OFF: update probe indicators only.
+      nextOnline = false;
+      nextError = existing!.errorMessage;
+    } else if (mode === "notif_only" || mode === "off") {
+      // Probe notifies admin only — keep published catalog as-is.
+      nextOnline = existing ? Boolean(existing.isOnline) : false;
+      // Keep prior force message if any; otherwise store probe error for indicator.
+      nextError = existingForced
+        ? existing!.errorMessage
+        : params.errorMessage;
+    }
+    // mode === "auto": use params.isOnline / params.errorMessage as published
+  } else {
+    // admin: params win (activate clears error; deactivate sets force message)
+    nextOnline = params.isOnline;
+    nextError = adminForced
+      ? params.errorMessage
+      : params.isOnline
+        ? null
+        : params.errorMessage;
+  }
 
   if (existing) {
     await db
       .update(modelMonitor)
       .set({
-        isOnline: params.isOnline,
+        isOnline: nextOnline,
         latencyMs: params.latencyMs,
         httpStatus: params.httpStatus,
-        errorMessage: params.errorMessage,
-        baseUrl: params.baseUrl,
+        errorMessage: nextError,
+        baseUrl: params.baseUrl ?? existing.baseUrl,
         checkedAt: now,
       })
       .where(eq(modelMonitor.id, existing.id));
@@ -106,16 +182,24 @@ export async function upsertModelStatus(params: {
     await db.insert(modelMonitor).values({
       modelId: params.modelId,
       provider: params.provider,
-      isOnline: params.isOnline,
+      // New rows from sweep in notif_only start published OFF until admin ON.
+      isOnline: source === "admin" ? nextOnline : mode === "auto" ? params.isOnline : false,
       latencyMs: params.latencyMs,
       httpStatus: params.httpStatus,
-      errorMessage: params.errorMessage,
+      errorMessage:
+        source === "admin"
+          ? nextError
+          : mode === "auto"
+            ? params.errorMessage
+            : params.errorMessage,
       baseUrl: params.baseUrl,
       checkedAt: now,
     });
   }
 
-  // Update model_test_state for retry tracking
+  // Retry state tracks probe health (sweep), not admin toggles.
+  if (source === "admin") return;
+
   const stateRow = await db
     .select()
     .from(modelTestState)
@@ -128,10 +212,11 @@ export async function upsertModelStatus(params: {
       ),
     )
     .limit(1)
-    .then(rows => rows[0]);
+    .then((rows) => rows[0]);
 
-  if (params.isOnline) {
-    // Online: clear retry state
+  const probeOnline = params.isOnline;
+
+  if (probeOnline) {
     if (stateRow) {
       await db
         .update(modelTestState)
@@ -147,8 +232,6 @@ export async function upsertModelStatus(params: {
       });
     }
   } else if (params.httpStatus === 429) {
-    // Rate limited: DON'T increment retry count - model is working, just busy
-    // Just update the lastTestAt timestamp
     if (stateRow) {
       await db
         .update(modelTestState)
@@ -164,9 +247,7 @@ export async function upsertModelStatus(params: {
       });
     }
   } else {
-    // Offline (5xx, timeout, connection error): increment retry count
     const newRetryCount = (stateRow?.retryCount ?? 0) + 1;
-    // After 3 failures, suspend for 24 hours instead of until midnight
     const suspendedUntil = newRetryCount >= MAX_RETRIES ? get24HoursFromNowIso() : null;
 
     if (stateRow) {
@@ -215,13 +296,34 @@ export async function resetAllTestStates(): Promise<void> {
 }
 
 /**
- * Flip all monitor rows for a provider to offline (e.g. no usable API keys).
- * Keeps model list visible in Discord/dashboard but honest about usability.
+ * Flip published offline for a provider when no usable keys (auto mode / access honesty).
+ * In notif_only this still flips published — call only from live traffic key exhaustion.
  */
 export async function markProviderModelsOffline(
   providerName: string,
   errorMessage: string,
 ): Promise<void> {
+  const mode = await getMonitorAutoMode();
+  if (mode === "notif_only" || mode === "off") {
+    // Don't clobber manual catalog; only annotate non-forced rows' probe fields.
+    const rows = await db
+      .select()
+      .from(modelMonitor)
+      .where(eq(modelMonitor.provider, providerName));
+    for (const row of rows) {
+      if (isForceDeactivatedMessage(row.errorMessage)) continue;
+      await db
+        .update(modelMonitor)
+        .set({
+          httpStatus: 0,
+          errorMessage,
+          checkedAt: new Date(),
+        })
+        .where(eq(modelMonitor.id, row.id));
+    }
+    return;
+  }
+
   await db
     .update(modelMonitor)
     .set({

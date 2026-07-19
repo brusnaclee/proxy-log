@@ -2736,10 +2736,8 @@ proxy.all('/*', async (c) => {
 	}
 
 	// ─── 8a. Model Monitor Check ─────────────────────────────────────────
-	// Online from live probe = safe to use. Offline = hard block so dashboard /
-	// Discord / client status stays truthful (no green + 502).
-	// Force-deactivated always blocks; natural offline blocks when checked
-	// within the last 30 minutes (avoids stale overnight gates).
+	// Published is_online (admin catalog / auto mode) gates access.
+	// In notif_only, only manual ON/OFF flips published — probe does not.
 	if (
 		!keyRecord.isTrial &&
 		upstreamModel &&
@@ -2759,19 +2757,7 @@ proxy.all('/*', async (c) => {
 
 		if (monitorRows.length > 0) {
 			const latest = monitorRows[0];
-			const forceDeactivated = monitorRows.some((row) => {
-				const msg = String(row.errorMessage || '');
-				return !row.isOnline && /force-deactivated/i.test(msg);
-			});
-			const checkedAtMs = latest.checkedAt
-				? new Date(latest.checkedAt).getTime()
-				: 0;
-			const freshOffline =
-				!latest.isOnline &&
-				checkedAtMs > 0 &&
-				Date.now() - checkedAtMs < 30 * 60 * 1000;
-
-			if (forceDeactivated || freshOffline) {
+			if (!latest.isOnline) {
 				const onlineModels = await db
 					.select({ modelId: modelMonitor.modelId })
 					.from(modelMonitor)

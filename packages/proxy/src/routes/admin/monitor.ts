@@ -11,6 +11,10 @@ import {
   upsertModelStatus,
   getModelTestStates,
   resetAllTestStates,
+  getMonitorAutoMode,
+  normalizeMonitorAutoMode,
+  isForceDeactivatedMessage,
+  isProbeOk,
   type MonitorSnapshotRow,
 } from "../../utils/model-monitor-store.js";
 import {
@@ -166,6 +170,7 @@ monitor.get("/settings/bot", async (c) => {
     geminiApiKey: config.geminiApiKey || "",
     verifAutoEnabled: Boolean(config.verifAutoEnabled),
     tokitoApiKey: config.tokitoApiKey || "",
+    monitorAutoMode: normalizeMonitorAutoMode(config.monitorAutoMode),
   });
 });
 
@@ -190,10 +195,21 @@ monitor.post("/settings/bot", async (c) => {
   if (body.geminiApiKey !== undefined) updates.geminiApiKey = body.geminiApiKey;
   if (body.verifAutoEnabled !== undefined) updates.verifAutoEnabled = Boolean(body.verifAutoEnabled);
   if (body.tokitoApiKey !== undefined) updates.tokitoApiKey = body.tokitoApiKey;
+  if (body.monitorAutoMode !== undefined) {
+    updates.monitorAutoMode = normalizeMonitorAutoMode(body.monitorAutoMode);
+  }
 
   await db.update(adminConfig).set(updates).where(eq(adminConfig.id, config.id));
 
-  return c.json({ success: true });
+  return c.json({ success: true, monitorAutoMode: updates.monitorAutoMode ?? normalizeMonitorAutoMode(config.monitorAutoMode) });
+});
+
+/** Bot reads auto mode to decide whether 10-min sweeps run / publish. */
+monitor.get("/internal/monitor/auto-mode", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+  const mode = await getMonitorAutoMode();
+  return c.json({ mode });
 });
 
 monitor.get("/monitor/models", async (c) => {
@@ -220,16 +236,24 @@ monitor.get("/monitor/models", async (c) => {
 
   const data = rows
     .map((r) => r.model_monitor)
-    .filter((d) => d.provider && activeNames.has(d.provider));
+    .filter((d) => d.provider && activeNames.has(d.provider))
+    .map((d) => ({
+      ...d,
+      probeOk: isProbeOk(d.httpStatus),
+      forceDeactivated: isForceDeactivatedMessage(d.errorMessage),
+    }));
 
+  const mode = await getMonitorAutoMode();
   const summary = {
     total: data.length,
     online: data.filter((d) => d.isOnline).length,
     offline: data.filter((d) => !d.isOnline && d.httpStatus !== 0).length,
     timeout: data.filter((d) => !d.isOnline && d.httpStatus === 0).length,
+    probeOk: data.filter((d) => d.probeOk).length,
+    monitorAutoMode: mode,
   };
 
-  return c.json({ data, summary });
+  return c.json({ data, summary, monitorAutoMode: mode });
 });
 
 // GET history for a specific model
@@ -313,7 +337,7 @@ monitor.patch("/internal/monitor/models/status", async (c) => {
     httpStatus: Number(item.httpStatus) || 0,
     errorMessage: item.errorMessage ? String(item.errorMessage) : null,
     baseUrl: item.baseUrl ? String(item.baseUrl) : null,
-  });
+  }, { source: "sweep" });
 
   return c.json({ success: true });
 });
@@ -400,11 +424,8 @@ async function getLatestMonitorRows() {
     .filter((d) => d.provider && activeNames.has(d.provider));
 }
 
-// POST admin force-activate: override-mark a model as online without
-// testing it. Useful when an admin knows a model is back online but the
-// last sweep is still showing it as offline. The next sweep (10min for
-// gpy, 1h for others) will verify the actual status and may flip it
-// back to offline if it is in fact broken.
+// POST admin force-activate: publish model ON in Discord/client catalog.
+// Sticky until admin OFF (sweeps in notif_only never flip published).
 monitor.post("/monitor/models/activate", async (c) => {
   const authErr = checkAdminSession(c);
   if (authErr) return authErr;
@@ -413,19 +434,22 @@ monitor.post("/monitor/models/activate", async (c) => {
   if (!body.modelId || !body.provider) {
     return c.json({ error: "modelId and provider required" }, 400);
   }
-  await upsertModelStatus({
-    modelId: String(body.modelId),
-    provider: String(body.provider),
-    isOnline: true,
-    latencyMs: 0,
-    httpStatus: 200,
-    errorMessage: null,
-    baseUrl: null,
-  });
-  return c.json({ success: true, message: `${body.modelId} force-activated` });
+  await upsertModelStatus(
+    {
+      modelId: String(body.modelId),
+      provider: String(body.provider),
+      isOnline: true,
+      latencyMs: 0,
+      httpStatus: 200,
+      errorMessage: null,
+      baseUrl: null,
+    },
+    { source: "admin" },
+  );
+  return c.json({ success: true, message: `${body.modelId} published ON` });
 });
 
-// POST admin force-deactivate: override-mark a model as offline without testing.
+// POST admin force-deactivate: publish model OFF (sticky until admin ON).
 monitor.post("/monitor/models/deactivate", async (c) => {
   const authErr = checkAdminSession(c);
   if (authErr) return authErr;
@@ -434,19 +458,22 @@ monitor.post("/monitor/models/deactivate", async (c) => {
   if (!body.modelId || !body.provider) {
     return c.json({ error: "modelId and provider required" }, 400);
   }
-  await upsertModelStatus({
-    modelId: String(body.modelId),
-    provider: String(body.provider),
-    isOnline: false,
-    latencyMs: 0,
-    httpStatus: 503,
-    errorMessage: "Force-deactivated by admin",
-    baseUrl: null,
-  });
-  return c.json({ success: true, message: `${body.modelId} force-deactivated` });
+  await upsertModelStatus(
+    {
+      modelId: String(body.modelId),
+      provider: String(body.provider),
+      isOnline: false,
+      latencyMs: 0,
+      httpStatus: 503,
+      errorMessage: "Force-deactivated by admin",
+      baseUrl: null,
+    },
+    { source: "admin" },
+  );
+  return c.json({ success: true, message: `${body.modelId} published OFF` });
 });
 
-// POST bulk override: toggle all models matching filter ON or OFF.
+// POST bulk override: toggle published ON/OFF for matching models.
 monitor.post("/monitor/models/bulk-override", async (c) => {
   const authErr = checkAdminSession(c);
   if (authErr) return authErr;
@@ -477,15 +504,18 @@ monitor.post("/monitor/models/bulk-override", async (c) => {
 
   const turnOn = body.action === "on";
   for (const row of rows) {
-    await upsertModelStatus({
-      modelId: row.modelId,
-      provider: row.provider,
-      isOnline: turnOn,
-      latencyMs: turnOn ? (row.latencyMs ?? 0) : 0,
-      httpStatus: turnOn ? 200 : 503,
-      errorMessage: turnOn ? null : "Force-deactivated by admin (bulk)",
-      baseUrl: row.baseUrl,
-    });
+    await upsertModelStatus(
+      {
+        modelId: row.modelId,
+        provider: row.provider,
+        isOnline: turnOn,
+        latencyMs: turnOn ? (row.latencyMs ?? 0) : 0,
+        httpStatus: turnOn ? (row.httpStatus && row.httpStatus >= 200 && row.httpStatus < 300 ? row.httpStatus : 200) : 503,
+        errorMessage: turnOn ? null : "Force-deactivated by admin (bulk)",
+        baseUrl: row.baseUrl,
+      },
+      { source: "admin" },
+    );
   }
 
   const scope = [
@@ -496,7 +526,7 @@ monitor.post("/monitor/models/bulk-override", async (c) => {
   return c.json({
     success: true,
     updated: rows.length,
-    message: `Turned ${body.action.toUpperCase()} ${rows.length} model(s) (${scope})`,
+    message: `Published ${body.action.toUpperCase()} ${rows.length} model(s) (${scope})`,
   });
 });
 
@@ -645,7 +675,7 @@ monitor.post("/monitor/sweep", async (c) => {
               httpStatus: 0,
               errorMessage: "No API key",
               baseUrl: m.baseUrl,
-            });
+            }, { source: "sweep" });
             sweepProgress.tested++;
             sweepProgress.offline++;
             return;
@@ -691,7 +721,7 @@ monitor.post("/monitor/sweep", async (c) => {
             httpStatus: lastStatus,
             errorMessage: ok ? null : lastError,
             baseUrl: m.baseUrl,
-          });
+          }, { source: "sweep" });
           sweepProgress.tested++;
           if (ok) sweepProgress.online++;
           else if (lastStatus === 429) sweepProgress.rateLimited++;
