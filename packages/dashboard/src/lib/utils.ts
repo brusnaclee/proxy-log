@@ -73,17 +73,44 @@ export function formatChartPeriod(v: string): string {
   return v.split("-").slice(1).join("/");
 }
 
-/** Admin Logs/Overview User column: keyLabel · discordUsername · discordUserId */
+/** True when key name already embeds Discord identity (main Discord-issued key). */
+export function isDiscordPrimaryKeyLabel(
+  apiKeyName?: string | null,
+  discordUsername?: string | null,
+  discordUserId?: string | null,
+): boolean {
+  const label = String(apiKeyName || "").trim();
+  if (!label) return false;
+  if (/^Discord[-_]/i.test(label)) return true;
+  const uname = String(discordUsername || "").trim();
+  const uid = String(discordUserId || "").trim();
+  if (uname && uid && label.includes(uid) && label.toLowerCase().includes(uname.toLowerCase())) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Admin Logs/Overview User column.
+ * Primary Discord key → `username · id` (no double Discord-… prefix).
+ * Extra portal/custom key → `KeyName · username · id`.
+ */
 export function formatLogUserDisplay(log: {
   apiKeyName?: string | null;
   discordUsername?: string | null;
   discordUserId?: string | null;
 }): string {
-  const label = String(log.apiKeyName || "").trim() || "—";
+  const label = String(log.apiKeyName || "").trim();
   const uname = String(log.discordUsername || "").trim();
   const uid = String(log.discordUserId || "").trim();
-  if (uname && uid) return `${label} · ${uname} · ${uid}`;
-  if (uid) return `${label} · ${uid}`;
-  if (uname) return `${label} · ${uname}`;
+  const discordOnly =
+    uname && uid ? `${uname} · ${uid}` : uname || uid || "";
+
+  if (isDiscordPrimaryKeyLabel(label, uname, uid)) {
+    return discordOnly || label || "—";
+  }
+
+  if (!label) return discordOnly || "—";
+  if (discordOnly) return `${label} · ${discordOnly}`;
   return label;
 }

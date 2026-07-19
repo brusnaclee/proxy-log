@@ -1,8 +1,18 @@
 import { db } from "../db/index.js";
 import { requestLogs, modelLimits, apiKeys } from "../db/schema.js";
-import { sql, and, eq, gte, type SQL } from "drizzle-orm";
+import { sql, and, eq, gte, inArray, type SQL } from "drizzle-orm";
 import { COUNTED_LOG_SQL } from "./counting.js";
 import { stripProviderPrefix } from "./model-catalog.js";
+
+function normalizeKeyIds(apiKeyId: number | number[]): number[] {
+  const ids = (Array.isArray(apiKeyId) ? apiKeyId : [apiKeyId]).filter((id) => Number.isFinite(id) && id > 0);
+  return ids.length > 0 ? ids : [0];
+}
+
+function keyIdMatch(apiKeyIds: number[]): SQL {
+  if (apiKeyIds.length === 1) return eq(requestLogs.apiKeyId, apiKeyIds[0]);
+  return inArray(requestLogs.apiKeyId, apiKeyIds);
+}
 
 /** Type alias for a model_limits row pulled from Drizzle. */
 type ModelLimitRow = typeof modelLimits.$inferSelect;
@@ -142,11 +152,13 @@ export async function findActiveOverrideInTx(
 }
 
 /**
- * Count user prompts for an API key within a time window.
+ * Count user prompts for an API key (or all keys in a Discord account) within a time window.
  * Uses a fixed window that starts on the first request and lasts for `windowStr`.
+ * When multiple key IDs are passed, usage is summed across them (shared account quota).
+ * Window start is read from the first key ID (pass primary/window owner first).
  */
 export async function checkPromptLimit(
-  apiKeyId: number,
+  apiKeyId: number | number[],
   promptLimit: number,
   windowStr: string,
 ): Promise<{ allowed: boolean; remaining: number; resetMs: number; used: number }> {
@@ -154,7 +166,10 @@ export async function checkPromptLimit(
   const windowMs = parseRateLimitWindow(windowStr);
   if (windowMs <= 0) return { allowed: true, remaining: -1, resetMs: 0, used: 0 };
 
-  const keyRecord = (await db.select({ promptWindowStart: apiKeys.promptWindowStart }).from(apiKeys).where(eq(apiKeys.id, apiKeyId)))[0];
+  const apiKeyIds = normalizeKeyIds(apiKeyId);
+  const windowKeyId = apiKeyIds[0];
+
+  const keyRecord = (await db.select({ promptWindowStart: apiKeys.promptWindowStart }).from(apiKeys).where(eq(apiKeys.id, windowKeyId)))[0];
   
   let windowStartMs = 0;
   if (keyRecord?.promptWindowStart) {
@@ -177,7 +192,7 @@ export async function checkPromptLimit(
   const usage = await db.select({ count: sql<number>`count(*)` })
     .from(requestLogs)
     .where(and(
-      eq(requestLogs.apiKeyId, apiKeyId),
+      keyIdMatch(apiKeyIds),
       gte(requestLogs.createdAt, windowStartDate),
       COUNTED_LOG_SQL,
     ));
@@ -189,22 +204,25 @@ export async function checkPromptLimit(
 }
 
 /**
- * Check per-model prompt limit for an API key.
+ * Check per-model prompt limit for an API key (or Discord account key set).
  * Uses a fixed window that starts on the first request for this model.
  */
 export async function checkModelPromptLimit(
-  apiKeyId: number,
+  apiKeyId: number | number[],
   model: string,
   perKeyDefaultLimit: number,
   perKeyDefaultWindow: string | null,
   globalDefaultLimit: number,
   globalDefaultWindow: string,
 ): Promise<{ allowed: boolean; remaining: number; resetMs: number; used: number; effectiveLimit: number }> {
+  const apiKeyIds = normalizeKeyIds(apiKeyId);
+  const overrideKeyId = apiKeyIds[0];
+
   // Normalize model name so "tokito/ag/claude-opus-4-6" matches "ag/claude-opus-4-6" etc.
   const normalizedModel = await normalizeModelForLimit(model);
 
   // Resolve the highest-priority override (key exact > key pattern > global exact > global pattern).
-  const activeOverride = await findActiveOverride(apiKeyId, normalizedModel);
+  const activeOverride = await findActiveOverride(overrideKeyId, normalizedModel);
 
   let effectiveLimit = 0;
 
@@ -245,7 +263,7 @@ export async function checkModelPromptLimit(
   const usage = await db.select({ count: sql<number>`count(*)` })
     .from(requestLogs)
     .where(and(
-      eq(requestLogs.apiKeyId, apiKeyId),
+      keyIdMatch(apiKeyIds),
       getModelMatchCondition(normalizedModel),
       gte(requestLogs.createdAt, windowStartDate),
       COUNTED_LOG_SQL,
@@ -267,17 +285,19 @@ export async function checkModelPromptLimit(
  * Find how many ms until the window resets (sliding window).
  * The window resets when the OLDEST counted request in the window expires.
  */
-export async function getWindowResetMs(apiKeyId: number, windowMs: number, model?: string): Promise<number> {
+export async function getWindowResetMs(apiKeyId: number | number[], windowMs: number, model?: string): Promise<number> {
   if (windowMs <= 0) return 0;
   
   const nowMs = Date.now();
+  const apiKeyIds = normalizeKeyIds(apiKeyId);
+  const windowKeyId = apiKeyIds[0];
   
   if (model) {
     const normalizedModel = await normalizeModelForLimit(model);
 
     // Model specific limit — match any variant that normalizes to the same base,
     // including pattern matches (substring, case-insensitive).
-    const activeOverride = await findActiveOverride(apiKeyId, normalizedModel);
+    const activeOverride = await findActiveOverride(windowKeyId, normalizedModel);
     
     if (activeOverride && activeOverride.promptWindowStart) {
       const windowStartMs = Date.parse(activeOverride.promptWindowStart.replace(" ", "T") + "Z");
@@ -295,7 +315,7 @@ export async function getWindowResetMs(apiKeyId: number, windowMs: number, model
   }
   
   // Global prompt limit
-  const keyRecord = (await db.select({ promptWindowStart: apiKeys.promptWindowStart }).from(apiKeys).where(eq(apiKeys.id, apiKeyId)))[0];
+  const keyRecord = (await db.select({ promptWindowStart: apiKeys.promptWindowStart }).from(apiKeys).where(eq(apiKeys.id, windowKeyId)))[0];
   
   if (keyRecord?.promptWindowStart) {
     const windowStartMs = Date.parse(keyRecord.promptWindowStart.replace(" ", "T") + "Z");

@@ -196,6 +196,9 @@ export interface KeyInfo {
   keyMasked: string;
   isActive: boolean;
   isTrial: boolean;
+  isPrimary?: boolean;
+  canDelete?: boolean;
+  provisionedBy?: string | null;
   createdAt: string;
   requestsToday: number;
 }
@@ -311,6 +314,9 @@ export const keys = {
 
   rotate: (id: number) =>
     request<{ success: boolean; key: string; keyPrefix: string }>(`/keys/${id}/rotate`, "POST"),
+
+  delete: (id: number) =>
+    request<{ success: boolean }>(`/keys/${id}`, "DELETE"),
 
   devices: (keyId: number) =>
     request<DeviceInfo[]>(`/keys/${keyId}/devices`, "GET"),

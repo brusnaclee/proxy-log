@@ -105,6 +105,7 @@ const EMOJI_TO_PHOSPHOR: Record<string, string> = {
   "🏆": "trophy", "💡": "lightbulb", "📊": "chart-bar", "👑": "crown", "🎉": "confetti",
   "⭐": "star", "🚀": "rocket", "📥": "arrow-down", "📤": "arrow-up", "😶": "ghost",
   "📅": "calendar-dots", "😴": "moon-stars", "🎯": "target", "🌅": "sun-horizon", "🌄": "sun-horizon",
+  "🔑": "key",
 };
 
 function iconHtml(emojiOrName: string, size = 16, cls = "b2-ic-sm"): string {
@@ -802,6 +803,24 @@ function buildSectionItems(d: RecapHtmlData): SlideItem[] {
         ${mediaTag(A.requests || A.tokens, d.base)}`);
     },
 
+    keys: () => {
+      const count = n(s, "keys.count");
+      const top = (s.keys?.top || []).filter((k: any) => (k.requests || 0) > 0);
+      if (count <= 1 && top.length <= 1) return null;
+      const fav = s.keys?.favorite || top[0]?.name || null;
+      const rows = top.slice(0, 4).map((k: any) =>
+        chipHtml("key", `${k.name}: ${fmtNum(k.requests)} req (${k.sharePercent || 0}%)`),
+      ).join("");
+      return section("keys", `
+        <div class="kicker reveal">API Keys</div>
+        <div class="big reveal">${fmtNum(count)}</div>
+        <div class="headline reveal">key aktif di akun ini</div>
+        ${fav ? chipHtml("star", `Paling sering: ${fav}`) : ""}
+        ${rows}
+        <div class="caption reveal">Limit & usage digabung per Discord — bikin key tambahan tidak menambah kuota.</div>
+        ${mediaTag(A.requests, d.base)}`);
+    },
+
     ach: () => {
       const ach = nv.badges || [];
       if (!ach.length) return null;
@@ -1085,7 +1104,7 @@ function buildSectionItems(d: RecapHtmlData): SlideItem[] {
   // 17) projection → 18) card → 19) closing
   const order: string[] = [
     "intro", "persona", "favoriteModel", "leastModel",
-    "modelSpeed", "activeTime", "stats", "ach",
+    "modelSpeed", "activeTime", "stats", "keys", "ach",
     "grid", "facts", "heatmap", "rest",
     "community", "rank", "race", "leaderboard",
     "projection", "card", "closing",

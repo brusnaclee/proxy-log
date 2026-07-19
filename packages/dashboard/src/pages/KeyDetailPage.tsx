@@ -254,8 +254,13 @@ export default function KeyDetailPage() {
 
   const handleDelete = async () => {
     if (!id) return;
-    await keys.delete(parseInt(id));
-    navigate("/keys");
+    try {
+      await keys.delete(parseInt(id));
+      navigate("/keys");
+    } catch (error: any) {
+      setShowDelete(false);
+      setStatusText(error?.message || "Failed to delete API key.");
+    }
   };
 
   const handleRotate = async () => {
@@ -463,9 +468,13 @@ export default function KeyDetailPage() {
           <Button variant="outline" size="sm" onClick={() => setShowRotate(true)}>
             <RotateCw className="h-3 w-3 mr-1" /> Rotate
           </Button>
-          <Button variant="destructive" size="sm" onClick={() => setShowDelete(true)}>
-            <Trash2 className="h-3 w-3 mr-1" /> Delete
-          </Button>
+          {keyData.canDelete !== false && !keyData.isPrimary ? (
+            <Button variant="destructive" size="sm" onClick={() => setShowDelete(true)}>
+              <Trash2 className="h-3 w-3 mr-1" /> Delete
+            </Button>
+          ) : (
+            <span className="text-xs text-muted-foreground px-2">Primary key — cannot delete</span>
+          )}
         </div>
       </div>
 

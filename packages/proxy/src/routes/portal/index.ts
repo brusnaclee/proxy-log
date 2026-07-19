@@ -17,6 +17,7 @@ import { parseTrialModelWhitelist, resolveKeyDailyTokenLimit, resolveKeyPromptLi
 import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindowResetMs } from "../../utils/rate-limit.js";
 import { logEmitter } from "../../utils/event-emitter.js";
 import { randomBytes } from "crypto";
+import { isProtectedPrimaryApiKey } from "../../utils/api-key-primary.js";
 
 const portal = new Hono();
 
@@ -263,29 +264,34 @@ portal.get("/me", async (c) => {
     ? resolveKeyDailyTokenLimit(primaryKey as any, config)
     : 0;
 
-  // Prompt used = Discord checkPromptLimit (rolling window), NOT today's request count
+  // Prompt used = shared across all Discord account keys
   let promptUsed = 0;
   let promptResetAt: string | null = null;
   let promptResetMins = 0;
-  if (primaryKey && promptLimit > 0) {
-    const plCheck = await checkPromptLimit(primaryKey.id, promptLimit, promptLimitWindow);
+  const accountKeyIds = userKeys.map((k) => k.id);
+  const windowKeyId = primaryKey?.id ?? accountKeyIds[0];
+  const promptScopeIds = windowKeyId
+    ? [windowKeyId, ...accountKeyIds.filter((id) => id !== windowKeyId)]
+    : accountKeyIds;
+  if (primaryKey && promptLimit > 0 && promptScopeIds.length > 0) {
+    const plCheck = await checkPromptLimit(promptScopeIds, promptLimit, promptLimitWindow);
     promptUsed = plCheck.used;
     const windowMs = parseRateLimitWindow(promptLimitWindow);
-    const resetMs = await getWindowResetMs(primaryKey.id, windowMs);
+    const resetMs = await getWindowResetMs(promptScopeIds, windowMs);
     promptResetMins = Math.ceil(resetMs / 60000);
     promptResetAt = resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null;
   }
 
-  // Per-model prompt usage (same as Discord /usage)
+  // Per-model prompt usage (same as Discord /usage) — account-scoped
   const modelUsageLimits: Array<{
     model: string; used: number; limit: number; window: string; resetAt: string | null;
   }> = [];
-  if (primaryKey && !isTrial) {
+  if (primaryKey && !isTrial && promptScopeIds.length > 0) {
     const todayModels = sanitizeRows((await db.execute(sql`
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
         COUNT(DISTINCT turn_id)::int as requests
       FROM request_logs
-      WHERE api_key_id = ${primaryKey.id}
+      WHERE api_key_id IN (${sql.join(promptScopeIds.map((id) => sql`${id}`), sql`, `)})
         AND created_at >= ${todayStart}
         AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
       GROUP BY 1
@@ -301,7 +307,7 @@ portal.get("/me", async (c) => {
     for (const tm of todayModels) {
       if (!tm.model) continue;
       const mlCheck = await checkModelPromptLimit(
-        primaryKey.id,
+        promptScopeIds,
         tm.model,
         perKeyDefault,
         perKeyWindow,
@@ -310,7 +316,7 @@ portal.get("/me", async (c) => {
       );
       const windowStr = perKeyWindow || globalPerModelWindow;
       const windowMs = parseRateLimitWindow(windowStr);
-      const resetMs = await getWindowResetMs(primaryKey.id, windowMs, tm.model);
+      const resetMs = await getWindowResetMs(promptScopeIds, windowMs, tm.model);
       if (mlCheck.used > 0 || mlCheck.effectiveLimit > 0) {
         modelUsageLimits.push({
           model: tm.model,
@@ -846,6 +852,14 @@ portal.get("/keys", async (c) => {
   const result = [];
   const todayStart = wibTodayStartDate();
 
+  // Primary = Discord/trial-issued key; else oldest non-trial
+  const primary =
+    userKeys.find((k) => !k.isTrial && isProtectedPrimaryApiKey(k)) ||
+    userKeys.find((k) => isProtectedPrimaryApiKey(k)) ||
+    [...userKeys].filter((k) => !k.isTrial).sort((a, b) => Number(a.id) - Number(b.id))[0] ||
+    userKeys[0];
+  const primaryId = primary?.id ?? null;
+
   for (const key of userKeys) {
     const todayPw = and(
       eq(requestLogs.apiKeyId, key.id),
@@ -856,6 +870,7 @@ portal.get("/keys", async (c) => {
       requests: turnCountSql(todayPw!),
     }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${todayStart}`)))[0];
 
+    const isPrimary = key.id === primaryId;
     result.push({
       id: key.id,
       name: key.name,
@@ -864,6 +879,9 @@ portal.get("/keys", async (c) => {
       keyMasked: maskKey(key.key),
       isActive: key.isActive,
       isTrial: key.isTrial || false,
+      isPrimary,
+      canDelete: !isProtectedPrimaryApiKey(key) && !isPrimary,
+      provisionedBy: key.provisionedBy,
       createdAt: key.createdAt,
       requestsToday: todayStats?.requests || 0,
     });
@@ -916,6 +934,37 @@ portal.post("/keys", async (c) => {
   }).returning();
 
   return c.json({ ...result, key: newKey });
+});
+
+portal.delete("/keys/:id", async (c) => {
+  const discordUserId = getPortalDiscordUserId(c)!;
+  const keyId = parseInt(c.req.param("id"));
+
+  const key = (await db.select().from(apiKeys).where(and(eq(apiKeys.id, keyId), eq(apiKeys.discordUserId, discordUserId)))).find(Boolean);
+  if (!key) return c.json({ error: "Key not found" }, 404);
+
+  if (isProtectedPrimaryApiKey(key)) {
+    return c.json({ error: "Cannot delete your primary Discord API key. You can delete additional keys you created." }, 403);
+  }
+
+  // Also block deleting the sole remaining key for this Discord account
+  const siblings = await db.select({ id: apiKeys.id, provisionedBy: apiKeys.provisionedBy, isTrial: apiKeys.isTrial })
+    .from(apiKeys)
+    .where(eq(apiKeys.discordUserId, discordUserId));
+  const hasProtectedPrimary = siblings.some((k) => isProtectedPrimaryApiKey(k));
+  if (!hasProtectedPrimary && siblings.length <= 1) {
+    return c.json({ error: "Cannot delete your only API key." }, 403);
+  }
+
+  await db.delete(devices).where(eq(devices.apiKeyId, keyId));
+  await db.delete(apiKeys).where(eq(apiKeys.id, keyId));
+
+  void fireUserWebhook(discordUserId, "key_deleted", {
+    keyId: key.id,
+    keyName: key.name,
+  });
+
+  return c.json({ success: true });
 });
 
 portal.post("/keys/:id/rotate", async (c) => {

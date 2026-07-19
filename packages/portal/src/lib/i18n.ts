@@ -121,6 +121,16 @@ const dict: Record<string, Record<Lang, string>> = {
   "Key rotated": { id: "Kunci dirotasi", en: "Key rotated" },
   "New key created": { id: "Kunci baru dibuat", en: "New key created" },
   "Confirm rotate": { id: "Konfirmasi rotasi", en: "Confirm rotate" },
+  "Confirm delete": { id: "Konfirmasi hapus", en: "Confirm delete" },
+  "Are you sure you want to delete this API key? This cannot be undone.": {
+    id: "Yakin ingin menghapus API key ini? Tindakan ini tidak bisa dibatalkan.",
+    en: "Are you sure you want to delete this API key? This cannot be undone.",
+  },
+  Delete: { id: "Hapus", en: "Delete" },
+  "Extra keys share the same Discord usage limits — they do not add extra quota.": {
+    id: "Key tambahan memakai limit & usage Discord yang sama — tidak menambah kuota.",
+    en: "Extra keys share the same Discord usage limits — they do not add extra quota.",
+  },
   "Confirm revoke": { id: "Konfirmasi cabut", en: "Confirm revoke" },
   "Model status and usage": { id: "Status dan penggunaan model", en: "Model status and usage" },
   "Last check": { id: "Cek terakhir", en: "Last check" },

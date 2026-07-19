@@ -113,6 +113,26 @@ export default function KeysPage() {
     });
   };
 
+  const doDeleteKey = async (id: number) => {
+    try {
+      await api.keys.delete(id);
+      loadKeys();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete key");
+    }
+  };
+
+  const handleDeleteKey = (key: KeyInfo) => {
+    setConfirmModal({
+      title: t("Confirm delete"),
+      message: t("Are you sure you want to delete this API key? This cannot be undone."),
+      onConfirm: () => {
+        setConfirmModal(null);
+        doDeleteKey(key.id);
+      },
+    });
+  };
+
   const loadDevices = async (keyId: number) => {
     if (expandedKey === keyId) {
       setExpandedKey(null);
@@ -293,6 +313,11 @@ export default function KeysPage() {
                       }`}>
                         {key.isActive ? "Active" : "Inactive"}
                       </span>
+                      {key.isPrimary && (
+                        <span className="px-2 py-0.5 text-xs rounded-full bg-sky-400/10 text-sky-400">
+                          Primary
+                        </span>
+                      )}
                       <span className={`px-2 py-0.5 text-xs rounded-full ${
                         key.isTrial
                           ? "bg-yellow-400/10 text-yellow-400"
@@ -316,6 +341,16 @@ export default function KeysPage() {
                       <RotateCcw className={`w-3.5 h-3.5 ${rotating === key.id ? "animate-spin" : ""}`} />
                       {t("Rotate")}
                     </button>
+                    {key.canDelete && (
+                      <button
+                        onClick={() => handleDeleteKey(key)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-red-400 hover:text-red-300 hover:bg-red-400/10 rounded-lg transition-colors"
+                        title={t("Delete")}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        {t("Delete")}
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -428,6 +463,9 @@ export default function KeysPage() {
                   autoFocus
                   required
                 />
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {t("Extra keys share the same Discord usage limits — they do not add extra quota.")}
+                </p>
               </div>
               <div className="flex gap-3">
                 <button

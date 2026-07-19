@@ -153,6 +153,7 @@ export default function LogsPage() {
   const handleSSEMessage = useCallback((newLog: any) => {
     if (!liveMode) return;
     if (viewMode === "requests") {
+      if (requestPage !== 1) return;
       setRequestData((prev) => [newLog, ...prev].slice(0, 50));
     } else {
       void loadSessions();
@@ -160,7 +161,7 @@ export default function LogsPage() {
         void loadSelectedSessionDetail();
       }
     }
-  }, [liveMode, viewMode, selectedSessionId, loadSessions, loadSelectedSessionDetail]);
+  }, [liveMode, viewMode, requestPage, selectedSessionId, loadSessions, loadSelectedSessionDetail]);
   useRealtimeSSE(handleSSEMessage, 500);
 
   const exportCSV = () => {

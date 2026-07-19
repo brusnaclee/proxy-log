@@ -11,6 +11,7 @@ import { apiKeyCache, statsCache } from "../../utils/cache.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
 import { enrichModelLimitsWithCatalog } from "../../utils/model-limits-enrich.js";
 import { isAuthenticated } from "../../middleware/session.js";
+import { isProtectedPrimaryApiKey } from "../../utils/api-key-primary.js";
 
 const keys = new Hono();
 
@@ -72,6 +73,8 @@ keys.get("/keys", async (c) => {
       discordUserId: key.discordUserId,
       discordUsername: key.discordUsername,
       provisionedBy: key.provisionedBy,
+      isPrimary: isProtectedPrimaryApiKey(key),
+      canDelete: !isProtectedPrimaryApiKey(key),
       isActive: key.isActive, isTrial: key.isTrial || false, maxDevices: key.maxDevices, devicePolicy: key.devicePolicy,
       ipPolicy: key.ipPolicy, idePolicy: key.idePolicy, 
       dailyTokenLimit: key.dailyTokenLimit || 0, monthlyTokenLimit: key.monthlyTokenLimit,
@@ -365,6 +368,8 @@ keys.get("/keys/:id", async (c) => {
     discordUserId: key.discordUserId,
     discordUsername: key.discordUsername,
     provisionedBy: key.provisionedBy,
+    isPrimary: isProtectedPrimaryApiKey(key),
+    canDelete: !isProtectedPrimaryApiKey(key),
     isActive: key.isActive, isTrial: key.isTrial || false, maxDevices: key.maxDevices, devicePolicy: key.devicePolicy,
     ipPolicy: key.ipPolicy, idePolicy: key.idePolicy, 
     dailyTokenLimit: key.dailyTokenLimit || 0, monthlyTokenLimit: key.monthlyTokenLimit,
@@ -437,6 +442,11 @@ keys.delete("/keys/:id", async (c) => {
   const id = parseInt(c.req.param("id"));
   const key = (await db.select().from(apiKeys).where(eq(apiKeys.id, id)))[0];
   if (!key) return c.json({ error: "API key not found" }, 404);
+  if (isProtectedPrimaryApiKey(key)) {
+    return c.json({
+      error: "Cannot delete the primary Discord/trial API key. Delete secondary portal keys only.",
+    }, 403);
+  }
   await db.delete(apiKeys).where(eq(apiKeys.id, id));
   apiKeyCache.clear();
   statsCache.invalidate("keys-list");

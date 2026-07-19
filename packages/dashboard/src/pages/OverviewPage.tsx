@@ -1,10 +1,10 @@
-﻿import { useEffect, useState, useCallback } from "react";
+﻿import { useEffect, useState, useCallback, useRef } from "react";
 import { stats, logs, type OverviewStats, type LogEntry } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatNumber, formatRelativeTime, formatChartPeriod, formatLogUserDisplay } from "@/lib/utils";
-import { Activity, Coins, Key, Monitor, TrendingUp, Download, RefreshCw, DollarSign, Search } from "lucide-react";
+import { Activity, Coins, Key, Monitor, TrendingUp, Download, RefreshCw, DollarSign, Search, ChevronLeft, ChevronRight } from "lucide-react";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer,
@@ -44,12 +44,20 @@ const TOOLTIP_STYLE = {
 const ITEM_STYLE  = { color: "hsl(var(--foreground))" };
 const LABEL_STYLE = { color: "hsl(var(--foreground))" };
 
+/** Recent Requests: 10 rows/page, max 10 pages (lazy — only fetch current page). */
+const RECENT_PAGE_SIZE = 10;
+const RECENT_MAX_PAGES = 10;
+
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function OverviewPage() {
   const [overview, setOverview]         = useState<OverviewStats | null>(null);
   const [timeseries, setTimeseries]     = useState<any[]>([]);
   const [modelStats, setModelStats]     = useState<any[]>([]);
   const [recentLogs, setRecentLogs]     = useState<LogEntry[]>([]);
+  const [recentPage, setRecentPage]     = useState(1);
+  const [recentTotalPages, setRecentTotalPages] = useState(1);
+  const [recentLoading, setRecentLoading] = useState(false);
+  const recentPageRef = useRef(1);
   const [period, setPeriod]             = useState<LocalPeriodKey>("today");
   const [chartPeriod, setChartPeriod]   = useState<LocalPeriodKey>("7d"); // for charts only
   const [modelChartDays, setModelChartDays] = useState(7);
@@ -93,25 +101,50 @@ export default function OverviewPage() {
     try {
       const tsdays = CHART_DAYS[chartPeriod];
       const tsperiod = tsdays <= 1 ? "hourly" : "daily";
-      const [ov, ts, ms, lg] = await Promise.all([
+      const [ov, ts, ms] = await Promise.all([
         stats.overview(),
         stats.timeseries(tsperiod, tsdays),
         stats.byModel(modelChartDays),
-        logs.list({ limit: "20" }),
       ]);
       setOverview(ov);
       setTimeseries(ts);
       setModelStats(ms);
-      setRecentLogs(lg.data);
     } catch {}
   }, [chartPeriod, modelChartDays]);
 
+  const loadRecentLogs = useCallback(async (page: number) => {
+    const safePage = Math.max(1, Math.min(page, RECENT_MAX_PAGES));
+    setRecentLoading(true);
+    try {
+      const lg = await logs.list({
+        page: String(safePage),
+        limit: String(RECENT_PAGE_SIZE),
+      });
+      setRecentLogs(Array.isArray(lg?.data) ? lg.data : []);
+      const apiPages = Math.max(1, Number(lg?.pagination?.totalPages) || 1);
+      setRecentTotalPages(Math.min(apiPages, RECENT_MAX_PAGES));
+      setRecentPage(safePage);
+      recentPageRef.current = safePage;
+    } catch {
+      // keep previous rows if refresh fails
+    } finally {
+      setRecentLoading(false);
+    }
+  }, []);
+
   useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => { void loadRecentLogs(1); }, [loadRecentLogs]);
 
   const handleSSEMessage = useCallback((data: any) => {
-    setRecentLogs((prev) => [data, ...prev].slice(0, 20));
-    void loadData();
-  }, [loadData]);
+    // Live prepend only on page 1 so other pages stay stable
+    if (recentPageRef.current === 1) {
+      setRecentLogs((prev) => {
+        const id = data?.id;
+        const withoutDup = id != null ? prev.filter((r) => r.id !== id) : prev;
+        return [data, ...withoutDup].slice(0, RECENT_PAGE_SIZE);
+      });
+    }
+  }, []);
   useRealtimeSSE(handleSSEMessage, 800);
 
   // Re-fetch timeseries on chart period change
@@ -425,12 +458,24 @@ export default function OverviewPage() {
       {/* Recent Requests */}
       <Card className="border-border/50">
         <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3">
             <CardTitle className="text-base font-medium">Recent Requests</CardTitle>
-            <Badge variant="secondary" className="gap-1">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              Live
-            </Badge>
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary" className="gap-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Live
+              </Badge>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs"
+                disabled={recentLoading}
+                onClick={() => void loadRecentLogs(recentPage)}
+              >
+                <RefreshCw className={`h-3 w-3 mr-1 ${recentLoading ? "animate-spin" : ""}`} />
+                Refresh
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -486,13 +531,43 @@ export default function OverviewPage() {
                 {recentLogs.length === 0 && (
                   <tr>
                     <td colSpan={7} className="text-center py-8 text-muted-foreground">
-                      No requests yet. Send a request through the proxy to see it here.
+                      {recentLoading
+                        ? "Loading recent requests..."
+                        : "No requests in the last 7 days."}
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
+          {recentTotalPages > 1 && (
+            <div className="flex items-center justify-between pt-3 mt-1 border-t border-border/50">
+              <p className="text-xs text-muted-foreground">
+                Page {recentPage} of {recentTotalPages}
+                {recentTotalPages >= RECENT_MAX_PAGES ? " (max 10 pages)" : ""}
+              </p>
+              <div className="flex gap-1">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8"
+                  disabled={recentLoading || recentPage <= 1}
+                  onClick={() => void loadRecentLogs(recentPage - 1)}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8"
+                  disabled={recentLoading || recentPage >= recentTotalPages}
+                  onClick={() => void loadRecentLogs(recentPage + 1)}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

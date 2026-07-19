@@ -96,6 +96,11 @@ export interface RecapStats {
   devices: {
     uniqueCount: number;
   };
+  keys: {
+    count: number;
+    favorite: string | null;
+    top: Array<{ name: string; requests: number; tokens: number; sharePercent: number }>;
+  };
   tools: {
     totalToolCalls: number;
     toolTurnPercent: number;
@@ -156,6 +161,22 @@ const WEEKDAY_ID = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabt
 
 const VALID = sql`status_code BETWEEN 200 AND 299`;
 
+/** Match one or many api_key_id values (Discord multi-key accounts share recap). */
+function keyScopeSql(keyIds: number[]) {
+  const ids = keyIds.length ? keyIds : [0];
+  if (ids.length === 1) return sql`api_key_id = ${ids[0]}`;
+  return sql`api_key_id IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`;
+}
+
+async function resolveRecapKeyIds(keyId: number): Promise<number[]> {
+  const row = (await db.execute(sql`SELECT discord_user_id FROM api_keys WHERE id = ${keyId}`)).rows[0] as any;
+  const discordUserId = row?.discord_user_id ? String(row.discord_user_id) : null;
+  if (!discordUserId) return [keyId];
+  const rows = (await db.execute(sql`SELECT id FROM api_keys WHERE discord_user_id = ${discordUserId}`)).rows as any[];
+  const ids = rows.map((r) => num(r.id)).filter((id) => id > 0);
+  return ids.length ? ids : [keyId];
+}
+
 /** Compute longest consecutive-day streak from a sorted set of YYYY-MM-DD strings. */
 function longestStreak(days: string[]): number {
   if (days.length === 0) return 0;
@@ -179,7 +200,7 @@ function longestStreak(days: string[]): number {
  * Per-turn aggregated totals for one api key in a month (multiplier-aware).
  * Mirrors counting.ts turn-based logic but inlined to also extract latency/tools.
  */
-async function fetchTotals(keyId: number, start: Date, end: Date) {
+async function fetchTotals(keyIds: number[], start: Date, end: Date) {
   const { input, output } = getTokenMultipliers();
   const row = (await db.execute(sql`
     SELECT
@@ -193,7 +214,7 @@ async function fetchTotals(keyId: number, start: Date, end: Date) {
         SUM(completion_tokens) AS sum_c,
         SUM(estimated_cost) AS est
       FROM request_logs
-      WHERE api_key_id = ${keyId} AND created_at >= ${start} AND created_at < ${end}
+      WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
         AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
       GROUP BY turn_id
     ) t
@@ -215,7 +236,7 @@ async function fetchTotals(keyId: number, start: Date, end: Date) {
 }
 
 /** Per-model breakdown with latency (auto normalized to base model). */
-async function fetchModels(keyId: number, start: Date, end: Date): Promise<ModelStat[]> {
+async function fetchModels(keyIds: number[], start: Date, end: Date): Promise<ModelStat[]> {
   const { input, output } = getTokenMultipliers();
   const rows = (await db.execute(sql`
     SELECT model,
@@ -227,7 +248,7 @@ async function fetchModels(keyId: number, start: Date, end: Date): Promise<Model
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END AS model,
         turn_id, context_delta_tokens, completion_tokens, latency_ms
       FROM request_logs
-      WHERE api_key_id = ${keyId} AND created_at >= ${start} AND created_at < ${end}
+      WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
         AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
     ) m
     GROUP BY model
@@ -244,12 +265,12 @@ async function fetchModels(keyId: number, start: Date, end: Date): Promise<Model
 }
 
 /** Per-day and per-hour estimated_cost (micro-dollars) buckets (WIB). */
-async function fetchCostBuckets(keyId: number, start: Date, end: Date): Promise<{ day: { day: string; micro: number } | null; hour: { hour: number; micro: number } | null }> {
+async function fetchCostBuckets(keyIds: number[], start: Date, end: Date): Promise<{ day: { day: string; micro: number } | null; hour: { hour: number; micro: number } | null }> {
   const dayRows = (await db.execute(sql`
     SELECT to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') AS day,
       COALESCE(SUM(estimated_cost), 0) AS micro
     FROM request_logs
-    WHERE api_key_id = ${keyId} AND created_at >= ${start} AND created_at < ${end}
+    WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
       AND status_code BETWEEN 200 AND 299
     GROUP BY day ORDER BY micro DESC LIMIT 1
   `)).rows as any[];
@@ -257,7 +278,7 @@ async function fetchCostBuckets(keyId: number, start: Date, end: Date): Promise<
     SELECT CAST(to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'HH24') AS INTEGER) AS hour,
       COALESCE(SUM(estimated_cost), 0) AS micro
     FROM request_logs
-    WHERE api_key_id = ${keyId} AND created_at >= ${start} AND created_at < ${end}
+    WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
       AND status_code BETWEEN 200 AND 299
     GROUP BY hour ORDER BY micro DESC LIMIT 1
   `)).rows as any[];
@@ -297,7 +318,7 @@ function buildCost(models: ModelStat[], buckets: { day: any; hour: any }): Recap
 }
 
 /** Per-day (WIB) request + token buckets. */
-async function fetchPerDay(keyId: number, start: Date, end: Date): Promise<DayStat[]> {
+async function fetchPerDay(keyIds: number[], start: Date, end: Date): Promise<DayStat[]> {
   const { input, output } = getTokenMultipliers();
   const rows = (await db.execute(sql`
     SELECT day,
@@ -308,7 +329,7 @@ async function fetchPerDay(keyId: number, start: Date, end: Date): Promise<DaySt
       SELECT to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') AS day,
         turn_id, context_delta_tokens, completion_tokens
       FROM request_logs
-      WHERE api_key_id = ${keyId} AND created_at >= ${start} AND created_at < ${end}
+      WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
         AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
     ) d
     GROUP BY day
@@ -323,7 +344,7 @@ async function fetchPerDay(keyId: number, start: Date, end: Date): Promise<DaySt
 }
 
 /** Per-hour-of-day (WIB) request + output token buckets. */
-async function fetchPerHour(keyId: number, start: Date, end: Date): Promise<HourStat[]> {
+async function fetchPerHour(keyIds: number[], start: Date, end: Date): Promise<HourStat[]> {
   const { output } = getTokenMultipliers();
   const rows = (await db.execute(sql`
     SELECT hour,
@@ -333,7 +354,7 @@ async function fetchPerHour(keyId: number, start: Date, end: Date): Promise<Hour
       SELECT CAST(to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'HH24') AS INTEGER) AS hour,
         turn_id, completion_tokens
       FROM request_logs
-      WHERE api_key_id = ${keyId} AND created_at >= ${start} AND created_at < ${end}
+      WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
         AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
     ) h
     GROUP BY hour
@@ -348,17 +369,17 @@ async function fetchPerHour(keyId: number, start: Date, end: Date): Promise<Hour
 }
 
 /** Aux per-request stats: sessions, ide, devices, tools, latency, errors, weekday split. */
-async function fetchAux(keyId: number, start: Date, end: Date) {
+async function fetchAux(keyIds: number[], start: Date, end: Date) {
   const sessionRow = (await db.execute(sql`
     SELECT COUNT(*) AS cnt, COALESCE(MAX(request_count), 0) AS longest, COALESCE(SUM(request_count), 0) AS total_req
     FROM chat_sessions
-    WHERE api_key_id = ${keyId} AND first_seen_at >= ${start} AND first_seen_at < ${end}
+    WHERE ${keyScopeSql(keyIds)} AND first_seen_at >= ${start} AND first_seen_at < ${end}
   `)).rows[0] as any;
 
   const ideRows = (await db.execute(sql`
     SELECT COALESCE(NULLIF(ide_detected, ''), 'unknown') AS ide, COUNT(DISTINCT turn_id) AS requests
     FROM request_logs
-    WHERE api_key_id = ${keyId} AND created_at >= ${start} AND created_at < ${end}
+    WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
       AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
     GROUP BY COALESCE(NULLIF(ide_detected, ''), 'unknown')
     ORDER BY requests DESC
@@ -367,7 +388,7 @@ async function fetchAux(keyId: number, start: Date, end: Date) {
   const deviceRow = (await db.execute(sql`
     SELECT COUNT(DISTINCT device_fingerprint) AS cnt
     FROM request_logs
-    WHERE api_key_id = ${keyId} AND created_at >= ${start} AND created_at < ${end}
+    WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
       AND status_code BETWEEN 200 AND 299 AND device_fingerprint IS NOT NULL
   `)).rows[0] as any;
 
@@ -377,7 +398,7 @@ async function fetchAux(keyId: number, start: Date, end: Date) {
       COUNT(DISTINCT turn_id) AS total_turns,
       COUNT(DISTINCT CASE WHEN has_tool_calls = true THEN turn_id END) AS tool_turns
     FROM request_logs
-    WHERE api_key_id = ${keyId} AND created_at >= ${start} AND created_at < ${end}
+    WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
       AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
   `)).rows[0] as any;
 
@@ -386,7 +407,7 @@ async function fetchAux(keyId: number, start: Date, end: Date) {
       COALESCE(MIN(NULLIF(latency_ms,0)),0) AS min_ms,
       COALESCE(MAX(latency_ms),0) AS max_ms
     FROM request_logs
-    WHERE api_key_id = ${keyId} AND created_at >= ${start} AND created_at < ${end}
+    WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
       AND status_code BETWEEN 200 AND 299
   `)).rows[0] as any;
 
@@ -395,7 +416,7 @@ async function fetchAux(keyId: number, start: Date, end: Date) {
       COUNT(*) AS total,
       COUNT(CASE WHEN status_code < 200 OR status_code > 299 THEN 1 END) AS errors
     FROM request_logs
-    WHERE api_key_id = ${keyId} AND created_at >= ${start} AND created_at < ${end}
+    WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
   `)).rows[0] as any;
 
   const weekdayRows = (await db.execute(sql`
@@ -403,7 +424,7 @@ async function fetchAux(keyId: number, start: Date, end: Date) {
     FROM (
       SELECT CAST(to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'D') AS INTEGER) AS dow, turn_id
       FROM request_logs
-      WHERE api_key_id = ${keyId} AND created_at >= ${start} AND created_at < ${end}
+      WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
         AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
     ) w
     GROUP BY dow
@@ -475,20 +496,71 @@ function deriveActivity(perDay: DayStat[], perHour: HourStat[], aux: Awaited<Ret
   };
 }
 
+/** Per-key usage breakdown for multi-key Discord accounts. */
+async function fetchKeyBreakdown(keyIds: number[], start: Date, end: Date): Promise<RecapStats["keys"]> {
+  if (keyIds.length === 0) {
+    return { count: 0, favorite: null, top: [] };
+  }
+  const { input, output } = getTokenMultipliers();
+  const rows = (await db.execute(sql`
+    SELECT k.id AS key_id,
+      COALESCE(NULLIF(k.name, ''), 'key-' || k.id::text) AS name,
+      COALESCE(SUM(t.turn_present), 0) AS requests,
+      COALESCE(SUM(t.sum_delta) * ${input} + SUM(t.sum_c) * ${output}, 0) AS tokens
+    FROM api_keys k
+    LEFT JOIN (
+      SELECT api_key_id, turn_id,
+        1 AS turn_present,
+        SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) AS sum_delta,
+        SUM(completion_tokens) AS sum_c
+      FROM request_logs
+      WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
+        AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+      GROUP BY api_key_id, turn_id
+    ) t ON t.api_key_id = k.id
+    WHERE k.id IN (${sql.join(keyIds.map((id) => sql`${id}`), sql`, `)})
+    GROUP BY k.id, k.name
+    ORDER BY requests DESC, tokens DESC
+  `)).rows as any[];
+
+  const topRaw = rows.map((r) => ({
+    name: String(r.name || "unknown"),
+    requests: num(r.requests),
+    tokens: Math.round(num(r.tokens)),
+  }));
+  const totalReq = topRaw.reduce((s, r) => s + r.requests, 0) || 1;
+  const top = topRaw
+    .filter((r) => r.requests > 0 || keyIds.length <= 3)
+    .slice(0, 5)
+    .map((r) => ({
+      ...r,
+      sharePercent: Math.round((r.requests / totalReq) * 100),
+    }));
+
+  return {
+    count: keyIds.length,
+    favorite: top.find((t) => t.requests > 0)?.name || top[0]?.name || null,
+    top,
+  };
+}
+
 /**
  * Build the complete recap stats object for one api key + target month.
  * Aggregate-only; no conversation content read.
+ * Usage is merged across all API keys on the same Discord account.
  */
 export async function getRecapStats(keyId: number, yearMonth: string): Promise<RecapStats> {
   const { start, end } = getMonthRangeUtc(yearMonth);
+  const keyIds = await resolveRecapKeyIds(keyId);
 
-  const [totals, models, perDay, perHour, aux, costBuckets] = await Promise.all([
-    fetchTotals(keyId, start, end),
-    fetchModels(keyId, start, end),
-    fetchPerDay(keyId, start, end),
-    fetchPerHour(keyId, start, end),
-    fetchAux(keyId, start, end),
-    fetchCostBuckets(keyId, start, end),
+  const [totals, models, perDay, perHour, aux, costBuckets, keyBreakdown] = await Promise.all([
+    fetchTotals(keyIds, start, end),
+    fetchModels(keyIds, start, end),
+    fetchPerDay(keyIds, start, end),
+    fetchPerHour(keyIds, start, end),
+    fetchAux(keyIds, start, end),
+    fetchCostBuckets(keyIds, start, end),
+    fetchKeyBreakdown(keyIds, start, end),
   ]);
 
   const hasData = totals.requests > 0;
@@ -525,6 +597,7 @@ export async function getRecapStats(keyId: number, yearMonth: string): Promise<R
       leastUsed: ideSorted.length > 1 ? ideSorted[ideSorted.length - 1] : null,
     },
     devices: { uniqueCount: aux.deviceCount },
+    keys: keyBreakdown,
     tools: aux.tools,
     latency: aux.latency,
     cost: buildCost(models, costBuckets),
@@ -546,8 +619,8 @@ export interface LeaderboardEntry {
 }
 
 /**
- * Compute the global per-key leaderboard for a month (multiplier-aware),
- * ordered separately by requests and tokens. Returns full ranked lists.
+ * Compute the global leaderboard for a month (multiplier-aware),
+ * aggregated by Discord account (multi-key usage merged).
  */
 export async function getMonthLeaderboard(yearMonth: string): Promise<{
   byRequests: LeaderboardEntry[];
@@ -557,10 +630,11 @@ export async function getMonthLeaderboard(yearMonth: string): Promise<{
   const { input, output } = getTokenMultipliers();
 
   const rows = (await db.execute(sql`
-    SELECT t.api_key_id AS api_key_id,
+    SELECT
+      MIN(t.api_key_id) AS api_key_id,
       k.discord_user_id AS discord_user_id,
-      k.discord_username AS discord_username,
-      k.name AS api_key_name,
+      MAX(k.discord_username) AS discord_username,
+      MAX(k.name) AS api_key_name,
       COALESCE(SUM(t.turn_present), 0) AS requests,
       COALESCE(SUM(t.sum_delta) * ${input} + SUM(t.sum_c) * ${output}, 0) AS tokens,
       COALESCE(SUM(t.sum_delta) * ${input}, 0) AS input_tokens,
@@ -576,7 +650,7 @@ export async function getMonthLeaderboard(yearMonth: string): Promise<{
       GROUP BY api_key_id, turn_id
     ) t
     LEFT JOIN api_keys k ON k.id = t.api_key_id
-    GROUP BY t.api_key_id, k.discord_user_id, k.discord_username, k.name
+    GROUP BY COALESCE(k.discord_user_id, t.api_key_id::text), k.discord_user_id
   `)).rows as any[];
 
   const entries: LeaderboardEntry[] = rows.map((r) => ({
@@ -596,8 +670,11 @@ export async function getMonthLeaderboard(yearMonth: string): Promise<{
 }
 
 /** Find a key's 1-based rank in a sorted list (0 if not present / no usage). */
-export function findRank(list: LeaderboardEntry[], keyId: number): number {
-  const idx = list.findIndex((e) => e.apiKeyId === keyId && (e.requests > 0 || e.tokens > 0));
+export function findRank(list: LeaderboardEntry[], keyId: number, accountKeyIds?: number[]): number {
+  const ids = new Set(accountKeyIds?.length ? accountKeyIds : [keyId]);
+  const idx = list.findIndex(
+    (e) => e.apiKeyId != null && ids.has(e.apiKeyId) && (e.requests > 0 || e.tokens > 0),
+  );
   return idx >= 0 ? idx + 1 : 0;
 }
 
@@ -623,13 +700,13 @@ export interface RaceTimelapse {
 }
 
 /** Per-day cumulative request counts for a single key across the month (WIB). */
-async function fetchPerDayRequests(keyId: number, start: Date, end: Date): Promise<Map<string, number>> {
+async function fetchPerDayRequests(keyIds: number[], start: Date, end: Date): Promise<Map<string, number>> {
   const rows = (await db.execute(sql`
     SELECT day, COUNT(DISTINCT turn_id) AS requests
     FROM (
       SELECT to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') AS day, turn_id
       FROM request_logs
-      WHERE api_key_id = ${keyId} AND created_at >= ${start} AND created_at < ${end}
+      WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
         AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
     ) d GROUP BY day
   `)).rows as any[];
@@ -639,7 +716,7 @@ async function fetchPerDayRequests(keyId: number, start: Date, end: Date): Promi
 }
 
 /** Per-day total token counts (multiplier-aware) for one key (WIB). */
-async function fetchPerDayTokens(keyId: number, start: Date, end: Date): Promise<Map<string, number>> {
+async function fetchPerDayTokens(keyIds: number[], start: Date, end: Date): Promise<Map<string, number>> {
   const { input, output } = getTokenMultipliers();
   const rows = (await db.execute(sql`
     SELECT day,
@@ -649,7 +726,7 @@ async function fetchPerDayTokens(keyId: number, start: Date, end: Date): Promise
       SELECT to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') AS day,
         context_delta_tokens, completion_tokens
       FROM request_logs
-      WHERE api_key_id = ${keyId} AND created_at >= ${start} AND created_at < ${end}
+      WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
         AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
     ) d GROUP BY day
   `)).rows as any[];
@@ -695,11 +772,11 @@ export async function getRaceTimelapse(
       console.warn(`[recap-race] ${metric}: only ${active.length} active participants — section will be skipped`);
       return null;
     }
-    let myIdx = active.findIndex((e) => e.apiKeyId === keyId);
+    let myIdx = active.findIndex((e) => e.apiKeyId != null && accountSet.has(e.apiKeyId));
     if (myIdx < 0) {
       // Viewer not in the leaderboard for this metric but has usage — inject a
       // synthetic entry so they still see their own trajectory.
-      const ownEntry = list.find((e) => e.apiKeyId === keyId);
+      const ownEntry = list.find((e) => e.apiKeyId != null && accountSet.has(e.apiKeyId));
       if (!ownEntry || (metric === "requests" ? ownEntry.requests : ownEntry.tokens) <= 0) return null;
       console.warn(`[recap-race] ${metric}: viewer not in leaderboard — injecting synthetic entry`);
       const synthetic: LeaderboardEntry = {
@@ -726,7 +803,7 @@ export async function getRaceTimelapse(
         name: e.discordUsername || null,
         avatar: null,
         rank: active.indexOf(e) + 1,
-        isMe: e.apiKeyId === keyId,
+        isMe: e.apiKeyId != null && accountSet.has(e.apiKeyId),
         cumulative,
       });
     }
@@ -814,6 +891,12 @@ function buildExtras(stats: RecapStats, leaderboard: { byRequests: LeaderboardEn
   if (a.mostActiveDay) facts.push(`Rekor sehari: ${a.mostActiveDay.requests} request tanggal ${a.mostActiveDay.day}.`);
   if (a.mostActiveHour) facts.push(`Jam ${a.mostActiveHour.hour}:00 WIB adalah "prime time" ngoding kamu.`);
   if (stats.models.uniqueCount > 1) facts.push(`Kamu nyobain ${stats.models.uniqueCount} model berbeda.`);
+  if (stats.keys?.count > 1) {
+    facts.push(`Kamu punya ${stats.keys.count} API key — usage-nya digabung jadi satu akun.`);
+    if (stats.keys.favorite) {
+      facts.push(`Paling sering lewat key "${stats.keys.favorite}"${stats.keys.top[0]?.sharePercent ? ` (~${stats.keys.top[0].sharePercent}% request)` : ""}.`);
+    }
+  }
 
   // Community percentiles (how the user ranks among active participants).
   let community: { tokenPercentile: number; requestPercentile: number } | null = null;
@@ -859,13 +942,14 @@ export async function enrichRankAndComparison(
   leaderboard: { byRequests: LeaderboardEntry[]; byTokens: LeaderboardEntry[] },
   prevYearMonth: string,
 ): Promise<RecapStats> {
-  stats.rank.requests = findRank(leaderboard.byRequests, keyId);
-  stats.rank.tokens = findRank(leaderboard.byTokens, keyId);
+  const keyIds = await resolveRecapKeyIds(keyId);
+  stats.rank.requests = findRank(leaderboard.byRequests, keyId, keyIds);
+  stats.rank.tokens = findRank(leaderboard.byTokens, keyId, keyIds);
   stats.rank.totalParticipants = leaderboard.byRequests.filter((e) => e.requests > 0).length;
   stats.population = computePopulation(leaderboard);
 
   try {
-    const prev = await fetchTotals(keyId, getMonthRangeUtc(prevYearMonth).start, getMonthRangeUtc(prevYearMonth).end);
+    const prev = await fetchTotals(keyIds, getMonthRangeUtc(prevYearMonth).start, getMonthRangeUtc(prevYearMonth).end);
     if (prev.requests > 0) {
       stats.comparison.hasPrev = true;
       stats.comparison.requestsDeltaPercent = Math.round(((stats.totals.requests - prev.requests) / prev.requests) * 100);

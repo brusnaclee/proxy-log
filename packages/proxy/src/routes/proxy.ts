@@ -103,6 +103,10 @@ import {
 	normalizeModelForLimit,
 } from '../utils/rate-limit.js';
 import {
+	accountApiKeyCondition,
+	resolveAccountKeyScope,
+} from '../utils/api-key-account.js';
+import {
 	detectOperatingSystem,
 	extractContextInfo,
 	extractToolNamesFromPayload,
@@ -1320,7 +1324,20 @@ proxy.all('/*', async (c) => {
 		);
 	}
 
-	// ΓöÇΓöÇΓöÇ 3. Device Fingerprinting & IDE Detection ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+	// Multi-key Discord accounts share one limit/usage pool (extra keys ≠ extra quota).
+	const { keyIds: accountKeyIds, windowKeyId } = await resolveAccountKeyScope(keyRecord);
+	if (windowKeyId !== keyRecord.id) {
+		const windowOwner = await db
+			.select({ promptWindowStart: apiKeys.promptWindowStart })
+			.from(apiKeys)
+			.where(eq(apiKeys.id, windowKeyId))
+			.then((r) => r[0]);
+		if (windowOwner?.promptWindowStart) {
+			keyRecord = { ...keyRecord, promptWindowStart: windowOwner.promptWindowStart };
+		}
+	}
+	const accountKeyFilter = accountApiKeyCondition(accountKeyIds);
+
 	const userAgent = c.req.header('User-Agent') || '';
 	const platformHintRaw = c.req.header('sec-ch-ua-platform') || '';
 	const deviceName =
@@ -2000,13 +2017,13 @@ proxy.all('/*', async (c) => {
 
 		if (effectivePromptLimit > 0) {
 			const plCheck = await checkPromptLimit(
-				keyRecord.id,
+				accountKeyIds,
 				effectivePromptLimit,
 				effectivePromptLimitWindow,
 			);
 			if (!plCheck.allowed) {
 				const windowMs = parseRateLimitWindow(effectivePromptLimitWindow);
-				const resetMs = await getWindowResetMs(keyRecord.id, windowMs);
+				const resetMs = await getWindowResetMs(accountKeyIds, windowMs);
 				const resetMins = Math.ceil(resetMs / 60000);
 				const isKeyOverride = (keyRecord.promptLimit || 0) > 0;
 				const trialTag = keyRecord.isTrial ? ' (trial)' : '';
@@ -2177,7 +2194,7 @@ proxy.all('/*', async (c) => {
 			// If exceeded, skip to next candidate model.
 			{
 				const mlCheck = await checkModelPromptLimit(
-					keyRecord.id,
+					accountKeyIds,
 					candidate.modelId,
 					keyRecord.perModelPromptLimit || 0,
 					keyRecord.perModelPromptLimitWindow || null,
@@ -2205,9 +2222,9 @@ proxy.all('/*', async (c) => {
 					mw.setUTCHours(0, 0, 0, 0);
 					const ms = new Date(mw.getTime() - wibOffset);
 					const mu = await db.select({ total: turnTotalTokensSql(
-						and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms}`, BILLABLE_LOG_SQL),
+						and(accountKeyFilter, sql`created_at >= ${ms}`, BILLABLE_LOG_SQL),
 						tokenCountOpts(keyRecord),
-					) }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ms}`, BILLABLE_LOG_SQL)).then((r: any[]) => r[0]);
+					) }).from(requestLogs).where(and(accountKeyFilter, sql`created_at >= ${ms}`, BILLABLE_LOG_SQL)).then((r: any[]) => r[0]);
 					if (mu && mu.total >= keyRecord.monthlyTokenLimit) {
 						tried.push(`${candidate.provider}/${candidate.modelId} (monthly token limit)`);
 						continue;
@@ -2221,9 +2238,9 @@ proxy.all('/*', async (c) => {
 					dw.setUTCHours(0, 0, 0, 0);
 					const ds = new Date(dw.getTime() - wibOffset);
 					const du = await db.select({ total: turnTotalTokensSql(
-						and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL),
+						and(accountKeyFilter, sql`created_at >= ${ds}`, BILLABLE_LOG_SQL),
 						tokenCountOpts(keyRecord),
-					) }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).then((r: any[]) => r[0]);
+					) }).from(requestLogs).where(and(accountKeyFilter, sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).then((r: any[]) => r[0]);
 					if (du && du.total >= globalDailyTokenLimit) {
 						tried.push(`${candidate.provider}/${candidate.modelId} (daily token limit)`);
 						continue;
@@ -2237,9 +2254,9 @@ proxy.all('/*', async (c) => {
 					dw.setUTCHours(0, 0, 0, 0);
 					const ds = new Date(dw.getTime() - wibOffset);
 					const di = await db.select({ total: turnPromptTokensSql(
-						and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL),
+						and(accountKeyFilter, sql`created_at >= ${ds}`, BILLABLE_LOG_SQL),
 						tokenCountOpts(keyRecord),
-					) }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).then((r: any[]) => r[0]);
+					) }).from(requestLogs).where(and(accountKeyFilter, sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).then((r: any[]) => r[0]);
 					if (di && di.total >= dailyInputLimit) {
 						tried.push(`${candidate.provider}/${candidate.modelId} (daily input token limit)`);
 						continue;
@@ -2253,9 +2270,9 @@ proxy.all('/*', async (c) => {
 					dw.setUTCHours(0, 0, 0, 0);
 					const ds = new Date(dw.getTime() - wibOffset);
 					const do_ = await db.select({ total: turnCompletionTokensSql(
-						and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL),
+						and(accountKeyFilter, sql`created_at >= ${ds}`, BILLABLE_LOG_SQL),
 						tokenCountOpts(keyRecord),
-					) }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, keyRecord.id), sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).then((r: any[]) => r[0]);
+					) }).from(requestLogs).where(and(accountKeyFilter, sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).then((r: any[]) => r[0]);
 					if (do_ && do_.total >= dailyOutputLimit) {
 						tried.push(`${candidate.provider}/${candidate.modelId} (daily output token limit)`);
 						continue;
@@ -2533,7 +2550,7 @@ proxy.all('/*', async (c) => {
 										const autoNowMs = Date.now();
 										const autoNowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
 										if (!autoGlobalWindowStartMs || autoNowMs >= autoGlobalWindowStartMs + autoGlobalWindowMs) {
-											await tx.update(apiKeys).set({ promptWindowStart: autoNowStr }).where(eq(apiKeys.id, keyRecord.id));
+											await tx.update(apiKeys).set({ promptWindowStart: autoNowStr }).where(inArray(apiKeys.id, accountKeyIds));
 										}
 										// Per-model window start — use pattern-aware helper so substring
 										// overrides like "claude" also match the candidate model.
@@ -2693,7 +2710,7 @@ proxy.all('/*', async (c) => {
 						const autoNowMs2 = Date.now();
 						const autoNowStr2 = new Date().toISOString().replace('T', ' ').substring(0, 19);
 						if (!autoGlobalWindowStartMs || autoNowMs2 >= autoGlobalWindowStartMs + autoGlobalWindowMs) {
-							await tx.update(apiKeys).set({ promptWindowStart: autoNowStr2 }).where(eq(apiKeys.id, keyRecord.id));
+							await tx.update(apiKeys).set({ promptWindowStart: autoNowStr2 }).where(inArray(apiKeys.id, accountKeyIds));
 						}
 						// Per-model window start — pattern-aware
 						const autoActiveOverride2 = await findActiveOverrideInTx(tx, keyRecord.id, candidate.modelId);
@@ -3008,7 +3025,7 @@ proxy.all('/*', async (c) => {
 	// Trial keys use global prompt limit only — skip per-model global overrides.
 	if (!keyRecord.isTrial) {
 		const mlCheck = await checkModelPromptLimit(
-			keyRecord.id,
+			accountKeyIds,
 			model,
 			keyRecord.perModelPromptLimit || 0,
 			keyRecord.perModelPromptLimitWindow || null,
@@ -3021,7 +3038,7 @@ proxy.all('/*', async (c) => {
 				config.globalPerModelPromptLimitWindow ||
 				'30m';
 			const windowMs = parseRateLimitWindow(windowStr);
-			const resetMs = await getWindowResetMs(keyRecord.id, windowMs, model);
+			const resetMs = await getWindowResetMs(accountKeyIds, windowMs, model);
 			const resetMins = Math.ceil(resetMs / 60000);
 			const globalLimit =
 				(keyRecord.promptLimit && keyRecord.promptLimit > 0
@@ -3031,7 +3048,7 @@ proxy.all('/*', async (c) => {
 				keyRecord.promptLimitWindow || config.globalPromptLimitWindow || '30m';
 			const globalCheck =
 				globalLimit > 0
-					? await checkPromptLimit(keyRecord.id, globalLimit, globalWindow)
+					? await checkPromptLimit(accountKeyIds, globalLimit, globalWindow)
 					: null;
 			const globalRemaining = globalCheck ? globalCheck.remaining : -1;
 			const isKeyOverride = (keyRecord.perModelPromptLimit || 0) > 0;
@@ -3069,13 +3086,13 @@ proxy.all('/*', async (c) => {
 
 		if (effectivePromptLimit > 0) {
 			const plCheck = await checkPromptLimit(
-				keyRecord.id,
+				accountKeyIds,
 				effectivePromptLimit,
 				effectivePromptLimitWindow,
 			);
 			if (!plCheck.allowed) {
 				const windowMs = parseRateLimitWindow(effectivePromptLimitWindow);
-				const resetMs = await getWindowResetMs(keyRecord.id, windowMs);
+				const resetMs = await getWindowResetMs(accountKeyIds, windowMs);
 				const resetMins = Math.ceil(resetMs / 60000);
 				const isKeyOverride = (keyRecord.promptLimit || 0) > 0;
 				const trialTag = keyRecord.isTrial ? ' (trial)' : '';
@@ -3117,7 +3134,7 @@ proxy.all('/*', async (c) => {
 			mw.setUTCHours(0, 0, 0, 0);
 			const ms = new Date(mw.getTime() - wibOffset);
 			const whereClause = and(
-				eq(requestLogs.apiKeyId, keyRecord.id),
+				accountKeyFilter,
 				sql`created_at >= ${ms}`,
 				BILLABLE_LOG_SQL,
 			);
@@ -3146,7 +3163,7 @@ proxy.all('/*', async (c) => {
 			dw.setUTCHours(0, 0, 0, 0);
 			const ds = new Date(dw.getTime() - wibOffset);
 			const whereClause = and(
-				eq(requestLogs.apiKeyId, keyRecord.id),
+				accountKeyFilter,
 				sql`created_at >= ${ds}`,
 				BILLABLE_LOG_SQL,
 			);
@@ -3182,7 +3199,7 @@ proxy.all('/*', async (c) => {
 			dw.setUTCHours(0, 0, 0, 0);
 			const ds = new Date(dw.getTime() - wibOffset);
 			const whereClause = and(
-				eq(requestLogs.apiKeyId, keyRecord.id),
+				accountKeyFilter,
 				sql`created_at >= ${ds}`,
 				BILLABLE_LOG_SQL,
 			);
@@ -3215,7 +3232,7 @@ proxy.all('/*', async (c) => {
 			dw.setUTCHours(0, 0, 0, 0);
 			const ds = new Date(dw.getTime() - wibOffset);
 			const whereClause = and(
-				eq(requestLogs.apiKeyId, keyRecord.id),
+				accountKeyFilter,
 				sql`created_at >= ${ds}`,
 				BILLABLE_LOG_SQL,
 			);
@@ -3245,7 +3262,7 @@ proxy.all('/*', async (c) => {
 			mw2.setUTCHours(0, 0, 0, 0);
 			const ms2 = new Date(mw2.getTime() - wibOffset);
 			const whereClause = and(
-				eq(requestLogs.apiKeyId, keyRecord.id),
+				accountKeyFilter,
 				sql`created_at >= ${ms2}`,
 				BILLABLE_LOG_SQL,
 			);
@@ -3288,7 +3305,7 @@ proxy.all('/*', async (c) => {
 
 			if (overrideDailyToken && overrideDailyToken > 0) {
 				const whereClause = and(
-					eq(requestLogs.apiKeyId, keyRecord.id),
+					accountKeyFilter,
 					eq(requestLogs.model, model),
 					sql`created_at >= ${ds}`,
 					BILLABLE_LOG_SQL,
@@ -3314,7 +3331,7 @@ proxy.all('/*', async (c) => {
 
 			if (overrideMonthlyToken && overrideMonthlyToken > 0) {
 				const whereClause = and(
-					eq(requestLogs.apiKeyId, keyRecord.id),
+					accountKeyFilter,
 					eq(requestLogs.model, model),
 					sql`created_at >= ${ms}`,
 					BILLABLE_LOG_SQL,
@@ -3340,7 +3357,7 @@ proxy.all('/*', async (c) => {
 
 			if (overrideDailyInputToken && overrideDailyInputToken > 0) {
 				const whereClause = and(
-					eq(requestLogs.apiKeyId, keyRecord.id),
+					accountKeyFilter,
 					eq(requestLogs.model, model),
 					sql`created_at >= ${ds}`,
 					BILLABLE_LOG_SQL,
@@ -3366,7 +3383,7 @@ proxy.all('/*', async (c) => {
 
 			if (overrideDailyOutputToken && overrideDailyOutputToken > 0) {
 				const whereClause = and(
-					eq(requestLogs.apiKeyId, keyRecord.id),
+					accountKeyFilter,
 					eq(requestLogs.model, model),
 					sql`created_at >= ${ds}`,
 					BILLABLE_LOG_SQL,
@@ -3506,7 +3523,7 @@ proxy.all('/*', async (c) => {
 					await tx
 						.update(apiKeys)
 						.set({ promptWindowStart: nowStr })
-						.where(eq(apiKeys.id, keyRecord.id));
+						.where(inArray(apiKeys.id, accountKeyIds));
 				}
 
 				// Model limit tracking — use pattern-aware helper inside the tx.

@@ -102,6 +102,8 @@ export interface ApiKeyListItem {
   discordUserId?: string | null;
   discordUsername?: string | null;
   provisionedBy?: string | null;
+  isPrimary?: boolean;
+  canDelete?: boolean;
 }
 
 export interface KeyPeriodStats {

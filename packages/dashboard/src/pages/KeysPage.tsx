@@ -252,6 +252,11 @@ export default function KeysPage() {
                             <td className="py-2.5 px-4 font-medium text-sm">
                               <span className="inline-flex items-center gap-2">
                                 {k.name}
+                                {k.isPrimary && (
+                                  <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-sky-500/50 text-sky-400">
+                                    Primary
+                                  </Badge>
+                                )}
                                 {k.isTrial && (
                                   <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-amber-500/50 text-amber-500">
                                     Trial
