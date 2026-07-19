@@ -1857,13 +1857,19 @@ async function refreshLatencyFromProxy() {
 				newEntries.push(entry);
 				const key = entryKey(entry);
 				newLatency.set(key, {
-					ok: Boolean(row.isOnline),
+					// clientOnline = published AND probe OK (green / requestable)
+					ok: Boolean(row.isOnline) && Number(row.httpStatus) >= 200 && Number(row.httpStatus) < 300,
+					// visible on Discord = published OR probe OK
+					visible:
+						Boolean(row.isOnline) ||
+						(Number(row.httpStatus) >= 200 && Number(row.httpStatus) < 300),
 					ms: row.latencyMs || 0,
 					checkedAt: row.checkedAt
 						? new Date(row.checkedAt).getTime()
 						: Date.now(),
 					status: row.httpStatus || 0,
 					error: row.errorMessage || null,
+					published: Boolean(row.isOnline),
 				});
 			}
 
@@ -1938,8 +1944,13 @@ async function runLatencyTest() {
 
 		const ms = Date.now() - started;
 		const key = entryKey(entry);
+		const prev = runtime.latency.get(key);
+		const published = Boolean(prev?.published);
+		const probeOk = Boolean(result.ok);
 		runtime.latency.set(key, {
-			ok: result.ok,
+			ok: published && probeOk,
+			visible: published || probeOk,
+			published,
 			ms,
 			checkedAt: now,
 			status: result.status,
@@ -2224,9 +2235,20 @@ async function sweepModelsParallel(entries, label) {
 			batch.map(async (entry) => {
 				const latency = await testSingleModel(entry);
 				const key = entryKey(entry);
-				runtime.latency.set(key, latency);
-				await pushSingleModelStatus(entry, latency);
-				return { entry, latency };
+				const prev = runtime.latency.get(key);
+				const published = Boolean(prev?.published);
+				const probeOk = Boolean(latency.ok);
+				const merged = {
+					...latency,
+					ok: published && probeOk,
+					visible: published || probeOk,
+					published,
+					// Keep raw probe success for pushSingleModelStatus / retry state
+					probeOk,
+				};
+				runtime.latency.set(key, merged);
+				await pushSingleModelStatus(entry, { ...latency, ok: probeOk });
+				return { entry, latency: { ...latency, ok: probeOk } };
 			}),
 		);
 		for (const r of results) {
@@ -2685,11 +2707,12 @@ function listModels(
 			apiKey: '',
 		};
 		items.unshift(autoEntry);
-		// Public Discord panel: Published ON only (same as /v1/models).
-		// Offline/OFF stay in runtime.modelEntries for sweeps, but hidden from users.
+		// Public Discord: show visible models (published OR probeOk).
+		// Green/online only when both (latency.ok). Natural offline stays hidden.
 		items = items.filter((e) => {
 			if (e.modelId === 'auto') return true;
-			return Boolean(runtime.latency.get(entryKey(e))?.ok);
+			const lt = runtime.latency.get(entryKey(e));
+			return Boolean(lt?.visible ?? lt?.ok);
 		});
 	}
 
@@ -2886,7 +2909,8 @@ function buildTokitoEmbed(kind, session) {
 		? listModels(kind, 'gpy', session.modelVendor, session.sortMode, session)
 		: runtime.modelEntries.filter((e) => {
 				if (e.modelId === 'auto') return false;
-				return Boolean(runtime.latency.get(entryKey(e))?.ok);
+				const lt = runtime.latency.get(entryKey(e));
+				return Boolean(lt?.visible ?? lt?.ok);
 			});
 
 	if (session.trialMode) {

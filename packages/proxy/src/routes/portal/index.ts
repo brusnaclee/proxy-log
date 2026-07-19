@@ -12,7 +12,7 @@ import { turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTo
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { getRecapWindow } from "../../utils/recap-window.js";
-import { getModelCatalogResponse, getOnlineModelsByLatency } from "../../utils/model-catalog.js";
+import { getModelCatalogResponse, getClientCatalogMonitorRows } from "../../utils/model-catalog.js";
 import { parseTrialModelWhitelist, resolveKeyDailyTokenLimit, resolveKeyPromptLimit } from "../../utils/trial-config.js";
 import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindowResetMs } from "../../utils/rate-limit.js";
 import { logEmitter } from "../../utils/event-emitter.js";
@@ -1096,77 +1096,71 @@ portal.get("/models", async (c) => {
       })));
     }
 
-    // Same online source as Discord bot (/internal/models/details)
-    const [onlineModels, monitorRows] = await Promise.all([
-      getOnlineModelsByLatency(),
-      db.select({
+    // Same matrix as Discord /v1/models: visible = published||probeOk; online = both
+    const monitorRows = await getClientCatalogMonitorRows();
+
+    const statusMap = new Map<
+      string,
+      { clientOnline: boolean; latencyMs: number; checkedAt: Date | null }
+    >();
+    for (const m of monitorRows) {
+      const bare = m.modelId.includes("/")
+        ? m.modelId.slice(m.modelId.indexOf("/") + 1)
+        : m.modelId;
+      const payload = {
+        clientOnline: m.clientOnline,
+        latencyMs: m.latencyMs,
+        checkedAt: null as Date | null,
+      };
+      statusMap.set(m.modelId, payload);
+      statusMap.set(bare, payload);
+      statusMap.set(`${m.provider}/${bare}`, payload);
+    }
+
+    // Attach checkedAt from raw table for display
+    const checkedRows = await db
+      .select({
         modelId: modelMonitor.modelId,
-        isOnline: modelMonitor.isOnline,
         checkedAt: modelMonitor.checkedAt,
-        latencyMs: modelMonitor.latencyMs,
-        httpStatus: modelMonitor.httpStatus,
-      }).from(modelMonitor).orderBy(desc(modelMonitor.checkedAt)),
-    ]);
-
-    const onlineMap = new Map<string, { latencyMs: number }>();
-    for (const m of onlineModels) {
-      onlineMap.set(m.modelId, { latencyMs: m.latencyMs });
-    }
-
-    // Latest monitor row per modelId (for last-check even when offline)
-    const monitorMap = new Map<string, { checkedAt: Date; isOnline: boolean; latencyMs: number | null }>();
-    for (const row of monitorRows) {
-      if (!monitorMap.has(row.modelId)) {
-        monitorMap.set(row.modelId, {
-          checkedAt: row.checkedAt,
-          isOnline: row.isOnline,
-          latencyMs: row.latencyMs ?? null,
-        });
+      })
+      .from(modelMonitor)
+      .orderBy(desc(modelMonitor.checkedAt));
+    for (const row of checkedRows) {
+      const existing = statusMap.get(row.modelId);
+      if (existing && !existing.checkedAt) {
+        existing.checkedAt = row.checkedAt;
       }
     }
 
-    const lookupMonitor = (id: string) => {
-      if (monitorMap.has(id)) return monitorMap.get(id)!;
-      // Fallback: match by stripping leading provider segments
+    const lookup = (id: string) => {
+      if (statusMap.has(id)) return statusMap.get(id)!;
       const parts = id.split("/");
       for (let i = 1; i < parts.length; i++) {
         const suffix = parts.slice(i).join("/");
-        if (monitorMap.has(suffix)) return monitorMap.get(suffix)!;
+        if (statusMap.has(suffix)) return statusMap.get(suffix)!;
       }
-      // Or monitor has longer prefix
-      for (const [mid, val] of monitorMap) {
-        if (mid.endsWith("/" + id) || mid === id || id.endsWith("/" + mid)) return val;
-      }
-      return null;
-    };
-
-    const lookupOnline = (id: string): { latencyMs: number } | null => {
-      if (onlineMap.has(id)) return onlineMap.get(id)!;
-      const parts = id.split("/");
-      for (let i = 1; i < parts.length; i++) {
-        const suffix = parts.slice(i).join("/");
-        if (onlineMap.has(suffix)) return onlineMap.get(suffix)!;
-      }
-      for (const [mid, val] of onlineMap) {
+      for (const [mid, val] of statusMap) {
         if (mid.endsWith("/" + id) || id.endsWith("/" + mid)) return val;
       }
       return null;
     };
 
-    return c.json(allModels.map(m => {
-      const online = lookupOnline(m.id);
-      const mon = lookupMonitor(m.id);
-      // Match Discord: in online map → online; otherwise offline (not "unknown")
-      const isOnline = !!online;
-      return {
-        id: m.id,
-        allowed: true,
-        online: isOnline,
-        checkedAt: mon?.checkedAt?.toISOString() ?? null,
-        lastCheckedMinutes: mon ? minutesAgo(mon.checkedAt) : null,
-        latencyMs: online?.latencyMs ?? mon?.latencyMs ?? null,
-      };
-    }));
+    return c.json(
+      allModels
+        .map((m) => {
+          const st = lookup(m.id);
+          if (!st) return null;
+          return {
+            id: m.id,
+            allowed: true,
+            online: st.clientOnline,
+            checkedAt: st.checkedAt?.toISOString() ?? null,
+            lastCheckedMinutes: st.checkedAt ? minutesAgo(st.checkedAt) : null,
+            latencyMs: st.latencyMs ?? null,
+          };
+        })
+        .filter(Boolean),
+    );
   } catch (err: any) {
     return c.json({ error: err?.message || "Failed to load models" }, 500);
   }

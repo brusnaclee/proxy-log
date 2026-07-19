@@ -72,3 +72,18 @@ export function formatChartPeriod(v: string): string {
   // Daily: "YYYY-MM-DD" → "MM/DD"
   return v.split("-").slice(1).join("/");
 }
+
+/** Admin Logs/Overview User column: keyLabel · discordUsername · discordUserId */
+export function formatLogUserDisplay(log: {
+  apiKeyName?: string | null;
+  discordUsername?: string | null;
+  discordUserId?: string | null;
+}): string {
+  const label = String(log.apiKeyName || "").trim() || "—";
+  const uname = String(log.discordUsername || "").trim();
+  const uid = String(log.discordUserId || "").trim();
+  if (uname && uid) return `${label} · ${uname} · ${uid}`;
+  if (uid) return `${label} · ${uid}`;
+  if (uname) return `${label} · ${uname}`;
+  return label;
+}

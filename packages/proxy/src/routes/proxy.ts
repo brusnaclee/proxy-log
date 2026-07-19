@@ -83,12 +83,16 @@ import {
 	getFilteredModelCatalogResponse,
 	getNextApiKey,
 	getOnlineModelsByLatency,
+	getClientCatalogMonitorRows,
 	getProviderForModel,
 	isAutoCompatible,
 	markKeyAsLimited,
 	stripProviderPrefix,
 } from '../utils/model-catalog.js';
-import { markProviderModelsOffline } from '../utils/model-monitor-store.js';
+import {
+	getClientCatalogFlags,
+	markProviderModelsOffline,
+} from '../utils/model-monitor-store.js';
 import {
 	checkModelPromptLimit,
 	checkPromptLimit,
@@ -1197,51 +1201,71 @@ proxy.all('/*', async (c) => {
 		}
 
 		const catalog = await getFilteredModelCatalogResponse({ isTrial });
-		// Client catalog = Published ON only (same source as Discord / access gate).
-		// Admin Model Monitor still lists all; OFF models are hidden here and blocked on chat.
+		// Client catalog: visible = published OR probeOk; is_online = published AND probeOk.
+		// Admin Model Monitor still lists all models.
 		try {
-			const onlineModels = await getOnlineModelsByLatency();
-			const onlineSet = new Set<string>();
-			for (const m of onlineModels) {
-				onlineSet.add(m.modelId);
-				const slash = m.modelId.indexOf('/');
-				if (slash > 0) onlineSet.add(m.modelId.slice(slash + 1));
-				if (m.provider) {
-					const bare = m.modelId.includes('/')
-						? m.modelId.slice(m.modelId.indexOf('/') + 1)
-						: m.modelId;
-					onlineSet.add(`${m.provider}/${bare}`);
+			const monitorRows = await getClientCatalogMonitorRows();
+			type Match = { visible: boolean; clientOnline: boolean };
+			const byKey = new Map<string, Match>();
+			const addKeys = (row: (typeof monitorRows)[0]) => {
+				const match = { visible: row.visible, clientOnline: row.clientOnline };
+				const bare = row.modelId.includes('/')
+					? row.modelId.slice(row.modelId.indexOf('/') + 1)
+					: row.modelId;
+				const keys = [
+					row.modelId,
+					bare,
+					`${row.provider}/${bare}`,
+					`${row.provider}/${row.modelId}`,
+				];
+				for (const k of keys) {
+					const prev = byKey.get(k);
+					// Prefer clientOnline=true if any match is fully online
+					byKey.set(k, {
+						visible: true,
+						clientOnline: Boolean(prev?.clientOnline || match.clientOnline),
+					});
 				}
-			}
-			const isOnlineId = (id: string): boolean => {
-				if (id === 'auto') return onlineSet.size > 0;
-				if (onlineSet.has(id)) return true;
+			};
+			for (const row of monitorRows) addKeys(row);
+
+			const lookup = (id: string): Match | null => {
+				if (id === 'auto') {
+					const anyOnline = [...byKey.values()].some((v) => v.clientOnline);
+					return { visible: byKey.size > 0, clientOnline: anyOnline };
+				}
+				if (byKey.has(id)) return byKey.get(id)!;
 				const parts = id.split('/');
 				for (let i = 1; i < parts.length; i++) {
-					if (onlineSet.has(parts.slice(i).join('/'))) return true;
+					const suffix = parts.slice(i).join('/');
+					if (byKey.has(suffix)) return byKey.get(suffix)!;
 				}
-				for (const mid of onlineSet) {
-					if (mid.endsWith('/' + id) || id.endsWith('/' + mid)) return true;
+				for (const [mid, val] of byKey) {
+					if (mid.endsWith('/' + id) || id.endsWith('/' + mid)) return val;
 				}
-				return false;
+				return null;
 			};
+
 			if (Array.isArray((catalog as any)?.data)) {
 				(catalog as any).data = (catalog as any).data
 					.filter((m: any) => {
 						const id = String(m?.id || '');
 						if (id === 'auto') return true;
-						return isOnlineId(id);
+						return Boolean(lookup(id)?.visible);
 					})
-					.map((m: any) => ({
-						...m,
-						is_online: true,
-						// Ensure context_length key exists for OpenCode/Cline (may already be set by catalog).
-						context_length: m.context_length ?? m.max_context_length ?? null,
-						max_tokens: m.max_output_tokens ?? m.max_tokens ?? null,
-					}));
+					.map((m: any) => {
+						const id = String(m?.id || '');
+						const match = lookup(id);
+						return {
+							...m,
+							is_online: id === 'auto' ? Boolean(match?.clientOnline) : Boolean(match?.clientOnline),
+							context_length: m.context_length ?? m.max_context_length ?? null,
+							max_tokens: m.max_output_tokens ?? m.max_tokens ?? null,
+						};
+					});
 			}
 		} catch (err) {
-			console.warn('[proxy] /v1/models published-online filter failed:', (err as Error)?.message || err);
+			console.warn('[proxy] /v1/models catalog filter failed:', (err as Error)?.message || err);
 		}
 		return c.json(catalog);
 	}
@@ -2750,8 +2774,7 @@ proxy.all('/*', async (c) => {
 	}
 
 	// ─── 8a. Model Monitor Check ─────────────────────────────────────────
-	// Published is_online (admin catalog / auto mode) gates access.
-	// In notif_only, only manual ON/OFF flips published — probe does not.
+	// Requestable = Published ON AND Probe OK. Otherwise 503.
 	if (
 		!keyRecord.isTrial &&
 		upstreamModel &&
@@ -2771,26 +2794,28 @@ proxy.all('/*', async (c) => {
 
 		if (monitorRows.length > 0) {
 			const latest = monitorRows[0];
-			if (!latest.isOnline) {
-				const onlineModels = await db
-					.select({ modelId: modelMonitor.modelId })
-					.from(modelMonitor)
-					.where(eq(modelMonitor.isOnline, true))
-					.orderBy(modelMonitor.modelId);
-
+			const flags = getClientCatalogFlags({
+				published: latest.isOnline,
+				httpStatus: latest.httpStatus,
+			});
+			if (!flags.requestable) {
+				const requestable = await getOnlineModelsByLatency();
 				const seen = new Set<string>();
 				const uniqueOnline: string[] = [];
-				for (const m of onlineModels) {
+				for (const m of requestable) {
 					if (!seen.has(m.modelId)) {
 						seen.add(m.modelId);
 						uniqueOnline.push(m.modelId);
 					}
 				}
 
+				const why = !flags.published
+					? 'Published OFF in Model Monitor'
+					: 'Probe is down (upstream unreachable)';
 				return c.json(
 					{
 						error: {
-							message: `Model "${model}" is offline (Published OFF). It is hidden from /v1/models until turned ON in Model Monitor.`,
+							message: `Model "${model}" is offline (${why}).`,
 							type: 'model_offline',
 							available_models: uniqueOnline,
 						},
@@ -3435,6 +3460,9 @@ proxy.all('/*', async (c) => {
 			logEmitter.emit({
 				...logEntry,
 				toolsUsed: parseToolJson(logEntry.toolsUsed),
+				isTrial: !!keyRecord.isTrial,
+				discordUserId: keyRecord.discordUserId || null,
+				discordUsername: keyRecord.discordUsername || null,
 			});
 
 			if (counted && messageAnalysis.messageHash) {

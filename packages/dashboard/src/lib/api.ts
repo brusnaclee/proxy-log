@@ -101,6 +101,7 @@ export interface ApiKeyListItem {
   createdAt: string;
   discordUserId?: string | null;
   discordUsername?: string | null;
+  provisionedBy?: string | null;
 }
 
 export interface KeyPeriodStats {
@@ -284,6 +285,8 @@ export interface LogEntry {
   apiKeyId: number;
   apiKeyName: string;
   isTrial?: boolean;
+  discordUserId?: string | null;
+  discordUsername?: string | null;
   userAgentRaw?: string | null;
   osDetected?: string | null;
   clientName?: string | null;

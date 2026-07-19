@@ -9,6 +9,7 @@ import {
   buildModelListAuthHeaders,
   buildModelListCandidateUrls,
 } from "./probe-validate.js";
+import { getClientCatalogFlags } from "./model-monitor-store.js";
 
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 30_000; // Upstream combo is often slow on POST; give the GET enough headroom.
@@ -846,14 +847,23 @@ export function isAutoCompatible(modelId: string): boolean {
   return !AUTO_MODEL_EXCLUDE_PATTERNS.some(p => p.test(modelId));
 }
 
-/** Get all online models from model_monitor, sorted by latency ascending. */
-export async function getOnlineModelsByLatency(): Promise<Array<{
+/**
+ * Latest monitor row per model+provider with Published×Probe client flags.
+ * visible = published || probeOk (show in /v1/models, Discord, portal)
+ * clientOnline / requestable = published && probeOk
+ */
+export async function getClientCatalogMonitorRows(): Promise<Array<{
   modelId: string;
   provider: string;
   latencyMs: number;
   baseUrl: string;
+  httpStatus: number;
+  published: boolean;
+  probeOk: boolean;
+  visible: boolean;
+  clientOnline: boolean;
+  requestable: boolean;
 }>> {
-  // Get latest check per model+provider, then filter to online only
   const latestSubquery = db
     .select({
       modelId: modelMonitor.modelId,
@@ -872,9 +882,6 @@ export async function getOnlineModelsByLatency(): Promise<Array<{
       sql`${modelMonitor.modelId} = ${latestSubquery.modelId} AND COALESCE(${modelMonitor.provider}, '') = COALESCE(${latestSubquery.provider}, '') AND ${modelMonitor.checkedAt} = ${latestSubquery.maxCheckedAt}`,
     );
 
-  // Filter out monitor rows whose prefix doesn't match any active provider. This
-  // skips "ghost" model ids left over from a removed upstream so the auto
-  // resolver doesn't pick a model that has no provider DB row.
   const allActive = await db
     .select({ name: providers.name, endpointType: providers.endpointType })
     .from(providers)
@@ -893,15 +900,40 @@ export async function getOnlineModelsByLatency(): Promise<Array<{
 
   return rows
     .map((r) => r.model_monitor)
-    // Published catalog flag only — not probe httpStatus.
-    // In notif_only, admin ON must appear in /v1/models + Discord even if probe is Fail.
-    .filter((d) => d.isOnline && d.provider && isResolvable(d.modelId, d.provider))
+    .filter((d) => d.provider && isResolvable(d.modelId, d.provider))
+    .map((d) => {
+      const flags = getClientCatalogFlags({
+        published: d.isOnline,
+        httpStatus: d.httpStatus,
+      });
+      return {
+        modelId: d.modelId,
+        provider: d.provider!,
+        latencyMs: d.latencyMs ?? 0,
+        baseUrl: d.baseUrl ?? "",
+        httpStatus: d.httpStatus ?? 0,
+        ...flags,
+      };
+    })
+    .filter((d) => d.visible);
+}
+
+/** Requestable models (Published ON + Probe OK), sorted by latency — for auto routing. */
+export async function getOnlineModelsByLatency(): Promise<Array<{
+  modelId: string;
+  provider: string;
+  latencyMs: number;
+  baseUrl: string;
+}>> {
+  const rows = await getClientCatalogMonitorRows();
+  return rows
+    .filter((d) => d.requestable)
     .sort((a, b) => (a.latencyMs ?? 999999) - (b.latencyMs ?? 999999))
     .map((d) => ({
       modelId: d.modelId,
-      provider: d.provider!,
-      latencyMs: d.latencyMs ?? 0,
-      baseUrl: d.baseUrl ?? "",
+      provider: d.provider,
+      latencyMs: d.latencyMs,
+      baseUrl: d.baseUrl,
     }));
 }
 

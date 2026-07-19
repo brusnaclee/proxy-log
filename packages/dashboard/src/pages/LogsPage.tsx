@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { formatDate, formatNumber, formatRelativeTime } from "@/lib/utils";
+import { formatDate, formatNumber, formatRelativeTime, formatLogUserDisplay } from "@/lib/utils";
 import { Download, Radio, ChevronLeft, ChevronRight } from "lucide-react";
 import { formatCost } from "@/lib/utils";
 import { useRealtimeSSE } from "@/lib/use-realtime-sse";
@@ -340,7 +340,7 @@ export default function LogsPage() {
                           <td className="py-2 px-3 text-xs text-muted-foreground font-mono whitespace-nowrap">{formatDate(log.createdAt)}</td>
                           <td className="py-2 px-3 text-xs">
                             <div className="flex items-center gap-1">
-                              <span>{log.apiKeyName || "-"}</span>
+                              <span className="break-all">{formatLogUserDisplay(log)}</span>
                               {log.isTrial && (
                                 <Badge variant="outline" className="text-[10px] border-purple-500/50 text-purple-400">
                                   Trial

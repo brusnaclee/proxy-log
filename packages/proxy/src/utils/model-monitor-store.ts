@@ -44,6 +44,36 @@ export function isProbeOk(httpStatus: number | null | undefined): boolean {
   return s >= 200 && s < 300;
 }
 
+/**
+ * Client catalog / Discord / chat access matrix:
+ * - visible: show in /v1/models, portal, Discord (published OR probeOk)
+ * - clientOnline: label Online only when both published AND probeOk
+ * - requestable: allow chat only when both published AND probeOk
+ * Admin Model Monitor always lists all models regardless.
+ */
+export type ClientCatalogFlags = {
+  published: boolean;
+  probeOk: boolean;
+  visible: boolean;
+  clientOnline: boolean;
+  requestable: boolean;
+};
+
+export function getClientCatalogFlags(params: {
+  published: boolean | null | undefined;
+  httpStatus?: number | null | undefined;
+}): ClientCatalogFlags {
+  const published = Boolean(params.published);
+  const probeOk = isProbeOk(params.httpStatus);
+  return {
+    published,
+    probeOk,
+    visible: published || probeOk,
+    clientOnline: published && probeOk,
+    requestable: published && probeOk,
+  };
+}
+
 export async function getActiveProviderNames(): Promise<Set<string>> {
   const rows = await db
     .select({ name: providers.name })

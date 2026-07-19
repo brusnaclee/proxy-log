@@ -3,7 +3,7 @@ import { stats, logs, type OverviewStats, type LogEntry } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { formatNumber, formatRelativeTime, formatChartPeriod } from "@/lib/utils";
+import { formatNumber, formatRelativeTime, formatChartPeriod, formatLogUserDisplay } from "@/lib/utils";
 import { Activity, Coins, Key, Monitor, TrendingUp, Download, RefreshCw, DollarSign, Search } from "lucide-react";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -455,7 +455,7 @@ export default function OverviewPage() {
                     </td>
                     <td className="py-2 px-3 text-xs">
                       <div className="flex items-center gap-1">
-                        <span>{log.apiKeyName || " - "}</span>
+                        <span className="break-all">{formatLogUserDisplay(log)}</span>
                         {log.isTrial && (
                           <Badge variant="outline" className="text-[10px] border-purple-500/50 text-purple-400">
                             Trial

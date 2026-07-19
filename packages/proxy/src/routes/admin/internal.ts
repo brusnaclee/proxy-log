@@ -1008,27 +1008,45 @@ internal.post("/internal/clear-notification/:keyId", async (c) => {
 
 // ─── Enriched Model Details (for Discord bot) ────────────────────────────────
 internal.get("/internal/models/details", async (c) => {
-  const { getModelCatalogResponse, getOnlineModelsByLatency } = await import("../../utils/model-catalog.js");
-  
-  const [catalog, onlineModels] = await Promise.all([
+  const { getModelCatalogResponse, getClientCatalogMonitorRows } = await import("../../utils/model-catalog.js");
+
+  const [catalog, monitorRows] = await Promise.all([
     getModelCatalogResponse(),
-    getOnlineModelsByLatency(),
+    getClientCatalogMonitorRows(),
   ]);
 
-  const onlineMap = new Map<string, { latencyMs: number; provider: string }>();
-  for (const m of onlineModels) {
-    onlineMap.set(m.modelId, { latencyMs: m.latencyMs, provider: m.provider });
+  const statusMap = new Map<string, { latencyMs: number; provider: string; clientOnline: boolean }>();
+  for (const m of monitorRows) {
+    statusMap.set(m.modelId, {
+      latencyMs: m.latencyMs,
+      provider: m.provider,
+      clientOnline: m.clientOnline,
+    });
+    const bare = m.modelId.includes("/") ? m.modelId.slice(m.modelId.indexOf("/") + 1) : m.modelId;
+    statusMap.set(`${m.provider}/${bare}`, {
+      latencyMs: m.latencyMs,
+      provider: m.provider,
+      clientOnline: m.clientOnline,
+    });
   }
 
-  const enriched = catalog.data.map((model: any) => {
-    const monitor = onlineMap.get(model.id);
-    return {
-      ...model,
-      is_online: !!monitor,
-      latency_ms: monitor?.latencyMs ?? null,
-      active_provider: monitor?.provider ?? null,
-    };
-  });
+  const enriched = catalog.data
+    .map((model: any) => {
+      const id = String(model.id || "");
+      const monitor =
+        statusMap.get(id) ||
+        [...statusMap.entries()].find(
+          ([mid]) => mid.endsWith("/" + id) || id.endsWith("/" + mid),
+        )?.[1];
+      if (!monitor) return null;
+      return {
+        ...model,
+        is_online: monitor.clientOnline,
+        latency_ms: monitor.latencyMs ?? null,
+        active_provider: monitor.provider ?? null,
+      };
+    })
+    .filter(Boolean);
 
   return c.json({ object: "list", data: enriched });
 });

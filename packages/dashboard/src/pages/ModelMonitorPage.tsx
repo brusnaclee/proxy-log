@@ -245,8 +245,9 @@ export default function ModelMonitorPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Model Monitor</h1>
           <p className="text-muted-foreground mt-1">
-            Published ON/OFF = Discord &amp; client catalog + access.
-            Probe = live reachability indicator (Settings mode: <span className="font-mono text-foreground">{monitorAutoMode}</span>).
+            Published = catalog intent (toggle). Probe = live reachability.
+            Client/Discord show a model if Published OR Probe OK; Online label + chat only when both.
+            Natural offline (Published OFF and Probe Fail) stays admin-only. Mode: <span className="font-mono text-foreground">{monitorAutoMode}</span>.
           </p>
         </div>
         <div className="flex items-center gap-2">
