@@ -425,7 +425,14 @@ export const monitor = {
   getModelDetails: () => request<{ object: string; data: any[] }>("/monitor/models/details"),
   triggerSweep: () => request<{ started: boolean; message: string }>("/monitor/sweep", { method: "POST" }),
   syncCatalog: () =>
-    request<{ success: boolean; providers: number; listed: number; seeded: number }>("/monitor/sync-catalog", {
+    request<{
+      success: boolean;
+      providers: number;
+      listed: number;
+      seeded: number;
+      skipped?: string[];
+      purged?: string[];
+    }>("/monitor/sync-catalog", {
       method: "POST",
     }),
   getSweepProgress: () => request<{ total: number; tested: number; online: number; offline: number; rateLimited: number; startedAt: string; status: string }>("/monitor/sweep/progress"),

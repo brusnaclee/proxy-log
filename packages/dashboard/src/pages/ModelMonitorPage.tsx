@@ -130,7 +130,16 @@ export default function ModelMonitorPage() {
     try {
       const res = await monitor.syncCatalog();
       await loadData();
-      alert(`Synced /models from ${res.providers} upstream(s): ${res.listed} listed, ${res.seeded} new in monitor.`);
+      const parts: string[] = [
+        `Synced: ${res.listed} models listed, ${res.seeded} new`,
+      ];
+      if (Array.isArray((res as any).purged) && (res as any).purged.length) {
+        parts.push(`cleared limited/invalid: ${(res as any).purged.join(", ")}`);
+      }
+      if (Array.isArray((res as any).skipped) && (res as any).skipped.length) {
+        parts.push(`skipped ${((res as any).skipped as string[]).length}`);
+      }
+      alert(parts.join(". ") + ".");
     } catch (err) {
       console.error("Sync catalog failed:", err);
       alert(`Sync failed: ${(err as any)?.message || err}`);

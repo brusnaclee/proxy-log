@@ -14,6 +14,8 @@ import { seedMonitorModelsFromList } from "./model-monitor-store.js";
 
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 30_000; // Upstream combo is often slow on POST; give the GET enough headroom.
+/** Shorter timeout for GET /models list (dashboard Sync + key probe). */
+const LIST_FETCH_TIMEOUT_MS = 10_000;
 const CACHE_FILE_PATH = process.env.MODEL_CATALOG_CACHE_PATH || "./data/model_catalog_cache.json";
 
 /** Synthetic model ids exposed for you.com (endpointType "youcom") providers. */
@@ -160,12 +162,14 @@ async function fetchModelsFromUpstream(
   apiKey: string,
   providerId: number,
   endpointType = "openai",
+  timeoutMs = FETCH_TIMEOUT_MS,
 ): Promise<ModelRecord[]> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const cleanKey = sanitizeProviderApiKey(apiKey);
   try {
-    const authAttempts = cleanKey ? [cleanKey, ""] : [""];
+    // Do not probe with an empty key after a real key — that doubles latency on dead upstreams.
+    const authAttempts = cleanKey ? [cleanKey] : [""];
     let lastError = "No models returned by upstream";
 
     for (const key of authAttempts) {
@@ -264,9 +268,14 @@ export async function refreshModelCatalog(): Promise<void> {
 
       const candidates = buildModelListCandidateUrls(provider.endpoint);
       const probeKeys = await getCatalogProbeKeys(provider.id, provider.apiKey);
+      if (probeKeys.length === 0) {
+        console.warn(
+          `[model-catalog] ${provider.name}: no usable (non-limited) API keys — skip /models`,
+        );
+        continue;
+      }
       let success = false;
-      // Retry the upstream fetch up to 2x to ride out transient Cloudflare
-      // 524s / aborts. Try every active provider API key.
+      // One retry only for non-auth failures (Cloudflare 524 / abort).
       for (const url of candidates) {
         for (const key of probeKeys) {
           for (let attempt = 0; attempt < 2 && !success; attempt++) {
@@ -276,6 +285,7 @@ export async function refreshModelCatalog(): Promise<void> {
                 key,
                 provider.id,
                 provider.endpointType || "openai",
+                LIST_FETCH_TIMEOUT_MS,
               );
               for (const m of models) {
                 const existing = allModels.find((x) => x.id === m.id && x.provider_id === provider.id);
@@ -287,7 +297,7 @@ export async function refreshModelCatalog(): Promise<void> {
               success = true;
               const kid = await findProviderKeyId(provider.id, key);
               if (kid) {
-                await setProviderKeyHealth(kid, { ok: true });
+                await setProviderKeyHealth(kid, { ok: true, modelCount: models.length });
                 await db
                   .update(providerApiKeys)
                   .set({ isLimited: false, limitedAt: null })
@@ -297,20 +307,24 @@ export async function refreshModelCatalog(): Promise<void> {
             } catch (error: any) {
               lastError = error?.message || "Unknown upstream fetch error";
               const kid = await findProviderKeyId(provider.id, key);
+              const classified = classifyUpstreamKeyError(
+                /HTTP\s+(\d+)/i.test(lastError)
+                  ? Number(lastError.match(/HTTP\s+(\d+)/i)![1])
+                  : 0,
+                lastError,
+              );
               if (kid) {
                 await setProviderKeyHealth(kid, {
                   ok: false,
-                  error: classifyUpstreamKeyError(
-                    /HTTP\s+(\d+)/i.test(lastError)
-                      ? Number(lastError.match(/HTTP\s+(\d+)/i)![1])
-                      : 0,
-                    lastError,
-                  ),
+                  error: classified,
+                  modelCount: 0,
                 });
               }
+              const isAuth = /invalid api key|expired|http 401|http 403|forbidden/i.test(classified);
+              if (isAuth) break; // don't retry auth failures
               if (attempt === 0) {
                 console.warn(`[model-catalog] fetch from ${provider.name} attempt 1 failed: ${lastError}, retrying once...`);
-                await new Promise((r) => setTimeout(r, 1500));
+                await new Promise((r) => setTimeout(r, 800));
               }
             }
           }
@@ -319,8 +333,8 @@ export async function refreshModelCatalog(): Promise<void> {
         if (success) break;
       }
       if (!success) {
-        // Soft-retain: keep previous catalog rows for this provider so a transient
-        // /models 401/5xx does not wipe routable models from /v1/models + sweeps.
+        // Soft-retain only when keys exist but list failed transiently.
+        // Do NOT retain when keys are limited/invalid — that re-pollutes Model Monitor.
         const retained = (cache.models || []).filter(
           (m) => m.provider_id === provider.id,
         );
@@ -366,14 +380,14 @@ export async function initializeModelCatalogScheduler() {
 
   await loadFromDisk();
   void refreshModelCatalog().then(() => {
-    void syncAllActiveProvidersToMonitor().catch((err) =>
+    void seedMonitorFromCatalogCache().catch((err) =>
       console.warn("[model-catalog] initial monitor seed failed:", (err as Error)?.message || err),
     );
   });
 
   const timer = setInterval(() => {
     void refreshModelCatalog().then(() => {
-      void syncAllActiveProvidersToMonitor().catch(() => {});
+      void seedMonitorFromCatalogCache().catch(() => {});
     });
   }, REFRESH_INTERVAL_MS);
 
@@ -381,23 +395,35 @@ export async function initializeModelCatalogScheduler() {
 }
 
 /**
- * Fetch /models for one provider and seed model_monitor so Admin Upstream filter
- * + Model Monitor list update without waiting for a full health sweep.
+ * Fetch /models for one provider and seed model_monitor.
+ * Only runs when the provider has a usable (active, non-limited) API key
+ * and /models succeeds live — never seeds from stale cache (that re-adds
+ * limited/invalid upstreams into Model Monitor).
  */
-export async function syncProviderToMonitor(providerId: number): Promise<{ provider: string; seeded: number; listed: number }> {
+export async function syncProviderToMonitor(providerId: number): Promise<{
+  provider: string;
+  seeded: number;
+  listed: number;
+  skipped?: string;
+}> {
   const [prov] = await db.select().from(providers).where(eq(providers.id, providerId));
   if (!prov || !prov.isActive) {
-    return { provider: prov?.name || String(providerId), seeded: 0, listed: 0 };
+    return { provider: prov?.name || String(providerId), seeded: 0, listed: 0, skipped: "inactive" };
   }
 
   const modelIds: string[] = [];
+  let liveOk = false;
 
   if (prov.endpointType === "youcom") {
     modelIds.push(...YOUCOM_MODEL_IDS);
+    liveOk = true;
   } else {
-    const candidates = buildModelListCandidateUrls(prov.endpoint);
     const probeKeys = await getCatalogProbeKeys(prov.id, prov.apiKey);
-    let got = false;
+    if (probeKeys.length === 0) {
+      console.warn(`[model-catalog] syncProviderToMonitor ${prov.name}: skipped (no usable API key)`);
+      return { provider: prov.name, seeded: 0, listed: 0, skipped: "no_usable_key" };
+    }
+    const candidates = buildModelListCandidateUrls(prov.endpoint);
     for (const url of candidates) {
       for (const key of probeKeys) {
         try {
@@ -406,18 +432,24 @@ export async function syncProviderToMonitor(providerId: number): Promise<{ provi
             key,
             prov.id,
             prov.endpointType || "openai",
+            LIST_FETCH_TIMEOUT_MS,
           );
           for (const m of models) {
             if (m.id) modelIds.push(m.id);
           }
-          got = true;
+          liveOk = true;
           break;
         } catch {
           /* try next */
         }
       }
-      if (got) break;
+      if (liveOk) break;
     }
+  }
+
+  if (!liveOk) {
+    console.warn(`[model-catalog] syncProviderToMonitor ${prov.name}: skipped (/models failed)`);
+    return { provider: prov.name, seeded: 0, listed: 0, skipped: "models_fetch_failed" };
   }
 
   const customs = await db
@@ -428,33 +460,71 @@ export async function syncProviderToMonitor(providerId: number): Promise<{ provi
     if (cm.modelId && !modelIds.includes(cm.modelId)) modelIds.push(cm.modelId);
   }
 
-  if (modelIds.length === 0) {
-    for (const m of cache.models || []) {
-      if (m.provider_id === prov.id && m.id) modelIds.push(m.id);
-    }
-  }
-
   const unique = [...new Set(modelIds)];
   const seeded = await seedMonitorModelsFromList(prov.name, prov.endpoint, unique);
   console.log(`[model-catalog] syncProviderToMonitor ${prov.name}: listed=${unique.length} seededNew=${seeded}`);
   return { provider: prov.name, seeded, listed: unique.length };
 }
 
-/** Seed monitor rows for every active upstream (after catalog refresh / provider CRUD). */
-export async function syncAllActiveProvidersToMonitor(): Promise<{
+/**
+ * Seed Model Monitor from the in-memory catalog cache (after refreshModelCatalog).
+ * Only providers that have live-listed models in cache — no second /models round-trip.
+ */
+export async function seedMonitorFromCatalogCache(): Promise<{
   providers: number;
   listed: number;
   seeded: number;
 }> {
-  const active = await db.select({ id: providers.id }).from(providers).where(eq(providers.isActive, true));
+  await loadFromDisk();
+  const active = await db.select().from(providers).where(eq(providers.isActive, true));
+  const idToProv = new Map(active.map((p) => [p.id, p]));
+  const byProvider = new Map<number, string[]>();
+  for (const m of cache.models || []) {
+    const pid = m.provider_id;
+    if (!pid || !idToProv.has(pid) || !m.id) continue;
+    const arr = byProvider.get(pid) || [];
+    arr.push(m.id);
+    byProvider.set(pid, arr);
+  }
   let listed = 0;
   let seeded = 0;
-  for (const p of active) {
-    const r = await syncProviderToMonitor(p.id);
+  for (const [pid, ids] of byProvider) {
+    const prov = idToProv.get(pid)!;
+    const unique = [...new Set(ids)];
+    listed += unique.length;
+    seeded += await seedMonitorModelsFromList(prov.name, prov.endpoint, unique);
+  }
+  return { providers: byProvider.size, listed, seeded };
+}
+
+/** Seed monitor rows for every active upstream that has a usable API key (parallel). */
+export async function syncAllActiveProvidersToMonitor(opts?: {
+  /** Remove Model Monitor rows for upstreams with no usable key (limited/invalid). */
+  purgeUnusable?: boolean;
+}): Promise<{
+  providers: number;
+  listed: number;
+  seeded: number;
+  skipped: string[];
+  purged: string[];
+}> {
+  const { purgeMonitorForProvider } = await import("./model-monitor-store.js");
+  const active = await db.select({ id: providers.id, name: providers.name }).from(providers).where(eq(providers.isActive, true));
+  const results = await Promise.all(active.map((p) => syncProviderToMonitor(p.id)));
+  let listed = 0;
+  let seeded = 0;
+  const skipped: string[] = [];
+  const purged: string[] = [];
+  for (const r of results) {
     listed += r.listed;
     seeded += r.seeded;
+    if (r.skipped) skipped.push(`${r.provider}:${r.skipped}`);
+    if (opts?.purgeUnusable && r.skipped === "no_usable_key") {
+      await purgeMonitorForProvider(r.provider);
+      purged.push(r.provider);
+    }
   }
-  return { providers: active.length, listed, seeded };
+  return { providers: active.length, listed, seeded, skipped, purged };
 }
 
 export async function getModelCatalogResponse() {
@@ -1115,7 +1185,7 @@ export async function checkProviderApiKeyHealth(
   for (const url of urls) {
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 20_000);
+      const timeout = setTimeout(() => controller.abort(), 10_000);
       const res = await fetch(url, {
         headers: buildModelListAuthHeaders(keyRow.apiKey, endpointType),
         signal: controller.signal,

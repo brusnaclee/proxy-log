@@ -576,12 +576,14 @@ monitor.get("/monitor/models/details", async (c) => {
   return c.json({ object: "list", data: enriched });
 });
 
-/** Force re-fetch /models for all active upstreams into Model Monitor (no probe). */
+/** Force re-fetch /models into Model Monitor for providers with usable API keys only. */
 monitor.post("/monitor/sync-catalog", async (c) => {
   if (!isAuthenticated(c)) return c.json({ error: "Unauthorized" }, 401);
-  const { refreshModelCatalog, syncAllActiveProvidersToMonitor } = await import("../../utils/model-catalog.js");
-  await refreshModelCatalog();
-  const result = await syncAllActiveProvidersToMonitor();
+  const { syncAllActiveProvidersToMonitor } = await import("../../utils/model-catalog.js");
+  // Do NOT await refreshModelCatalog first — that double-fetched every upstream
+  // (30s×retries) and made Sync hang. Live sync alone is enough and parallel.
+  // purgeUnusable: drop stale rows from limited/invalid-key upstreams.
+  const result = await syncAllActiveProvidersToMonitor({ purgeUnusable: true });
   return c.json({ success: true, ...result });
 });
 
@@ -608,7 +610,12 @@ monitor.post("/monitor/sweep", async (c) => {
 
       for (const prov of activeProviders) {
         const probeKeys = await getProviderProbeKeys(prov.id, prov.apiKey);
-        if (probeKeys.length === 0) continue;
+        if (probeKeys.length === 0) {
+          console.warn(
+            `[monitor-sweep] ${prov.name}: no usable API keys — skip (do not retain stale models)`,
+          );
+          continue;
+        }
 
         const endpointType = prov.endpointType || "openai";
         const urls = buildModelListCandidateUrls(prov.endpoint);
@@ -618,7 +625,7 @@ monitor.post("/monitor/sweep", async (c) => {
           for (const key of probeKeys) {
             try {
               const controller = new AbortController();
-              const timeout = setTimeout(() => controller.abort(), 30_000);
+              const timeout = setTimeout(() => controller.abort(), 10_000);
               const res = await fetch(url, {
                 headers: buildModelListAuthHeaders(key, endpointType),
                 signal: controller.signal,
@@ -649,6 +656,7 @@ monitor.post("/monitor/sweep", async (c) => {
         }
 
         if (!listed) {
+          // Soft-retain only for transient list failures when keys exist.
           const retained = previousRows.filter((r) => r.provider === prov.name);
           for (const row of retained) {
             allModels.push({
