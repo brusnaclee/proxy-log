@@ -2,9 +2,9 @@
 import { db } from "../../db/index.js";
 import { providers, customModels } from "../../db/schema.js";
 import { eq, desc } from "drizzle-orm";
-import { refreshModelCatalog, getProviderApiKeys, addProviderApiKey, resetKeyLimited, deleteApiKey, toggleKeyActive, updateApiKey, checkProviderApiKeyHealth } from "../../utils/model-catalog.js";
+import { refreshModelCatalog, getProviderApiKeys, addProviderApiKey, resetKeyLimited, deleteApiKey, toggleKeyActive, updateApiKey, checkProviderApiKeyHealth, syncProviderToMonitor } from "../../utils/model-catalog.js";
 import { sanitizeProviderApiKey } from "../../utils/crypto.js";
-import { purgeMonitorForProvider } from "../../utils/model-monitor-store.js";
+import { purgeMonitorForProvider, renameProviderInMonitor } from "../../utils/model-monitor-store.js";
 
 const providersApi = new Hono();
 
@@ -38,7 +38,10 @@ providersApi.post("/providers", async (c) => {
   // Also add the key to the providerApiKeys table for rotation
   await addProviderApiKey(result.id, body.apiKey);
 
-  void refreshModelCatalog();
+  await refreshModelCatalog();
+  if (result.isActive) {
+    void syncProviderToMonitor(result.id);
+  }
 
   return c.json({ success: true, provider: result });
 });
@@ -60,11 +63,19 @@ providersApi.put("/providers/:id", async (c) => {
 
   await db.update(providers).set(updates).where(eq(providers.id, id));
 
-  if (body.isActive === false) {
-    await purgeMonitorForProvider(existing.name);
+  if (body.name && body.name !== existing.name) {
+    await renameProviderInMonitor(existing.name, body.name);
   }
 
-  void refreshModelCatalog();
+  if (body.isActive === false) {
+    await purgeMonitorForProvider(body.name || existing.name);
+  }
+
+  await refreshModelCatalog();
+  const nowActive = body.isActive !== undefined ? body.isActive : existing.isActive;
+  if (nowActive) {
+    void syncProviderToMonitor(id);
+  }
 
   return c.json({ success: true });
 });
@@ -105,7 +116,8 @@ providersApi.post("/providers/:id/keys", async (c) => {
 
   const keyId = await addProviderApiKey(id, body.apiKey);
   const health = await checkProviderApiKeyHealth(id, keyId);
-  void refreshModelCatalog();
+  await refreshModelCatalog();
+  if (existing.isActive) void syncProviderToMonitor(id);
   return c.json({
     success: true,
     keyId,

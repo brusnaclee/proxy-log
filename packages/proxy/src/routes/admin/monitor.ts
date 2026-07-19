@@ -244,6 +244,7 @@ monitor.get("/monitor/models", async (c) => {
     }));
 
   const mode = await getMonitorAutoMode();
+  const activeProviders = [...activeNames].sort((a, b) => a.localeCompare(b));
   const summary = {
     total: data.length,
     online: data.filter((d) => d.isOnline).length,
@@ -253,7 +254,7 @@ monitor.get("/monitor/models", async (c) => {
     monitorAutoMode: mode,
   };
 
-  return c.json({ data, summary, monitorAutoMode: mode });
+  return c.json({ data, summary, monitorAutoMode: mode, activeProviders });
 });
 
 // GET history for a specific model
@@ -573,6 +574,15 @@ monitor.get("/monitor/models/details", async (c) => {
     .filter(Boolean);
 
   return c.json({ object: "list", data: enriched });
+});
+
+/** Force re-fetch /models for all active upstreams into Model Monitor (no probe). */
+monitor.post("/monitor/sync-catalog", async (c) => {
+  if (!isAuthenticated(c)) return c.json({ error: "Unauthorized" }, 401);
+  const { refreshModelCatalog, syncAllActiveProvidersToMonitor } = await import("../../utils/model-catalog.js");
+  await refreshModelCatalog();
+  const result = await syncAllActiveProvidersToMonitor();
+  return c.json({ success: true, ...result });
 });
 
 // ─── Model Health Check Sweep ────────────────────────────────────────────────

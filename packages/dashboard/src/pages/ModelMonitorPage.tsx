@@ -15,9 +15,11 @@ function modelVendorOf(modelId: string) {
 export default function ModelMonitorPage() {
   const [activeTab, setActiveTab] = useState<"monitor" | "catalog">("monitor");
   const [data, setData] = useState<ModelMonitorEntry[]>([]);
+  const [activeProviders, setActiveProviders] = useState<string[]>([]);
   const [summary, setSummary] = useState({ total: 0, online: 0, offline: 0, timeout: 0, probeOk: 0 });
   const [monitorAutoMode, setMonitorAutoMode] = useState<string>("notif_only");
   const [loading, setLoading] = useState(true);
+  const [syncingCatalog, setSyncingCatalog] = useState(false);
   const [upstreamFilter, setUpstreamFilter] = useState("all");
   const [modelVendorFilter, setModelVendorFilter] = useState("all");
   const [sortMode, setSortMode] = useState("status");
@@ -108,6 +110,7 @@ export default function ModelMonitorPage() {
     try {
       const res = await monitor.getModels();
       setData(res.data);
+      setActiveProviders(Array.isArray(res.activeProviders) ? res.activeProviders : []);
       setSummary({
         total: res.summary.total,
         online: res.summary.online,
@@ -121,6 +124,20 @@ export default function ModelMonitorPage() {
     } catch {}
     setLoading(false);
   }, []);
+
+  const handleSyncCatalog = async () => {
+    setSyncingCatalog(true);
+    try {
+      const res = await monitor.syncCatalog();
+      await loadData();
+      alert(`Synced /models from ${res.providers} upstream(s): ${res.listed} listed, ${res.seeded} new in monitor.`);
+    } catch (err) {
+      console.error("Sync catalog failed:", err);
+      alert(`Sync failed: ${(err as any)?.message || err}`);
+    } finally {
+      setSyncingCatalog(false);
+    }
+  };
 
   useEffect(() => {
     loadData();
@@ -181,10 +198,11 @@ export default function ModelMonitorPage() {
     });
   };
 
-  const upstreamOptions = useMemo(
-    () => ["all", ...new Set(data.map(d => d.provider || "unknown"))].sort(),
-    [data],
-  );
+  const upstreamOptions = useMemo(() => {
+    const fromData = data.map((d) => d.provider || "unknown");
+    const merged = new Set([...activeProviders, ...fromData]);
+    return ["all", ...[...merged].sort((a, b) => a.localeCompare(b))];
+  }, [data, activeProviders]);
 
   const vendorOptions = useMemo(() => {
     let rows = data;
@@ -265,6 +283,10 @@ export default function ModelMonitorPage() {
           </Button>
           {activeTab === "monitor" && (
             <>
+              <Button variant="outline" size="sm" onClick={handleSyncCatalog} disabled={syncingCatalog || sweepState.running}>
+                <RefreshCw className={`h-4 w-4 mr-2 ${syncingCatalog ? "animate-spin" : ""}`} />
+                {syncingCatalog ? "Syncing /models..." : "Sync /models"}
+              </Button>
               <Button variant="destructive" size="sm" onClick={handleSweep} disabled={sweepState.running}>
                 <Zap className={`h-4 w-4 mr-2 ${sweepState.running ? "animate-pulse" : ""}`} />
                 {sweepState.running && sweepState.progress

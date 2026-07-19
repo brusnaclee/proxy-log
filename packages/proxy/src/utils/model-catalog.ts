@@ -10,6 +10,7 @@ import {
   buildModelListCandidateUrls,
 } from "./probe-validate.js";
 import { getClientCatalogFlags } from "./model-monitor-store.js";
+import { seedMonitorModelsFromList } from "./model-monitor-store.js";
 
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 30_000; // Upstream combo is often slow on POST; give the GET enough headroom.
@@ -364,13 +365,96 @@ export async function initializeModelCatalogScheduler() {
   schedulerStarted = true;
 
   await loadFromDisk();
-  void refreshModelCatalog();
+  void refreshModelCatalog().then(() => {
+    void syncAllActiveProvidersToMonitor().catch((err) =>
+      console.warn("[model-catalog] initial monitor seed failed:", (err as Error)?.message || err),
+    );
+  });
 
   const timer = setInterval(() => {
-    void refreshModelCatalog();
+    void refreshModelCatalog().then(() => {
+      void syncAllActiveProvidersToMonitor().catch(() => {});
+    });
   }, REFRESH_INTERVAL_MS);
 
   timer.unref?.();
+}
+
+/**
+ * Fetch /models for one provider and seed model_monitor so Admin Upstream filter
+ * + Model Monitor list update without waiting for a full health sweep.
+ */
+export async function syncProviderToMonitor(providerId: number): Promise<{ provider: string; seeded: number; listed: number }> {
+  const [prov] = await db.select().from(providers).where(eq(providers.id, providerId));
+  if (!prov || !prov.isActive) {
+    return { provider: prov?.name || String(providerId), seeded: 0, listed: 0 };
+  }
+
+  const modelIds: string[] = [];
+
+  if (prov.endpointType === "youcom") {
+    modelIds.push(...YOUCOM_MODEL_IDS);
+  } else {
+    const candidates = buildModelListCandidateUrls(prov.endpoint);
+    const probeKeys = await getCatalogProbeKeys(prov.id, prov.apiKey);
+    let got = false;
+    for (const url of candidates) {
+      for (const key of probeKeys) {
+        try {
+          const models = await fetchModelsFromUpstream(
+            url,
+            key,
+            prov.id,
+            prov.endpointType || "openai",
+          );
+          for (const m of models) {
+            if (m.id) modelIds.push(m.id);
+          }
+          got = true;
+          break;
+        } catch {
+          /* try next */
+        }
+      }
+      if (got) break;
+    }
+  }
+
+  const customs = await db
+    .select({ modelId: customModels.modelId })
+    .from(customModels)
+    .where(and(eq(customModels.providerId, prov.id), eq(customModels.isActive, true)));
+  for (const cm of customs) {
+    if (cm.modelId && !modelIds.includes(cm.modelId)) modelIds.push(cm.modelId);
+  }
+
+  if (modelIds.length === 0) {
+    for (const m of cache.models || []) {
+      if (m.provider_id === prov.id && m.id) modelIds.push(m.id);
+    }
+  }
+
+  const unique = [...new Set(modelIds)];
+  const seeded = await seedMonitorModelsFromList(prov.name, prov.endpoint, unique);
+  console.log(`[model-catalog] syncProviderToMonitor ${prov.name}: listed=${unique.length} seededNew=${seeded}`);
+  return { provider: prov.name, seeded, listed: unique.length };
+}
+
+/** Seed monitor rows for every active upstream (after catalog refresh / provider CRUD). */
+export async function syncAllActiveProvidersToMonitor(): Promise<{
+  providers: number;
+  listed: number;
+  seeded: number;
+}> {
+  const active = await db.select({ id: providers.id }).from(providers).where(eq(providers.isActive, true));
+  let listed = 0;
+  let seeded = 0;
+  for (const p of active) {
+    const r = await syncProviderToMonitor(p.id);
+    listed += r.listed;
+    seeded += r.seeded;
+  }
+  return { providers: active.length, listed, seeded };
 }
 
 export async function getModelCatalogResponse() {

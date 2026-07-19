@@ -82,6 +82,55 @@ export async function getActiveProviderNames(): Promise<Set<string>> {
   return new Set(rows.map((r) => r.name));
 }
 
+/** When an upstream is renamed in Settings, keep monitor rows in sync. */
+export async function renameProviderInMonitor(oldName: string, newName: string): Promise<void> {
+  if (!oldName || !newName || oldName === newName) return;
+  await db.update(modelMonitor).set({ provider: newName }).where(eq(modelMonitor.provider, oldName));
+  await db.update(modelTestState).set({ provider: newName }).where(eq(modelTestState.provider, oldName));
+}
+
+/**
+ * Insert/refresh monitor rows from a /models list so new upstreams appear in
+ * Model Monitor immediately (Published OFF until probed / manually enabled).
+ */
+export async function seedMonitorModelsFromList(
+  providerName: string,
+  baseUrl: string,
+  modelIds: string[],
+): Promise<number> {
+  let count = 0;
+  const now = new Date();
+  for (const modelId of modelIds) {
+    const id = String(modelId || "").trim();
+    if (!id) continue;
+    const existing = await db
+      .select({ id: modelMonitor.id })
+      .from(modelMonitor)
+      .where(and(eq(modelMonitor.modelId, id), eq(modelMonitor.provider, providerName)))
+      .limit(1)
+      .then((r) => r[0]);
+    if (existing) {
+      await db
+        .update(modelMonitor)
+        .set({ baseUrl })
+        .where(eq(modelMonitor.id, existing.id));
+    } else {
+      await db.insert(modelMonitor).values({
+        modelId: id,
+        provider: providerName,
+        isOnline: false,
+        latencyMs: 0,
+        httpStatus: 0,
+        errorMessage: "Listed from /models — pending probe",
+        baseUrl,
+        checkedAt: now,
+      });
+      count++;
+    }
+  }
+  return count;
+}
+
 export async function purgeMonitorForProvider(providerName: string): Promise<void> {
   await db.delete(modelMonitor).where(eq(modelMonitor.provider, providerName));
   await db.delete(modelTestState).where(eq(modelTestState.provider, providerName));

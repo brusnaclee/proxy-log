@@ -415,6 +415,8 @@ export interface ModelMonitorResponse {
     monitorAutoMode?: string;
   };
   monitorAutoMode?: string;
+  /** All active upstream names (even if no monitor rows yet). */
+  activeProviders?: string[];
 }
 
 export const monitor = {
@@ -422,6 +424,10 @@ export const monitor = {
   getModelHistory: (modelId: string) => request<ModelMonitorEntry[]>(`/monitor/models/${encodeURIComponent(modelId)}/history`),
   getModelDetails: () => request<{ object: string; data: any[] }>("/monitor/models/details"),
   triggerSweep: () => request<{ started: boolean; message: string }>("/monitor/sweep", { method: "POST" }),
+  syncCatalog: () =>
+    request<{ success: boolean; providers: number; listed: number; seeded: number }>("/monitor/sync-catalog", {
+      method: "POST",
+    }),
   getSweepProgress: () => request<{ total: number; tested: number; online: number; offline: number; rateLimited: number; startedAt: string; status: string }>("/monitor/sweep/progress"),
   activate: (modelId: string, provider: string) =>
     request<{ success: boolean; message?: string }>("/monitor/models/activate", {
