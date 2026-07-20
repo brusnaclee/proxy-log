@@ -245,6 +245,7 @@ export default function KeysPage() {
                           <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs hide-mobile">Tokens</th>
                           <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs hide-mobile">In left</th>
                           <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs hide-mobile">Out left</th>
+                          <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs hide-mobile">Prompt left</th>
                           <th className="text-center py-2 px-4 text-muted-foreground font-medium text-xs">Active</th>
                         </tr>
                       </thead>
@@ -294,6 +295,18 @@ export default function KeysPage() {
                               {k.liveUsage?.remaining.output != null
                                 ? formatNumber(k.liveUsage.remaining.output)
                                 : "—"}
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-mono text-xs hide-mobile text-muted-foreground">
+                              {k.liveUsage?.remaining.prompt != null ? (
+                                <span title={`${k.liveUsage.limits.promptLimitWindow} · ${k.liveUsage.limits.promptLimitSource}`}>
+                                  {formatNumber(k.liveUsage.remaining.prompt)}
+                                  {k.liveUsage.limits.promptLimitSource === "override" && (
+                                    <span className="text-sky-400 ml-0.5">*</span>
+                                  )}
+                                </span>
+                              ) : (
+                                "—"
+                              )}
                             </td>
                             <td className="py-2.5 px-4 text-center" onClick={(e) => e.stopPropagation()}>
                               <Switch

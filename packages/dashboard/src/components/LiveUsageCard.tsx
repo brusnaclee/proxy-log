@@ -82,24 +82,47 @@ export function LiveUsageCard({
   compact?: boolean;
 }) {
   if (!live) return null;
-  const { limits, usageToday, usageMonth, remaining, dailyResetAt, monthlyResetAt, scope, accountKeyCount } =
-    live;
+  const {
+    limits,
+    usageToday,
+    usageMonth,
+    remaining,
+    dailyResetAt,
+    monthlyResetAt,
+    promptResetAt,
+    scope,
+    accountKeyCount,
+    modelUsageLimits,
+  } = live;
 
   const bars: Array<{
     label: string;
     value: number;
     max: number;
     remaining: number | null;
+    sublabel?: string;
     source?: string;
     reset?: string;
   }> = [];
 
+  if (limits.promptLimit > 0) {
+    bars.push({
+      label: `Prompt Limit (${limits.promptLimitWindow})`,
+      value: usageToday.promptCount ?? 0,
+      max: limits.promptLimit,
+      remaining: remaining.prompt,
+      sublabel: "prompts",
+      source: sourceLabel(limits.promptLimitSource),
+      reset: formatReset(promptResetAt),
+    });
+  }
   if (limits.dailyInputTokenLimit > 0) {
     bars.push({
       label: "Input Tokens",
       value: usageToday.promptTokens,
       max: limits.dailyInputTokenLimit,
       remaining: remaining.input,
+      sublabel: "tokens",
       source: sourceLabel(limits.dailyInputTokenLimitSource),
       reset: formatReset(dailyResetAt),
     });
@@ -110,6 +133,7 @@ export function LiveUsageCard({
       value: usageToday.completionTokens,
       max: limits.dailyOutputTokenLimit,
       remaining: remaining.output,
+      sublabel: "tokens",
       source: sourceLabel(limits.dailyOutputTokenLimitSource),
       reset: formatReset(dailyResetAt),
     });
@@ -120,6 +144,7 @@ export function LiveUsageCard({
       value: usageToday.totalTokens,
       max: limits.dailyTokenLimit,
       remaining: remaining.daily,
+      sublabel: "tokens",
       source: sourceLabel(limits.dailyTokenLimitSource),
       reset: formatReset(dailyResetAt),
     });
@@ -130,13 +155,19 @@ export function LiveUsageCard({
       value: usageMonth.totalTokens,
       max: limits.monthlyTokenLimit,
       remaining: remaining.monthly,
+      sublabel: "tokens",
       source: sourceLabel(limits.monthlyTokenLimitSource),
       reset: formatReset(monthlyResetAt),
     });
   }
 
+  const modelLimits = (modelUsageLimits || []).filter((m) => m.limit > 0 || m.used > 0);
+
   if (compact) {
     const chips: string[] = [];
+    if (remaining.prompt != null) {
+      chips.push(`Prompt ${formatNumber(remaining.prompt)} left (${limits.promptLimitWindow})`);
+    }
     if (remaining.input != null) chips.push(`In ${formatNumber(remaining.input)} left`);
     if (remaining.output != null) chips.push(`Out ${formatNumber(remaining.output)} left`);
     if (remaining.daily != null && remaining.input == null && remaining.output == null) {
@@ -147,18 +178,23 @@ export function LiveUsageCard({
         `Today ${formatNumber(usageToday.promptTokens)} in / ${formatNumber(usageToday.completionTokens)} out`,
       );
     }
+    const overrideBits: string[] = [];
+    if (limits.promptLimitSource === "override") overrideBits.push("prompt");
+    if (limits.dailyInputTokenLimitSource === "override") overrideBits.push("in");
+    if (limits.dailyOutputTokenLimitSource === "override") overrideBits.push("out");
     return (
       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
         <span className="text-foreground/80">{chips.join(" · ")}</span>
         <span>
           · used {formatNumber(usageToday.totalTokens)} today
           {scope === "account" && accountKeyCount > 1 ? ` · ${accountKeyCount} keys` : ""}
+          {overrideBits.length > 0 ? ` · override: ${overrideBits.join("/")}` : ""}
         </span>
       </div>
     );
   }
 
-  if (!bars.length) {
+  if (!bars.length && !modelLimits.length) {
     return (
       <div className="rounded-xl border border-border/50 bg-card p-4 space-y-2">
         <div className="flex items-center justify-between">
@@ -168,7 +204,7 @@ export function LiveUsageCard({
           </span>
         </div>
         <p className="text-xs text-muted-foreground">
-          No daily/monthly token limits configured (key or global). Today:{" "}
+          No prompt/token limits configured on this key (or global). Today:{" "}
           <span className="text-foreground font-mono">
             {formatNumber(usageToday.promptTokens)} in / {formatNumber(usageToday.completionTokens)} out
           </span>{" "}
@@ -182,12 +218,11 @@ export function LiveUsageCard({
     <div className="rounded-xl border border-border/50 bg-card p-4 space-y-3">
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-medium">Usage Today</h3>
-        <span className="text-[10px] text-muted-foreground">
+        <span className="text-[10px] text-muted-foreground text-right">
+          Limits from this key
           {scope === "account"
-            ? `Shared across Discord account · ${accountKeyCount} key(s)`
-            : "This key only"}
-          {" · "}
-          {formatReset(dailyResetAt)}
+            ? ` · usage shared across ${accountKeyCount} Discord key(s)`
+            : " · this key only"}
         </span>
       </div>
       <div className="space-y-3">
@@ -198,12 +233,35 @@ export function LiveUsageCard({
             value={b.value}
             max={b.max}
             remaining={b.remaining}
-            sublabel="tokens"
+            sublabel={b.sublabel}
             source={b.source}
             reset={b.reset}
           />
         ))}
       </div>
+      {modelLimits.length > 0 && (
+        <div className="pt-2 border-t border-border/50 space-y-1.5">
+          <p className="text-xs text-muted-foreground">
+            Per-model prompt
+            {limits.perModelPromptLimitSource !== "none"
+              ? ` · ${sourceLabel(limits.perModelPromptLimitSource)} default ${formatNumber(limits.perModelPromptLimit)}/${limits.perModelPromptLimitWindow}`
+              : ""}
+          </p>
+          {modelLimits.slice(0, 8).map((m) => (
+            <div key={m.model} className="flex items-center justify-between text-xs gap-2">
+              <span className="font-mono text-foreground truncate flex-1">{m.model}</span>
+              <span
+                className={
+                  m.limit > 0 && m.used >= m.limit ? "text-red-400 shrink-0" : "text-muted-foreground shrink-0"
+                }
+              >
+                {m.used} / {m.limit > 0 ? m.limit : "∞"}
+                {m.remaining != null ? ` · ${m.remaining} left` : ""}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -1,21 +1,39 @@
 /**
- * Live daily/monthly usage + remaining quota — same semantics as portal /me
- * (account-scoped when Discord-linked, key override vs global limits).
+ * Live daily/monthly/prompt usage + remaining — portal /me semantics for admin.
+ * Usage is account-scoped when Discord-linked; limits come from the viewed key
+ * (so per-key overrides show correctly on Key Detail / Keys list rows).
  */
 
 import { and, eq, sql, inArray } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { apiKeys, adminConfig, requestLogs } from '../db/schema.js';
+import { apiKeys, adminConfig, requestLogs, modelLimits } from '../db/schema.js';
 import {
 	turnCountSql,
 	turnPromptTokensSql,
 	turnCompletionTokensSql,
 	turnTotalTokensSql,
 	wibMonthStartSql,
+	sanitizeRows,
 } from './counting.js';
-import { resolveKeyDailyTokenLimit } from './trial-config.js';
+import { resolveKeyDailyTokenLimit, resolveKeyPromptLimit } from './trial-config.js';
+import {
+	checkPromptLimit,
+	checkModelPromptLimit,
+	parseRateLimitWindow,
+	getWindowResetMs,
+} from './rate-limit.js';
 
 export type LimitSource = 'override' | 'global' | 'none';
+
+export interface ModelPromptUsage {
+	model: string;
+	used: number;
+	limit: number;
+	window: string;
+	remaining: number | null;
+	resetAt: string | null;
+	source: LimitSource;
+}
 
 export interface LiveUsagePayload {
 	scope: 'account' | 'key';
@@ -25,6 +43,8 @@ export interface LiveUsagePayload {
 		promptTokens: number;
 		completionTokens: number;
 		totalTokens: number;
+		/** Rolling prompt-window usage (not all-day request count). */
+		promptCount: number;
 	};
 	usageMonth: {
 		totalTokens: number;
@@ -38,15 +58,25 @@ export interface LiveUsagePayload {
 		dailyOutputTokenLimitSource: LimitSource;
 		monthlyTokenLimit: number;
 		monthlyTokenLimitSource: LimitSource;
+		promptLimit: number;
+		promptLimitWindow: string;
+		promptLimitSource: LimitSource;
+		perModelPromptLimit: number;
+		perModelPromptLimitWindow: string;
+		perModelPromptLimitSource: LimitSource;
 	};
 	remaining: {
 		input: number | null;
 		output: number | null;
 		daily: number | null;
 		monthly: number | null;
+		prompt: number | null;
 	};
 	dailyResetAt: string;
 	monthlyResetAt: string;
+	promptResetAt: string | null;
+	promptResetMins: number;
+	modelUsageLimits: ModelPromptUsage[];
 }
 
 function pickLimit(
@@ -92,8 +122,9 @@ type KeyRow = typeof apiKeys.$inferSelect;
 type ConfigRow = typeof adminConfig.$inferSelect;
 
 /**
- * Build live usage for an API key. When Discord-linked, aggregates usage across
- * all keys for that Discord user (same as client portal).
+ * Build live usage for an API key.
+ * - Usage: Discord account aggregate when linked (portal parity)
+ * - Limits: from the viewed key so per-key overrides are visible
  */
 export async function buildLiveUsageForKey(
 	key: KeyRow,
@@ -117,11 +148,8 @@ export async function buildLiveUsageForKey(
 	}
 	const keyIds = accountKeys.map((k) => k.id);
 
-	// Limits from primary active non-trial key when account-scoped (portal parity)
-	const primaryKey =
-		accountKeys.find((k) => !k.isTrial && k.isActive) ||
-		accountKeys.find((k) => k.isActive) ||
-		key;
+	// Limits from the VIEWED key (per-key override), not primaryKey
+	const limitKey = key;
 
 	const whereToday = and(
 		inArray(requestLogs.apiKeyId, keyIds),
@@ -158,19 +186,129 @@ export async function buildLiveUsageForKey(
 	const totalTokens = promptTokens + completionTokens;
 	const monthTokens = usageMonth?.tokens || 0;
 
-	const dailyInput = pickLimit(primaryKey.dailyInputTokenLimit, cfg?.globalDailyInputTokenLimit);
-	const dailyOutput = pickLimit(primaryKey.dailyOutputTokenLimit, cfg?.globalDailyOutputTokenLimit);
-	const monthly = pickLimit(primaryKey.monthlyTokenLimit, cfg?.globalMonthlyTokenLimit);
-	const dailyTokenLimit = resolveKeyDailyTokenLimit(primaryKey as any, cfg);
+	const dailyInput = pickLimit(limitKey.dailyInputTokenLimit, cfg?.globalDailyInputTokenLimit);
+	const dailyOutput = pickLimit(limitKey.dailyOutputTokenLimit, cfg?.globalDailyOutputTokenLimit);
+	const monthly = pickLimit(limitKey.monthlyTokenLimit, cfg?.globalMonthlyTokenLimit);
+	const dailyTokenLimit = resolveKeyDailyTokenLimit(limitKey as any, cfg);
 	const dailyTok =
 		dailyTokenLimit > 0
 			? {
 					value: dailyTokenLimit,
-					source: (Number(primaryKey.dailyTokenLimit) > 0
+					source: (Number(limitKey.dailyTokenLimit) > 0
 						? 'override'
 						: 'global') as LimitSource,
 				}
 			: { value: 0, source: 'none' as LimitSource };
+
+	const { limit: promptLimit, window: promptLimitWindow } = resolveKeyPromptLimit(
+		limitKey as any,
+		cfg,
+	);
+	const promptLimitSource: LimitSource =
+		promptLimit > 0
+			? Number(limitKey.promptLimit) > 0
+				? 'override'
+				: 'global'
+			: 'none';
+
+	const perModelPick = pickLimit(
+		limitKey.perModelPromptLimit,
+		cfg?.globalPerModelPromptLimit,
+	);
+	const perModelWindow =
+		limitKey.perModelPromptLimitWindow ||
+		cfg?.globalPerModelPromptLimitWindow ||
+		'30m';
+
+	// Prompt window usage — account-scoped (shared across Discord keys)
+	let promptUsed = 0;
+	let promptResetAt: string | null = null;
+	let promptResetMins = 0;
+	const windowKeyId = limitKey.id;
+	const promptScopeIds = [
+		windowKeyId,
+		...keyIds.filter((id) => id !== windowKeyId),
+	];
+	if (promptLimit > 0 && promptScopeIds.length > 0) {
+		const plCheck = await checkPromptLimit(promptScopeIds, promptLimit, promptLimitWindow);
+		promptUsed = plCheck.used;
+		const windowMs = parseRateLimitWindow(promptLimitWindow);
+		const resetMs = await getWindowResetMs(promptScopeIds, windowMs);
+		promptResetMins = Math.ceil(resetMs / 60000);
+		promptResetAt = resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null;
+	}
+
+	const modelUsageLimits: ModelPromptUsage[] = [];
+	if (!limitKey.isTrial && promptScopeIds.length > 0) {
+		const todayModels = sanitizeRows(
+			(
+				await db.execute(sql`
+      SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
+        COUNT(DISTINCT turn_id)::int as requests
+      FROM request_logs
+      WHERE api_key_id IN (${sql.join(
+				promptScopeIds.map((id) => sql`${id}`),
+				sql`, `,
+			)})
+        AND created_at >= ${todayStart}
+        AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+      GROUP BY 1
+      ORDER BY requests DESC
+      LIMIT 12
+    `)
+			).rows as any[],
+			['requests'],
+		);
+
+		const perKeyDefault = limitKey.perModelPromptLimit || 0;
+		const perKeyWindow = limitKey.perModelPromptLimitWindow || null;
+		const globalPerModel = cfg?.globalPerModelPromptLimit || 0;
+		const globalPerModelWindow = cfg?.globalPerModelPromptLimitWindow || '30m';
+
+		for (const tm of todayModels) {
+			if (!tm.model) continue;
+			const mlCheck = await checkModelPromptLimit(
+				promptScopeIds,
+				tm.model,
+				perKeyDefault,
+				perKeyWindow,
+				globalPerModel,
+				globalPerModelWindow,
+			);
+			const windowStr = perKeyWindow || globalPerModelWindow;
+			const windowMs = parseRateLimitWindow(windowStr);
+			const resetMs = await getWindowResetMs(promptScopeIds, windowMs, tm.model);
+			if (mlCheck.used > 0 || mlCheck.effectiveLimit > 0) {
+				modelUsageLimits.push({
+					model: tm.model,
+					used: mlCheck.used,
+					limit: mlCheck.effectiveLimit,
+					window: windowStr,
+					remaining: rem(mlCheck.effectiveLimit, mlCheck.used),
+					resetAt: resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null,
+					source: perModelPick.source,
+				});
+			}
+		}
+
+		const activeModelLimits = await db
+			.select()
+			.from(modelLimits)
+			.where(eq(modelLimits.scope, 'global'));
+		for (const am of activeModelLimits) {
+			if (!modelUsageLimits.find((m) => m.model === am.model) && (am.promptLimit || 0) > 0) {
+				modelUsageLimits.push({
+					model: am.model,
+					used: 0,
+					limit: am.promptLimit || 0,
+					window: perKeyWindow || globalPerModelWindow,
+					remaining: rem(am.promptLimit || 0, 0),
+					resetAt: null,
+					source: 'global',
+				});
+			}
+		}
+	}
 
 	return {
 		scope,
@@ -180,6 +318,7 @@ export async function buildLiveUsageForKey(
 			promptTokens,
 			completionTokens,
 			totalTokens,
+			promptCount: promptUsed,
 		},
 		usageMonth: {
 			totalTokens: monthTokens,
@@ -193,14 +332,24 @@ export async function buildLiveUsageForKey(
 			dailyOutputTokenLimitSource: dailyOutput.source,
 			monthlyTokenLimit: monthly.value,
 			monthlyTokenLimitSource: monthly.source,
+			promptLimit,
+			promptLimitWindow,
+			promptLimitSource,
+			perModelPromptLimit: perModelPick.value,
+			perModelPromptLimitWindow: perModelWindow,
+			perModelPromptLimitSource: perModelPick.source,
 		},
 		remaining: {
 			input: rem(dailyInput.value, promptTokens),
 			output: rem(dailyOutput.value, completionTokens),
 			daily: rem(dailyTok.value, totalTokens),
 			monthly: rem(monthly.value, monthTokens),
+			prompt: rem(promptLimit, promptUsed),
 		},
 		dailyResetAt,
 		monthlyResetAt,
+		promptResetAt,
+		promptResetMins,
+		modelUsageLimits,
 	};
 }

@@ -84,6 +84,7 @@ export interface LiveUsagePayload {
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
+    promptCount: number;
   };
   usageMonth: {
     totalTokens: number;
@@ -97,15 +98,33 @@ export interface LiveUsagePayload {
     dailyOutputTokenLimitSource: "override" | "global" | "none";
     monthlyTokenLimit: number;
     monthlyTokenLimitSource: "override" | "global" | "none";
+    promptLimit: number;
+    promptLimitWindow: string;
+    promptLimitSource: "override" | "global" | "none";
+    perModelPromptLimit: number;
+    perModelPromptLimitWindow: string;
+    perModelPromptLimitSource: "override" | "global" | "none";
   };
   remaining: {
     input: number | null;
     output: number | null;
     daily: number | null;
     monthly: number | null;
+    prompt: number | null;
   };
   dailyResetAt: string;
   monthlyResetAt: string;
+  promptResetAt: string | null;
+  promptResetMins: number;
+  modelUsageLimits: Array<{
+    model: string;
+    used: number;
+    limit: number;
+    window: string;
+    remaining: number | null;
+    resetAt: string | null;
+    source: "override" | "global" | "none";
+  }>;
 }
 
 export interface ApiKeyListItem {

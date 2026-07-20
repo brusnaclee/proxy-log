@@ -90,23 +90,15 @@ keys.get("/keys", async (c) => {
     return result;
   }, 30_000);
 
-  // Fresh liveUsage (same as portal) — not cached with list stats
+  // Fresh liveUsage per key (limits = that key's override; usage = account when Discord-linked)
   const allKeysFresh = await db.select().from(apiKeys);
   const configFresh = (await db.select().from(adminConfig))[0];
   const liveByKeyId = new Map<number, Awaited<ReturnType<typeof buildLiveUsageForKey>>>();
-  const seenDiscord = new Set<string>();
-  for (const key of allKeysFresh) {
-    if (key.discordUserId) {
-      if (seenDiscord.has(key.discordUserId)) continue;
-      seenDiscord.add(key.discordUserId);
-      const live = await buildLiveUsageForKey(key, configFresh);
-      for (const k of allKeysFresh) {
-        if (k.discordUserId === key.discordUserId) liveByKeyId.set(k.id, live);
-      }
-    } else {
+  await Promise.all(
+    allKeysFresh.map(async (key) => {
       liveByKeyId.set(key.id, await buildLiveUsageForKey(key, configFresh));
-    }
-  }
+    }),
+  );
 
   return c.json(
     (listBase as any[]).map((row) => ({
