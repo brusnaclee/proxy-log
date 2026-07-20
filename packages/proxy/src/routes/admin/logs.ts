@@ -100,6 +100,8 @@ logs.get("/logs", async (c) => {
   const page = parseInt(c.req.query("page") || "1");
   const limit = Math.min(parseInt(c.req.query("limit") || "50"), 200);
   const offset = (page - 1) * limit;
+  // Overview Recent Requests: skip heavy preview columns so first paint is fast.
+  const lite = c.req.query("lite") === "1" || c.req.query("lite") === "true";
 
   const conditions: any[] = [];
   const apiKeyId = c.req.query("api_key_id");
@@ -127,19 +129,27 @@ logs.get("/logs", async (c) => {
 
   // New period param (takes precedence over from/to)
   if (period && ["today", "3d", "7d", "30d", "thisMonth", "lastMonth", "allTime"].includes(period)) {
-    const range = resolvePeriodRange(period);
-    conditions.push(sql`created_at >= ${range.start}`);
-    if (range.end) conditions.push(sql`created_at <= ${range.end}`);
+    if (period === "7d") {
+      conditions.push(sql`created_at >= NOW() - INTERVAL '7 days'`);
+    } else if (period === "3d") {
+      conditions.push(sql`created_at >= NOW() - INTERVAL '3 days'`);
+    } else if (period === "30d") {
+      conditions.push(sql`created_at >= NOW() - INTERVAL '30 days'`);
+    } else if (period === "allTime") {
+      // no date filter
+    } else {
+      const range = resolvePeriodRange(period);
+      conditions.push(sql`created_at >= ${range.start.toISOString()}::timestamptz`);
+      if (range.end) conditions.push(sql`created_at <= ${range.end.toISOString()}::timestamptz`);
+    }
   } else if (!from && !to) {
-    // Default: last 7 days rolling
-    const defaultStart = new Date(Date.now() - 7 * 86400000);
-    conditions.push(sql`created_at >= ${defaultStart}`);
+    // Default: last 7 days rolling (SQL interval — reliable vs Date param binding)
+    conditions.push(sql`created_at >= NOW() - INTERVAL '7 days'`);
   }
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-  // Select only columns needed for the listing (skip heavy transcriptSnapshot)
-  const rows = await db.select({
+  const baseSelect = {
     id: requestLogs.id,
     apiKeyId: requestLogs.apiKeyId,
     apiKeyName: requestLogs.apiKeyName,
@@ -163,21 +173,31 @@ logs.get("/logs", async (c) => {
     toolsUsed: requestLogs.toolsUsed,
     toolCount: requestLogs.toolCount,
     hasToolCalls: requestLogs.hasToolCalls,
-    requestPreview: requestLogs.requestPreview,
-    responsePreview: requestLogs.responsePreview,
     isCountedRequest: requestLogs.isCountedRequest,
     latencyMs: requestLogs.latencyMs,
     statusCode: requestLogs.statusCode,
     errorMessage: requestLogs.errorMessage,
     estimatedCost: requestLogs.estimatedCost,
     createdAt: requestLogs.createdAt,
-  }).from(requestLogs)
+  } as const;
+
+  const rows = await db.select(
+    lite
+      ? baseSelect
+      : {
+          ...baseSelect,
+          requestPreview: requestLogs.requestPreview,
+          responsePreview: requestLogs.responsePreview,
+        },
+  ).from(requestLogs)
   .leftJoin(apiKeys, eq(requestLogs.apiKeyId, apiKeys.id))
   .where(whereClause)
   .orderBy(desc(requestLogs.createdAt)).limit(limit).offset(offset);
 
-  const totalResult = (await db.select({ count: sql<number>`count(*)` }).from(requestLogs).where(whereClause))[0];
-  const total = totalResult?.count || 0;
+  const totalResult = (
+    await db.select({ count: sql<number>`count(*)::int` }).from(requestLogs).where(whereClause)
+  )[0];
+  const total = Number(totalResult?.count) || 0;
 
   const mappedRows = rows.map((row: any) => mapTimelineRow(row));
 
@@ -187,7 +207,7 @@ logs.get("/logs", async (c) => {
       page,
       limit,
       total,
-      totalPages: Math.ceil(total / limit),
+      totalPages: Math.max(1, Math.ceil(total / limit)),
     }
   });
 });

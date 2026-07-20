@@ -44,9 +44,9 @@ const TOOLTIP_STYLE = {
 const ITEM_STYLE  = { color: "hsl(var(--foreground))" };
 const LABEL_STYLE = { color: "hsl(var(--foreground))" };
 
-/** Recent Requests: 10 rows/page, max 10 pages (lazy — only fetch current page). */
-const RECENT_PAGE_SIZE = 10;
-const RECENT_MAX_PAGES = 10;
+/** Recent Requests: 20 rows/page, paginate up to 25 pages (500 rows). */
+const RECENT_PAGE_SIZE = 20;
+const RECENT_MAX_PAGES = 25;
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function OverviewPage() {
@@ -56,7 +56,9 @@ export default function OverviewPage() {
   const [recentLogs, setRecentLogs]     = useState<LogEntry[]>([]);
   const [recentPage, setRecentPage]     = useState(1);
   const [recentTotalPages, setRecentTotalPages] = useState(1);
+  const [recentTotal, setRecentTotal]   = useState(0);
   const [recentLoading, setRecentLoading] = useState(false);
+  const [recentError, setRecentError]   = useState<string | null>(null);
   const recentPageRef = useRef(1);
   const [period, setPeriod]             = useState<LocalPeriodKey>("today");
   const [chartPeriod, setChartPeriod]   = useState<LocalPeriodKey>("7d"); // for charts only
@@ -115,18 +117,32 @@ export default function OverviewPage() {
   const loadRecentLogs = useCallback(async (page: number) => {
     const safePage = Math.max(1, Math.min(page, RECENT_MAX_PAGES));
     setRecentLoading(true);
+    setRecentError(null);
     try {
       const lg = await logs.list({
         page: String(safePage),
         limit: String(RECENT_PAGE_SIZE),
+        lite: "1",
+        period: "7d",
       });
-      setRecentLogs(Array.isArray(lg?.data) ? lg.data : []);
+      const rows = Array.isArray(lg?.data) ? lg.data : [];
+      setRecentLogs(
+        rows.map((r) => ({
+          ...r,
+          createdAt:
+            r.createdAt ||
+            (r as any).created_at ||
+            new Date().toISOString(),
+        })),
+      );
+      const total = Number(lg?.pagination?.total) || 0;
       const apiPages = Math.max(1, Number(lg?.pagination?.totalPages) || 1);
+      setRecentTotal(total);
       setRecentTotalPages(Math.min(apiPages, RECENT_MAX_PAGES));
       setRecentPage(safePage);
       recentPageRef.current = safePage;
-    } catch {
-      // keep previous rows if refresh fails
+    } catch (e: any) {
+      setRecentError(e?.message || "Failed to load recent requests");
     } finally {
       setRecentLoading(false);
     }
@@ -137,13 +153,17 @@ export default function OverviewPage() {
 
   const handleSSEMessage = useCallback((data: any) => {
     // Live prepend only on page 1 so other pages stay stable
-    if (recentPageRef.current === 1) {
-      setRecentLogs((prev) => {
-        const id = data?.id;
-        const withoutDup = id != null ? prev.filter((r) => r.id !== id) : prev;
-        return [data, ...withoutDup].slice(0, RECENT_PAGE_SIZE);
-      });
-    }
+    if (recentPageRef.current !== 1) return;
+    const entry = {
+      ...data,
+      createdAt: data?.createdAt || data?.created_at || new Date().toISOString(),
+    };
+    setRecentLogs((prev) => {
+      const id = entry?.id;
+      const withoutDup = id != null ? prev.filter((r) => r.id !== id) : prev;
+      return [entry, ...withoutDup].slice(0, RECENT_PAGE_SIZE);
+    });
+    setRecentTotal((t) => t + 1);
   }, []);
   useRealtimeSSE(handleSSEMessage, 800);
 
@@ -533,41 +553,45 @@ export default function OverviewPage() {
                     <td colSpan={7} className="text-center py-8 text-muted-foreground">
                       {recentLoading
                         ? "Loading recent requests..."
-                        : "No requests in the last 7 days."}
+                        : recentError
+                          ? `Failed to load: ${recentError}`
+                          : "No requests in the last 7 days."}
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
-          {recentTotalPages > 1 && (
-            <div className="flex items-center justify-between pt-3 mt-1 border-t border-border/50">
-              <p className="text-xs text-muted-foreground">
-                Page {recentPage} of {recentTotalPages}
-                {recentTotalPages >= RECENT_MAX_PAGES ? " (max 10 pages)" : ""}
-              </p>
-              <div className="flex gap-1">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
-                  disabled={recentLoading || recentPage <= 1}
-                  onClick={() => void loadRecentLogs(recentPage - 1)}
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
-                  disabled={recentLoading || recentPage >= recentTotalPages}
-                  onClick={() => void loadRecentLogs(recentPage + 1)}
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
+          <div className="flex items-center justify-between pt-3 mt-1 border-t border-border/50">
+            <p className="text-xs text-muted-foreground">
+              {recentLoading
+                ? "Loading…"
+                : `Page ${recentPage} of ${recentTotalPages} · ${formatNumber(recentTotal)} in last 7d · ${RECENT_PAGE_SIZE}/page`}
+              {recentTotalPages >= RECENT_MAX_PAGES ? ` (max ${RECENT_MAX_PAGES} pages)` : ""}
+            </p>
+            <div className="flex gap-1">
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8"
+                disabled={recentLoading || recentPage <= 1}
+                onClick={() => void loadRecentLogs(recentPage - 1)}
+                title="Previous page"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8"
+                disabled={recentLoading || recentPage >= recentTotalPages}
+                onClick={() => void loadRecentLogs(recentPage + 1)}
+                title="Next page"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
             </div>
-          )}
+          </div>
         </CardContent>
       </Card>
     </div>

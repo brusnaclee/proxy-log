@@ -2510,10 +2510,12 @@ proxy.all('/*', async (c) => {
 										),
 									});
 									logEmitter.emit({
+										id: undefined,
 										model: logModel,
 										provider: candidate.provider,
 										statusCode: trialResponse.status,
 										latencyMs,
+										createdAt: new Date().toISOString(),
 									});
 									// Update session stats for auto model
 									if (autoIsNewPrompt) {
@@ -2674,6 +2676,7 @@ proxy.all('/*', async (c) => {
 						provider: candidate.provider,
 						statusCode: 200,
 						latencyMs,
+						createdAt: new Date().toISOString(),
 					});
 					// Update session stats for auto model (non-streaming)
 					if (autoIsNewPrompt) {
@@ -3491,6 +3494,7 @@ proxy.all('/*', async (c) => {
 			await tx.insert(requestLogs).values(logEntry);
 			logEmitter.emit({
 				...logEntry,
+				createdAt: logEntry.createdAt || new Date().toISOString(),
 				toolsUsed: parseToolJson(logEntry.toolsUsed),
 				isTrial: !!keyRecord.isTrial,
 				discordUserId: keyRecord.discordUserId || null,
