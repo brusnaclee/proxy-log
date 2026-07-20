@@ -47,7 +47,7 @@ export async function applyHeadroom(
 			return stats;
 		}
 		const data = await res.json().catch(() => null);
-		if (data && Array.isArray((data as any).messages)) {
+		if (data && Array.isArray((data as any).messages) && (data as any).messages.length > 0) {
 			body.messages = (data as any).messages;
 			stats.ok = true;
 			stats.afterChars = measureBodyChars(body);

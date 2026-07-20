@@ -118,7 +118,7 @@ export function extractContextInfo(requestBody: any): ContextInfo {
   let previewSource = "";
   let transcriptSnapshot = "";
 
-  if (Array.isArray(requestBody?.messages)) {
+	if (Array.isArray(requestBody?.messages) && requestBody.messages.length > 0) {
     const messages = requestBody.messages as any[];
     const normalizedMessages = messages.map((msg) => messageLikeToText(msg));
     canonicalContext = normalizedMessages.join("\n");

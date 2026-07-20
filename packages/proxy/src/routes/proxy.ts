@@ -131,6 +131,10 @@ import {
 	collapseDuplicateApiVersionPath,
 	joinUpstreamOpenAIUrl,
 } from '../utils/probe-validate.js';
+import {
+	looksLikeGeminiContentsBody,
+	convertGeminiContentsToOpenAI,
+} from '../utils/gemini-contents-adapter.js';
 
 const proxy = new Hono();
 
@@ -1812,6 +1816,34 @@ proxy.all('/*', async (c) => {
 	const isResponsesApi = normalizedPath === '/v1/responses';
 	let forwardPath = path; // path to forward to upstream
 
+	// ─── 7a0. Antigravity / Gemini contents → OpenAI chat completions ────────
+	// Antigravity often hits /v1/chat/completions with { request: { contents } }
+	// and no `messages`. Forwarding raw → amanai 400 "messages required" → 502.
+	if (requestBody && looksLikeGeminiContentsBody(requestBody)) {
+		const converted = convertGeminiContentsToOpenAI(requestBody);
+		if (converted && Array.isArray(converted.messages) && converted.messages.length > 0) {
+			requestBody = converted;
+			requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
+			forwardPath = '/v1/chat/completions';
+			model = requestBody.model || model;
+			console.log(
+				`[proxy] gemini-contents→openai translation for model=${model} messages=${converted.messages.length}`,
+			);
+		} else {
+			return c.json(
+				{
+					error: {
+						message:
+							'Request looks like Gemini/Antigravity contents format but produced no OpenAI messages. Send OpenAI { messages: [...] } or a non-empty request.contents.',
+						type: 'invalid_request_error',
+						code: 'gemini_contents_empty',
+					},
+				},
+				400,
+			);
+		}
+	}
+
 	if (isResponsesApi && requestBody) {
 		// Convert Responses API input to Chat Completions messages
 		let messages: any[] = [];
@@ -3418,6 +3450,39 @@ proxy.all('/*', async (c) => {
 					);
 				}
 			}
+		}
+	}
+
+	// Guard: OpenAI chat path must have non-empty messages (prevents amanai 400 → client 502).
+	const chatPath =
+		forwardPath.includes('/chat/completions') || normalizedPath.includes('/chat/completions');
+	if (
+		chatPath &&
+		!isAnthropicRequest &&
+		requestBody &&
+		(!Array.isArray(requestBody.messages) || requestBody.messages.length === 0)
+	) {
+		// Last-chance convert if Gemini contents still present
+		if (looksLikeGeminiContentsBody(requestBody)) {
+			const converted = convertGeminiContentsToOpenAI(requestBody);
+			if (converted?.messages?.length) {
+				requestBody = converted;
+				requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
+			}
+		}
+		if (!Array.isArray(requestBody.messages) || requestBody.messages.length === 0) {
+			return c.json(
+				{
+					error: {
+						message:
+							`Invalid chat request for model "${model}": 'messages' must be a non-empty array. ` +
+							`If you use Antigravity/Gemini contents format, send request.contents with text parts, or use OpenAI messages.`,
+						type: 'invalid_request_error',
+						code: 'messages_required',
+					},
+				},
+				400,
+			);
 		}
 	}
 
