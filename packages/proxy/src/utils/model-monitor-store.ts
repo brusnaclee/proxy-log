@@ -46,9 +46,9 @@ export function isProbeOk(httpStatus: number | null | undefined): boolean {
 
 /**
  * Client catalog / Discord / chat access matrix:
- * - visible: show in /v1/models, portal, Discord (published OR probeOk)
- * - clientOnline: label Online only when both published AND probeOk
- * - requestable: allow chat only when both published AND probeOk
+ * - visible: show in /v1/models, portal, Discord when admin Published ON
+ * - requestable: allow chat when Published ON (Probe is advisory — stale Fail must not 503)
+ * - clientOnline: label "Online" only when Published AND Probe OK
  * Admin Model Monitor always lists all models regardless.
  */
 export type ClientCatalogFlags = {
@@ -68,9 +68,9 @@ export function getClientCatalogFlags(params: {
   return {
     published,
     probeOk,
-    visible: published || probeOk,
+    visible: published,
     clientOnline: published && probeOk,
-    requestable: published && probeOk,
+    requestable: published,
   };
 }
 

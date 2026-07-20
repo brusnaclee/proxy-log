@@ -576,14 +576,11 @@ monitor.get("/monitor/models/details", async (c) => {
   return c.json({ object: "list", data: enriched });
 });
 
-/** Force re-fetch /models into Model Monitor for providers with usable API keys only. */
+/** Force re-fetch /models into Model Monitor for all active upstreams. */
 monitor.post("/monitor/sync-catalog", async (c) => {
   if (!isAuthenticated(c)) return c.json({ error: "Unauthorized" }, 401);
   const { syncAllActiveProvidersToMonitor } = await import("../../utils/model-catalog.js");
-  // Do NOT await refreshModelCatalog first — that double-fetched every upstream
-  // (30s×retries) and made Sync hang. Live sync alone is enough and parallel.
-  // purgeUnusable: drop stale rows from limited/invalid-key upstreams.
-  const result = await syncAllActiveProvidersToMonitor({ purgeUnusable: true });
+  const result = await syncAllActiveProvidersToMonitor();
   return c.json({ success: true, ...result });
 });
 

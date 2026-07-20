@@ -147,8 +147,12 @@ async function getCatalogProbeKeys(providerId: number, legacyApiKey: string | nu
     .orderBy(asc(providerApiKeys.id));
 
   if (allActive.length > 0) {
-    return allActive
-      .filter((r) => !r.isLimited)
+    // Prefer non-limited keys first, but still try limited ones for /models list
+    // (list often works when chat is rate-limited).
+    const healthy = allActive.filter((r) => !r.isLimited);
+    const limited = allActive.filter((r) => r.isLimited);
+    const ordered = [...healthy, ...limited];
+    return ordered
       .map((r) => sanitizeProviderApiKey(r.apiKey))
       .filter(Boolean);
   }
@@ -396,9 +400,8 @@ export async function initializeModelCatalogScheduler() {
 
 /**
  * Fetch /models for one provider and seed model_monitor.
- * Only runs when the provider has a usable (active, non-limited) API key
- * and /models succeeds live — never seeds from stale cache (that re-adds
- * limited/invalid upstreams into Model Monitor).
+ * Always tries /models with whatever active keys exist (including limited).
+ * Seed only on live success — never invent rows from unrelated cache.
  */
 export async function syncProviderToMonitor(providerId: number): Promise<{
   provider: string;
@@ -420,8 +423,8 @@ export async function syncProviderToMonitor(providerId: number): Promise<{
   } else {
     const probeKeys = await getCatalogProbeKeys(prov.id, prov.apiKey);
     if (probeKeys.length === 0) {
-      console.warn(`[model-catalog] syncProviderToMonitor ${prov.name}: skipped (no usable API key)`);
-      return { provider: prov.name, seeded: 0, listed: 0, skipped: "no_usable_key" };
+      console.warn(`[model-catalog] syncProviderToMonitor ${prov.name}: skipped (no API key configured)`);
+      return { provider: prov.name, seeded: 0, listed: 0, skipped: "no_key" };
     }
     const candidates = buildModelListCandidateUrls(prov.endpoint);
     for (const url of candidates) {
@@ -497,34 +500,24 @@ export async function seedMonitorFromCatalogCache(): Promise<{
   return { providers: byProvider.size, listed, seeded };
 }
 
-/** Seed monitor rows for every active upstream that has a usable API key (parallel). */
-export async function syncAllActiveProvidersToMonitor(opts?: {
-  /** Remove Model Monitor rows for upstreams with no usable key (limited/invalid). */
-  purgeUnusable?: boolean;
-}): Promise<{
+/** Seed monitor for every active upstream (parallel). Never purges on skip. */
+export async function syncAllActiveProvidersToMonitor(): Promise<{
   providers: number;
   listed: number;
   seeded: number;
   skipped: string[];
-  purged: string[];
 }> {
-  const { purgeMonitorForProvider } = await import("./model-monitor-store.js");
-  const active = await db.select({ id: providers.id, name: providers.name }).from(providers).where(eq(providers.isActive, true));
+  const active = await db.select({ id: providers.id }).from(providers).where(eq(providers.isActive, true));
   const results = await Promise.all(active.map((p) => syncProviderToMonitor(p.id)));
   let listed = 0;
   let seeded = 0;
   const skipped: string[] = [];
-  const purged: string[] = [];
   for (const r of results) {
     listed += r.listed;
     seeded += r.seeded;
     if (r.skipped) skipped.push(`${r.provider}:${r.skipped}`);
-    if (opts?.purgeUnusable && r.skipped === "no_usable_key") {
-      await purgeMonitorForProvider(r.provider);
-      purged.push(r.provider);
-    }
   }
-  return { providers: active.length, listed, seeded, skipped, purged };
+  return { providers: active.length, listed, seeded, skipped };
 }
 
 export async function getModelCatalogResponse() {
@@ -757,6 +750,10 @@ async function resolveProviderById(providerId: number) {
  * `tokito/phantom/claude-opus-4.6`). Peel ALL leading segments that match
  * active provider names and keep the innermost as the forced provider so
  * traffic hits the real upstream instead of returning empty/wrong replies.
+ *
+ * Amanai (and similar) expose model ids that already include a vendor prefix
+ * equal to our provider name (`amanai/glm-5.2`). After peeling `amanai/`,
+ * we must restore that full id when the catalog/monitor knows it.
  */
 export async function parseModelWithProvider(modelId: string): Promise<{ upstreamModel: string; forcedProviderName: string | null }> {
   const raw = String(modelId || "").trim();
@@ -769,13 +766,14 @@ export async function parseModelWithProvider(modelId: string): Promise<{ upstrea
 
   let rest = raw;
   let forcedProviderName: string | null = null;
+  const peeled: string[] = [];
 
   while (rest.includes("/")) {
     const slashIdx = rest.indexOf("/");
     const prefix = rest.slice(0, slashIdx);
     if (!providerNames.has(prefix.toLowerCase())) break;
-    // Keep client prefix for now; canonicalize to DB name below.
     forcedProviderName = prefix;
+    peeled.push(prefix);
     rest = rest.slice(slashIdx + 1);
   }
 
@@ -783,14 +781,63 @@ export async function parseModelWithProvider(modelId: string): Promise<{ upstrea
     return { upstreamModel: raw, forcedProviderName: null };
   }
 
-  // Case-insensitive: client may send rtx/... while DB name is RTX
   const canonical = allProvs.find(
     (p) => String(p.name || "").toLowerCase() === forcedProviderName!.toLowerCase(),
   );
+  const providerName = canonical?.name || forcedProviderName;
+
+  // Prefer the id form that actually exists for this provider (nested vendor prefix).
+  const upstreamModel = await resolveUpstreamModelId(providerName, rest, peeled);
+
   return {
-    upstreamModel: rest || raw,
-    forcedProviderName: canonical?.name || forcedProviderName,
+    upstreamModel,
+    forcedProviderName: providerName,
   };
+}
+
+/** Pick bare vs nested (`amanai/glm-5.2`) form based on catalog + monitor. */
+async function resolveUpstreamModelId(
+  providerName: string,
+  rest: string,
+  peeled: string[],
+): Promise<string> {
+  const candidates: string[] = [rest];
+  // Rebuild nested forms: last peeled segment often belongs to the upstream id.
+  for (let i = peeled.length - 1; i >= 0; i--) {
+    candidates.push([...peeled.slice(i), rest].join("/"));
+  }
+
+  await loadFromDisk();
+  const [prov] = await db.select({ id: providers.id }).from(providers).where(eq(providers.name, providerName)).limit(1);
+  const providerId = prov?.id;
+
+  const known = new Set<string>();
+  for (const m of cache.models || []) {
+    if (providerId != null && m.provider_id === providerId && m.id) known.add(m.id);
+  }
+  const mon = await db
+    .select({ modelId: modelMonitor.modelId })
+    .from(modelMonitor)
+    .where(eq(modelMonitor.provider, providerName));
+  for (const r of mon) {
+    if (r.modelId) known.add(r.modelId);
+  }
+
+  for (const c of candidates) {
+    if (known.has(c)) return c;
+  }
+  // Heuristic: if most known ids contain `/` and start with provider name, prefer nested.
+  if (known.size > 0) {
+    const nested = `${providerName}/${rest}`;
+    const nestedHits = [...known].filter((id) => id.includes("/")).length;
+    if (nestedHits >= known.size / 2 && known.has(nested)) return nested;
+    // Even without exact known set after cold start: if rest has no slash but
+    // provider itself nests ids as provider/*, try nested when any known id starts with provider/
+    if (!rest.includes("/") && [...known].some((id) => id.startsWith(providerName + "/"))) {
+      return nested;
+    }
+  }
+  return rest;
 }
 
 function collectProviderIdsForModel(modelId: string, upstreamModel: string): number[] {
@@ -814,38 +861,46 @@ function collectProviderIdsForModel(modelId: string, upstreamModel: string): num
 }
 
 async function isProviderOnlineForModel(providerName: string, upstreamModel: string): Promise<boolean> {
-	// Check exact match first
-	const latest = (await db
-		.select()
-		.from(modelMonitor)
-		.where(
-			and(
-				eq(modelMonitor.modelId, upstreamModel),
-				eq(modelMonitor.provider, providerName),
-			),
-		)
-		.orderBy(desc(modelMonitor.checkedAt))
-		.limit(1))[0];
-
-	if (latest) {
-		return Boolean(latest.isOnline) && latest.httpStatus === 200;
+	// Published ON = admin wants this model routable (Probe is advisory).
+	const candidates = [
+		upstreamModel,
+		`${providerName}/${upstreamModel}`,
+	];
+	if (upstreamModel.includes("/")) {
+		candidates.push(upstreamModel.slice(upstreamModel.indexOf("/") + 1));
 	}
 
-	// Also check with provider prefix (e.g., "mimo-v2.5-pro" -> "mimo/mimo-v2.5-pro")
-	const withPrefix = (await db
+	for (const mid of [...new Set(candidates)]) {
+		const latest = (await db
+			.select()
+			.from(modelMonitor)
+			.where(
+				and(
+					eq(modelMonitor.modelId, mid),
+					eq(modelMonitor.provider, providerName),
+				),
+			)
+			.orderBy(desc(modelMonitor.checkedAt))
+			.limit(1))[0];
+		if (latest) return Boolean(latest.isOnline);
+	}
+
+	const rows = await db
 		.select()
 		.from(modelMonitor)
-		.where(
-			and(
-				eq(modelMonitor.modelId, `${providerName}/${upstreamModel}`),
-				eq(modelMonitor.provider, providerName),
-			),
-		)
+		.where(and(eq(modelMonitor.provider, providerName), eq(modelMonitor.isOnline, true)))
 		.orderBy(desc(modelMonitor.checkedAt))
-		.limit(1))[0];
-
-	if (withPrefix) {
-		return Boolean(withPrefix.isOnline) && withPrefix.httpStatus === 200;
+		.limit(80);
+	for (const r of rows) {
+		const id = r.modelId || "";
+		if (
+			id === upstreamModel ||
+			id.endsWith("/" + upstreamModel) ||
+			upstreamModel.endsWith("/" + id) ||
+			id === `${providerName}/${upstreamModel}`
+		) {
+			return true;
+		}
 	}
 
 	// Fallback: any monitor row for this model (legacy rows without provider)
@@ -857,7 +912,7 @@ async function isProviderOnlineForModel(providerName: string, upstreamModel: str
 		.limit(1))[0];
 
 	if (legacy) {
-		return Boolean(legacy.isOnline) && legacy.httpStatus === 200;
+		return Boolean(legacy.isOnline);
 	}
 
 	// No monitor data — treat as eligible (don't block first request)
@@ -1003,8 +1058,8 @@ export function isAutoCompatible(modelId: string): boolean {
 
 /**
  * Latest monitor row per model+provider with Published×Probe client flags.
- * visible = published || probeOk (show in /v1/models, Discord, portal)
- * clientOnline / requestable = published && probeOk
+ * visible / requestable = Published ON (admin catalog intent)
+ * clientOnline = Published AND Probe OK (status label only)
  */
 export async function getClientCatalogMonitorRows(): Promise<Array<{
   modelId: string;
@@ -1072,7 +1127,7 @@ export async function getClientCatalogMonitorRows(): Promise<Array<{
     .filter((d) => d.visible);
 }
 
-/** Requestable models (Published ON + Probe OK), sorted by latency — for auto routing. */
+/** Requestable models (Published ON), sorted by latency — for auto routing. */
 export async function getOnlineModelsByLatency(): Promise<Array<{
   modelId: string;
   provider: string;

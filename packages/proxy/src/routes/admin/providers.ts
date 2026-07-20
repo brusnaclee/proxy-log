@@ -52,7 +52,8 @@ providersApi.post("/providers", async (c) => {
 
   await refreshModelCatalog();
   let catalog = { provider: result.name, seeded: 0, listed: 0 };
-  if (result.isActive && health.ok) {
+  // Always try /models → Model Monitor (even if key probe reported limited/invalid).
+  if (result.isActive) {
     catalog = await syncProviderToMonitor(result.id);
   }
 
@@ -141,7 +142,7 @@ providersApi.post("/providers/:id/keys", async (c) => {
   const health = await checkProviderApiKeyHealth(id, keyId);
   await refreshModelCatalog();
   let catalog = { provider: existing.name, seeded: 0, listed: 0 };
-  if (existing.isActive && health.ok) {
+  if (existing.isActive) {
     catalog = await syncProviderToMonitor(id);
   }
   return c.json({
@@ -166,7 +167,7 @@ providersApi.post("/providers/:id/keys/:keyId/check", async (c) => {
   if (!existing) return c.json({ error: "Provider not found" }, 404);
   const health = await checkProviderApiKeyHealth(id, keyId);
   let catalog = null as null | { provider: string; seeded: number; listed: number };
-  if (health.ok && existing.isActive) {
+  if (existing.isActive) {
     await refreshModelCatalog();
     catalog = await syncProviderToMonitor(id);
   }
@@ -180,14 +181,12 @@ providersApi.post("/providers/:id/keys/check-all", async (c) => {
   if (!existing) return c.json({ error: "Provider not found" }, 404);
   const keys = await getProviderApiKeys(id);
   const results = [];
-  let anyOk = false;
   for (const k of keys) {
     const h = await checkProviderApiKeyHealth(id, k.id);
-    if (h.ok) anyOk = true;
     results.push({ keyId: k.id, ...h });
   }
   let catalog = null as null | { provider: string; seeded: number; listed: number };
-  if (anyOk && existing.isActive) {
+  if (existing.isActive) {
     await refreshModelCatalog();
     catalog = await syncProviderToMonitor(id);
   }
@@ -219,7 +218,7 @@ providersApi.put("/providers/:id/keys/:keyId", async (c) => {
   await updateApiKey(keyId, body.apiKey);
   const health = await checkProviderApiKeyHealth(id, keyId);
   let catalog = null as null | { provider: string; seeded: number; listed: number };
-  if (health.ok && existing.isActive) {
+  if (existing.isActive) {
     await refreshModelCatalog();
     catalog = await syncProviderToMonitor(id);
   }

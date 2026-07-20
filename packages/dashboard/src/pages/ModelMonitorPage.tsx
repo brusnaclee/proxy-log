@@ -133,9 +133,6 @@ export default function ModelMonitorPage() {
       const parts: string[] = [
         `Synced: ${res.listed} models listed, ${res.seeded} new`,
       ];
-      if (Array.isArray((res as any).purged) && (res as any).purged.length) {
-        parts.push(`cleared limited/invalid: ${(res as any).purged.join(", ")}`);
-      }
       if (Array.isArray((res as any).skipped) && (res as any).skipped.length) {
         parts.push(`skipped ${((res as any).skipped as string[]).length}`);
       }
@@ -281,7 +278,7 @@ export default function ModelMonitorPage() {
           <h1 className="text-2xl font-bold tracking-tight">Model Monitor</h1>
           <p className="text-muted-foreground mt-1">
             Published = catalog intent (toggle). Probe = live reachability.
-            Client/Discord show a model if Published OR Probe OK; Online label + chat only when both.
+            Client/Discord / chat follow Published ON. Probe is status only (does not block).
             Natural offline (Published OFF and Probe Fail) stays admin-only. Mode: <span className="font-mono text-foreground">{monitorAutoMode}</span>.
           </p>
         </div>

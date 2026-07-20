@@ -1145,7 +1145,7 @@ portal.get("/models", async (c) => {
       })));
     }
 
-    // Same matrix as Discord /v1/models: visible = published||probeOk; online = both
+    // Same matrix as Discord /v1/models: visible = Published ON; online label = both
     const monitorRows = await getClientCatalogMonitorRows();
 
     const statusMap = new Map<

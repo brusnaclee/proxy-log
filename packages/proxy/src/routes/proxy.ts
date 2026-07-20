@@ -1205,7 +1205,7 @@ proxy.all('/*', async (c) => {
 		}
 
 		const catalog = await getFilteredModelCatalogResponse({ isTrial });
-		// Client catalog: visible = published OR probeOk; is_online = published AND probeOk.
+		// Client catalog: visible/requestable = Published ON; is_online label = Published AND Probe OK.
 		// Admin Model Monitor still lists all models.
 		try {
 			const monitorRows = await getClientCatalogMonitorRows();
@@ -2791,26 +2791,44 @@ proxy.all('/*', async (c) => {
 	}
 
 	// ─── 8a. Model Monitor Check ─────────────────────────────────────────
-	// Requestable = Published ON AND Probe OK. Otherwise 503.
+	// Requestable = Published ON. Probe Fail must not 503 when admin published.
 	if (
 		!keyRecord.isTrial &&
 		upstreamModel &&
 		upstreamModel !== 'unknown'
 	) {
-		const monitorRows = await db
-			.select()
-			.from(modelMonitor)
-			.where(
-				and(
-					eq(modelMonitor.modelId, upstreamModel),
-					eq(modelMonitor.provider, targetProvider.name),
-				),
-			)
-			.orderBy(desc(modelMonitor.checkedAt))
-			.limit(5);
+		const monitorCandidates = [
+			upstreamModel,
+			`${targetProvider.name}/${upstreamModel}`,
+			model,
+		];
+		if (upstreamModel.includes('/')) {
+			monitorCandidates.push(upstreamModel.slice(upstreamModel.indexOf('/') + 1));
+		}
+		let latest:
+			| {
+					isOnline: boolean | null;
+					httpStatus: number | null;
+			  }
+			| undefined;
+		for (const mid of [...new Set(monitorCandidates)]) {
+			latest = (
+				await db
+					.select()
+					.from(modelMonitor)
+					.where(
+						and(
+							eq(modelMonitor.modelId, mid),
+							eq(modelMonitor.provider, targetProvider.name),
+						),
+					)
+					.orderBy(desc(modelMonitor.checkedAt))
+					.limit(1)
+			)[0];
+			if (latest) break;
+		}
 
-		if (monitorRows.length > 0) {
-			const latest = monitorRows[0];
+		if (latest) {
 			const flags = getClientCatalogFlags({
 				published: latest.isOnline,
 				httpStatus: latest.httpStatus,
@@ -2826,13 +2844,10 @@ proxy.all('/*', async (c) => {
 					}
 				}
 
-				const why = !flags.published
-					? 'Published OFF in Model Monitor'
-					: 'Probe is down (upstream unreachable)';
 				return c.json(
 					{
 						error: {
-							message: `Model "${model}" is offline (${why}).`,
+							message: `Model "${model}" is offline (Published OFF in Model Monitor).`,
 							type: 'model_offline',
 							available_models: uniqueOnline,
 						},
