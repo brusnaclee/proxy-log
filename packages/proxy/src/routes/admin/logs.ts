@@ -124,27 +124,27 @@ logs.get("/logs", async (c) => {
   if (status) conditions.push(eq(requestLogs.statusCode, parseInt(status)));
   if (sessionId) conditions.push(eq(requestLogs.sessionId, sessionId));
   if (contextEvent) conditions.push(eq(requestLogs.contextEvent, contextEvent));
-  if (from) conditions.push(sql`created_at >= ${from}`);
-  if (to) conditions.push(sql`created_at <= ${to}`);
+  if (from) conditions.push(sql`${requestLogs.createdAt} >= ${from}`);
+  if (to) conditions.push(sql`${requestLogs.createdAt} <= ${to}`);
 
   // New period param (takes precedence over from/to)
   if (period && ["today", "3d", "7d", "30d", "thisMonth", "lastMonth", "allTime"].includes(period)) {
     if (period === "7d") {
-      conditions.push(sql`created_at >= NOW() - INTERVAL '7 days'`);
+      conditions.push(sql`${requestLogs.createdAt} >= NOW() - INTERVAL '7 days'`);
     } else if (period === "3d") {
-      conditions.push(sql`created_at >= NOW() - INTERVAL '3 days'`);
+      conditions.push(sql`${requestLogs.createdAt} >= NOW() - INTERVAL '3 days'`);
     } else if (period === "30d") {
-      conditions.push(sql`created_at >= NOW() - INTERVAL '30 days'`);
+      conditions.push(sql`${requestLogs.createdAt} >= NOW() - INTERVAL '30 days'`);
     } else if (period === "allTime") {
       // no date filter
     } else {
       const range = resolvePeriodRange(period);
-      conditions.push(sql`created_at >= ${range.start.toISOString()}::timestamptz`);
-      if (range.end) conditions.push(sql`created_at <= ${range.end.toISOString()}::timestamptz`);
+      conditions.push(sql`${requestLogs.createdAt} >= ${range.start.toISOString()}::timestamptz`);
+      if (range.end) conditions.push(sql`${requestLogs.createdAt} <= ${range.end.toISOString()}::timestamptz`);
     }
   } else if (!from && !to) {
-    // Default: last 7 days rolling (SQL interval — reliable vs Date param binding)
-    conditions.push(sql`created_at >= NOW() - INTERVAL '7 days'`);
+    // Qualify created_at — join with api_keys also has created_at (ambiguous otherwise → 500)
+    conditions.push(sql`${requestLogs.createdAt} >= NOW() - INTERVAL '7 days'`);
   }
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;

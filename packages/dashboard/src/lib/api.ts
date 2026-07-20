@@ -446,7 +446,12 @@ export const monitor = {
       method: "POST",
       body: JSON.stringify({ modelId, provider }),
     }),
-  bulkOverride: (params: { action: "on" | "off"; provider?: string; vendor?: string }) =>
+  bulkOverride: (params: {
+    action: "on" | "off";
+    provider?: string;
+    vendor?: string;
+    probe?: "ok" | "fail" | "all";
+  }) =>
     request<{ success: boolean; updated: number; message?: string }>("/monitor/models/bulk-override", {
       method: "POST",
       body: JSON.stringify(params),

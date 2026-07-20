@@ -483,6 +483,8 @@ monitor.post("/monitor/models/bulk-override", async (c) => {
     action: "on" | "off";
     provider?: string;
     vendor?: string;
+    /** Filter by probe: ok = HTTP 2xx, fail = not 2xx / missing */
+    probe?: "ok" | "fail" | "all";
   }>();
   if (body.action !== "on" && body.action !== "off") {
     return c.json({ error: 'action must be "on" or "off"' }, 400);
@@ -490,6 +492,7 @@ monitor.post("/monitor/models/bulk-override", async (c) => {
 
   const providerFilter = body.provider && body.provider !== "all" ? String(body.provider) : null;
   const vendorFilter = body.vendor && body.vendor !== "all" ? String(body.vendor) : null;
+  const probeFilter = body.probe === "ok" || body.probe === "fail" ? body.probe : "all";
 
   let rows = await getLatestMonitorRows();
   if (providerFilter) {
@@ -497,6 +500,11 @@ monitor.post("/monitor/models/bulk-override", async (c) => {
   }
   if (vendorFilter) {
     rows = rows.filter((d) => modelVendorOf(d.modelId) === vendorFilter);
+  }
+  if (probeFilter === "ok") {
+    rows = rows.filter((d) => Number(d.httpStatus) >= 200 && Number(d.httpStatus) < 300);
+  } else if (probeFilter === "fail") {
+    rows = rows.filter((d) => !(Number(d.httpStatus) >= 200 && Number(d.httpStatus) < 300));
   }
 
   if (rows.length === 0) {
@@ -522,6 +530,7 @@ monitor.post("/monitor/models/bulk-override", async (c) => {
   const scope = [
     providerFilter ? `upstream=${providerFilter}` : null,
     vendorFilter ? `vendor=${vendorFilter}` : null,
+    probeFilter !== "all" ? `probe=${probeFilter}` : null,
   ].filter(Boolean).join(", ") || "all models";
 
   return c.json({

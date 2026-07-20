@@ -250,15 +250,32 @@ export default function ModelMonitorPage() {
     return rows;
   }, [data, upstreamFilter, modelVendorFilter, sortMode]);
 
-  const handleBulkOverride = async (action: "on" | "off") => {
+  const handleBulkOverride = async (
+    action: "on" | "off",
+    probe?: "ok" | "fail" | "all",
+  ) => {
+    const probeLabel =
+      probe === "ok" ? " (Probe OK only)" : probe === "fail" ? " (Probe Fail only)" : "";
     const verb = action === "on" ? "ON" : "OFF";
-    if (!confirm(`Turn ${verb} all models for ${bulkScopeLabel}? (${filtered.length} visible)`)) return;
+    const matchCount =
+      probe === "ok"
+        ? filtered.filter((d) => d.probeOk).length
+        : probe === "fail"
+          ? filtered.filter((d) => !d.probeOk).length
+          : filtered.length;
+    if (
+      !confirm(
+        `Turn Published ${verb}${probeLabel} for ${bulkScopeLabel}? (${matchCount} matching)`,
+      )
+    )
+      return;
     setBulkLoading(true);
     try {
       const res = await monitor.bulkOverride({
         action,
         provider: upstreamFilter !== "all" ? upstreamFilter : undefined,
         vendor: modelVendorFilter !== "all" ? modelVendorFilter : undefined,
+        probe: probe || "all",
       });
       await loadData();
       alert(res.message || `Updated ${res.updated} model(s)`);
@@ -523,13 +540,14 @@ export default function ModelMonitorPage() {
               </SelectContent>
             </Select>
           </div>
-          <div className="flex items-center gap-2 ml-auto">
+          <div className="flex flex-wrap items-center gap-2 ml-auto">
             <span className="text-sm text-muted-foreground">Bulk ({filtered.length}):</span>
             <Button
               size="sm"
               variant="outline"
               disabled={bulkLoading || filtered.length === 0}
               onClick={() => handleBulkOverride("on")}
+              title="Publish ON for all visible models"
             >
               <Power className="h-3 w-3 mr-1" /> All ON
             </Button>
@@ -538,8 +556,27 @@ export default function ModelMonitorPage() {
               variant="outline"
               disabled={bulkLoading || filtered.length === 0}
               onClick={() => handleBulkOverride("off")}
+              title="Publish OFF for all visible models"
             >
               <PowerOff className="h-3 w-3 mr-1" /> All OFF
+            </Button>
+            <Button
+              size="sm"
+              variant="default"
+              disabled={bulkLoading || filtered.filter((d) => d.probeOk).length === 0}
+              onClick={() => handleBulkOverride("on", "ok")}
+              title="Publish ON only for models with Probe OK"
+            >
+              <Power className="h-3 w-3 mr-1" /> ON Probe OK
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={bulkLoading || filtered.filter((d) => !d.probeOk).length === 0}
+              onClick={() => handleBulkOverride("off", "fail")}
+              title="Publish OFF only for models with Probe Fail"
+            >
+              <PowerOff className="h-3 w-3 mr-1" /> OFF Probe Fail
             </Button>
           </div>
         </CardContent>
