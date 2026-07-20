@@ -34,6 +34,8 @@ export default function KeyDetailPage() {
   const [keyData, setKeyData] = useState<ApiKeyDetail | null>(null);
   const [deviceList, setDeviceList] = useState<any[]>([]);
   const [keyLogs, setKeyLogs] = useState<LogEntry[]>([]);
+  const [keyLogsLoading, setKeyLogsLoading] = useState(false);
+  const [keyLogsError, setKeyLogsError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState("");
   const [editMaxDevices, setEditMaxDevices] = useState(0);
@@ -133,16 +135,31 @@ export default function KeyDetailPage() {
 
   const loadLogs = useCallback(async (period: 0 | 1 | 7 | 30 = 0) => {
     if (!id) return;
+    setKeyLogsLoading(true);
+    setKeyLogsError(null);
     try {
-      const params: Record<string, string> = { api_key_id: id, limit: "100" };
-      if (period > 0) {
-        const from = new Date(Date.now() - period * 24 * 60 * 60 * 1000);
-        params.from = from.toISOString().replace("T", " ").substring(0, 19);
+      const params: Record<string, string> = {
+        api_key_id: id,
+        limit: "100",
+        lite: "1",
+      };
+      if (period === 0) {
+        params.period = "allTime";
+      } else if (period === 1) {
+        params.period = "today";
+      } else if (period === 7) {
+        params.period = "7d";
+      } else if (period === 30) {
+        params.period = "30d";
       }
       const l = await logs.list(params);
-      setKeyLogs(l.data);
-    } catch (err) {
+      setKeyLogs(Array.isArray(l?.data) ? l.data : []);
+    } catch (err: any) {
       console.error("[KeyDetail] Failed to load logs:", err);
+      setKeyLogs([]);
+      setKeyLogsError(err?.message || "Failed to load logs");
+    } finally {
+      setKeyLogsLoading(false);
     }
   }, [id]);
 
@@ -1460,6 +1477,17 @@ export API_TIMEOUT_MS=500000`}
                       </td>
                     </tr>
                   ))}
+                  {keyLogs.length === 0 && (
+                    <tr>
+                      <td colSpan={10} className="text-center py-8 text-muted-foreground">
+                        {keyLogsLoading
+                          ? "Loading logs..."
+                          : keyLogsError
+                            ? `Failed to load logs: ${keyLogsError}`
+                            : "No request logs for this period."}
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </CardContent>

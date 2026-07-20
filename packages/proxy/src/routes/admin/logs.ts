@@ -97,10 +97,11 @@ function collapseTimelineRows(rows: any[]) {
 }
 
 logs.get("/logs", async (c) => {
+  try {
   const page = parseInt(c.req.query("page") || "1");
   const limit = Math.min(parseInt(c.req.query("limit") || "50"), 200);
   const offset = (page - 1) * limit;
-  // Overview Recent Requests: skip heavy preview columns so first paint is fast.
+  // Overview / Key detail: skip heavy preview columns so first paint is fast.
   const lite = c.req.query("lite") === "1" || c.req.query("lite") === "true";
 
   const conditions: any[] = [];
@@ -149,7 +150,7 @@ logs.get("/logs", async (c) => {
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const baseSelect = {
+  const selectFields: Record<string, any> = {
     id: requestLogs.id,
     apiKeyId: requestLogs.apiKeyId,
     apiKeyName: requestLogs.apiKeyName,
@@ -159,6 +160,8 @@ logs.get("/logs", async (c) => {
     ipAddress: requestLogs.ipAddress,
     deviceFingerprint: requestLogs.deviceFingerprint,
     ideDetected: requestLogs.ideDetected,
+    osDetected: requestLogs.osDetected,
+    clientName: requestLogs.clientName,
     provider: requestLogs.provider,
     endpointPath: requestLogs.endpointPath,
     sessionId: requestLogs.sessionId,
@@ -179,17 +182,13 @@ logs.get("/logs", async (c) => {
     errorMessage: requestLogs.errorMessage,
     estimatedCost: requestLogs.estimatedCost,
     createdAt: requestLogs.createdAt,
-  } as const;
+  };
+  if (!lite) {
+    selectFields.requestPreview = requestLogs.requestPreview;
+    selectFields.responsePreview = requestLogs.responsePreview;
+  }
 
-  const rows = await db.select(
-    lite
-      ? baseSelect
-      : {
-          ...baseSelect,
-          requestPreview: requestLogs.requestPreview,
-          responsePreview: requestLogs.responsePreview,
-        },
-  ).from(requestLogs)
+  const rows = await db.select(selectFields).from(requestLogs)
   .leftJoin(apiKeys, eq(requestLogs.apiKeyId, apiKeys.id))
   .where(whereClause)
   .orderBy(desc(requestLogs.createdAt)).limit(limit).offset(offset);
@@ -210,6 +209,10 @@ logs.get("/logs", async (c) => {
       totalPages: Math.max(1, Math.ceil(total / limit)),
     }
   });
+  } catch (err: any) {
+    console.error("[logs] GET /logs failed:", err?.message || err);
+    return c.json({ error: err?.message || "Internal server error", data: [], pagination: { page: 1, limit: 50, total: 0, totalPages: 1 } }, 500);
+  }
 });
 
 logs.get("/logs/sessions", async (c) => {
