@@ -14,6 +14,7 @@ import ModelMonitorPage from "@/pages/ModelMonitorPage";
 import BugLogPage from "@/pages/BugLogPage";
 import QuotaGuardPage from "@/pages/QuotaGuardPage";
 import TrialSettingsPage from "@/pages/TrialSettingsPage";
+import AddonsPage from "@/pages/AddonsPage";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const [checking, setChecking] = useState(true);
@@ -63,6 +64,7 @@ export default function App() {
         <Route path="buglog" element={<BugLogPage />} />
         <Route path="quota-guard" element={<QuotaGuardPage />} />
         <Route path="trial" element={<TrialSettingsPage />} />
+        <Route path="addons" element={<AddonsPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

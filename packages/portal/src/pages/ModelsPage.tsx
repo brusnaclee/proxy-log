@@ -1,9 +1,12 @@
-import { useState, useEffect } from "react";
-import { Copy, Check, ChevronDown, ChevronUp, Circle } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
+import { Copy, Check, ChevronDown, ChevronUp, Circle, Search } from "lucide-react";
 import { PeriodSelector, PERIOD_OPTIONS, type PeriodKey } from "@/components/PeriodSelector";
 import { api, type ModelEntry, type ModelUsage } from "@/lib/api";
 import { formatNumber, formatRelativeTime } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n";
+
+type SortKey = "latency" | "name" | "default";
+type StatusFilter = "all" | "online" | "offline";
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -40,6 +43,41 @@ function statusMeta(m: ModelEntry, t: (k: string) => string) {
   return { label: t("Unknown"), color: "text-muted-foreground", dot: "bg-muted-foreground/40" };
 }
 
+function providerPrefix(id: string): string {
+  const slash = id.indexOf("/");
+  return slash > 0 ? id.slice(0, slash) : id;
+}
+
+function latencyRank(m: ModelEntry): number {
+  if (m.online === true && typeof m.latencyMs === "number" && Number.isFinite(m.latencyMs)) {
+    return m.latencyMs;
+  }
+  return Number.POSITIVE_INFINITY;
+}
+
+function sortModels(list: ModelEntry[], sort: SortKey, catalogOrder: Map<string, number>): ModelEntry[] {
+  const copy = [...list];
+  if (sort === "default") {
+    return copy.sort((a, b) => (catalogOrder.get(a.id) ?? 0) - (catalogOrder.get(b.id) ?? 0));
+  }
+  if (sort === "name") {
+    return copy.sort((a, b) => a.id.localeCompare(b.id, undefined, { sensitivity: "base" }));
+  }
+  // latency: online with latency first (asc), then online without latency, then offline/unknown
+  return copy.sort((a, b) => {
+    const aOnline = a.online === true ? 0 : 1;
+    const bOnline = b.online === true ? 0 : 1;
+    if (aOnline !== bOnline) return aOnline - bOnline;
+    const la = latencyRank(a);
+    const lb = latencyRank(b);
+    if (la !== lb) return la - lb;
+    return a.id.localeCompare(b.id, undefined, { sensitivity: "base" });
+  });
+}
+
+const selectClass =
+  "h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40";
+
 export default function ModelsPage() {
   const { t } = useI18n();
   const [period, setPeriod] = useState<PeriodKey>("today");
@@ -48,7 +86,10 @@ export default function ModelsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(false);
-  const [filter, setFilter] = useState<"all" | "online" | "offline">("all");
+  const [filter, setFilter] = useState<StatusFilter>("all");
+  const [sort, setSort] = useState<SortKey>("latency");
+  const [provider, setProvider] = useState<string>("all");
+  const [query, setQuery] = useState("");
 
   const periodLabel = PERIOD_OPTIONS.find((o) => o.key === period)?.label || period;
 
@@ -67,14 +108,38 @@ export default function ModelsPage() {
       .finally(() => setLoading(false));
   }, [period]);
 
-  const filtered = modelsList.filter((m) => {
-    if (filter === "online") return m.online === true;
-    if (filter === "offline") return m.online === false;
-    return true;
-  });
+  const catalogOrder = useMemo(() => {
+    const map = new Map<string, number>();
+    modelsList.forEach((m, i) => map.set(m.id, i));
+    return map;
+  }, [modelsList]);
+
+  const providers = useMemo(() => {
+    const set = new Set<string>();
+    for (const m of modelsList) set.add(providerPrefix(m.id));
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [modelsList]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const base = modelsList.filter((m) => {
+      if (filter === "online" && m.online !== true) return false;
+      if (filter === "offline" && m.online !== false) return false;
+      if (provider !== "all" && providerPrefix(m.id) !== provider) return false;
+      if (q && !m.id.toLowerCase().includes(q)) return false;
+      return true;
+    });
+    return sortModels(base, sort, catalogOrder);
+  }, [modelsList, filter, provider, query, sort, catalogOrder]);
+
   const displayList = expanded ? filtered : filtered.slice(0, 24);
   const onlineCount = modelsList.filter((m) => m.online === true).length;
   const offlineCount = modelsList.filter((m) => m.online === false).length;
+
+  // Reset expand when filters change so the user starts from the top again
+  useEffect(() => {
+    setExpanded(false);
+  }, [filter, provider, query, sort]);
 
   return (
     <div className="space-y-6">
@@ -98,27 +163,68 @@ export default function ModelsPage() {
         <>
           {/* Available models */}
           <div className="bg-card border border-border rounded-xl p-4 animate-fade-in">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
-              <div>
-                <h3 className="text-sm font-medium text-foreground">{t("Available Models")}</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {modelsList.length} models · {onlineCount} {t("Online")} · {offlineCount} {t("Offline")}
-                </p>
+            <div className="flex flex-col gap-3 mb-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-medium text-foreground">{t("Available Models")}</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {filtered.length === modelsList.length
+                      ? `${modelsList.length} models · ${onlineCount} ${t("Online")} · ${offlineCount} ${t("Offline")}`
+                      : `${filtered.length} ${t("shown")} · ${modelsList.length} total · ${onlineCount} ${t("Online")} · ${offlineCount} ${t("Offline")}`}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1 flex-wrap">
+                  {(["all", "online", "offline"] as const).map((f) => (
+                    <button
+                      key={f}
+                      onClick={() => setFilter(f)}
+                      className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
+                        filter === f
+                          ? "bg-primary/15 text-primary"
+                          : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                      }`}
+                    >
+                      {f === "all" ? t("All") : f === "online" ? t("Online") : t("Offline")}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div className="flex items-center gap-1">
-                {(["all", "online", "offline"] as const).map((f) => (
-                  <button
-                    key={f}
-                    onClick={() => setFilter(f)}
-                    className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
-                      filter === f
-                        ? "bg-primary/15 text-primary"
-                        : "text-muted-foreground hover:text-foreground hover:bg-accent"
-                    }`}
-                  >
-                    {f === "all" ? t("All") : f === "online" ? t("Online") : t("Offline")}
-                  </button>
-                ))}
+
+              <div className="flex flex-col sm:flex-row flex-wrap gap-2">
+                <div className="relative flex-1 min-w-[160px]">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+                  <input
+                    type="search"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder={t("Search models")}
+                    className={`${selectClass} w-full pl-8 pr-2`}
+                    aria-label={t("Search models")}
+                  />
+                </div>
+                <select
+                  value={sort}
+                  onChange={(e) => setSort(e.target.value as SortKey)}
+                  className={selectClass}
+                  aria-label={t("Sort")}
+                >
+                  <option value="latency">{t("Fastest")}</option>
+                  <option value="name">{t("Name A-Z")}</option>
+                  <option value="default">{t("Catalog order")}</option>
+                </select>
+                <select
+                  value={provider}
+                  onChange={(e) => setProvider(e.target.value)}
+                  className={selectClass}
+                  aria-label={t("Provider")}
+                >
+                  <option value="all">{t("All providers")}</option>
+                  {providers.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 

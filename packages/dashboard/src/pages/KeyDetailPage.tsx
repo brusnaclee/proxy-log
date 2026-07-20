@@ -921,7 +921,9 @@ export API_TIMEOUT_MS=500000`}
       <div className="flex items-center justify-between">
         <div>
           <Label className="text-sm font-medium">Per-Key Model Limit Overrides</Label>
-          <p className="text-[10px] text-muted-foreground">Override the default limits for specific models on this key.</p>
+          <p className="text-[10px] text-muted-foreground">
+            Override prompt and/or token caps for this key. Token-only overrides (daily token without prompt limit) are enforced.
+          </p>
         </div>
         <Dialog>
           <DialogTrigger asChild>

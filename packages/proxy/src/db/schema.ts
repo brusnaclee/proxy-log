@@ -491,6 +491,47 @@ export type NewMonthlyStats = typeof monthlyStats.$inferInsert;
 export type NewModelMetadata = typeof modelMetadata.$inferInsert;
 export type NewTrialUser = typeof trialUsers.$inferInsert;
 
+// ─── Add-ons (assignable model access + quota packs) ───────────────────────────
+export const addons = pgTable('addons', {
+	id: serial('id').primaryKey(),
+	name: text('name').notNull(),
+	description: text('description').notNull().default(''),
+	/** JSON string array of model id / substring patterns, e.g. ["chatgpt-5.6","gpt-5"] */
+	modelAllowlist: text('model_allowlist').notNull().default('[]'),
+	dailyTokenLimit: integer('daily_token_limit').notNull().default(0),
+	monthlyTokenLimit: integer('monthly_token_limit').notNull().default(0),
+	dailyInputTokenLimit: integer('daily_input_token_limit').notNull().default(0),
+	dailyOutputTokenLimit: integer('daily_output_token_limit').notNull().default(0),
+	promptLimit: integer('prompt_limit').notNull().default(0),
+	promptLimitWindow: text('prompt_limit_window').notNull().default('1d'),
+	/** Optional Discord role: members with this role are treated as assigned while active */
+	discordRoleId: text('discord_role_id'),
+	isActive: boolean('is_active').notNull().default(true),
+	createdAt: timestamp('created_at').notNull().defaultNow(),
+	updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+export const addonAssignments = pgTable('addon_assignments', {
+	id: serial('id').primaryKey(),
+	addonId: integer('addon_id').notNull().references(() => addons.id, { onDelete: 'cascade' }),
+	discordUserId: text('discord_user_id'),
+	apiKeyId: integer('api_key_id').references(() => apiKeys.id, { onDelete: 'cascade' }),
+	startsAt: timestamp('starts_at').notNull().defaultNow(),
+	expiresAt: timestamp('expires_at'),
+	isActive: boolean('is_active').notNull().default(true),
+	assignedBy: text('assigned_by').notNull().default('dashboard'),
+	createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => ({
+	addonIdx: index('idx_addon_assignments_addon').on(table.addonId),
+	discordIdx: index('idx_addon_assignments_discord').on(table.discordUserId),
+	keyIdx: index('idx_addon_assignments_key').on(table.apiKeyId),
+}));
+
+export type Addon = typeof addons.$inferSelect;
+export type NewAddon = typeof addons.$inferInsert;
+export type AddonAssignment = typeof addonAssignments.$inferSelect;
+export type NewAddonAssignment = typeof addonAssignments.$inferInsert;
+
 // ─── User Portal Settings ────────────────────────────────────────────────────────
 export const userPortalSettings = pgTable('user_portal_settings', {
   discordUserId: text('discord_user_id').primaryKey(),

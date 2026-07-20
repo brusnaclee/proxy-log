@@ -123,6 +123,47 @@ export async function initializeDatabase() {
 	// Monitor auto mode (off | notif_only | auto)
 	await migrateMonitorAutoModeColumn();
 
+	// Add-ons (assignable model access + quota packs)
+	try {
+		await pool.query(`
+			CREATE TABLE IF NOT EXISTS addons (
+				id SERIAL PRIMARY KEY,
+				name TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				model_allowlist TEXT NOT NULL DEFAULT '[]',
+				daily_token_limit INTEGER NOT NULL DEFAULT 0,
+				monthly_token_limit INTEGER NOT NULL DEFAULT 0,
+				daily_input_token_limit INTEGER NOT NULL DEFAULT 0,
+				daily_output_token_limit INTEGER NOT NULL DEFAULT 0,
+				prompt_limit INTEGER NOT NULL DEFAULT 0,
+				prompt_limit_window TEXT NOT NULL DEFAULT '1d',
+				discord_role_id TEXT,
+				is_active BOOLEAN NOT NULL DEFAULT true,
+				created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+				updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+			)
+		`);
+		await pool.query(`
+			CREATE TABLE IF NOT EXISTS addon_assignments (
+				id SERIAL PRIMARY KEY,
+				addon_id INTEGER NOT NULL REFERENCES addons(id) ON DELETE CASCADE,
+				discord_user_id TEXT,
+				api_key_id INTEGER REFERENCES api_keys(id) ON DELETE CASCADE,
+				starts_at TIMESTAMP NOT NULL DEFAULT NOW(),
+				expires_at TIMESTAMP,
+				is_active BOOLEAN NOT NULL DEFAULT true,
+				assigned_by TEXT NOT NULL DEFAULT 'dashboard',
+				created_at TIMESTAMP NOT NULL DEFAULT NOW()
+			)
+		`);
+		await pool.query(`CREATE INDEX IF NOT EXISTS idx_addon_assignments_addon ON addon_assignments (addon_id)`);
+		await pool.query(`CREATE INDEX IF NOT EXISTS idx_addon_assignments_discord ON addon_assignments (discord_user_id)`);
+		await pool.query(`CREATE INDEX IF NOT EXISTS idx_addon_assignments_key ON addon_assignments (api_key_id)`);
+		console.log('✅ Applied idempotent addons migrations');
+	} catch (err: any) {
+		console.warn('⚠️ addons migration warning:', err?.message || err);
+	}
+
 	// Unique index on devices(api_key_id, fingerprint) — prevents duplicate device rows
 	try {
 		await pool.query(`DROP INDEX IF EXISTS idx_devices_api_key_fingerprint`);

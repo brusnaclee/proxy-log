@@ -1,8 +1,8 @@
 ﻿import { Hono } from "hono";
 import { db } from "../../db/index.js";
 import { providers, customModels } from "../../db/schema.js";
-import { eq, desc, sql } from "drizzle-orm";
-import { refreshModelCatalog, getProviderApiKeys, addProviderApiKey, resetKeyLimited, deleteApiKey, toggleKeyActive, updateApiKey, checkProviderApiKeyHealth, syncProviderToMonitor } from "../../utils/model-catalog.js";
+import { eq, desc, sql, and } from "drizzle-orm";
+import { refreshModelCatalog, getProviderApiKeys, addProviderApiKey, resetKeyLimited, resetAllLimitedKeys, deleteApiKey, toggleKeyActive, updateApiKey, checkProviderApiKeyHealth, syncProviderToMonitor } from "../../utils/model-catalog.js";
 import { sanitizeProviderApiKey } from "../../utils/crypto.js";
 import { purgeMonitorForProvider, renameProviderInMonitor } from "../../utils/model-monitor-store.js";
 
@@ -198,6 +198,15 @@ providersApi.patch("/providers/:id/keys/:keyId/reset", async (c) => {
   const keyId = parseInt(c.req.param("keyId"));
   await resetKeyLimited(keyId);
   return c.json({ success: true });
+});
+
+// Reset ALL limited keys for a provider
+providersApi.post("/providers/:id/keys/reset-limited", async (c) => {
+  const id = parseInt(c.req.param("id"));
+  const [existing] = await db.select().from(providers).where(eq(providers.id, id));
+  if (!existing) return c.json({ error: "Provider not found" }, 404);
+  const reset = await resetAllLimitedKeys(id);
+  return c.json({ success: true, reset });
 });
 
 // Toggle a key's active status (Enable/Disable button)

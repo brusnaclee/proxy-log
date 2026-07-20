@@ -495,7 +495,10 @@ export default function SettingsPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <Label className="text-sm font-medium">Model Limit Overrides</Label>
-                    <p className="text-[10px] text-muted-foreground">Override the default per-model limit for specific models. Cannot exceed Global Prompt Limit.</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      Override prompt and/or token caps per model (global). Token-only rows (daily/monthly without prompt limit) are enforced.
+                      Example: model pattern <span className="font-mono">chatgpt-5.6</span> with Daily Token = 5000000 → max 5M tokens/day.
+                    </p>
                   </div>
                   <Dialog>
                     <DialogTrigger asChild>

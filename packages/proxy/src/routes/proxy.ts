@@ -98,10 +98,18 @@ import {
 	checkPromptLimit,
 	findActiveOverride,
 	findActiveOverrideInTx,
+	getModelMatchCondition,
 	getWindowResetMs,
 	parseRateLimitWindow,
 	normalizeModelForLimit,
 } from '../utils/rate-limit.js';
+import {
+	checkAddonModelAccess,
+	getActiveAddonsForUser,
+	resolveAddonModelDailyTokenLimit,
+	sumAddonDailyTokenBonus,
+	sumAddonMonthlyTokenBonus,
+} from '../utils/addons.js';
 import {
 	accountApiKeyCondition,
 	resolveAccountKeyScope,
@@ -2810,6 +2818,34 @@ proxy.all('/*', async (c) => {
 		);
 	}
 
+	// Add-on model access gate (non-trial): models listed on any active add-on require assignment.
+	const activeAddons = !keyRecord.isTrial
+		? await getActiveAddonsForUser({
+				discordUserId: keyRecord.discordUserId,
+				apiKeyId: keyRecord.id,
+			})
+		: [];
+	if (!keyRecord.isTrial) {
+		const addonAccess = await checkAddonModelAccess({
+			model,
+			discordUserId: keyRecord.discordUserId,
+			apiKeyId: keyRecord.id,
+		});
+		if (!addonAccess.allowed) {
+			return c.json(
+				{
+					error: {
+						message: addonAccess.reason || 'Add-on required for this model.',
+						type: 'access_error',
+						code: 'addon_required',
+						param: addonAccess.requiredAddon || null,
+					},
+				},
+				403,
+			);
+		}
+	}
+
 	// Strip provider prefix for upstream request: "tokito/glm/glm-5.1" -> "glm/glm-5.1"
 	// Amanai nested ids stay as "amanai/glm-5.2" (never bare "glm-5.2").
 	const upstreamModel = await stripProviderPrefix(model);
@@ -3173,6 +3209,8 @@ proxy.all('/*', async (c) => {
 		const wibNow = new Date(Date.now() + wibOffset);
 
 		if (keyRecord.monthlyTokenLimit && keyRecord.monthlyTokenLimit > 0) {
+			const monthlyCap =
+				keyRecord.monthlyTokenLimit + sumAddonMonthlyTokenBonus(activeAddons);
 			const mw = new Date(wibNow);
 			mw.setUTCDate(1);
 			mw.setUTCHours(0, 0, 0, 0);
@@ -3187,11 +3225,11 @@ proxy.all('/*', async (c) => {
 				.from(requestLogs)
 				.where(whereClause)
 				.then((r) => r[0]);
-			if (mu && mu.total >= keyRecord.monthlyTokenLimit) {
+			if (mu && mu.total >= monthlyCap) {
 				return c.json(
 					{
 						error: {
-							message: `Monthly token limit reached: ${mu.total.toLocaleString()}/${keyRecord.monthlyTokenLimit.toLocaleString()} tokens.`,
+							message: `Monthly token limit reached: ${mu.total.toLocaleString()}/${monthlyCap.toLocaleString()} tokens.`,
 							type: 'rate_limit_error',
 							code: 'monthly_token_limit_exceeded',
 						},
@@ -3201,7 +3239,10 @@ proxy.all('/*', async (c) => {
 			}
 		}
 
-		const globalDailyTokenLimit = resolveKeyDailyTokenLimit(keyRecord, config);
+		const baseDailyTokenLimit = resolveKeyDailyTokenLimit(keyRecord, config);
+		const addonDailyBonus = sumAddonDailyTokenBonus(activeAddons);
+		const globalDailyTokenLimit =
+			baseDailyTokenLimit > 0 ? baseDailyTokenLimit + addonDailyBonus : 0;
 		if (globalDailyTokenLimit > 0) {
 			const dw = new Date(wibNow);
 			dw.setUTCHours(0, 0, 0, 0);
@@ -3347,10 +3388,12 @@ proxy.all('/*', async (c) => {
 			mw.setUTCHours(0, 0, 0, 0);
 			const ms = new Date(mw.getTime() - wibOffset);
 
+			const modelMatch = getModelMatchCondition(normalizedModelForToken);
+
 			if (overrideDailyToken && overrideDailyToken > 0) {
 				const whereClause = and(
 					accountKeyFilter,
-					eq(requestLogs.model, model),
+					modelMatch,
 					sql`created_at >= ${ds}`,
 					BILLABLE_LOG_SQL,
 				);
@@ -3376,7 +3419,7 @@ proxy.all('/*', async (c) => {
 			if (overrideMonthlyToken && overrideMonthlyToken > 0) {
 				const whereClause = and(
 					accountKeyFilter,
-					eq(requestLogs.model, model),
+					modelMatch,
 					sql`created_at >= ${ms}`,
 					BILLABLE_LOG_SQL,
 				);
@@ -3402,7 +3445,7 @@ proxy.all('/*', async (c) => {
 			if (overrideDailyInputToken && overrideDailyInputToken > 0) {
 				const whereClause = and(
 					accountKeyFilter,
-					eq(requestLogs.model, model),
+					modelMatch,
 					sql`created_at >= ${ds}`,
 					BILLABLE_LOG_SQL,
 				);
@@ -3428,7 +3471,7 @@ proxy.all('/*', async (c) => {
 			if (overrideDailyOutputToken && overrideDailyOutputToken > 0) {
 				const whereClause = and(
 					accountKeyFilter,
-					eq(requestLogs.model, model),
+					modelMatch,
 					sql`created_at >= ${ds}`,
 					BILLABLE_LOG_SQL,
 				);
@@ -3444,6 +3487,42 @@ proxy.all('/*', async (c) => {
 								message: `Daily output token limit reached for model "${model}": ${du.total.toLocaleString()}/${overrideDailyOutputToken.toLocaleString()} output tokens today. Resets tomorrow.`,
 								type: 'rate_limit_error',
 								code: 'model_daily_output_token_limit_exceeded',
+							},
+						},
+						429,
+					);
+				}
+			}
+		}
+
+		// Add-on per-model daily token cap (when model matches an assigned add-on's allowlist)
+		if (!keyRecord.isTrial) {
+			const addonModelDaily = resolveAddonModelDailyTokenLimit(
+				activeAddons,
+				normalizedModelForToken,
+			);
+			if (addonModelDaily > 0) {
+				const dw = new Date(wibNow);
+				dw.setUTCHours(0, 0, 0, 0);
+				const ds = new Date(dw.getTime() - wibOffset);
+				const whereClause = and(
+					accountKeyFilter,
+					getModelMatchCondition(normalizedModelForToken),
+					sql`created_at >= ${ds}`,
+					BILLABLE_LOG_SQL,
+				);
+				const du = await db
+					.select({ total: turnTotalTokensSql(whereClause, tokenCountOpts(keyRecord)) })
+					.from(requestLogs)
+					.where(whereClause)
+					.then((r) => r[0]);
+				if (du && du.total >= addonModelDaily) {
+					return c.json(
+						{
+							error: {
+								message: `Add-on daily token limit reached for model "${model}": ${du.total.toLocaleString()}/${addonModelDaily.toLocaleString()} tokens today. Resets tomorrow.`,
+								type: 'rate_limit_error',
+								code: 'addon_model_daily_token_limit_exceeded',
 							},
 						},
 						429,
@@ -4744,6 +4823,26 @@ proxy.all('/*', async (c) => {
 				errorMessage = parsed.error.message || JSON.stringify(parsed.error);
 			}
 
+			// Upstream combo gateways (api3) return 404 "No active credentials for provider: X"
+			// — surface as 503 with a clear message instead of a confusing client 502.
+			if (
+				statusCode >= 400 &&
+				/no active credentials for provider/i.test(String(errorMessage || ""))
+			) {
+				const providerHint =
+					String(errorMessage).match(/provider:\s*([a-z0-9_-]+)/i)?.[1] || "upstream";
+				statusCode = 503;
+				errorMessage = `Upstream has no active credentials for provider "${providerHint}". Enable that provider on the combo gateway (api3/9Router), or use a different model.`;
+				responseBody = JSON.stringify({
+					error: {
+						message: errorMessage,
+						type: "upstream_error",
+						code: "upstream_provider_credentials_missing",
+						param: providerHint,
+					},
+				});
+			}
+
 			consumeNonStreamingPayload(acc, parsed);
 			const finalized = finalizeCompletion(acc);
 			finalizedUsage = finalized;
@@ -4819,15 +4918,16 @@ proxy.all('/*', async (c) => {
 			const errMsg =
 				`Upstream returned empty content for ${model}. Prompt quota was NOT charged. Try again or switch model.`;
 			console.warn(`[proxy] ${errMsg}`);
+			const emptyTools = Array.from(toolNameSet);
 			const emptyLogEntry = {
 				...baseLogEntry,
 				promptTokens: finalizedUsage.promptTokens || 0,
 				completionTokens: 0,
 				totalTokens: finalizedUsage.promptTokens || 0,
 				cachedTokens: finalizedUsage.cachedTokens || 0,
-				toolCount: toolsUsed.length,
-				hasToolCalls: toolsUsed.length > 0,
-				toolsUsed: toToolJson(toolsUsed),
+				toolCount: emptyTools.length,
+				hasToolCalls: emptyTools.length > 0,
+				toolsUsed: toToolJson(emptyTools),
 				responsePreview: null,
 				latencyMs: Date.now() - startTime,
 				statusCode: 502,

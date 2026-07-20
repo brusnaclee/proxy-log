@@ -17,6 +17,17 @@ function keyIdMatch(apiKeyIds: number[]): SQL {
 /** Type alias for a model_limits row pulled from Drizzle. */
 type ModelLimitRow = typeof modelLimits.$inferSelect;
 
+/** True if the override row defines any enforceable limit (prompt and/or tokens). */
+export function overrideHasLimits(m: ModelLimitRow): boolean {
+  return (
+    (m.promptLimit || 0) > 0 ||
+    (m.dailyTokenLimit || 0) > 0 ||
+    (m.monthlyTokenLimit || 0) > 0 ||
+    (m.dailyInputTokenLimit || 0) > 0 ||
+    (m.dailyOutputTokenLimit || 0) > 0
+  );
+}
+
 export function parseRateLimitWindow(windowStr: string | null | undefined): number {
   if (!windowStr) return 0;
   const match = windowStr.trim().toLowerCase().match(/^(\d+)([smhd])$/);
@@ -109,13 +120,13 @@ export async function findActiveOverride(
   const isPattern = (m: ModelLimitRow) =>
     !!m.isPattern && lower.includes(m.model.toLowerCase());
 
-  const keyEx = candidates.find(m => m.scope === 'key' && m.promptLimit > 0 && isExact(m));
+  const keyEx = candidates.find(m => m.scope === 'key' && overrideHasLimits(m) && isExact(m));
   if (keyEx) return keyEx;
-  const keyPat = candidates.find(m => m.scope === 'key' && m.promptLimit > 0 && isPattern(m));
+  const keyPat = candidates.find(m => m.scope === 'key' && overrideHasLimits(m) && isPattern(m));
   if (keyPat) return keyPat;
-  const gEx = candidates.find(m => m.scope === 'global' && m.promptLimit > 0 && isExact(m));
+  const gEx = candidates.find(m => m.scope === 'global' && overrideHasLimits(m) && isExact(m));
   if (gEx) return gEx;
-  const gPat = candidates.find(m => m.scope === 'global' && m.promptLimit > 0 && isPattern(m));
+  const gPat = candidates.find(m => m.scope === 'global' && overrideHasLimits(m) && isPattern(m));
   if (gPat) return gPat;
   return null;
 }
@@ -140,13 +151,13 @@ export async function findActiveOverrideInTx(
   const isPattern = (m: ModelLimitRow) =>
     !!m.isPattern && lower.includes(m.model.toLowerCase());
 
-  const keyEx = candidates.find(m => m.scope === 'key' && m.promptLimit > 0 && isExact(m));
+  const keyEx = candidates.find(m => m.scope === 'key' && overrideHasLimits(m) && isExact(m));
   if (keyEx) return keyEx;
-  const keyPat = candidates.find(m => m.scope === 'key' && m.promptLimit > 0 && isPattern(m));
+  const keyPat = candidates.find(m => m.scope === 'key' && overrideHasLimits(m) && isPattern(m));
   if (keyPat) return keyPat;
-  const gEx = candidates.find(m => m.scope === 'global' && m.promptLimit > 0 && isExact(m));
+  const gEx = candidates.find(m => m.scope === 'global' && overrideHasLimits(m) && isExact(m));
   if (gEx) return gEx;
-  const gPat = candidates.find(m => m.scope === 'global' && m.promptLimit > 0 && isPattern(m));
+  const gPat = candidates.find(m => m.scope === 'global' && overrideHasLimits(m) && isPattern(m));
   if (gPat) return gPat;
   return null;
 }

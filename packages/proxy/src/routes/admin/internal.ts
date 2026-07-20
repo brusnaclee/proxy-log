@@ -1374,4 +1374,56 @@ internal.put("/internal/token-saver/:discordUserId", async (c) => {
   });
 });
 
+/** Diagnose combo-gateway model routing (e.g. tokito/gpy/webnet 502s). */
+internal.post("/internal/ops/probe-upstream-model", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+
+  const body = await c.req.json<{ model?: string; providerName?: string }>().catch(() => ({} as any));
+  const model = String(body.model || "gpy/webnet/claude-haiku-4.5").trim();
+  const providerName = String(body.providerName || "tokito").trim();
+
+  const [prov] = await db.select().from(providers).where(eq(providers.name, providerName));
+  if (!prov) return c.json({ error: `Provider ${providerName} not found` }, 404);
+
+  const endpoint = prov.endpoint.replace(/\/$/, "");
+  const url = `${endpoint}/chat/completions`;
+  const t0 = Date.now();
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${prov.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: "ping" }],
+        max_tokens: 5,
+      }),
+    });
+    const text = await res.text();
+    return c.json({
+      success: true,
+      provider: providerName,
+      endpoint,
+      model,
+      status: res.status,
+      latencyMs: Date.now() - t0,
+      bodyPreview: text.slice(0, 400),
+      hint: /no active credentials/i.test(text)
+        ? "Enable credentials for that nested provider on the combo gateway (api3/9Router)."
+        : null,
+    });
+  } catch (err: any) {
+    return c.json({
+      success: false,
+      provider: providerName,
+      model,
+      latencyMs: Date.now() - t0,
+      error: err?.message || String(err),
+    }, 500);
+  }
+});
+
 export default internal;

@@ -20,6 +20,7 @@ import monitorRoutes from "./routes/admin/monitor.js";
 import buglogRoutes from "./routes/admin/buglog.js";
 import quotaGuardRoutes from "./routes/admin/quota-guard.js";
 import trialRoutes from "./routes/admin/trial.js";
+import addonsRoutes from "./routes/admin/addons.js";
 import recapRoutes from "./routes/admin/recap.js";
 import recapWebRoutes from "./routes/recap-web.js";
 import portalRoutes from "./routes/portal/index.js";
@@ -79,6 +80,7 @@ app.route("/admin", buglogRoutes);
 app.route("/admin", quotaGuardRoutes);
 app.route("/admin", recapRoutes);
 app.route("/admin", trialRoutes);
+app.route("/admin", addonsRoutes);
 
 // Service-to-service audit (no admin session required, just internal secret)
 app.route("/", internalAuditRoute);

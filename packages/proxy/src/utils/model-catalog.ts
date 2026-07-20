@@ -1327,8 +1327,12 @@ export async function checkProviderApiKeyHealth(
  * Get the next available API key for a provider.
  * Uses least-used-first (by requestCount) for even load distribution.
  * Skips keys marked as limited or inactive.
+ * Auto-expires limited flags older than KEY_LIMITED_TTL_MS so transient
+ * auth/rate-limit parks don't permanently brick a provider (fast 502s).
  * Falls back to the provider's legacy api_key column if no keys in the new table.
  */
+const KEY_LIMITED_TTL_MS = 15 * 60 * 1000;
+
 export async function getNextApiKey(providerId: number): Promise<{ keyId: number; apiKey: string } | null> {
   const activeRows = await db
     .select()
@@ -1344,7 +1348,19 @@ export async function getNextApiKey(providerId: number): Promise<{ keyId: number
   // If the provider has key rows, ONLY use non-limited ones — never silently
   // fall back to legacy api_key (that desynced monitor Online vs live 502).
   if (activeRows.length > 0) {
-    const usable = activeRows.filter((k) => !k.isLimited);
+    const now = Date.now();
+    const usable = [];
+    for (const k of activeRows) {
+      if (!k.isLimited) {
+        usable.push(k);
+        continue;
+      }
+			const limitedAtMs = k.limitedAt ? new Date(k.limitedAt as string | Date).getTime() : 0;
+      if (Number.isFinite(limitedAtMs) && limitedAtMs > 0 && now - limitedAtMs >= KEY_LIMITED_TTL_MS) {
+        await resetKeyLimited(k.id);
+        usable.push({ ...k, isLimited: false, limitedAt: null });
+      }
+    }
     if (usable.length === 0) return null;
 
     const chosen = usable[0];
@@ -1394,6 +1410,25 @@ export async function resetKeyLimited(keyId: number): Promise<void> {
       lastError: null,
     })
     .where(eq(providerApiKeys.id, keyId));
+}
+
+/** Reset all limited keys for a provider (bulk Retry). */
+export async function resetAllLimitedKeys(providerId: number): Promise<number> {
+  const result = await db
+    .update(providerApiKeys)
+    .set({
+      isLimited: false,
+      limitedAt: null,
+      lastError: null,
+    })
+    .where(
+      and(
+        eq(providerApiKeys.providerId, providerId),
+        eq(providerApiKeys.isLimited, true),
+      ),
+    )
+    .returning({ id: providerApiKeys.id });
+  return result.length;
 }
 
 /**

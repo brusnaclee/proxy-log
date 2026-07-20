@@ -800,3 +800,73 @@ export const trialSettings = {
       }>;
     }>(`/trial/history/${encodeURIComponent(discordUserId)}`),
 };
+
+// ─── Add-ons ───────────────────────────────────────────────────────────────────
+export interface AddonEntry {
+  id: number;
+  name: string;
+  description: string;
+  modelAllowlist: string;
+  modelAllowlistParsed?: string[];
+  dailyTokenLimit: number;
+  monthlyTokenLimit: number;
+  dailyInputTokenLimit: number;
+  dailyOutputTokenLimit: number;
+  promptLimit: number;
+  promptLimitWindow: string;
+  discordRoleId: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AddonAssignmentEntry {
+  id: number;
+  addonId: number;
+  discordUserId: string | null;
+  apiKeyId: number | null;
+  startsAt: string;
+  expiresAt: string | null;
+  isActive: boolean;
+  assignedBy: string;
+  createdAt: string;
+  addonName?: string;
+  modelAllowlistParsed?: string[];
+}
+
+export const addonsApi = {
+  list: () => request<{ data: AddonEntry[] }>("/addons"),
+  create: (data: Partial<AddonEntry> & { name: string; modelAllowlist?: string | string[] }) =>
+    request<{ success: boolean; addon: AddonEntry }>("/addons", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  update: (id: number, data: Partial<AddonEntry> & { modelAllowlist?: string | string[] }) =>
+    request<{ success: boolean; addon: AddonEntry }>(`/addons/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  remove: (id: number) =>
+    request<{ success: boolean }>(`/addons/${id}`, { method: "DELETE" }),
+  listAssignments: (discordUserId?: string) =>
+    request<{ data: AddonAssignmentEntry[] }>(
+      `/addon-assignments${discordUserId ? `?discordUserId=${encodeURIComponent(discordUserId)}` : ""}`,
+    ),
+  assign: (data: {
+    addonId: number;
+    discordUserId?: string;
+    apiKeyId?: number;
+    expiresAt?: string | null;
+  }) =>
+    request<{ success: boolean; assignment: AddonAssignmentEntry }>("/addon-assignments", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateAssignment: (id: number, data: { isActive?: boolean; expiresAt?: string | null }) =>
+    request<{ success: boolean }>(`/addon-assignments/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  removeAssignment: (id: number) =>
+    request<{ success: boolean }>(`/addon-assignments/${id}`, { method: "DELETE" }),
+};
