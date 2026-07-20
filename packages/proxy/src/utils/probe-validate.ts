@@ -36,6 +36,45 @@ export function buildModelListCandidateUrls(endpoint: string): string[] {
 	return [...new Set(urls)];
 }
 
+/**
+ * Collapse duplicated API version segments: /v1/v1/chat/... → /v1/chat/...
+ * Antigravity (and similar) often set baseURL=.../v1 and still request /v1/chat/completions.
+ */
+export function collapseDuplicateApiVersionPath(path: string): string {
+	let p = String(path || '').replace(/\/+$/, '') || '/';
+	let prev = '';
+	while (p !== prev) {
+		prev = p;
+		p = p.replace(/^(\/v\d+)(?:\/v\d+)+(?=\/|$)/, '$1');
+	}
+	return p;
+}
+
+/**
+ * Join provider endpoint + client forward path without producing /v1/v1/...
+ * (e.g. endpoint https://api.amanai.dev/v1 + /v1/v1/chat/completions → .../v1/chat/completions)
+ */
+export function joinUpstreamOpenAIUrl(endpoint: string, forwardPath: string): string {
+	const upstreamBase = String(endpoint || '').replace(/\/+$/, '');
+	let upstreamPath = collapseDuplicateApiVersionPath(forwardPath);
+	while (true) {
+		const m = upstreamBase.match(/\/(v\d+)$/i);
+		if (!m) break;
+		const ver = m[1];
+		const prefix = `/${ver}`;
+		if (upstreamPath === prefix) {
+			upstreamPath = '';
+			break;
+		}
+		if (upstreamPath.toLowerCase().startsWith(`${prefix.toLowerCase()}/`)) {
+			upstreamPath = upstreamPath.slice(prefix.length);
+			continue;
+		}
+		break;
+	}
+	return `${upstreamBase}${upstreamPath}`;
+}
+
 export function extractModelsArray(payload: any): any[] {
 	if (Array.isArray(payload)) return payload;
 	if (Array.isArray(payload?.data)) return payload.data;

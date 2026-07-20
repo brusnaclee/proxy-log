@@ -126,7 +126,11 @@ import {
 } from '../utils/trial-routing.js';
 import { isGpyProviderOrModel, resolveKeyDailyTokenLimit, resolveKeyPromptLimit } from '../utils/trial-config.js';
 import { queueTrialNotification } from '../utils/trial-notify.js';
-import { sseTextToOpenAICompletion } from '../utils/probe-validate.js';
+import {
+	sseTextToOpenAICompletion,
+	collapseDuplicateApiVersionPath,
+	joinUpstreamOpenAIUrl,
+} from '../utils/probe-validate.js';
 
 const proxy = new Hono();
 
@@ -1150,7 +1154,8 @@ async function updateSessionAfterRequest(
  */
 proxy.all('/*', async (c) => {
 	const startTime = Date.now();
-	const path = c.req.path; // e.g., /v1/chat/completions
+	// Antigravity etc. may hit /v1/v1/chat/completions when baseURL already ends with /v1.
+	const path = collapseDuplicateApiVersionPath(c.req.path); // e.g., /v1/chat/completions
 	const normalizedPath = path.replace(/\/+$/, '') || '/';
 
 	// Anthropic Messages endpoint detection — path-based OR body-shape-based.
@@ -2165,16 +2170,7 @@ proxy.all('/*', async (c) => {
 			const isAnthropicAuto = providerRow.endpointType === 'anthropic';
 			const upstreamUrl = isAnthropicAuto
 				? resolveAnthropicUpstreamUrl(providerRow.endpoint)
-				: (() => {
-					const upstreamBase = providerRow.endpoint.replace(/\/$/, '');
-					let upstreamPath = forwardPath;
-					if (upstreamBase.endsWith('/v1') && upstreamPath.startsWith('/v1/')) {
-						upstreamPath = upstreamPath.slice(3);
-					} else if (upstreamBase.endsWith('/v1') && upstreamPath === '/v1') {
-						upstreamPath = '';
-					}
-					return `${upstreamBase}${upstreamPath}`;
-				})();
+				: joinUpstreamOpenAIUrl(providerRow.endpoint, forwardPath);
 
 			const upstreamHeaders: Record<string, string> = { ...baseHeaders };
 			// Use key rotation for auto-model trials too
@@ -2881,16 +2877,10 @@ proxy.all('/*', async (c) => {
 				500,
 			);
 		}
-		const upstreamBase2 = targetProvider2.endpoint.replace(/\/$/, '');
 		const isAnthropicTitleGen = targetProvider2.endpointType === 'anthropic';
 		let upstreamUrl2 = isAnthropicTitleGen
 			? resolveAnthropicUpstreamUrl(targetProvider2.endpoint)
-			: (() => {
-				let upstreamPath2 = forwardPath;
-				if (upstreamBase2.endsWith('/v1') && upstreamPath2.startsWith('/v1/'))
-					upstreamPath2 = upstreamPath2.slice(3);
-				return `${upstreamBase2}${upstreamPath2}`;
-			})();
+			: joinUpstreamOpenAIUrl(targetProvider2.endpoint, forwardPath);
 		let upstreamHeaders2: Record<string, string> = {};
 		const blocked2 = new Set([
 			'host',
@@ -3431,15 +3421,7 @@ proxy.all('/*', async (c) => {
 		}
 	}
 
-	const upstreamBase = targetProvider.endpoint.replace(/\/$/, '');
-	let upstreamPath = forwardPath; // use forwardPath (may be converted from /v1/responses)
-	// Avoid /v1 duplication if upstream endpoint already ends with /v1
-	if (upstreamBase.endsWith('/v1') && upstreamPath.startsWith('/v1/')) {
-		upstreamPath = upstreamPath.slice(3);
-	} else if (upstreamBase.endsWith('/v1') && upstreamPath === '/v1') {
-		upstreamPath = '';
-	}
-	const upstreamUrl = `${upstreamBase}${upstreamPath}`;
+	const upstreamUrl = joinUpstreamOpenAIUrl(targetProvider.endpoint, forwardPath);
 	const isStreaming = requestBody?.stream === true;
 
 	const toolNameSet = new Set<string>(requestToolNames);
@@ -3865,10 +3847,7 @@ proxy.all('/*', async (c) => {
 					if (requestBody) requestBody.model = attemptUpstreamModel;
 					requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
 					const base = attemptProvider.endpoint.replace(/\/$/, '');
-					let pathPart = forwardPath;
-					if (base.endsWith('/v1') && pathPart.startsWith('/v1/')) pathPart = pathPart.slice(3);
-					else if (base.endsWith('/v1') && pathPart === '/v1') pathPart = '';
-					attemptUpstreamUrl = `${base}${pathPart}`;
+					attemptUpstreamUrl = joinUpstreamOpenAIUrl(attemptProvider.endpoint, forwardPath);
 					attemptIsAnthropic =
 						attemptProvider.endpointType === 'anthropic' ||
 						(isAnthropicRequest &&

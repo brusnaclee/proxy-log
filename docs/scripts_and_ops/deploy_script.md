@@ -123,3 +123,10 @@ pnpm --filter proxy db:push
 ### Deployment Script Hangs
 - The script uses SSH which may timeout on slow connections
 - Try running commands manually via SSH instead
+
+### Antigravity / double `/v1` → amanai 404 → client 502
+Some IDEs set `baseURL` to `https://host/v1` and still call `/v1/chat/completions`, producing `/v1/v1/...`. The proxy collapses that before forwarding (`joinUpstreamOpenAIUrl` in `probe-validate.ts`). Without it, amanai returns fast `404 {"detail":"Not Found"}` which surfaces as `502`.
+
+## Related
+
+- Ops script inventory: [ops_scripts.md](./ops_scripts.md)
