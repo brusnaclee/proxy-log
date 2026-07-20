@@ -76,6 +76,38 @@ export const settings = {
 };
 
 // ─── API Keys ──────────────────────────────────────────────────────────────────
+export interface LiveUsagePayload {
+  scope: "account" | "key";
+  accountKeyCount: number;
+  usageToday: {
+    requests: number;
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
+  usageMonth: {
+    totalTokens: number;
+  };
+  limits: {
+    dailyTokenLimit: number;
+    dailyTokenLimitSource: "override" | "global" | "none";
+    dailyInputTokenLimit: number;
+    dailyInputTokenLimitSource: "override" | "global" | "none";
+    dailyOutputTokenLimit: number;
+    dailyOutputTokenLimitSource: "override" | "global" | "none";
+    monthlyTokenLimit: number;
+    monthlyTokenLimitSource: "override" | "global" | "none";
+  };
+  remaining: {
+    input: number | null;
+    output: number | null;
+    daily: number | null;
+    monthly: number | null;
+  };
+  dailyResetAt: string;
+  monthlyResetAt: string;
+}
+
 export interface ApiKeyListItem {
   id: number;
   name: string;
@@ -104,6 +136,7 @@ export interface ApiKeyListItem {
   provisionedBy?: string | null;
   isPrimary?: boolean;
   canDelete?: boolean;
+  liveUsage?: LiveUsagePayload | null;
 }
 
 export interface KeyPeriodStats {
@@ -125,6 +158,7 @@ export interface ApiKeyDetail extends ApiKeyListItem {
   perModelPromptLimit: number;
   perModelPromptLimitWindow: string;
   updatedAt: string;
+  liveUsage?: LiveUsagePayload | null;
   stats: {
     today:   KeyPeriodStats;
     week:    KeyPeriodStats;

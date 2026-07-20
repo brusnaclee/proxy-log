@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { useRealtimeSSE } from "@/lib/use-realtime-sse";
 import { exportXlsx, buildLogsSection, buildSessionsSection, fmtCost } from "@/lib/export-xlsx";
+import { LiveUsageCard } from "@/components/LiveUsageCard";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
@@ -669,6 +670,9 @@ export API_TIMEOUT_MS=500000`}
           </CardContent>
         </Card>
       )}
+
+      {/* Live usage — same semantics as client portal */}
+      <LiveUsageCard live={keyData.liveUsage} />
 
       {/* Stats Cards with period filter */}
       <div className="space-y-3">

@@ -12,6 +12,7 @@ import { getModelCatalogResponse } from "../../utils/model-catalog.js";
 import { enrichModelLimitsWithCatalog } from "../../utils/model-limits-enrich.js";
 import { isAuthenticated } from "../../middleware/session.js";
 import { isProtectedPrimaryApiKey } from "../../utils/api-key-primary.js";
+import { buildLiveUsageForKey } from "../../utils/live-usage.js";
 
 const keys = new Hono();
 
@@ -31,64 +32,88 @@ function calculateBreakdownCosts(modelBreakdown: Array<{ model: string | null, p
 }
 
 keys.get("/keys", async (c) => {
-  return c.json(await statsCache.getOrFetch("keys-list", async () => {
-  const allKeys = await db.select().from(apiKeys);
-  const config = (await db.select().from(adminConfig))[0];
-  const result = [];
+  const listBase = await statsCache.getOrFetch("keys-list", async () => {
+    const allKeys = await db.select().from(apiKeys);
+    const config = (await db.select().from(adminConfig))[0];
+    const result = [];
 
-  for (const key of allKeys) {
-    const tmOpts = key.isTrial ? { isTrial: true as const } : undefined;
-    const _now = new Date();
-    const _wibOffset = 7 * 60 * 60 * 1000;
-    const _wibNow = new Date(_now.getTime() + _wibOffset);
-    _wibNow.setUTCHours(0, 0, 0, 0);
-    const _d = new Date(_wibNow.getTime() - _wibOffset);
-    const todayUtcDate = _d;
-    const todayWhere = and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${todayUtcDate}`, VALID_LOG_SQL)!;
-    const todayStats = (await db.select({
-      count: turnCountSql(todayWhere),
-      tokens: turnTotalTokensSql(todayWhere, tmOpts),
-      cost: sql<number>`COALESCE(SUM(estimated_cost), 0)`,
-    })
-      .from(requestLogs).where(todayWhere))[0];
-    // Cost scaled from the token split so it stays consistent with multiplied tokens.
-    const todayBreakdown = applyTokenMultiplierRows(sanitizeRows((await db.execute(sql`
-      SELECT model, COALESCE(SUM(sum_delta), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
-      FROM (SELECT model, turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
-        FROM request_logs WHERE api_key_id = ${key.id} AND created_at >= ${todayUtcDate} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-        GROUP BY model, turn_id)
-      GROUP BY model
-    `)).rows as any[], ['promptTokens', 'completionTokens']), tmOpts);
-    const todayCost = calculateBreakdownCosts(todayBreakdown as any).totalCost;
-    const deviceCount = (await db.select({ count: sql<number>`count(*)` }).from(devices).where(eq(devices.apiKeyId, key.id)))[0];
-    const totalWhere = and(eq(requestLogs.apiKeyId, key.id), VALID_LOG_SQL)!;
-    const totalStats = (await db.select({
-      count: turnCountSql(totalWhere),
-      tokens: turnTotalTokensSql(totalWhere, tmOpts),
-    })
-      .from(requestLogs).where(totalWhere))[0];
+    for (const key of allKeys) {
+      const tmOpts = key.isTrial ? { isTrial: true as const } : undefined;
+      const _now = new Date();
+      const _wibOffset = 7 * 60 * 60 * 1000;
+      const _wibNow = new Date(_now.getTime() + _wibOffset);
+      _wibNow.setUTCHours(0, 0, 0, 0);
+      const _d = new Date(_wibNow.getTime() - _wibOffset);
+      const todayUtcDate = _d;
+      const todayWhere = and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${todayUtcDate}`, VALID_LOG_SQL)!;
+      const todayStats = (await db.select({
+        count: turnCountSql(todayWhere),
+        tokens: turnTotalTokensSql(todayWhere, tmOpts),
+        cost: sql<number>`COALESCE(SUM(estimated_cost), 0)`,
+      })
+        .from(requestLogs).where(todayWhere))[0];
+      const todayBreakdown = applyTokenMultiplierRows(sanitizeRows((await db.execute(sql`
+        SELECT model, COALESCE(SUM(sum_delta), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
+        FROM (SELECT model, turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
+          FROM request_logs WHERE api_key_id = ${key.id} AND created_at >= ${todayUtcDate} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+          GROUP BY model, turn_id)
+        GROUP BY model
+      `)).rows as any[], ['promptTokens', 'completionTokens']), tmOpts);
+      const todayCost = calculateBreakdownCosts(todayBreakdown as any).totalCost;
+      const deviceCount = (await db.select({ count: sql<number>`count(*)` }).from(devices).where(eq(devices.apiKeyId, key.id)))[0];
+      const totalWhere = and(eq(requestLogs.apiKeyId, key.id), VALID_LOG_SQL)!;
+      const totalStats = (await db.select({
+        count: turnCountSql(totalWhere),
+        tokens: turnTotalTokensSql(totalWhere, tmOpts),
+      })
+        .from(requestLogs).where(totalWhere))[0];
 
-    result.push({
-      id: key.id, name: key.name, keyPrefix: key.keyPrefix, keyMasked: maskKey(key.key),
-      discordUserId: key.discordUserId,
-      discordUsername: key.discordUsername,
-      provisionedBy: key.provisionedBy,
-      isPrimary: isProtectedPrimaryApiKey(key),
-      canDelete: !isProtectedPrimaryApiKey(key),
-      isActive: key.isActive, isTrial: key.isTrial || false, maxDevices: key.maxDevices, devicePolicy: key.devicePolicy,
-      ipPolicy: key.ipPolicy, idePolicy: key.idePolicy, 
-      dailyTokenLimit: key.dailyTokenLimit || 0, monthlyTokenLimit: key.monthlyTokenLimit,
-      dailyInputTokenLimit: key.dailyInputTokenLimit || 0, dailyOutputTokenLimit: key.dailyOutputTokenLimit || 0,
-      rateLimit: key.rateLimit || 0, rateLimitWindow: key.rateLimitWindow || config?.globalRateLimitWindow || "1h",
-      promptLimit: key.promptLimit || 0, promptLimitWindow: key.promptLimitWindow || config?.globalPromptLimitWindow || "1d",
-      deviceCount: deviceCount?.count || 0, requestsToday: todayStats?.count || 0,
-      tokensToday: todayStats?.tokens || 0, estimatedCostToday: todayCost,
-      totalRequests: totalStats?.count || 0,
-      totalTokens: totalStats?.tokens || 0, createdAt: key.createdAt,
-    });
+      result.push({
+        id: key.id, name: key.name, keyPrefix: key.keyPrefix, keyMasked: maskKey(key.key),
+        discordUserId: key.discordUserId,
+        discordUsername: key.discordUsername,
+        provisionedBy: key.provisionedBy,
+        isPrimary: isProtectedPrimaryApiKey(key),
+        canDelete: !isProtectedPrimaryApiKey(key),
+        isActive: key.isActive, isTrial: key.isTrial || false, maxDevices: key.maxDevices, devicePolicy: key.devicePolicy,
+        ipPolicy: key.ipPolicy, idePolicy: key.idePolicy,
+        dailyTokenLimit: key.dailyTokenLimit || 0, monthlyTokenLimit: key.monthlyTokenLimit,
+        dailyInputTokenLimit: key.dailyInputTokenLimit || 0, dailyOutputTokenLimit: key.dailyOutputTokenLimit || 0,
+        rateLimit: key.rateLimit || 0, rateLimitWindow: key.rateLimitWindow || config?.globalRateLimitWindow || "1h",
+        promptLimit: key.promptLimit || 0, promptLimitWindow: key.promptLimitWindow || config?.globalPromptLimitWindow || "1d",
+        deviceCount: deviceCount?.count || 0, requestsToday: todayStats?.count || 0,
+        tokensToday: todayStats?.tokens || 0, estimatedCostToday: todayCost,
+        totalRequests: totalStats?.count || 0,
+        totalTokens: totalStats?.tokens || 0, createdAt: key.createdAt,
+      });
+    }
+    return result;
+  }, 30_000);
+
+  // Fresh liveUsage (same as portal) — not cached with list stats
+  const allKeysFresh = await db.select().from(apiKeys);
+  const configFresh = (await db.select().from(adminConfig))[0];
+  const liveByKeyId = new Map<number, Awaited<ReturnType<typeof buildLiveUsageForKey>>>();
+  const seenDiscord = new Set<string>();
+  for (const key of allKeysFresh) {
+    if (key.discordUserId) {
+      if (seenDiscord.has(key.discordUserId)) continue;
+      seenDiscord.add(key.discordUserId);
+      const live = await buildLiveUsageForKey(key, configFresh);
+      for (const k of allKeysFresh) {
+        if (k.discordUserId === key.discordUserId) liveByKeyId.set(k.id, live);
+      }
+    } else {
+      liveByKeyId.set(key.id, await buildLiveUsageForKey(key, configFresh));
+    }
   }
-  return result;
-  }, 30_000)); // 30s TTL for keys list
+
+  return c.json(
+    (listBase as any[]).map((row) => ({
+      ...row,
+      liveUsage: liveByKeyId.get(row.id) || null,
+    })),
+  );
 });
 
 keys.post("/keys", async (c) => {
@@ -363,6 +388,8 @@ keys.get("/keys/:id", async (c) => {
     .orderBy(sql`created_at DESC`)
     .limit(200);
 
+  const liveUsage = await buildLiveUsageForKey(key, config);
+
   return c.json({
     id: key.id, name: key.name, keyPrefix: key.keyPrefix, keyMasked: maskKey(key.key),
     discordUserId: key.discordUserId,
@@ -378,6 +405,7 @@ keys.get("/keys/:id", async (c) => {
     promptLimit: key.promptLimit || 0, promptLimitWindow: key.promptLimitWindow || config?.globalPromptLimitWindow || "1d",
     perModelPromptLimit: key.perModelPromptLimit || 0, perModelPromptLimitWindow: key.perModelPromptLimitWindow || config?.globalPerModelPromptLimitWindow || "1d",
     createdAt: key.createdAt, updatedAt: key.updatedAt,
+    liveUsage,
     stats: {
       today:   { ...todayStats },
       week:    { ...weekStats },

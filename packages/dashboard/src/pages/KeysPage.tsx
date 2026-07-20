@@ -15,6 +15,7 @@ import { Plus, Copy, Check, Key, Download, Zap, ChevronDown, ChevronRight } from
 import { useRealtimeSSE } from "@/lib/use-realtime-sse";
 import { exportCsvSimple } from "@/lib/export-csv";
 import { Label } from "@/components/ui/label";
+import { LiveUsageCard } from "@/components/LiveUsageCard";
 
 type KeyGroup = {
   discordUserId: string | null;
@@ -221,6 +222,9 @@ export default function KeysPage() {
                   {!g.discordUserId && (
                     <div className="text-[10px] text-muted-foreground">No Discord link on these keys</div>
                   )}
+                  <div className="mt-1">
+                    <LiveUsageCard live={g.keys[0]?.liveUsage} compact />
+                  </div>
                 </div>
                 <Badge variant="secondary" className="shrink-0 gap-1">
                   <Key className="h-3 w-3" />
@@ -239,6 +243,8 @@ export default function KeysPage() {
                           <th className="text-center py-2 px-4 text-muted-foreground font-medium text-xs">Status</th>
                           <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs">Requests</th>
                           <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs hide-mobile">Tokens</th>
+                          <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs hide-mobile">In left</th>
+                          <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs hide-mobile">Out left</th>
                           <th className="text-center py-2 px-4 text-muted-foreground font-medium text-xs">Active</th>
                         </tr>
                       </thead>
@@ -279,6 +285,16 @@ export default function KeysPage() {
                             </td>
                             <td className="py-2.5 px-4 text-right font-mono text-xs">{formatNumber(k.requestsToday)}</td>
                             <td className="py-2.5 px-4 text-right font-mono text-xs hide-mobile">{formatNumber(k.tokensToday)}</td>
+                            <td className="py-2.5 px-4 text-right font-mono text-xs hide-mobile text-muted-foreground">
+                              {k.liveUsage?.remaining.input != null
+                                ? formatNumber(k.liveUsage.remaining.input)
+                                : "—"}
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-mono text-xs hide-mobile text-muted-foreground">
+                              {k.liveUsage?.remaining.output != null
+                                ? formatNumber(k.liveUsage.remaining.output)
+                                : "—"}
+                            </td>
                             <td className="py-2.5 px-4 text-center" onClick={(e) => e.stopPropagation()}>
                               <Switch
                                 checked={k.isActive}
