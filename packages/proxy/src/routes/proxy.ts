@@ -2783,7 +2783,11 @@ proxy.all('/*', async (c) => {
 	}
 
 	// Strip provider prefix for upstream request: "tokito/glm/glm-5.1" -> "glm/glm-5.1"
+	// Amanai nested ids stay as "amanai/glm-5.2" (never bare "glm-5.2").
 	const upstreamModel = await stripProviderPrefix(model);
+	if (model !== upstreamModel) {
+		console.log(`[proxy] model resolve: client="${model}" → upstream="${upstreamModel}" (provider=${targetProvider.name})`);
+	}
 
 	// Modify requestBody to use clean model name for upstream request
 	if (requestBody && model !== upstreamModel) {
@@ -4284,12 +4288,15 @@ proxy.all('/*', async (c) => {
 							}
 							if (!payloadText) continue;
 							try {
-								const data = JSON.parse(payloadText);
+								const data = backfillOpenAIResponseContent(
+									JSON.parse(payloadText),
+									{ stripReasoning },
+								);
 								appendToolsFromPayload(data);
 								if (detectToolCallsInResponse(data)) hasActualToolCalls = true;
 								consumeStreamPayload(acc, data);
 								const converted = convertOpenAIChunkToAnthropicEvents(
-									line.startsWith('data: ') ? line : `data: ${payloadText}`,
+									`data: ${JSON.stringify(data)}`,
 									clientAnthropicStreamState,
 								);
 								if (converted) {
@@ -4705,16 +4712,24 @@ proxy.all('/*', async (c) => {
 
 		// Guard: if upstream returned HTTP 200 but the response has zero visible content,
 		// return 502 so the client gets a meaningful error instead of "200 OK" with an
-		// empty bubble. This mirrors the streaming guard at lines 3586–3615.
-		// Count reasoning_content as visible — some models (GLM/Kimi via amanai) put
-		// output only there; emptying that into a hard 502 broke Hermes loops.
-		// Do NOT treat finish_reason=length/max_tokens as empty (valid truncate).
+		// empty bubble. Understand both OpenAI choices[] and Anthropic content[] shapes
+		// (after OpenAI→Anthropic conversion the body no longer has choices).
 		const hasReasoningOnly = (() => {
 			try {
 				const p = JSON.parse(responseBody);
 				const msg = p?.choices?.[0]?.message;
 				const rc = msg?.reasoning_content || msg?.reasoning;
-				return typeof rc === 'string' && rc.trim().length > 0;
+				if (typeof rc === 'string' && rc.trim().length > 0) return true;
+				// Anthropic content blocks: thinking / text
+				if (Array.isArray(p?.content)) {
+					for (const b of p.content) {
+						if (!b) continue;
+						if (b.type === 'thinking' && (b.thinking || b.text)) return true;
+						if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) return true;
+						if (b.type === 'tool_use') return true;
+					}
+				}
+				return false;
 			} catch {
 				return false;
 			}
@@ -4722,13 +4737,31 @@ proxy.all('/*', async (c) => {
 		const nonStreamFinishReason = (() => {
 			try {
 				const p = JSON.parse(responseBody);
-				return String(p?.choices?.[0]?.finish_reason || p?.stop_reason || '').toLowerCase();
+				return String(
+					p?.choices?.[0]?.finish_reason || p?.stop_reason || '',
+				).toLowerCase();
 			} catch {
 				return '';
 			}
 		})();
+		const hasAnthropicVisibleContent = (() => {
+			try {
+				const p = JSON.parse(responseBody);
+				if (!Array.isArray(p?.content)) return false;
+				return p.content.some((b: any) => {
+					if (!b) return false;
+					if (b.type === 'text' && String(b.text || '').trim()) return true;
+					if (b.type === 'thinking' && String(b.thinking || b.text || '').trim()) return true;
+					if (b.type === 'tool_use') return true;
+					return false;
+				});
+			} catch {
+				return false;
+			}
+		})();
 		const isValidTruncate =
-			nonStreamFinishReason === 'length' || nonStreamFinishReason === 'max_tokens';
+			nonStreamFinishReason === 'length' ||
+			nonStreamFinishReason === 'max_tokens';
 		if (
 			statusCode >= 200 &&
 			statusCode < 300 &&
@@ -4736,6 +4769,7 @@ proxy.all('/*', async (c) => {
 			!responsePreview &&
 			!hasActualToolCalls &&
 			!hasReasoningOnly &&
+			!hasAnthropicVisibleContent &&
 			!isValidTruncate
 		) {
 			const errMsg =

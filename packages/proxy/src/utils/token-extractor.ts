@@ -41,7 +41,9 @@ const collectFromContentBlocks = (blocks: any[]): string => {
       if (typeof content === "string") parts.push(content);
       else parts.push(safeJsonStringify(content));
     } else if (type === "thinking" || type === "reasoning") {
-      if (typeof block.text === "string") parts.push(block.text);
+      if (typeof block.thinking === "string") parts.push(block.thinking);
+      else if (typeof block.text === "string") parts.push(block.text);
+      else if (typeof block.content === "string") parts.push(block.content);
     } else if (type === "message" && block.content) {
       if (Array.isArray(block.content)) parts.push(collectFromContentBlocks(block.content));
       else if (typeof block.content === "string") parts.push(block.content);
@@ -77,9 +79,21 @@ function appendToolArg(acc: CompletionAccumulator, idx: any, fragment: string) {
 
 function captureUsage(acc: CompletionAccumulator, usage: any) {
   if (!usage || typeof usage !== "object") return;
+  const prompt =
+    typeof usage.prompt_tokens === "number"
+      ? usage.prompt_tokens
+      : typeof usage.input_tokens === "number"
+        ? usage.input_tokens
+        : acc.usage.prompt_tokens;
+  const completion =
+    typeof usage.completion_tokens === "number"
+      ? usage.completion_tokens
+      : typeof usage.output_tokens === "number"
+        ? usage.output_tokens
+        : acc.usage.completion_tokens;
   const next: UpstreamUsage = {
-    prompt_tokens: typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : acc.usage.prompt_tokens,
-    completion_tokens: typeof usage.completion_tokens === "number" ? usage.completion_tokens : acc.usage.completion_tokens,
+    prompt_tokens: prompt,
+    completion_tokens: completion,
     total_tokens: typeof usage.total_tokens === "number" ? usage.total_tokens : acc.usage.total_tokens,
   };
   // Extract cached_tokens from prompt_tokens_details
@@ -87,6 +101,8 @@ function captureUsage(acc: CompletionAccumulator, usage: any) {
     next.cached_tokens = usage.prompt_tokens_details.cached_tokens;
   } else if (typeof usage.cached_tokens === "number") {
     next.cached_tokens = usage.cached_tokens;
+  } else if (typeof usage.cache_read_input_tokens === "number") {
+    next.cached_tokens = usage.cache_read_input_tokens;
   }
   // Extract reasoning_tokens from completion_tokens_details
   if (usage.completion_tokens_details?.reasoning_tokens != null) {

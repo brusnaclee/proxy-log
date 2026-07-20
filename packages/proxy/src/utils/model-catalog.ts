@@ -795,20 +795,63 @@ export async function parseModelWithProvider(modelId: string): Promise<{ upstrea
   };
 }
 
-/** Pick bare vs nested (`amanai/glm-5.2`) form based on catalog + monitor. */
+/** Short-lived cache so we don't hit monitor on every request. */
+const upstreamModelResolveCache = new Map<string, { value: string; expiresAt: number }>();
+const UPSTREAM_MODEL_RESOLVE_TTL_MS = 60_000;
+
+function providerUsesNestedModelIds(
+  providerName: string,
+  endpoint: string | null | undefined,
+  knownIds: Iterable<string>,
+): boolean {
+  const ep = String(endpoint || "").toLowerCase();
+  const name = String(providerName || "").toLowerCase();
+  // Amanai always nests vendor ids as amanai/<model>
+  if (ep.includes("amanai.dev") || name === "amanai") return true;
+  let total = 0;
+  let withSlash = 0;
+  for (const id of knownIds) {
+    total++;
+    if (String(id).includes("/")) withSlash++;
+  }
+  if (total === 0) {
+    // Cold start: still nest when endpoint looks like amanai-style OpenAI gateways
+    return false;
+  }
+  return withSlash * 2 >= total;
+}
+
+/**
+ * Pick bare vs nested (`amanai/glm-5.2`) form based on catalog + monitor.
+ * Never bare-peel amanai-style providers when rest has no slash — that caused
+ * mass 404 Unknown model: glm-5.2.
+ */
 async function resolveUpstreamModelId(
   providerName: string,
   rest: string,
   peeled: string[],
 ): Promise<string> {
-  const candidates: string[] = [rest];
-  // Rebuild nested forms: last peeled segment often belongs to the upstream id.
+  const cacheKey = `${providerName}\0${rest}\0${peeled.join("/")}`;
+  const cached = upstreamModelResolveCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+  const candidates: string[] = [];
+  // Prefer nested forms first for correctness on nested-id upstreams.
   for (let i = peeled.length - 1; i >= 0; i--) {
     candidates.push([...peeled.slice(i), rest].join("/"));
   }
+  if (!candidates.includes(rest)) candidates.push(rest);
+  const nested = `${providerName}/${rest}`;
+  if (!rest.includes("/") && !candidates.includes(nested)) {
+    candidates.unshift(nested);
+  }
 
   await loadFromDisk();
-  const [prov] = await db.select({ id: providers.id }).from(providers).where(eq(providers.name, providerName)).limit(1);
+  const [prov] = await db
+    .select({ id: providers.id, endpoint: providers.endpoint })
+    .from(providers)
+    .where(eq(providers.name, providerName))
+    .limit(1);
   const providerId = prov?.id;
 
   const known = new Set<string>();
@@ -824,20 +867,28 @@ async function resolveUpstreamModelId(
   }
 
   for (const c of candidates) {
-    if (known.has(c)) return c;
-  }
-  // Heuristic: if most known ids contain `/` and start with provider name, prefer nested.
-  if (known.size > 0) {
-    const nested = `${providerName}/${rest}`;
-    const nestedHits = [...known].filter((id) => id.includes("/")).length;
-    if (nestedHits >= known.size / 2 && known.has(nested)) return nested;
-    // Even without exact known set after cold start: if rest has no slash but
-    // provider itself nests ids as provider/*, try nested when any known id starts with provider/
-    if (!rest.includes("/") && [...known].some((id) => id.startsWith(providerName + "/"))) {
-      return nested;
+    if (known.has(c)) {
+      upstreamModelResolveCache.set(cacheKey, { value: c, expiresAt: Date.now() + UPSTREAM_MODEL_RESOLVE_TTL_MS });
+      return c;
     }
   }
-  return rest;
+
+  const nestedProvider = providerUsesNestedModelIds(providerName, prov?.endpoint, known);
+  let resolved = rest;
+  if (!rest.includes("/") && nestedProvider) {
+    resolved = nested;
+  } else if (known.size > 0) {
+    const nestedHits = [...known].filter((id) => id.includes("/")).length;
+    if (nestedHits >= known.size / 2 && !rest.includes("/")) {
+      resolved = nested;
+    }
+  }
+
+  upstreamModelResolveCache.set(cacheKey, {
+    value: resolved,
+    expiresAt: Date.now() + UPSTREAM_MODEL_RESOLVE_TTL_MS,
+  });
+  return resolved;
 }
 
 function collectProviderIdsForModel(modelId: string, upstreamModel: string): number[] {

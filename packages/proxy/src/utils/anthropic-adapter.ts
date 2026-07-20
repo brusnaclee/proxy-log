@@ -801,6 +801,8 @@ export interface AnthropicStreamState {
   thinkingBlockOpen: boolean;
   /** Per OpenAI tool_call index → Anthropic content block index */
   openToolBlocks: Map<number, number>;
+  /** Buffer id/name until both are known (upstream often splits across chunks). */
+  pendingTools: Map<number, { id?: string; name?: string }>;
   toolIndex: number;
   stopReason: string | null;
   inputTokens: number;
@@ -818,6 +820,7 @@ export function createAnthropicStreamState(model: string, msgId?: string): Anthr
     contentBlockOpen: false,
     thinkingBlockOpen: false,
     openToolBlocks: new Map(),
+    pendingTools: new Map(),
     toolIndex: 0,
     stopReason: null,
     inputTokens: 0,
@@ -969,19 +972,25 @@ export function convertOpenAIChunkToAnthropicEvents(chunk: string, state: Anthro
       closeThinkingBlock();
       const idx = typeof tc.index === "number" ? tc.index : state.toolIndex;
       let blockIdx = state.openToolBlocks.get(idx);
-      if (tc.id && tc.function?.name && blockIdx === undefined) {
+      const pending = state.pendingTools.get(idx) || {};
+      if (typeof tc.id === "string" && tc.id) pending.id = tc.id;
+      if (typeof tc.function?.name === "string" && tc.function.name) pending.name = tc.function.name;
+      state.pendingTools.set(idx, pending);
+
+      if (blockIdx === undefined && pending.id && pending.name) {
         blockIdx = state.contentBlockIndex;
         out += sseEvent("content_block_start", {
           type: "content_block_start",
           index: blockIdx,
           content_block: {
             type: "tool_use",
-            id: tc.id,
-            name: tc.function.name,
+            id: pending.id,
+            name: pending.name,
             input: {},
           },
         });
         state.openToolBlocks.set(idx, blockIdx);
+        state.pendingTools.delete(idx);
         state.toolIndex = Math.max(state.toolIndex, idx + 1);
         state.contentBlockIndex++;
       }
@@ -1026,6 +1035,25 @@ export function flushAnthropicStream(state: AnthropicStreamState): string {
   if (state.streamTerminated) return "";
   state.streamTerminated = true;
   let out = "";
+  // Start any tool blocks that received id+name but never opened (split deltas).
+  for (const [idx, pending] of state.pendingTools) {
+    if (state.openToolBlocks.has(idx)) continue;
+    if (!pending.id || !pending.name) continue;
+    const blockIdx = state.contentBlockIndex;
+    out += sseEvent("content_block_start", {
+      type: "content_block_start",
+      index: blockIdx,
+      content_block: {
+        type: "tool_use",
+        id: pending.id,
+        name: pending.name,
+        input: {},
+      },
+    });
+    state.openToolBlocks.set(idx, blockIdx);
+    state.contentBlockIndex++;
+  }
+  state.pendingTools.clear();
   if (state.contentBlockOpen || state.thinkingBlockOpen) {
     out += sseEvent("content_block_stop", { type: "content_block_stop", index: state.contentBlockIndex });
     state.contentBlockOpen = false;
