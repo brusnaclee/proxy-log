@@ -54,7 +54,7 @@ keys.get("/keys", async (c) => {
         .from(requestLogs).where(todayWhere))[0];
       const todayBreakdown = applyTokenMultiplierRows(sanitizeRows((await db.execute(sql`
         SELECT model, COALESCE(SUM(sum_delta), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
-        FROM (SELECT model, turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
+        FROM (SELECT model, turn_id, GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta, SUM(completion_tokens) as sum_c
           FROM request_logs WHERE api_key_id = ${key.id} AND created_at >= ${todayUtcDate} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
           GROUP BY model, turn_id)
         GROUP BY model
@@ -250,12 +250,12 @@ keys.get("/keys/:id", async (c) => {
       SELECT model, COALESCE(SUM(sum_delta), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
       FROM (
         SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
-          turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
+          turn_id, GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta, SUM(completion_tokens) as sum_c
         FROM request_logs WHERE api_key_id = ${key.id} ${since ? sql`AND created_at >= ${since}` : sql``} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
         GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
         UNION ALL
         SELECT TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
-          turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
+          turn_id, GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta, SUM(completion_tokens) as sum_c
         FROM request_logs WHERE model LIKE 'auto (%)%' AND api_key_id = ${key.id} ${since ? sql`AND created_at >= ${since}` : sql``} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
         GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
       )
@@ -289,12 +289,12 @@ keys.get("/keys/:id", async (c) => {
     SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta * ${tmInput} + sum_c * ${tmOutput}), 0) as tokens, 0 as "estimatedCost"
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
-        turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
+        turn_id, GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta, SUM(completion_tokens) as sum_c
       FROM request_logs WHERE api_key_id = ${key.id} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 ${analyticsDateFilter}
       GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
       UNION ALL
       SELECT TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
-        turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
+        turn_id, GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta, SUM(completion_tokens) as sum_c
       FROM request_logs WHERE model LIKE 'auto (%)%' AND api_key_id = ${key.id} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 ${analyticsDateFilter}
       GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
     )
@@ -305,12 +305,12 @@ keys.get("/keys/:id", async (c) => {
     SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta * ${tmInput} + sum_c * ${tmOutput}), 0) as tokens, 0 as "estimatedCost"
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
-        turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
+        turn_id, GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta, SUM(completion_tokens) as sum_c
       FROM request_logs WHERE api_key_id = ${key.id} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 ${analyticsDateFilter}
       GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
       UNION ALL
       SELECT TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
-        turn_id, SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c
+        turn_id, GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta, SUM(completion_tokens) as sum_c
       FROM request_logs WHERE model LIKE 'auto (%)%' AND api_key_id = ${key.id} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 ${analyticsDateFilter}
       GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
     )
@@ -324,7 +324,7 @@ keys.get("/keys/:id", async (c) => {
       COALESCE(SUM(sum_delta * ${tmInput} + sum_c * ${tmOutput}), 0) as tokens, 0 as "estimatedCost",
       MAX(last_seen) as "lastSeen"
     FROM (SELECT device_fingerprint, ip_address, ide_detected, os_detected, client_name, session_id, turn_id,
-        SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c, MAX(created_at) as last_seen
+        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta, SUM(completion_tokens) as sum_c, MAX(created_at) as last_seen
       FROM request_logs WHERE api_key_id = ${key.id} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL ${analyticsDateFilter}
       GROUP BY device_fingerprint, ip_address, ide_detected, os_detected, client_name, session_id, turn_id)
     GROUP BY device_fingerprint, ip_address, ide_detected, os_detected, client_name ORDER BY tokens DESC LIMIT 20

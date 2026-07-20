@@ -144,56 +144,93 @@ async function snapshotMonthStats(yearMonth: string): Promise<void> {
   const perKeyModel = (await db.execute(sql`
     SELECT
       api_key_id,
-      CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
-      COUNT(DISTINCT turn_id) as turn_count,
-      COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END), 0) as input_tokens,
-      COALESCE(SUM(completion_tokens), 0) as output_tokens,
-      COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) + SUM(completion_tokens), 0) as total_tokens,
-      COALESCE(SUM(estimated_cost), 0) as estimated_cost
-    FROM request_logs
-    WHERE created_at >= ${start} AND created_at < ${end} AND status_code BETWEEN 200 AND 299
-    GROUP BY api_key_id, CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END
+      model,
+      COUNT(*) as turn_count,
+      COALESCE(SUM(sum_delta), 0) as input_tokens,
+      COALESCE(SUM(sum_c), 0) as output_tokens,
+      COALESCE(SUM(sum_delta) + SUM(sum_c), 0) as total_tokens,
+      COALESCE(SUM(est), 0) as estimated_cost
+    FROM (
+      SELECT
+        api_key_id,
+        CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
+        turn_id,
+        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta,
+        SUM(completion_tokens) as sum_c,
+        SUM(estimated_cost) as est
+      FROM request_logs
+      WHERE created_at >= ${start} AND created_at < ${end} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+      GROUP BY api_key_id, CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
+    ) t
+    GROUP BY api_key_id, model
   `)).rows;
 
   // 2. Also add underlying model counts for auto entries
   const perKeyAutoModels = (await db.execute(sql`
     SELECT
       api_key_id,
-      TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
-      COUNT(DISTINCT turn_id) as turn_count,
-      COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END), 0) as input_tokens,
-      COALESCE(SUM(completion_tokens), 0) as output_tokens,
-      COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) + SUM(completion_tokens), 0) as total_tokens,
-      COALESCE(SUM(estimated_cost), 0) as estimated_cost
-    FROM request_logs
-    WHERE model LIKE 'auto (%)%' AND created_at >= ${start} AND created_at < ${end} AND status_code BETWEEN 200 AND 299
-    GROUP BY api_key_id, TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1))
+      model,
+      COUNT(*) as turn_count,
+      COALESCE(SUM(sum_delta), 0) as input_tokens,
+      COALESCE(SUM(sum_c), 0) as output_tokens,
+      COALESCE(SUM(sum_delta) + SUM(sum_c), 0) as total_tokens,
+      COALESCE(SUM(est), 0) as estimated_cost
+    FROM (
+      SELECT
+        api_key_id,
+        TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
+        turn_id,
+        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta,
+        SUM(completion_tokens) as sum_c,
+        SUM(estimated_cost) as est
+      FROM request_logs
+      WHERE model LIKE 'auto (%)%' AND created_at >= ${start} AND created_at < ${end} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+      GROUP BY api_key_id, TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
+    ) t
+    GROUP BY api_key_id, model
   `)).rows;
 
   // 3. Global aggregates (all keys combined, per model)
   const globalModel = (await db.execute(sql`
     SELECT
-      CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
-      COUNT(DISTINCT turn_id) as turn_count,
-      COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END), 0) as input_tokens,
-      COALESCE(SUM(completion_tokens), 0) as output_tokens,
-      COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) + SUM(completion_tokens), 0) as total_tokens,
-      COALESCE(SUM(estimated_cost), 0) as estimated_cost
-    FROM request_logs
-    WHERE created_at >= ${start} AND created_at < ${end} AND status_code BETWEEN 200 AND 299
-    GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END
+      model,
+      COUNT(*) as turn_count,
+      COALESCE(SUM(sum_delta), 0) as input_tokens,
+      COALESCE(SUM(sum_c), 0) as output_tokens,
+      COALESCE(SUM(sum_delta) + SUM(sum_c), 0) as total_tokens,
+      COALESCE(SUM(est), 0) as estimated_cost
+    FROM (
+      SELECT
+        CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
+        turn_id,
+        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta,
+        SUM(completion_tokens) as sum_c,
+        SUM(estimated_cost) as est
+      FROM request_logs
+      WHERE created_at >= ${start} AND created_at < ${end} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+      GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
+    ) t
+    GROUP BY model
   `)).rows;
 
   // 4. Global total (all keys, all models)
   const globalTotal = (await db.execute(sql`
     SELECT
-      COUNT(DISTINCT turn_id) as turn_count,
-      COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END), 0) as input_tokens,
-      COALESCE(SUM(completion_tokens), 0) as output_tokens,
-      COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) + SUM(completion_tokens), 0) as total_tokens,
-      COALESCE(SUM(estimated_cost), 0) as estimated_cost
-    FROM request_logs
-    WHERE created_at >= ${start} AND created_at < ${end} AND status_code BETWEEN 200 AND 299
+      COUNT(*) as turn_count,
+      COALESCE(SUM(sum_delta), 0) as input_tokens,
+      COALESCE(SUM(sum_c), 0) as output_tokens,
+      COALESCE(SUM(sum_delta) + SUM(sum_c), 0) as total_tokens,
+      COALESCE(SUM(est), 0) as estimated_cost
+    FROM (
+      SELECT
+        turn_id,
+        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta,
+        SUM(completion_tokens) as sum_c,
+        SUM(estimated_cost) as est
+      FROM request_logs
+      WHERE created_at >= ${start} AND created_at < ${end} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+      GROUP BY turn_id
+    ) t
   `)).rows[0];
 
   // Insert all snapshots

@@ -40,9 +40,19 @@ export const VALID_LOG_SQL = sql`status_code BETWEEN 200 AND 299`;
  * the NEW tokens added since the last request (user message + tool results).
  * This excludes system prompt and conversation history.
  *
+ * Compact cycles: IDE/agent compact drops context (negative delta) then rebuilds
+ * it (positive delta). Summing only positive deltas double-counts every rebuild.
+ * Bill GREATEST(0, SUM(all deltas)) per turn so compact↔rebuild nets out.
+ *
  * For output tokens, SUM(completion_tokens) across all requests in the turn
  * since each tool call produces genuinely new output.
  */
+
+/**
+ * Raw SQL fragment used inside GROUP BY turn_id subqueries.
+ * Prefer this over SUM(positive-only) everywhere stats/limits are computed.
+ */
+export const TURN_NET_INPUT_DELTA_SQL = `GREATEST(0, COALESCE(SUM(context_delta_tokens), 0))`;
 
 /** Turn-based request count: COUNT(DISTINCT turn_id) */
 export function turnCountSql(whereCondition: SQL | undefined): SQL<number> {
@@ -50,13 +60,12 @@ export function turnCountSql(whereCondition: SQL | undefined): SQL<number> {
 }
 
 /**
- * Turn-based input tokens: SUM of context_delta_tokens per turn.
- * context_delta_tokens = new tokens added since last request (user message + tool results).
- * Excludes system prompt and conversation history.
+ * Turn-based input tokens: net context growth per turn (compacts cancel rebuilds).
+ * context_delta_tokens = change since last request (can be negative on compact).
  */
 export function turnPromptTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
   const { input } = getTokenMultipliers(opts);
-  return sql<number>`COALESCE((SELECT SUM(sum_delta) * ${input} FROM (SELECT SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
+  return sql<number>`COALESCE((SELECT SUM(sum_delta) * ${input} FROM (SELECT GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
 }
 
 /** Turn-based completion tokens: SUM(completion) per turn, then SUM across turns */
@@ -68,7 +77,7 @@ export function turnCompletionTokensSql(whereCondition: SQL | undefined, opts?: 
 /** Turn-based total tokens: (input + output) per turn, then SUM */
 export function turnTotalTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
   const { input, output } = getTokenMultipliers(opts);
-  return sql<number>`COALESCE((SELECT SUM(sum_delta * ${input} + sum_c * ${output}) FROM (SELECT SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta, SUM(completion_tokens) as sum_c FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
+  return sql<number>`COALESCE((SELECT SUM(sum_delta * ${input} + sum_c * ${output}) FROM (SELECT GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta, SUM(completion_tokens) as sum_c FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
 }
 
 /** WIB midnight as PostgreSQL datetime string (UTC storage). */

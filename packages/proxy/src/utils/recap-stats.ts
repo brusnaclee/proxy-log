@@ -210,7 +210,7 @@ async function fetchTotals(keyIds: number[], start: Date, end: Date) {
       COALESCE(SUM(est), 0) AS est_cost
     FROM (
       SELECT turn_id,
-        SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) AS sum_delta,
+        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) AS sum_delta,
         SUM(completion_tokens) AS sum_c,
         SUM(estimated_cost) AS est
       FROM request_logs
@@ -240,16 +240,20 @@ async function fetchModels(keyIds: number[], start: Date, end: Date): Promise<Mo
   const { input, output } = getTokenMultipliers();
   const rows = (await db.execute(sql`
     SELECT model,
-      COUNT(DISTINCT turn_id) AS requests,
-      COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END), 0) AS input_raw,
-      COALESCE(SUM(completion_tokens), 0) AS output_raw,
-      COALESCE(AVG(NULLIF(latency_ms, 0)), 0) AS avg_lat
+      COUNT(*) AS requests,
+      COALESCE(SUM(sum_delta), 0) AS input_raw,
+      COALESCE(SUM(sum_c), 0) AS output_raw,
+      COALESCE(AVG(NULLIF(avg_lat, 0)), 0) AS avg_lat
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END AS model,
-        turn_id, context_delta_tokens, completion_tokens, latency_ms
+        turn_id,
+        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) AS sum_delta,
+        SUM(completion_tokens) AS sum_c,
+        AVG(NULLIF(latency_ms, 0)) AS avg_lat
       FROM request_logs
       WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
         AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+      GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
     ) m
     GROUP BY model
     ORDER BY requests DESC
@@ -322,15 +326,18 @@ async function fetchPerDay(keyIds: number[], start: Date, end: Date): Promise<Da
   const { input, output } = getTokenMultipliers();
   const rows = (await db.execute(sql`
     SELECT day,
-      COUNT(DISTINCT turn_id) AS requests,
-      COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END), 0) AS input_raw,
-      COALESCE(SUM(completion_tokens), 0) AS output_raw
+      COUNT(*) AS requests,
+      COALESCE(SUM(sum_delta), 0) AS input_raw,
+      COALESCE(SUM(sum_c), 0) AS output_raw
     FROM (
       SELECT to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') AS day,
-        turn_id, context_delta_tokens, completion_tokens
+        turn_id,
+        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) AS sum_delta,
+        SUM(completion_tokens) AS sum_c
       FROM request_logs
       WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
         AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+      GROUP BY 1, turn_id
     ) d
     GROUP BY day
     ORDER BY day
@@ -511,7 +518,7 @@ async function fetchKeyBreakdown(keyIds: number[], start: Date, end: Date): Prom
     LEFT JOIN (
       SELECT api_key_id, turn_id,
         1 AS turn_present,
-        SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) AS sum_delta,
+        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) AS sum_delta,
         SUM(completion_tokens) AS sum_c
       FROM request_logs
       WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
@@ -642,7 +649,7 @@ export async function getMonthLeaderboard(yearMonth: string): Promise<{
     FROM (
       SELECT api_key_id, turn_id,
         1 AS turn_present,
-        SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) AS sum_delta,
+        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) AS sum_delta,
         SUM(completion_tokens) AS sum_c
       FROM request_logs
       WHERE created_at >= ${start} AND created_at < ${end}
@@ -720,14 +727,16 @@ async function fetchPerDayTokens(keyIds: number[], start: Date, end: Date): Prom
   const { input, output } = getTokenMultipliers();
   const rows = (await db.execute(sql`
     SELECT day,
-      COALESCE(SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) * ${input}
-        + SUM(completion_tokens) * ${output}, 0) AS tokens
+      COALESCE(SUM(sum_delta) * ${input} + SUM(sum_c) * ${output}, 0) AS tokens
     FROM (
       SELECT to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') AS day,
-        context_delta_tokens, completion_tokens
+        turn_id,
+        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) AS sum_delta,
+        SUM(completion_tokens) AS sum_c
       FROM request_logs
       WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
         AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+      GROUP BY 1, turn_id
     ) d GROUP BY day
   `)).rows as any[];
   const m = new Map<string, number>();

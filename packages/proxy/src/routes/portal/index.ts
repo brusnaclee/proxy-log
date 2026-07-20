@@ -501,7 +501,7 @@ portal.get("/stats/overview", async (c) => {
       COALESCE(SUM(sum_c), 0) as "completionTokens"
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model, turn_id,
-        SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta,
+        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta,
         SUM(completion_tokens) as sum_c
       FROM request_logs
       WHERE api_key_id IN (${userApiKeyIds(discordUserId)})
@@ -553,7 +553,7 @@ portal.get("/stats/timeseries", async (c) => {
       COALESCE(SUM(sum_c), 0) as "completionTokens"
     FROM (
       SELECT ${groupExpr} as period_group, turn_id,
-        SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta,
+        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta,
         SUM(completion_tokens) as sum_c
       FROM request_logs
       WHERE api_key_id IN (${userApiKeyIds(discordUserId)})
@@ -586,7 +586,7 @@ portal.get("/stats/by-model", async (c) => {
       COALESCE(SUM(sum_c), 0) as "completionTokens"
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model, turn_id,
-        SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta,
+        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta,
         SUM(completion_tokens) as sum_c
       FROM request_logs
       WHERE api_key_id IN (${userApiKeyIds(discordUserId)})
@@ -706,7 +706,7 @@ portal.get("/stats/compare", async (c) => {
         COALESCE(SUM(sum_c), 0) as "completionTokens"
       FROM (
         SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model, turn_id,
-          SUM(CASE WHEN context_delta_tokens > 0 THEN context_delta_tokens ELSE 0 END) as sum_delta,
+          GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta,
           SUM(completion_tokens) as sum_c
         FROM request_logs
         WHERE api_key_id IN (${userApiKeyIds(discordUserId)})
