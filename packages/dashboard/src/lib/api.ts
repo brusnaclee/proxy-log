@@ -808,12 +808,18 @@ export interface AddonEntry {
   description: string;
   modelAllowlist: string;
   modelAllowlistParsed?: string[];
+  accessMode?: "allowlist" | "all_except";
+  modelDenylist?: string;
+  modelDenylistParsed?: string[];
+  modelDailyLimits?: string;
+  modelDailyLimitsParsed?: Record<string, number>;
   dailyTokenLimit: number;
   monthlyTokenLimit: number;
   dailyInputTokenLimit: number;
   dailyOutputTokenLimit: number;
   promptLimit: number;
   promptLimitWindow: string;
+  maxDevices?: number;
   discordRoleId: string | null;
   isActive: boolean;
   createdAt: string;
@@ -834,14 +840,23 @@ export interface AddonAssignmentEntry {
   modelAllowlistParsed?: string[];
 }
 
+export type AddonWritePayload = Partial<AddonEntry> & {
+  name?: string;
+  modelAllowlist?: string | string[];
+  modelDenylist?: string | string[];
+  modelDailyLimits?: Record<string, number> | string;
+  accessMode?: "allowlist" | "all_except";
+  maxDevices?: number;
+};
+
 export const addonsApi = {
   list: () => request<{ data: AddonEntry[] }>("/addons"),
-  create: (data: Partial<AddonEntry> & { name: string; modelAllowlist?: string | string[] }) =>
+  create: (data: AddonWritePayload & { name: string }) =>
     request<{ success: boolean; addon: AddonEntry }>("/addons", {
       method: "POST",
       body: JSON.stringify(data),
     }),
-  update: (id: number, data: Partial<AddonEntry> & { modelAllowlist?: string | string[] }) =>
+  update: (id: number, data: AddonWritePayload) =>
     request<{ success: boolean; addon: AddonEntry }>(`/addons/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),

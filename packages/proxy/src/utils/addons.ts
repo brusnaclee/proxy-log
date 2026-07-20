@@ -8,6 +8,8 @@ export type ActiveAddon = Addon & {
   expiresAt: Date | null;
 };
 
+export type AccessMode = "allowlist" | "all_except";
+
 function parseAllowlist(raw: string | null | undefined): string[] {
   try {
     const parsed = JSON.parse(raw || "[]");
@@ -21,6 +23,27 @@ function parseAllowlist(raw: string | null | undefined): string[] {
   }
 }
 
+export function parsePatternList(raw: string | null | undefined): string[] {
+  return parseAllowlist(raw);
+}
+
+/** Parse JSON object of pattern -> daily token limit. */
+export function parseModelDailyLimits(raw: string | null | undefined): Record<string, number> {
+  try {
+    const parsed = JSON.parse(raw || "{}");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      const key = String(k || "").trim();
+      const n = Math.max(0, Number(v) || 0);
+      if (key && n > 0) out[key] = n;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 export function modelMatchesAllowlist(model: string, allowlist: string[]): boolean {
   if (!allowlist.length) return false;
   const lower = model.toLowerCase();
@@ -28,6 +51,10 @@ export function modelMatchesAllowlist(model: string, allowlist: string[]): boole
     const p = pat.toLowerCase();
     return lower === p || lower.includes(p) || lower.endsWith("/" + p);
   });
+}
+
+function getAccessMode(a: Addon): AccessMode {
+  return a.accessMode === "all_except" ? "all_except" : "allowlist";
 }
 
 /**
@@ -83,16 +110,25 @@ export async function getActiveAddonsForUser(opts: {
   return Array.from(byId.values());
 }
 
-/** All model patterns locked behind any active add-on catalog entry. */
+/** All model patterns locked behind any active allowlist add-on catalog entry. */
 export async function getLockedModelPatterns(): Promise<string[]> {
   const rows = await db.select().from(addons).where(eq(addons.isActive, true));
   const patterns: string[] = [];
   for (const a of rows) {
-    patterns.push(...parseAllowlist(a.modelAllowlist));
+    if (getAccessMode(a) === "allowlist") {
+      patterns.push(...parseAllowlist(a.modelAllowlist));
+    }
   }
   return Array.from(new Set(patterns.map((p) => p.toLowerCase())));
 }
 
+/**
+ * Access rules:
+ * - If user has an active all_except add-on → allow all models except that addon's denylist
+ *   (union of denylists if multiple).
+ * - Else if model matches any catalog allowlist add-on → require assignment to one of those.
+ * - Else → open (base access).
+ */
 export async function checkAddonModelAccess(opts: {
   model: string;
   discordUserId?: string | null;
@@ -100,20 +136,42 @@ export async function checkAddonModelAccess(opts: {
 }): Promise<{ allowed: boolean; reason?: string; requiredAddon?: string }> {
   const normalized = await normalizeModelForLimit(opts.model);
   const allAddons = await db.select().from(addons).where(eq(addons.isActive, true));
-
-  // Models not listed in any addon allowlist stay open (base access).
-  const locking = allAddons.filter((a) =>
-    modelMatchesAllowlist(normalized, parseAllowlist(a.modelAllowlist)) ||
-    modelMatchesAllowlist(opts.model, parseAllowlist(a.modelAllowlist)),
-  );
-  if (locking.length === 0) {
-    return { allowed: true };
-  }
-
   const active = await getActiveAddonsForUser({
     discordUserId: opts.discordUserId,
     apiKeyId: opts.apiKeyId,
   });
+
+  const activeAllExcept = active.filter((a) => getAccessMode(a) === "all_except");
+  if (activeAllExcept.length > 0) {
+    for (const a of activeAllExcept) {
+      const deny = parsePatternList(a.modelDenylist);
+      if (
+        modelMatchesAllowlist(normalized, deny) ||
+        modelMatchesAllowlist(opts.model, deny)
+      ) {
+        return {
+          allowed: false,
+          reason: `Model "${opts.model}" is excluded by add-on "${a.name}".`,
+          requiredAddon: a.name,
+        };
+      }
+    }
+    return { allowed: true };
+  }
+
+  // Models listed on any allowlist-mode addon require that addon (or another matching one).
+  const locking = allAddons.filter((a) => {
+    if (getAccessMode(a) !== "allowlist") return false;
+    const list = parseAllowlist(a.modelAllowlist);
+    return (
+      modelMatchesAllowlist(normalized, list) ||
+      modelMatchesAllowlist(opts.model, list)
+    );
+  });
+  if (locking.length === 0) {
+    return { allowed: true };
+  }
+
   const hasMatch = locking.some((lock) => active.some((a) => a.id === lock.id));
   if (hasMatch) return { allowed: true };
 
@@ -133,21 +191,29 @@ export function sumAddonMonthlyTokenBonus(active: ActiveAddon[]): number {
   return active.reduce((sum, a) => sum + Math.max(0, a.monthlyTokenLimit || 0), 0);
 }
 
-/** Per-model daily token cap from the matching active addon (strictest / first match with limit > 0). */
+/**
+ * Per-model daily token cap from active addons' modelDailyLimits map
+ * (substring match). Returns the lowest positive matching cap (strictest).
+ * Pack-level dailyTokenLimit is account bonus via sumAddonDailyTokenBonus, not here.
+ */
 export function resolveAddonModelDailyTokenLimit(
   active: ActiveAddon[],
   model: string,
 ): number {
   const lower = model.toLowerCase();
+  let best = 0;
+
   for (const a of active) {
-    const list = parseAllowlist(a.modelAllowlist);
-    const matches =
-      modelMatchesAllowlist(lower, list) || list.some((p) => lower.includes(p.toLowerCase()));
-    if (matches && (a.dailyTokenLimit || 0) > 0) {
-      return a.dailyTokenLimit;
+    const map = parseModelDailyLimits(a.modelDailyLimits);
+    for (const [pat, lim] of Object.entries(map)) {
+      const p = pat.toLowerCase();
+      if (lower === p || lower.includes(p) || lower.endsWith("/" + p)) {
+        if (lim > 0 && (best === 0 || lim < best)) best = lim;
+      }
     }
   }
-  return 0;
+
+  return best;
 }
 
 export { parseAllowlist };

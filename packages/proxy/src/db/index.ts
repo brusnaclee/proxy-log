@@ -131,18 +131,26 @@ export async function initializeDatabase() {
 				name TEXT NOT NULL,
 				description TEXT NOT NULL DEFAULT '',
 				model_allowlist TEXT NOT NULL DEFAULT '[]',
+				access_mode TEXT NOT NULL DEFAULT 'allowlist',
+				model_denylist TEXT NOT NULL DEFAULT '[]',
+				model_daily_limits TEXT NOT NULL DEFAULT '{}',
 				daily_token_limit INTEGER NOT NULL DEFAULT 0,
 				monthly_token_limit INTEGER NOT NULL DEFAULT 0,
 				daily_input_token_limit INTEGER NOT NULL DEFAULT 0,
 				daily_output_token_limit INTEGER NOT NULL DEFAULT 0,
 				prompt_limit INTEGER NOT NULL DEFAULT 0,
 				prompt_limit_window TEXT NOT NULL DEFAULT '1d',
+				max_devices INTEGER NOT NULL DEFAULT 0,
 				discord_role_id TEXT,
 				is_active BOOLEAN NOT NULL DEFAULT true,
 				created_at TIMESTAMP NOT NULL DEFAULT NOW(),
 				updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 			)
 		`);
+		await pool.query(`ALTER TABLE addons ADD COLUMN IF NOT EXISTS access_mode TEXT NOT NULL DEFAULT 'allowlist'`);
+		await pool.query(`ALTER TABLE addons ADD COLUMN IF NOT EXISTS model_denylist TEXT NOT NULL DEFAULT '[]'`);
+		await pool.query(`ALTER TABLE addons ADD COLUMN IF NOT EXISTS model_daily_limits TEXT NOT NULL DEFAULT '{}'`);
+		await pool.query(`ALTER TABLE addons ADD COLUMN IF NOT EXISTS max_devices INTEGER NOT NULL DEFAULT 0`);
 		await pool.query(`
 			CREATE TABLE IF NOT EXISTS addon_assignments (
 				id SERIAL PRIMARY KEY,

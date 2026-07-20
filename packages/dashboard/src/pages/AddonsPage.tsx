@@ -1,29 +1,143 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { Package, Plus, Trash2, UserPlus, RefreshCw, Loader2 } from "lucide-react";
+import { Package, Plus, Trash2, UserPlus, RefreshCw, Loader2, X } from "lucide-react";
 import {
   addonsApi,
+  globalSettings,
   type AddonAssignmentEntry,
   type AddonEntry,
 } from "@/lib/api";
 
+type AccessMode = "allowlist" | "all_except";
+
+function CatalogPicker({
+  label,
+  hint,
+  selected,
+  onChange,
+  catalog,
+}: {
+  label: string;
+  hint: string;
+  selected: string[];
+  onChange: (next: string[]) => void;
+  catalog: string[];
+}) {
+  const [query, setQuery] = useState("");
+  const [manual, setManual] = useState("");
+
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return catalog.slice(0, 20);
+    return catalog.filter((id) => id.toLowerCase().includes(q)).slice(0, 30);
+  }, [catalog, query]);
+
+  const toggle = (id: string) => {
+    if (selected.includes(id)) onChange(selected.filter((x) => x !== id));
+    else onChange([...selected, id]);
+  };
+
+  const addManual = () => {
+    const p = manual.trim();
+    if (!p) return;
+    if (!selected.includes(p)) onChange([...selected, p]);
+    setManual("");
+  };
+
+  return (
+    <div className="space-y-2">
+      <Label>{label}</Label>
+      <p className="text-[10px] text-muted-foreground">{hint}</p>
+      {selected.length > 0 && (
+        <div className="flex flex-wrap gap-1 max-h-28 overflow-y-auto p-1.5 border rounded-md bg-background/40">
+          {selected.map((id) => (
+            <span
+              key={id}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-primary/15 text-primary font-mono text-[10px]"
+            >
+              {id}
+              <button type="button" onClick={() => toggle(id)} className="hover:text-destructive" aria-label={`Remove ${id}`}>
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <Input
+        className="font-mono text-sm"
+        placeholder="Cari di katalog… (glm, claude, chatgpt-5.6)"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+      />
+      <div className="max-h-36 overflow-y-auto border rounded-md divide-y divide-border/50">
+        {matches.length === 0 ? (
+          <p className="p-2 text-xs text-muted-foreground">Tidak ada hasil.</p>
+        ) : (
+          matches.map((id) => {
+            const on = selected.includes(id);
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => toggle(id)}
+                className={`w-full text-left px-2 py-1.5 text-[11px] font-mono hover:bg-accent/60 flex items-center gap-2 ${
+                  on ? "bg-primary/10 text-primary" : "text-foreground"
+                }`}
+              >
+                <span className={`h-3.5 w-3.5 rounded border flex items-center justify-center text-[9px] ${on ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/40"}`}>
+                  {on ? "✓" : ""}
+                </span>
+                <span className="truncate">{id}</span>
+              </button>
+            );
+          })
+        )}
+      </div>
+      <div className="flex gap-2">
+        <Input
+          className="font-mono text-sm"
+          placeholder="Pattern manual (substring)"
+          value={manual}
+          onChange={(e) => setManual(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              addManual();
+            }
+          }}
+        />
+        <Button type="button" variant="outline" size="sm" onClick={addManual}>
+          Add
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export default function AddonsPage() {
   const [addons, setAddons] = useState<AddonEntry[]>([]);
   const [assignments, setAssignments] = useState<AddonAssignmentEntry[]>([]);
+  const [catalog, setCatalog] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [allowlist, setAllowlist] = useState("");
-  const [dailyTokenLimit, setDailyTokenLimit] = useState(5_000_000);
+  const [accessMode, setAccessMode] = useState<AccessMode>("allowlist");
+  const [allowlist, setAllowlist] = useState<string[]>([]);
+  const [denylist, setDenylist] = useState<string[]>([]);
+  const [dailyTokenLimit, setDailyTokenLimit] = useState(0);
+  const [maxDevices, setMaxDevices] = useState(0);
   const [discordRoleId, setDiscordRoleId] = useState("");
+  const [limitPattern, setLimitPattern] = useState("");
+  const [limitValue, setLimitValue] = useState(5_000_000);
+  const [modelDailyLimits, setModelDailyLimits] = useState<Record<string, number>>({});
 
   const [assignAddonId, setAssignAddonId] = useState<number | "">("");
   const [assignDiscordId, setAssignDiscordId] = useState("");
@@ -33,9 +147,14 @@ export default function AddonsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [a, asg] = await Promise.all([addonsApi.list(), addonsApi.listAssignments()]);
+      const [a, asg, models] = await Promise.all([
+        addonsApi.list(),
+        addonsApi.listAssignments(),
+        globalSettings.getModels().catch(() => ({ data: [] as string[] })),
+      ]);
       setAddons(a.data || []);
       setAssignments(asg.data || []);
+      setCatalog(models.data || []);
       setAssignAddonId((prev) => prev || a.data?.[0]?.id || "");
     } catch (e: any) {
       setError(e?.message || "Failed to load add-ons");
@@ -48,6 +167,20 @@ export default function AddonsPage() {
     void load();
   }, [load]);
 
+  const resetForm = () => {
+    setName("");
+    setDescription("");
+    setAccessMode("allowlist");
+    setAllowlist([]);
+    setDenylist([]);
+    setDailyTokenLimit(0);
+    setMaxDevices(0);
+    setDiscordRoleId("");
+    setModelDailyLimits({});
+    setLimitPattern("");
+    setLimitValue(5_000_000);
+  };
+
   const createAddon = async () => {
     if (!name.trim()) return;
     setSaving(true);
@@ -55,15 +188,16 @@ export default function AddonsPage() {
       await addonsApi.create({
         name: name.trim(),
         description: description.trim(),
+        accessMode,
         modelAllowlist: allowlist,
+        modelDenylist: denylist,
+        modelDailyLimits,
         dailyTokenLimit,
+        maxDevices,
         discordRoleId: discordRoleId.trim() || null,
         isActive: true,
       });
-      setName("");
-      setDescription("");
-      setAllowlist("");
-      setDiscordRoleId("");
+      resetForm();
       await load();
     } catch (e: any) {
       setError(e?.message || "Failed to create add-on");
@@ -119,6 +253,18 @@ export default function AddonsPage() {
     }
   };
 
+  const addDailyLimit = () => {
+    const p = limitPattern.trim();
+    if (!p || limitValue <= 0) return;
+    setModelDailyLimits((prev) => ({ ...prev, [p]: limitValue }));
+    setLimitPattern("");
+  };
+
+  const limitSuggestions = useMemo(() => {
+    const set = new Set([...allowlist, ...denylist, ...Object.keys(modelDailyLimits)]);
+    return Array.from(set).slice(0, 40);
+  }, [allowlist, denylist, modelDailyLimits]);
+
   return (
     <div className="space-y-6 p-4 md:p-6">
       <div className="flex items-center justify-between gap-3">
@@ -127,8 +273,9 @@ export default function AddonsPage() {
             <Package className="h-6 w-6" /> Add-ons
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Packs that unlock models (allowlist) and add daily token quota. Assign to Discord users.
-            Models listed on any active add-on require that add-on; other models stay open.
+            Packs that unlock models (allowlist) or open all except denylist, with optional per-model daily caps.
+            Assign to Discord users. Example Vibecode: mode <span className="font-mono">all_except</span> + denylist{" "}
+            <span className="font-mono">codex</span> + 5M/day on chatgpt-5.6 / kimi.
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
@@ -150,33 +297,134 @@ export default function AddonsPage() {
           <CardContent className="space-y-3">
             <div>
               <Label>Name</Label>
-              <Input className="mt-1" value={name} onChange={(e) => setName(e.target.value)} placeholder="ChatGPT 5.6 Pack" />
+              <Input className="mt-1" value={name} onChange={(e) => setName(e.target.value)} placeholder="Vibecode" />
             </div>
             <div>
               <Label>Description</Label>
               <Input className="mt-1" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional" />
             </div>
+
             <div>
-              <Label>Model allowlist (comma-separated patterns)</Label>
-              <Input
-                className="mt-1 font-mono text-sm"
-                value={allowlist}
-                onChange={(e) => setAllowlist(e.target.value)}
-                placeholder="chatgpt-5.6, gpt-5.6"
-              />
+              <Label>Access mode</Label>
+              <div className="mt-1 flex gap-1">
+                {([
+                  ["allowlist", "Allowlist only"],
+                  ["all_except", "All except denylist"],
+                ] as const).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setAccessMode(mode)}
+                    className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
+                      accessMode === mode
+                        ? "bg-primary/15 text-primary"
+                        : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                {accessMode === "all_except"
+                  ? "User with this pack can use all models except denylist (e.g. exclude codex)."
+                  : "Only selected allowlist models require/get this pack."}
+              </p>
             </div>
+
+            {accessMode === "allowlist" ? (
+              <CatalogPicker
+                label="Model allowlist"
+                hint="Pilih dari katalog atau tambah pattern substring."
+                selected={allowlist}
+                onChange={setAllowlist}
+                catalog={catalog}
+              />
+            ) : (
+              <CatalogPicker
+                label="Model denylist (excluded)"
+                hint="Model yang di-exclude meski mode all_except — mis. codex."
+                selected={denylist}
+                onChange={setDenylist}
+                catalog={catalog}
+              />
+            )}
+
+            <div className="space-y-2 border border-border/50 rounded-lg p-3">
+              <Label>Per-model daily token limits</Label>
+              <p className="text-[10px] text-muted-foreground">
+                Pattern substring → cap harian. Contoh: chatgpt-5.6 / terra / sol / kimi-k3 = 5,000,000.
+              </p>
+              {Object.keys(modelDailyLimits).length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {Object.entries(modelDailyLimits).map(([pat, lim]) => (
+                    <span
+                      key={pat}
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 font-mono text-[10px]"
+                    >
+                      {pat}={lim.toLocaleString()}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setModelDailyLimits((prev) => {
+                            const next = { ...prev };
+                            delete next[pat];
+                            return next;
+                          })
+                        }
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Input
+                  className="font-mono text-sm"
+                  list="addon-limit-suggestions"
+                  placeholder="pattern"
+                  value={limitPattern}
+                  onChange={(e) => setLimitPattern(e.target.value)}
+                />
+                <datalist id="addon-limit-suggestions">
+                  {limitSuggestions.map((s) => (
+                    <option key={s} value={s} />
+                  ))}
+                </datalist>
+                <Input
+                  type="number"
+                  value={limitValue}
+                  onChange={(e) => setLimitValue(parseInt(e.target.value) || 0)}
+                />
+                <Button type="button" variant="outline" size="sm" onClick={addDailyLimit}>
+                  Add
+                </Button>
+              </div>
+            </div>
+
             <div>
-              <Label>Daily token limit (bonus / model pack)</Label>
+              <Label>Pack daily token bonus (0 = none)</Label>
               <Input
                 className="mt-1"
                 type="number"
                 value={dailyTokenLimit}
                 onChange={(e) => setDailyTokenLimit(parseInt(e.target.value) || 0)}
               />
-              <p className="text-[10px] text-muted-foreground mt-1">Default 5,000,000 = 5M/day for matching models</p>
+              <p className="text-[10px] text-muted-foreground mt-1">Stacked on account daily limit. Vibecode unlimited → 0.</p>
             </div>
             <div>
-              <Label>Discord role ID (optional note / future auto-assign)</Label>
+              <Label>Max devices (0 = no change)</Label>
+              <Input
+                className="mt-1"
+                type="number"
+                value={maxDevices}
+                onChange={(e) => setMaxDevices(parseInt(e.target.value) || 0)}
+              />
+              <p className="text-[10px] text-muted-foreground mt-1">Applied to user keys on assign (e.g. 1 for Vibecode).</p>
+            </div>
+            <div>
+              <Label>Discord role ID (optional note)</Label>
               <Input className="mt-1 font-mono text-sm" value={discordRoleId} onChange={(e) => setDiscordRoleId(e.target.value)} placeholder="role snowflake" />
             </div>
             <Button onClick={() => void createAddon()} disabled={saving || !name.trim()}>
@@ -228,29 +476,56 @@ export default function AddonsPage() {
           {addons.length === 0 && !loading && (
             <p className="text-sm text-muted-foreground">No add-ons yet.</p>
           )}
-          {addons.map((a) => (
-            <div key={a.id} className="flex flex-col gap-2 rounded-lg border border-border/60 p-3 md:flex-row md:items-center md:justify-between">
-              <div className="space-y-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-medium">{a.name}</span>
-                  <Badge variant={a.isActive ? "default" : "secondary"}>{a.isActive ? "active" : "off"}</Badge>
-                  <span className="text-xs text-muted-foreground">
-                    {(a.dailyTokenLimit || 0).toLocaleString()} tok/day
-                  </span>
+          {addons.map((a) => {
+            const mode = a.accessMode === "all_except" ? "all_except" : "allowlist";
+            const allow = a.modelAllowlistParsed || [];
+            const deny = a.modelDenylistParsed || [];
+            const limits = a.modelDailyLimitsParsed || {};
+            return (
+              <div
+                key={a.id}
+                className="flex flex-col gap-2 rounded-lg border border-border/60 p-3 md:flex-row md:items-start md:justify-between"
+              >
+                <div className="space-y-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium">{a.name}</span>
+                    <Badge variant={a.isActive ? "default" : "secondary"}>{a.isActive ? "active" : "off"}</Badge>
+                    <Badge variant="outline">{mode === "all_except" ? "all except" : "allowlist"}</Badge>
+                    {(a.maxDevices || 0) > 0 && (
+                      <span className="text-xs text-muted-foreground">{a.maxDevices} device(s)</span>
+                    )}
+                    <span className="text-xs text-muted-foreground">
+                      pack {(a.dailyTokenLimit || 0).toLocaleString()} tok/day
+                    </span>
+                  </div>
+                  {mode === "allowlist" ? (
+                    <div className="text-xs text-muted-foreground font-mono break-all">
+                      allow: {allow.join(", ") || "(none)"}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-muted-foreground font-mono break-all">
+                      deny: {deny.join(", ") || "(none)"}
+                    </div>
+                  )}
+                  {Object.keys(limits).length > 0 && (
+                    <div className="text-xs text-amber-700 dark:text-amber-300 font-mono break-all">
+                      limits:{" "}
+                      {Object.entries(limits)
+                        .map(([k, v]) => `${k}=${v.toLocaleString()}`)
+                        .join(", ")}
+                    </div>
+                  )}
+                  {a.description && <p className="text-xs text-muted-foreground">{a.description}</p>}
                 </div>
-                <div className="text-xs text-muted-foreground font-mono break-all">
-                  {(a.modelAllowlistParsed || []).join(", ") || a.modelAllowlist || "(no models)"}
+                <div className="flex items-center gap-2 shrink-0">
+                  <Switch checked={a.isActive} onCheckedChange={() => void toggleActive(a)} />
+                  <Button variant="ghost" size="icon" onClick={() => void removeAddon(a.id)}>
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
                 </div>
-                {a.description && <p className="text-xs text-muted-foreground">{a.description}</p>}
               </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <Switch checked={a.isActive} onCheckedChange={() => void toggleActive(a)} />
-                <Button variant="ghost" size="icon" onClick={() => void removeAddon(a.id)}>
-                  <Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </CardContent>
       </Card>
 

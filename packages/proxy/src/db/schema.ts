@@ -498,13 +498,21 @@ export const addons = pgTable('addons', {
 	description: text('description').notNull().default(''),
 	/** JSON string array of model id / substring patterns, e.g. ["chatgpt-5.6","gpt-5"] */
 	modelAllowlist: text('model_allowlist').notNull().default('[]'),
+	/** allowlist | all_except — all_except uses modelDenylist */
+	accessMode: text('access_mode').notNull().default('allowlist'),
+	/** JSON string array of excluded patterns when accessMode=all_except */
+	modelDenylist: text('model_denylist').notNull().default('[]'),
+	/** JSON object pattern -> daily token limit, e.g. {"chatgpt-5.6":5000000} */
+	modelDailyLimits: text('model_daily_limits').notNull().default('{}'),
 	dailyTokenLimit: integer('daily_token_limit').notNull().default(0),
 	monthlyTokenLimit: integer('monthly_token_limit').notNull().default(0),
 	dailyInputTokenLimit: integer('daily_input_token_limit').notNull().default(0),
 	dailyOutputTokenLimit: integer('daily_output_token_limit').notNull().default(0),
 	promptLimit: integer('prompt_limit').notNull().default(0),
 	promptLimitWindow: text('prompt_limit_window').notNull().default('1d'),
-	/** Optional Discord role: members with this role are treated as assigned while active */
+	/** When > 0, assignment clamps api_keys.maxDevices */
+	maxDevices: integer('max_devices').notNull().default(0),
+	/** Optional Discord role: note / future auto-assign */
 	discordRoleId: text('discord_role_id'),
 	isActive: boolean('is_active').notNull().default(true),
 	createdAt: timestamp('created_at').notNull().defaultNow(),

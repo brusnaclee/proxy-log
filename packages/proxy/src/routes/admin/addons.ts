@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { addonAssignments, addons, apiKeys } from "../../db/schema.js";
-import { parseAllowlist } from "../../utils/addons.js";
+import { parseAllowlist, parseModelDailyLimits, parsePatternList } from "../../utils/addons.js";
 
 const addonsApi = new Hono();
 
@@ -31,13 +31,70 @@ function normalizeAllowlistInput(raw: unknown): string {
   return "[]";
 }
 
+function normalizeDailyLimitsInput(raw: unknown): string {
+  if (!raw) return "{}";
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return normalizeDailyLimitsInput(parsed);
+    } catch {
+      return "{}";
+    }
+  }
+  if (typeof raw === "object" && !Array.isArray(raw)) {
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      const key = String(k || "").trim();
+      const n = Math.max(0, Number(v) || 0);
+      if (key && n > 0) out[key] = n;
+    }
+    return JSON.stringify(out);
+  }
+  return "{}";
+}
+
+function normalizeAccessMode(raw: unknown): "allowlist" | "all_except" {
+  return raw === "all_except" ? "all_except" : "allowlist";
+}
+
+function enrichAddon(r: typeof addons.$inferSelect) {
+  return {
+    ...r,
+    modelAllowlistParsed: parseAllowlist(r.modelAllowlist),
+    modelDenylistParsed: parsePatternList(r.modelDenylist),
+    modelDailyLimitsParsed: parseModelDailyLimits(r.modelDailyLimits),
+  };
+}
+
+async function applyMaxDevicesForAssignment(opts: {
+  maxDevices: number;
+  discordUserId?: string | null;
+  apiKeyId?: number | null;
+}) {
+  const cap = Math.max(0, opts.maxDevices || 0);
+  if (cap <= 0) return;
+
+  const keys =
+    opts.apiKeyId && opts.apiKeyId > 0
+      ? await db.select().from(apiKeys).where(eq(apiKeys.id, opts.apiKeyId))
+      : opts.discordUserId
+        ? await db.select().from(apiKeys).where(eq(apiKeys.discordUserId, opts.discordUserId))
+        : [];
+
+  for (const key of keys) {
+    const current = key.maxDevices || 0;
+    // Clamp: if unlimited (0) or higher than pack, set to pack maxDevices
+    const next = current <= 0 ? cap : Math.min(current, cap);
+    if (next !== current) {
+      await db.update(apiKeys).set({ maxDevices: next, updatedAt: new Date() }).where(eq(apiKeys.id, key.id));
+    }
+  }
+}
+
 addonsApi.get("/addons", async (c) => {
   const rows = await db.select().from(addons).orderBy(desc(addons.id));
   return c.json({
-    data: rows.map((r) => ({
-      ...r,
-      modelAllowlistParsed: parseAllowlist(r.modelAllowlist),
-    })),
+    data: rows.map(enrichAddon),
   });
 });
 
@@ -46,12 +103,16 @@ addonsApi.post("/addons", async (c) => {
     name: string;
     description?: string;
     modelAllowlist?: string | string[];
+    modelDenylist?: string | string[];
+    modelDailyLimits?: Record<string, number> | string;
+    accessMode?: string;
     dailyTokenLimit?: number;
     monthlyTokenLimit?: number;
     dailyInputTokenLimit?: number;
     dailyOutputTokenLimit?: number;
     promptLimit?: number;
     promptLimitWindow?: string;
+    maxDevices?: number;
     discordRoleId?: string | null;
     isActive?: boolean;
   }>();
@@ -63,18 +124,22 @@ addonsApi.post("/addons", async (c) => {
       name: body.name.trim(),
       description: body.description?.trim() || "",
       modelAllowlist: normalizeAllowlistInput(body.modelAllowlist),
+      modelDenylist: normalizeAllowlistInput(body.modelDenylist),
+      modelDailyLimits: normalizeDailyLimitsInput(body.modelDailyLimits),
+      accessMode: normalizeAccessMode(body.accessMode),
       dailyTokenLimit: Math.max(0, body.dailyTokenLimit || 0),
       monthlyTokenLimit: Math.max(0, body.monthlyTokenLimit || 0),
       dailyInputTokenLimit: Math.max(0, body.dailyInputTokenLimit || 0),
       dailyOutputTokenLimit: Math.max(0, body.dailyOutputTokenLimit || 0),
       promptLimit: Math.max(0, body.promptLimit || 0),
       promptLimitWindow: body.promptLimitWindow || "1d",
+      maxDevices: Math.max(0, body.maxDevices || 0),
       discordRoleId: body.discordRoleId || null,
       isActive: body.isActive ?? true,
     })
     .returning();
 
-  return c.json({ success: true, addon: row });
+  return c.json({ success: true, addon: enrichAddon(row) });
 });
 
 addonsApi.put("/addons/:id", async (c) => {
@@ -87,17 +152,21 @@ addonsApi.put("/addons/:id", async (c) => {
   if (typeof body.name === "string") updates.name = body.name.trim();
   if (typeof body.description === "string") updates.description = body.description.trim();
   if (body.modelAllowlist !== undefined) updates.modelAllowlist = normalizeAllowlistInput(body.modelAllowlist);
+  if (body.modelDenylist !== undefined) updates.modelDenylist = normalizeAllowlistInput(body.modelDenylist);
+  if (body.modelDailyLimits !== undefined) updates.modelDailyLimits = normalizeDailyLimitsInput(body.modelDailyLimits);
+  if (body.accessMode !== undefined) updates.accessMode = normalizeAccessMode(body.accessMode);
   if (body.dailyTokenLimit !== undefined) updates.dailyTokenLimit = Math.max(0, Number(body.dailyTokenLimit) || 0);
   if (body.monthlyTokenLimit !== undefined) updates.monthlyTokenLimit = Math.max(0, Number(body.monthlyTokenLimit) || 0);
   if (body.dailyInputTokenLimit !== undefined) updates.dailyInputTokenLimit = Math.max(0, Number(body.dailyInputTokenLimit) || 0);
   if (body.dailyOutputTokenLimit !== undefined) updates.dailyOutputTokenLimit = Math.max(0, Number(body.dailyOutputTokenLimit) || 0);
   if (body.promptLimit !== undefined) updates.promptLimit = Math.max(0, Number(body.promptLimit) || 0);
   if (typeof body.promptLimitWindow === "string") updates.promptLimitWindow = body.promptLimitWindow;
+  if (body.maxDevices !== undefined) updates.maxDevices = Math.max(0, Number(body.maxDevices) || 0);
   if (body.discordRoleId !== undefined) updates.discordRoleId = body.discordRoleId || null;
   if (body.isActive !== undefined) updates.isActive = Boolean(body.isActive);
 
   const [row] = await db.update(addons).set(updates as any).where(eq(addons.id, id)).returning();
-  return c.json({ success: true, addon: row });
+  return c.json({ success: true, addon: enrichAddon(row) });
 });
 
 addonsApi.delete("/addons/:id", async (c) => {
@@ -172,6 +241,12 @@ addonsApi.post("/addon-assignments", async (c) => {
       isActive: true,
     })
     .returning();
+
+  await applyMaxDevicesForAssignment({
+    maxDevices: addon.maxDevices || 0,
+    discordUserId: body.discordUserId,
+    apiKeyId: body.apiKeyId,
+  });
 
   return c.json({ success: true, assignment: row });
 });
