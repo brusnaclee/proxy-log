@@ -3642,7 +3642,7 @@ proxy.all('/*', async (c) => {
 		lastUserText: string;
 	} = { clientSentTools: false, matchedToolName: null, lastUserText: '' };
 	let actualUpstreamUrl = upstreamUrl;
-	let actualUpstreamPath = upstreamPath;
+	let actualUpstreamPath = forwardPath;
 
 	if (isAnthropicProvider) {
 		anthropicRequestBody = isAnthropicRequest
