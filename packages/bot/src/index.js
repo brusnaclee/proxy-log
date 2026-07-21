@@ -4043,20 +4043,25 @@ function formatTokens(n) {
 	return String(n);
 }
 
-/** Full input = billable + cache. Returns { total, label, compact }. */
+/** Full input = prompt + cache. label = readable, compact = short. */
 function formatInputBreakdown(billable, cached, fullInput) {
-	const bill = Math.max(0, Number(billable) || 0);
 	const cache = Math.max(0, Number(cached) || 0);
 	const totalNum =
 		fullInput != null && Number.isFinite(Number(fullInput))
 			? Math.max(0, Number(fullInput))
-			: bill + cache;
+			: Math.max(0, Number(billable) || 0) + cache;
+	const bill =
+		billable != null && Number.isFinite(Number(billable))
+			? Math.max(0, Number(billable))
+			: Math.max(0, totalNum - cache);
 	const total = formatTokens(totalNum);
 	if (cache > 0) {
 		return {
 			total,
-			label: `${total} (${formatTokens(bill)} billable + ${formatTokens(cache)} cache)`,
-			compact: `${total} (c${formatTokens(cache)})`,
+			// Cards / embeds: "100K (10K prompt + 90K cache)"
+			label: `${total} (${formatTokens(bill)} prompt + ${formatTokens(cache)} cache)`,
+			// Leaderboard / dense: "100K (10K p + 90K c)"
+			compact: `${total} (${formatTokens(bill)}p + ${formatTokens(cache)}c)`,
 		};
 	}
 	return { total, label: total, compact: total };

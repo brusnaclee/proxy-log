@@ -11,25 +11,30 @@ export function formatNumber(num: number): string {
   return num.toString();
 }
 
-/** Full input = billable + cache; primary + compact labels for UI. */
+/** Full input = prompt (billable) + cache. label = readable, compact = short. */
 export function formatInputBreakdown(
   billable: number | undefined | null,
   cached: number | undefined | null,
   fullInput?: number | undefined | null,
 ): { total: string; label: string; compact: string; totalNum: number } {
-  const bill = Math.max(0, Number(billable) || 0);
   const cache = Math.max(0, Number(cached) || 0);
   const totalNum =
     fullInput != null && Number.isFinite(Number(fullInput))
       ? Math.max(0, Number(fullInput))
-      : bill + cache;
+      : Math.max(0, Number(billable) || 0) + cache;
+  const bill =
+    billable != null && Number.isFinite(Number(billable))
+      ? Math.max(0, Number(billable))
+      : Math.max(0, totalNum - cache);
   const total = formatNumber(totalNum);
   if (cache > 0) {
     return {
       totalNum,
       total,
-      label: `${total} (${formatNumber(bill)} billable + ${formatNumber(cache)} cache)`,
-      compact: `${total} (c${formatNumber(cache)})`,
+      // Cards / tooltips: "100K (10K prompt + 90K cache)"
+      label: `${total} (${formatNumber(bill)} prompt + ${formatNumber(cache)} cache)`,
+      // Tables / Discord: "100K (10K p + 90K c)"
+      compact: `${total} (${formatNumber(bill)}p + ${formatNumber(cache)}c)`,
     };
   }
   return { totalNum, total, label: total, compact: total };
