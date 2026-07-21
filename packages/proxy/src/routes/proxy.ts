@@ -215,8 +215,8 @@ function backfillOpenAIMessageContent<T extends { content?: unknown; reasoning_c
 	} else if (contentStr && rStr && contentStr === rStr) {
 		delete msg.reasoning;
 	}
-	// OpenCode renders reasoning_content as fragmented "Thought: Xms" lines.
-	// Strip only for OpenCode; Cursor/Claude Code keep reasoning fields intact.
+	// OpenCode/Kilo render each reasoning_content delta as its own "Reasoning"
+	// / "Thought" block (spammy UI). Strip for those IDEs only; Cursor/Claude Code keep fields.
 	if (opts?.stripReasoning) {
 		delete msg.reasoning_content;
 		delete msg.reasoning;
@@ -473,8 +473,19 @@ const TRANSIENT_NON_STREAMING_ATTEMPT_MS = 45_000;
 // Allow multiple 502 retries plus one slow success within the wall clock.
 const TRANSIENT_MAX_WALL_MS = 120_000;
 
+/**
+ * IDEs that open a new Reasoning/Thought UI section per streaming
+ * reasoning_content delta (instead of appending into one block).
+ * Safe for other clients: Cursor / Claude Code / Cline keep reasoning fields.
+ */
 function shouldStripReasoningForIde(ide: string): boolean {
-	return ide === 'OpenCode' || ide === 'OpenCode (VS Code)';
+	const n = String(ide || '').toLowerCase().trim();
+	return (
+		n === 'opencode' ||
+		n === 'opencode (vs code)' ||
+		n === 'kilo' ||
+		n.startsWith('kilo ')
+	);
 }
 
 function isTransientStreamingRetryable(code: number): boolean {
