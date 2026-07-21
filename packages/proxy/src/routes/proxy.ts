@@ -3604,7 +3604,7 @@ proxy.all('/*', async (c) => {
 			return completionTokens > 0 || promptTokens > 0;
 		};
 
-		const counted =
+		let counted =
 			isNewPrompt && shouldCountRequest && hasActualContent(logEntry);
 
 		// Calculate billable flat. Every successful request to upstream uses tokens.
@@ -3627,10 +3627,15 @@ proxy.all('/*', async (c) => {
 		// Safety net: guarantee turn_id is never null.
 		// Without a turn_id, the request is invisible to all stats queries, charts,
 		// and leaderboards (they all filter on turn_id IS NOT NULL).
+		// If we invent a turn here, this hop IS the turn start — count it toward
+		// prompt limits (otherwise users show 0 prompts while burning tokens).
 		if (!logEntry.turnId) {
 			const fallbackTurnId = `turn_${generateSessionId().slice(0, 16)}`;
 			turnIdCache.set(turnKey, fallbackTurnId);
 			logEntry.turnId = fallbackTurnId;
+			if (shouldCountRequest && hasActualContent(logEntry)) {
+				counted = true;
+			}
 		}
 
 		enqueueLogWrite(async (tx) => {

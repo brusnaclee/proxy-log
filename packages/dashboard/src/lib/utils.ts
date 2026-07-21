@@ -33,8 +33,8 @@ export function formatInputBreakdown(
       total,
       // Cards / tooltips: "100K (10K prompt + 90K cache)"
       label: `${total} (${formatNumber(bill)} prompt + ${formatNumber(cache)} cache)`,
-      // Tables / Discord: "100K (10K p + 90K c)"
-      compact: `${total} (${formatNumber(bill)}p + ${formatNumber(cache)}c)`,
+      // Tables / Discord: "100K (10K p + 90K c)" — spaces so letters don't glue to numbers
+      compact: `${total} (${formatNumber(bill)} p + ${formatNumber(cache)} c)`,
     };
   }
   return { totalNum, total, label: total, compact: total };

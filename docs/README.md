@@ -30,7 +30,9 @@ Details about the SQLite schema, models, and data flows.
 Deep dives into specific functionalities and integrations.
 - [Discord Bot Integration](features/discord_bot_integration.md)
 - [Rate Limiting and Tokens](features/rate_limiting_and_tokens.md)
+- [Token Input Modes (peak / full / billable)](features/token_input_modes.md)
 - [Custom Models per Provider](features/custom_models.md)
+- [Quota Guard](features/quota_guard.md)
 - [_Template](features/_template.md)
 
 ### Scripts and Operations (`/scripts_and_ops`)

@@ -4060,8 +4060,8 @@ function formatInputBreakdown(billable, cached, fullInput) {
 			total,
 			// Cards / embeds: "100K (10K prompt + 90K cache)"
 			label: `${total} (${formatTokens(bill)} prompt + ${formatTokens(cache)} cache)`,
-			// Leaderboard / dense: "100K (10K p + 90K c)"
-			compact: `${total} (${formatTokens(bill)}p + ${formatTokens(cache)}c)`,
+			// Leaderboard / dense: "100K (10K p + 90K c)" — spaces so p/c don't glue to numbers
+			compact: `${total} (${formatTokens(bill)} p + ${formatTokens(cache)} c)`,
 		};
 	}
 	return { total, label: total, compact: total };
