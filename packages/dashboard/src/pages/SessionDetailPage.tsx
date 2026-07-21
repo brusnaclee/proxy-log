@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, ChevronDown, ChevronUp, Download } from "lucide-react";
-import { formatDate, formatNumber, formatCost, formatRelativeTime } from "@/lib/utils";
+import { formatDate, formatNumber, formatCost, formatRelativeTime, formatInputBreakdown } from "@/lib/utils";
 import { useRealtimeSSE } from "@/lib/use-realtime-sse";
 import { exportXlsx, buildTimelineSection } from "@/lib/export-xlsx";
 import { useCallback } from "react";
@@ -297,9 +297,20 @@ export default function SessionDetailPage() {
                     <td className="py-2 px-3 text-xs">{row.contextEvent || "append"}</td>
                     <td className="py-2 px-3 text-xs">{(row.toolsUsed || []).join(", ") || "-"}</td>
                     <td className="py-2 px-3 text-right font-mono text-xs">
-                      <span className="text-blue-400">{formatNumber(row.promptTokens || 0)}</span>
-                      <span className="text-muted-foreground mx-1">/</span>
-                      <span className="text-purple-400">{formatNumber(row.completionTokens || 0)}</span>
+                      {(() => {
+                        const input = formatInputBreakdown(
+                          (row as any).billablePromptTokens,
+                          (row as any).cachedTokens,
+                          row.promptTokens,
+                        );
+                        return (
+                          <>
+                            <span className="text-blue-400" title={input.label}>{input.compact}</span>
+                            <span className="text-muted-foreground mx-1">/</span>
+                            <span className="text-purple-400">{formatNumber(row.completionTokens || 0)}</span>
+                          </>
+                        );
+                      })()}
                     </td>
                     <td className="py-2 px-3 text-right font-mono text-xs">{formatNumber(row.totalTokens || 0)}</td>
                     <td className="py-2 px-3 text-right font-mono text-xs text-emerald-400/90">{formatCost(row.estimatedCost || 0)}</td>

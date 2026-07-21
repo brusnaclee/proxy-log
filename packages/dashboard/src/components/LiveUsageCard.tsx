@@ -1,4 +1,4 @@
-import { formatNumber } from "@/lib/utils";
+import { formatNumber, formatInputBreakdown } from "@/lib/utils";
 import type { LiveUsagePayload } from "@/lib/api";
 
 function formatReset(iso?: string | null) {
@@ -117,12 +117,17 @@ export function LiveUsageCard({
     });
   }
   if (limits.dailyInputTokenLimit > 0) {
+    const inputBd = formatInputBreakdown(
+      usageToday.billablePromptTokens,
+      usageToday.cachedTokens,
+      usageToday.promptTokens,
+    );
     bars.push({
       label: "Input Tokens",
       value: usageToday.promptTokens,
       max: limits.dailyInputTokenLimit,
       remaining: remaining.input,
-      sublabel: "tokens",
+      sublabel: inputBd.label !== inputBd.total ? inputBd.label : "tokens",
       source: sourceLabel(limits.dailyInputTokenLimitSource),
       reset: formatReset(dailyResetAt),
     });
@@ -174,8 +179,13 @@ export function LiveUsageCard({
       chips.push(`${formatNumber(remaining.daily)} daily left`);
     }
     if (!chips.length) {
+      const inLabel = formatInputBreakdown(
+        usageToday.billablePromptTokens,
+        usageToday.cachedTokens,
+        usageToday.promptTokens,
+      ).compact;
       chips.push(
-        `Today ${formatNumber(usageToday.promptTokens)} in / ${formatNumber(usageToday.completionTokens)} out`,
+        `Today ${inLabel} in / ${formatNumber(usageToday.completionTokens)} out`,
       );
     }
     const overrideBits: string[] = [];
@@ -206,7 +216,12 @@ export function LiveUsageCard({
         <p className="text-xs text-muted-foreground">
           No prompt/token limits configured on this key (or global). Today:{" "}
           <span className="text-foreground font-mono">
-            {formatNumber(usageToday.promptTokens)} in / {formatNumber(usageToday.completionTokens)} out
+            {formatInputBreakdown(
+              usageToday.billablePromptTokens,
+              usageToday.cachedTokens,
+              usageToday.promptTokens,
+            ).label}{" "}
+            in / {formatNumber(usageToday.completionTokens)} out
           </span>{" "}
           ({formatNumber(usageToday.requests)} requests).
         </p>

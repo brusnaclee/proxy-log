@@ -91,15 +91,15 @@ async function main() {
   }
   console.log(envUpdate.stdout || envUpdate.stderr || 'No .env update output');
 
-  // Token multipliers: input 1x (full prompt), output 5x
+  // Token multipliers: input 1x (full prompt), output 10x
   const multUpdate = await ssh.execCommand(
     "grep -q '^INPUT_TOKEN_MULTIPLIER=' /root/proxy-log/.env && " +
       "sed -i 's/^INPUT_TOKEN_MULTIPLIER=.*/INPUT_TOKEN_MULTIPLIER=1/' /root/proxy-log/.env || " +
       "echo 'INPUT_TOKEN_MULTIPLIER=1' >> /root/proxy-log/.env; " +
     "grep -q '^OUTPUT_TOKEN_MULTIPLIER=' /root/proxy-log/.env && " +
-      "sed -i 's/^OUTPUT_TOKEN_MULTIPLIER=.*/OUTPUT_TOKEN_MULTIPLIER=5/' /root/proxy-log/.env || " +
-      "echo 'OUTPUT_TOKEN_MULTIPLIER=5' >> /root/proxy-log/.env; " +
-    "echo 'Updated token multipliers (in=1 out=5)'"
+      "sed -i 's/^OUTPUT_TOKEN_MULTIPLIER=.*/OUTPUT_TOKEN_MULTIPLIER=10/' /root/proxy-log/.env || " +
+      "echo 'OUTPUT_TOKEN_MULTIPLIER=10' >> /root/proxy-log/.env; " +
+    "echo 'Updated token multipliers (in=1 out=10)'"
   );
   console.log(multUpdate.stdout || multUpdate.stderr || '');
 

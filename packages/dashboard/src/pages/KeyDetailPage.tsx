@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { formatDate, formatNumber, formatRelativeTime, copyToClipboard, formatCost } from "@/lib/utils";
+import { formatDate, formatNumber, formatRelativeTime, copyToClipboard, formatCost, formatInputBreakdown } from "@/lib/utils";
 import { ArrowLeft, Copy, Check, RotateCw, Trash2, Shield, ShieldOff, X, Download, DollarSign, Gift, Info, ExternalLink } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -399,7 +399,10 @@ export default function KeyDetailPage() {
         rows: [
           ["Requests",        s.today.requests,         s.week.requests,         s.month.requests,         s.allTime.requests],
           ["Total Tokens",    s.today.tokens,           s.week.tokens,           s.month.tokens,           s.allTime.tokens],
-          ["Input Tokens",    s.today.promptTokens,     s.week.promptTokens,     s.month.promptTokens,     s.allTime.promptTokens],
+          ["Input Tokens",    formatInputBreakdown(s.today.billablePromptTokens, s.today.cachedTokens, s.today.promptTokens).label,
+                              formatInputBreakdown(s.week.billablePromptTokens, s.week.cachedTokens, s.week.promptTokens).label,
+                              formatInputBreakdown(s.month.billablePromptTokens, s.month.cachedTokens, s.month.promptTokens).label,
+                              formatInputBreakdown(s.allTime.billablePromptTokens, s.allTime.cachedTokens, s.allTime.promptTokens).label],
           ["Output Tokens",   s.today.completionTokens, s.week.completionTokens, s.month.completionTokens, s.allTime.completionTokens],
           ["Context Tokens",  s.today.contextTokens,    s.week.contextTokens,    s.month.contextTokens,    s.allTime.contextTokens],
           ["Est. Cost",       fmtCost(s.today.estimatedCost), fmtCost(s.week.estimatedCost), fmtCost(s.month.estimatedCost), fmtCost(s.allTime.estimatedCost)],
@@ -433,7 +436,11 @@ export default function KeyDetailPage() {
         rows: [
           ["Requests",   s.today.requests,  s.week.requests,  s.month.requests,  s.allTime.requests],
           ["Tokens",     s.today.tokens,    s.week.tokens,    s.month.tokens,    s.allTime.tokens],
-          ["Input",      s.today.promptTokens, s.week.promptTokens, s.month.promptTokens, s.allTime.promptTokens],
+          ["Input",
+            formatInputBreakdown(s.today.billablePromptTokens, s.today.cachedTokens, s.today.promptTokens).label,
+            formatInputBreakdown(s.week.billablePromptTokens, s.week.cachedTokens, s.week.promptTokens).label,
+            formatInputBreakdown(s.month.billablePromptTokens, s.month.cachedTokens, s.month.promptTokens).label,
+            formatInputBreakdown(s.allTime.billablePromptTokens, s.allTime.cachedTokens, s.allTime.promptTokens).label],
           ["Output",     s.today.completionTokens, s.week.completionTokens, s.month.completionTokens, s.allTime.completionTokens],
           ["Est. Cost",  fmtCost(s.today.estimatedCost), fmtCost(s.week.estimatedCost), fmtCost(s.month.estimatedCost), fmtCost(s.allTime.estimatedCost)],
         ],
@@ -691,7 +698,7 @@ export API_TIMEOUT_MS=500000`}
               {[
                 { label: "Requests",      value: formatNumber(s.requests) },
                 { label: "Total Tokens",  value: formatNumber(s.tokens) },
-                { label: "Input Tokens",  value: formatNumber(s.promptTokens) },
+                { label: "Input Tokens",  value: formatInputBreakdown(s.billablePromptTokens, s.cachedTokens, s.promptTokens).label },
                 { label: "Output Tokens", value: formatNumber(s.completionTokens) },
                 { label: "Context Tokens",value: formatNumber(s.contextTokens) },
                 { label: "Est. Cost",     value: `$${(s.estimatedCost/1e6).toFixed(4)}` },

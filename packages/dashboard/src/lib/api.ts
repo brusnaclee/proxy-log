@@ -82,6 +82,8 @@ export interface LiveUsagePayload {
   usageToday: {
     requests: number;
     promptTokens: number;
+    billablePromptTokens?: number;
+    cachedTokens?: number;
     completionTokens: number;
     totalTokens: number;
     promptCount: number;
@@ -162,6 +164,8 @@ export interface KeyPeriodStats {
   requests: number;
   tokens: number;
   promptTokens: number;
+  billablePromptTokens?: number;
+  cachedTokens?: number;
   completionTokens: number;
   contextTokens: number;
   estimatedCost: number;
@@ -578,6 +582,8 @@ export interface OverviewPeriodStats {
   requests: number;
   tokens: number;
   promptTokens?: number;
+  billablePromptTokens?: number;
+  cachedTokens?: number;
   completionTokens?: number;
   contextTokens?: number;
   promptCost?: number;

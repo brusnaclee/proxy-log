@@ -4,7 +4,7 @@ import { PeriodSelector, type PeriodKey } from "@/components/PeriodSelector";
 import { api, type TopError } from "@/lib/api";
 import {
   formatDateWIB, statusLabel, statusDetail, statusColor,
-  statusBgColor, formatNumber,
+  statusBgColor, formatNumber, formatInputBreakdown,
 } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n";
 
@@ -101,7 +101,7 @@ export default function ActivityPage() {
       `IDE: ${log.ideDetected}`,
       log.endpointPath ? `Endpoint: ${log.endpointPath}` : null,
       `Latency: ${log.latencyMs}ms`,
-      `Input tokens: ${log.promptTokens}`,
+      `Input tokens: ${formatInputBreakdown(log.billablePromptTokens, log.cachedTokens, log.promptTokens).label}`,
       `Output tokens: ${log.completionTokens}`,
       "",
       "=== Error ===",
@@ -257,8 +257,8 @@ export default function ActivityPage() {
                         <td className="px-4 py-3 text-sm text-foreground whitespace-nowrap">
                           {log.latencyMs}ms
                         </td>
-                        <td className="px-4 py-3 text-sm text-muted-foreground hide-mobile">
-                          {formatNumber(log.promptTokens || 0)}
+                        <td className="px-4 py-3 text-sm text-muted-foreground hide-mobile" title={formatInputBreakdown(log.billablePromptTokens, log.cachedTokens, log.promptTokens).label}>
+                          {formatInputBreakdown(log.billablePromptTokens, log.cachedTokens, log.promptTokens).compact}
                         </td>
                         <td className="px-4 py-3 text-sm text-muted-foreground hide-mobile">
                           {formatNumber(log.completionTokens || 0)}

@@ -7,7 +7,7 @@ import {
 import { eq, sql, and, desc } from "drizzle-orm";
 import { generateApiKey, getKeyPrefix, sha256, maskKey } from "../../utils/crypto.js";
 import { createPortalSession, destroyPortalSession, getPortalDiscordUserId, isPortalAuthenticated } from "../../middleware/portal-session.js";
-import { resolvePeriodRange, chartDaysForPeriod, type PeriodKey, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, sanitizeRows, groupedInputSumSql } from "../../utils/counting.js";
+import { resolvePeriodRange, chartDaysForPeriod, type PeriodKey, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql } from "../../utils/counting.js";
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { getRecapWindow } from "../../utils/recap-window.js";
@@ -242,6 +242,8 @@ portal.get("/me", async (c) => {
   const usageToday = (await db.select({
     requests: turnCountSql(todayPw!),
     promptTokens: turnPromptTokensSql(todayPw!, { isTrial }),
+    billablePromptTokens: turnBillablePromptTokensSql(todayPw!, { isTrial }),
+    cachedTokens: turnCachedTokensSql(todayPw!, { isTrial }),
     completionTokens: turnCompletionTokensSql(todayPw!, { isTrial }),
   }).from(requestLogs).where(todayPw))[0];
 
@@ -439,6 +441,8 @@ portal.get("/me", async (c) => {
     usageToday: {
       requests: usageToday?.requests || 0,
       promptTokens: usageToday?.promptTokens || 0,
+      billablePromptTokens: usageToday?.billablePromptTokens || 0,
+      cachedTokens: usageToday?.cachedTokens || 0,
       completionTokens: usageToday?.completionTokens || 0,
       // Rolling prompt window usage (matches Discord), NOT all-day requests
       promptCount: promptUsed,
@@ -485,6 +489,8 @@ portal.get("/stats/overview", async (c) => {
     requests: turnCountSql(pw),
     tokens: turnTotalTokensSql(pw, { isTrial }),
     promptTokens: turnPromptTokensSql(pw, { isTrial }),
+    billablePromptTokens: turnBillablePromptTokensSql(pw, { isTrial }),
+    cachedTokens: turnCachedTokensSql(pw, { isTrial }),
     completionTokens: turnCompletionTokensSql(pw, { isTrial }),
   }).from(requestLogs).where(pw))[0];
 
@@ -525,6 +531,8 @@ portal.get("/stats/overview", async (c) => {
     requests: stats?.requests || 0,
     tokens: stats?.tokens || 0,
     promptTokens: stats?.promptTokens || 0,
+    billablePromptTokens: stats?.billablePromptTokens || 0,
+    cachedTokens: stats?.cachedTokens || 0,
     completionTokens: stats?.completionTokens || 0,
     sessions: Number(sessionCount?.count) || 0,
     toolCalls: Number(toolCount?.count) || 0,
@@ -582,10 +590,14 @@ portal.get("/stats/by-model", async (c) => {
   const rows = sanitizeRows((await db.execute(sql`
     SELECT model, COUNT(*) as requests,
       COALESCE(SUM(sum_delta), 0) as "promptTokens",
+      COALESCE(SUM(sum_bill), 0) as "billablePromptTokens",
+      COALESCE(SUM(sum_cache), 0) as "cachedTokens",
       COALESCE(SUM(sum_c), 0) as "completionTokens"
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model, turn_id,
         ${sql.raw(groupedInputSumSql())} as sum_delta,
+        SUM(COALESCE(prompt_tokens, 0)) as sum_bill,
+        SUM(COALESCE(cached_tokens, 0)) as sum_cache,
         SUM(completion_tokens) as sum_c
       FROM request_logs
       WHERE api_key_id IN (${userApiKeyIds(discordUserId)})
@@ -597,12 +609,14 @@ portal.get("/stats/by-model", async (c) => {
     GROUP BY model
     ORDER BY requests DESC
     LIMIT 20
-  `)).rows as any[], ["requests", "promptTokens", "completionTokens"]);
+  `)).rows as any[], ["requests", "promptTokens", "billablePromptTokens", "cachedTokens", "completionTokens"]);
 
   const { input, output } = getTokenMultipliers({ isTrial });
   return c.json(rows.map((r: any) => ({
     ...r,
     promptTokens: Math.round(r.promptTokens * input),
+    billablePromptTokens: Math.round(r.billablePromptTokens * input),
+    cachedTokens: Math.round(r.cachedTokens * input),
     completionTokens: Math.round(r.completionTokens * output),
     tokens: Math.round(r.promptTokens * input + r.completionTokens * output),
   })));
@@ -696,6 +710,8 @@ portal.get("/stats/compare", async (c) => {
       requests: turnCountSql(pw),
       tokens: turnTotalTokensSql(pw, { isTrial }),
       promptTokens: turnPromptTokensSql(pw, { isTrial }),
+      billablePromptTokens: turnBillablePromptTokensSql(pw, { isTrial }),
+      cachedTokens: turnCachedTokensSql(pw, { isTrial }),
       completionTokens: turnCompletionTokensSql(pw, { isTrial }),
     }).from(requestLogs).where(pw))[0];
 
@@ -729,6 +745,8 @@ portal.get("/stats/compare", async (c) => {
       requests: stats?.requests || 0,
       tokens: stats?.tokens || 0,
       promptTokens: stats?.promptTokens || 0,
+      billablePromptTokens: stats?.billablePromptTokens || 0,
+      cachedTokens: stats?.cachedTokens || 0,
       completionTokens: stats?.completionTokens || 0,
       cost: { prompt: promptCost, completion: completionCost, total: promptCost + completionCost },
     };

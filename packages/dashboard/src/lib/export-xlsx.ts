@@ -297,7 +297,7 @@ export function buildLogsSection(logs: any[], title = "Request Logs"): XlsxSheet
     headers: [
       "Timestamp", "Model", "Provider", "IDE", "OS", "IP Address",
       "Session ID", "Context Event",
-      "Input Tokens", "Output Tokens", "Total Tokens", "Context Tokens",
+      "Input Tokens", "Billable Input", "Cached Tokens", "Output Tokens", "Total Tokens", "Context Tokens",
       "Est. Cost", "Latency", "HTTP Status", "Counted", "User Prompt Preview",
     ],
     rows: logs.map(l => [
@@ -310,6 +310,8 @@ export function buildLogsSection(logs: any[], title = "Request Logs"): XlsxSheet
       l.sessionId || "",
       l.contextEvent || "",
       typeof l.promptTokens === "number" ? l.promptTokens : (Number(l.promptTokens) || 0),
+      Number(l.billablePromptTokens ?? 0),
+      Number(l.cachedTokens ?? 0),
       typeof l.completionTokens === "number" ? l.completionTokens : (Number(l.completionTokens) || 0),
       typeof l.totalTokens === "number" ? l.totalTokens : (Number(l.totalTokens) || 0),
       Number(l.contextTokensBefore ?? l.estimatedContextLength ?? 0),

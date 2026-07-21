@@ -12,6 +12,8 @@ import {
 	turnPromptTokensSql,
 	turnCompletionTokensSql,
 	turnTotalTokensSql,
+	turnBillablePromptTokensSql,
+	turnCachedTokensSql,
 	wibMonthStartSql,
 	sanitizeRows,
 } from './counting.js';
@@ -41,6 +43,8 @@ export interface LiveUsagePayload {
 	usageToday: {
 		requests: number;
 		promptTokens: number;
+		billablePromptTokens: number;
+		cachedTokens: number;
 		completionTokens: number;
 		totalTokens: number;
 		/** Rolling prompt-window usage (not all-day request count). */
@@ -167,6 +171,8 @@ export async function buildLiveUsageForKey(
 			.select({
 				requests: turnCountSql(whereToday),
 				promptTokens: turnPromptTokensSql(whereToday, tmOpts),
+				billablePromptTokens: turnBillablePromptTokensSql(whereToday, tmOpts),
+				cachedTokens: turnCachedTokensSql(whereToday, tmOpts),
 				completionTokens: turnCompletionTokensSql(whereToday, tmOpts),
 			})
 			.from(requestLogs)
@@ -182,6 +188,8 @@ export async function buildLiveUsageForKey(
 	]);
 
 	const promptTokens = usageToday?.promptTokens || 0;
+	const billablePromptTokens = usageToday?.billablePromptTokens || 0;
+	const cachedTokens = usageToday?.cachedTokens || 0;
 	const completionTokens = usageToday?.completionTokens || 0;
 	const totalTokens = promptTokens + completionTokens;
 	const monthTokens = usageMonth?.tokens || 0;
@@ -316,6 +324,8 @@ export async function buildLiveUsageForKey(
 		usageToday: {
 			requests: usageToday?.requests || 0,
 			promptTokens,
+			billablePromptTokens,
+			cachedTokens,
 			completionTokens,
 			totalTokens,
 			promptCount: promptUsed,

@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { Copy, Check, ChevronDown, ChevronUp, Circle, Search } from "lucide-react";
 import { PeriodSelector, PERIOD_OPTIONS, type PeriodKey } from "@/components/PeriodSelector";
 import { api, type ModelEntry, type ModelUsage } from "@/lib/api";
-import { formatNumber, formatRelativeTime } from "@/lib/utils";
+import { formatNumber, formatRelativeTime, formatInputBreakdown } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n";
 
 type SortKey = "latency" | "name" | "default";
@@ -299,8 +299,8 @@ export default function ModelsPage() {
                     <div key={m.model} className="space-y-1.5">
                       <div className="flex items-center justify-between text-xs gap-2">
                         <span className="text-foreground truncate font-mono flex-1">{m.model}</span>
-                        <span className="text-muted-foreground flex-shrink-0">
-                          {formatNumber(m.promptTokens)}↑ / {formatNumber(m.completionTokens)}↓ · {formatNumber(m.tokens)} tok · {m.requests} req
+                        <span className="text-muted-foreground flex-shrink-0" title={formatInputBreakdown(m.billablePromptTokens, m.cachedTokens, m.promptTokens).label}>
+                          {formatInputBreakdown(m.billablePromptTokens, m.cachedTokens, m.promptTokens).compact}↑ / {formatNumber(m.completionTokens)}↓ · {formatNumber(m.tokens)} tok · {m.requests} req
                         </span>
                       </div>
                       <div className="flex items-center gap-2">

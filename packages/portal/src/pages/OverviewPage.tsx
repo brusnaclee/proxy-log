@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { PeriodSelector, type PeriodKey } from "@/components/PeriodSelector";
 import { api, type MeResponse, type TopError, type RecapStatus } from "@/lib/api";
-import { formatNumber, formatCost } from "@/lib/utils";
+import { formatNumber, formatCost, formatInputBreakdown } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n";
 
 const CHART_COLORS = {
@@ -231,11 +231,16 @@ export default function OverviewPage() {
 
     const bars: Array<{ label: string; value: number; max: number; sublabel?: string; source?: string; reset?: string }> = [];
     if (limits.dailyInputTokenLimit > 0) {
+      const inputBd = formatInputBreakdown(
+        usageToday.billablePromptTokens,
+        usageToday.cachedTokens,
+        usageToday.promptTokens,
+      );
       bars.push({
         label: t("Input Tokens"),
         value: usageToday.promptTokens,
         max: limits.dailyInputTokenLimit,
-        sublabel: "tokens",
+        sublabel: inputBd.label !== inputBd.total ? inputBd.label : "tokens",
         source: sourceLabel(limits.dailyInputTokenLimitSource),
         reset: formatReset(user.dailyResetAt),
       });
@@ -340,10 +345,15 @@ export default function OverviewPage() {
     );
 
     const cells = [
-      { label: t("Requests"), today: today.requests, yesterday: yesterday.requests, format: formatNumber, diff: pct(today.requests, yesterday.requests) },
-      { label: t("Input Tokens"), today: today.promptTokens, yesterday: yesterday.promptTokens, format: formatNumber, diff: pct(today.promptTokens, yesterday.promptTokens) },
-      { label: t("Output Tokens"), today: today.completionTokens, yesterday: yesterday.completionTokens, format: formatNumber, diff: pct(today.completionTokens, yesterday.completionTokens) },
-      { label: t("Est. Cost"), today: today.cost.total, yesterday: yesterday.cost.total, format: formatCost, diff: pct(today.cost.total, yesterday.cost.total) },
+      { label: t("Requests"), today: formatNumber(today.requests), yesterday: formatNumber(yesterday.requests), diff: pct(today.requests, yesterday.requests) },
+      {
+        label: t("Input Tokens"),
+        today: formatInputBreakdown(today.billablePromptTokens, today.cachedTokens, today.promptTokens).label,
+        yesterday: formatInputBreakdown(yesterday.billablePromptTokens, yesterday.cachedTokens, yesterday.promptTokens).label,
+        diff: pct(today.promptTokens, yesterday.promptTokens),
+      },
+      { label: t("Output Tokens"), today: formatNumber(today.completionTokens), yesterday: formatNumber(yesterday.completionTokens), diff: pct(today.completionTokens, yesterday.completionTokens) },
+      { label: t("Est. Cost"), today: formatCost(today.cost.total), yesterday: formatCost(yesterday.cost.total), diff: pct(today.cost.total, yesterday.cost.total) },
     ];
 
     return (
@@ -354,10 +364,10 @@ export default function OverviewPage() {
             <div key={c.label}>
               <p className="text-xs text-muted-foreground mb-0.5">{c.label}</p>
               <div className="flex items-baseline gap-1.5">
-                <span className="text-lg font-semibold">{c.format(c.today)}</span>
+                <span className="text-lg font-semibold">{c.today}</span>
                 <DiffBadge val={c.diff} />
               </div>
-              <p className="text-xs text-muted-foreground mt-0.5">{c.format(c.yesterday)} yesterday</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{c.yesterday} yesterday</p>
             </div>
           ))}
         </div>
@@ -548,7 +558,7 @@ export default function OverviewPage() {
     if (!stats) return null;
     const cards = [
       { key: "requests", label: t("Requests"), icon: Activity, value: stats.requests, format: formatNumber },
-      { key: "promptTokens", label: t("Input Tokens"), icon: MessageSquare, value: stats.promptTokens, format: formatNumber },
+      { key: "promptTokens", label: t("Input Tokens"), icon: MessageSquare, value: stats.promptTokens, format: (n: number) => formatInputBreakdown(stats.billablePromptTokens, stats.cachedTokens, n).label },
       { key: "completionTokens", label: t("Output Tokens"), icon: Download, value: stats.completionTokens, format: formatNumber },
       { key: "cost", label: t("Est. Cost"), icon: DollarSign, value: stats.cost.total, format: formatCost },
       { key: "sessions", label: t("Sessions"), icon: Users, value: stats.sessions, format: formatNumber },

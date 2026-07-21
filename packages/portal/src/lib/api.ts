@@ -74,6 +74,8 @@ export interface MeResponse {
   usageToday: {
     requests: number;
     promptTokens: number;
+    billablePromptTokens?: number;
+    cachedTokens?: number;
     completionTokens: number;
     promptCount?: number;
     totalTokens?: number;
@@ -124,6 +126,8 @@ export interface OverviewStats {
   requests: number;
   tokens: number;
   promptTokens: number;
+  billablePromptTokens?: number;
+  cachedTokens?: number;
   completionTokens: number;
   sessions: number;
   toolCalls: number;
@@ -142,6 +146,8 @@ export interface ModelUsage {
   model: string;
   requests: number;
   promptTokens: number;
+  billablePromptTokens?: number;
+  cachedTokens?: number;
   completionTokens: number;
   tokens: number;
 }
@@ -221,6 +227,9 @@ export interface LogItem {
   id?: number;
   model: string;
   promptTokens: number;
+  billablePromptTokens?: number;
+  cachedTokens?: number;
+  inputTokens?: number;
   completionTokens: number;
   totalTokens: number;
   ideDetected: string;

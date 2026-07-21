@@ -545,8 +545,13 @@ internal.get("/internal/stats/ranking", async (c) => {
       SELECT api_key_id as "apiKeyId", COUNT(*) as requests,
         COALESCE(SUM(sum_delta * ${tmInput} + sum_c * ${tmOutput}), 0) as tokens,
         COALESCE(SUM(sum_delta) * ${tmInput}, 0) as "promptTokens",
+        COALESCE(SUM(sum_bill) * ${tmInput}, 0) as "billablePromptTokens",
+        COALESCE(SUM(sum_cache) * ${tmInput}, 0) as "cachedTokens",
         COALESCE(SUM(sum_c) * ${tmOutput}, 0) as "completionTokens"
-      FROM (SELECT api_key_id, turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
+      FROM (SELECT api_key_id, turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta,
+        SUM(COALESCE(prompt_tokens, 0)) as sum_bill,
+        SUM(COALESCE(cached_tokens, 0)) as sum_cache,
+        SUM(completion_tokens) as sum_c
         FROM request_logs WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 AND is_billable_token = true
         GROUP BY api_key_id, turn_id)
       GROUP BY api_key_id ORDER BY tokens DESC LIMIT 20
@@ -564,10 +569,14 @@ internal.get("/internal/stats/ranking", async (c) => {
         const [raw] = await db.select({
           tokens: turnTotalTokensSql(whereClause, { isTrial: true }),
           promptTokens: turnPromptTokensSql(whereClause, { isTrial: true }),
+          billablePromptTokens: turnBillablePromptTokensSql(whereClause, { isTrial: true }),
+          cachedTokens: turnCachedTokensSql(whereClause, { isTrial: true }),
           completionTokens: turnCompletionTokensSql(whereClause, { isTrial: true }),
         }).from(requestLogs).where(whereClause);
         row.tokens = raw?.tokens ?? row.tokens;
         row.promptTokens = raw?.promptTokens ?? row.promptTokens;
+        row.billablePromptTokens = raw?.billablePromptTokens ?? row.billablePromptTokens;
+        row.cachedTokens = raw?.cachedTokens ?? row.cachedTokens;
         row.completionTokens = raw?.completionTokens ?? row.completionTokens;
       }
 
@@ -581,6 +590,8 @@ internal.get("/internal/stats/ranking", async (c) => {
         requests: row.requests,
         tokens: row.tokens,
         promptTokens: row.promptTokens,
+        billablePromptTokens: row.billablePromptTokens || 0,
+        cachedTokens: row.cachedTokens || 0,
         completionTokens: row.completionTokens,
         estimatedCost,
       });

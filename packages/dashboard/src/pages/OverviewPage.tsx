@@ -3,7 +3,7 @@ import { stats, logs, type OverviewStats, type LogEntry } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { formatNumber, formatRelativeTime, formatChartPeriod, formatLogUserDisplay } from "@/lib/utils";
+import { formatNumber, formatRelativeTime, formatChartPeriod, formatLogUserDisplay, formatInputBreakdown } from "@/lib/utils";
 import { Activity, Coins, Key, Monitor, TrendingUp, Download, RefreshCw, DollarSign, Search, ChevronLeft, ChevronRight } from "lucide-react";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -265,7 +265,11 @@ export default function OverviewPage() {
         },
         {
           label: `Input Tokens (${periodLabelMap[period]})`,
-          value: formatNumber(periodData.promptTokens || 0),
+          value: formatInputBreakdown(
+            periodData.billablePromptTokens,
+            periodData.cachedTokens,
+            periodData.promptTokens || 0,
+          ).label,
           icon: Coins,
           sub: `Cost: ${formatCost(periodData.promptCost || 0)}`,
           color: "text-cyan-400",
@@ -533,20 +537,24 @@ export default function OverviewPage() {
                     </td>
                     <td className="py-2 px-3 text-xs hide-mobile">{log.ideDetected || " - "}</td>
                     <td className="py-2 px-3 text-right font-mono text-xs">
-                      <div title={
-                        (log.billablePromptTokens != null || log.cachedTokens != null)
-                          ? `in ${formatNumber((log.inputTokens ?? log.promptTokens) || 0)} = bill ${formatNumber(log.billablePromptTokens || 0)} + cache ${formatNumber(log.cachedTokens || 0)} · out ${formatNumber(log.completionTokens || 0)}`
-                          : undefined
-                      }>
-                        {formatNumber(log.totalTokens || 0)}
-                      </div>
-                      {(Number(log.cachedTokens) > 0 || Number(log.billablePromptTokens) > 0) && (
-                        <div className="text-[10px] text-muted-foreground">
-                          ↑{formatNumber((log.inputTokens ?? log.promptTokens) || 0)}
-                          {Number(log.cachedTokens) > 0 ? ` (c${formatNumber(log.cachedTokens)})` : ""}
-                          {" · "}↓{formatNumber(log.completionTokens || 0)}
-                        </div>
-                      )}
+                      {(() => {
+                        const input = formatInputBreakdown(
+                          log.billablePromptTokens,
+                          log.cachedTokens,
+                          log.inputTokens ?? log.promptTokens,
+                        );
+                        return (
+                          <>
+                            <div title={`${input.label} · out ${formatNumber(log.completionTokens || 0)}`}>
+                              {formatNumber(log.totalTokens || 0)}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground" title={input.label}>
+                              ↑{input.compact}
+                              {" · "}↓{formatNumber(log.completionTokens || 0)}
+                            </div>
+                          </>
+                        );
+                      })()}
                     </td>
                     <td className="py-2 px-3 text-right text-xs text-muted-foreground hide-mobile">
                       {log.latencyMs || 0}ms

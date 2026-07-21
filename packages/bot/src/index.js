@@ -4043,6 +4043,25 @@ function formatTokens(n) {
 	return String(n);
 }
 
+/** Full input = billable + cache. Returns { total, label, compact }. */
+function formatInputBreakdown(billable, cached, fullInput) {
+	const bill = Math.max(0, Number(billable) || 0);
+	const cache = Math.max(0, Number(cached) || 0);
+	const totalNum =
+		fullInput != null && Number.isFinite(Number(fullInput))
+			? Math.max(0, Number(fullInput))
+			: bill + cache;
+	const total = formatTokens(totalNum);
+	if (cache > 0) {
+		return {
+			total,
+			label: `${total} (${formatTokens(bill)} billable + ${formatTokens(cache)} cache)`,
+			compact: `${total} (c${formatTokens(cache)})`,
+		};
+	}
+	return { total, label: total, compact: total };
+}
+
 function formatCostMicro(microdollars) {
 	const dollars = microdollars / 1_000_000;
 	if (dollars >= 1) return `$${dollars.toFixed(4)}`;
@@ -5373,7 +5392,7 @@ async function refreshRankingEmbeds() {
 						name = `<@${item.discordUserId}>`;
 					}
 					const suffix = item.isTrial ? ' 🎁' : '';
-					return `**${name}**${suffix} — ${formatTokens(item.tokens)} tok (📥 ${formatTokens(item.promptTokens || 0)} / 📤 ${formatTokens(item.completionTokens || 0)})`;
+					return `**${name}**${suffix} — ${formatTokens(item.tokens)} tok (📥 ${formatInputBreakdown(item.billablePromptTokens, item.cachedTokens, item.promptTokens).compact} / 📤 ${formatTokens(item.completionTokens || 0)})`;
 				},
 			);
 			await msg.edit({ embeds: [embed] });
@@ -5848,16 +5867,15 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 	}
 
 	function periodField(p) {
-		const bill = Number(p.billablePromptTokens) || 0;
-		const cache = Number(p.cachedTokens) || 0;
-		const inputLine =
-			bill > 0 || cache > 0
-				? `📥 Input: **${formatTokens(p.promptTokens)}** _(bill ${formatTokens(bill)} · cache ${formatTokens(cache)})_`
-				: `📥 Input: **${formatTokens(p.promptTokens)}**`;
+		const input = formatInputBreakdown(
+			p.billablePromptTokens,
+			p.cachedTokens,
+			p.promptTokens,
+		);
 		const lines = [
 			`📨 Requests: **${p.requests.toLocaleString()}**`,
 			`🔢 Total Tokens: **${formatTokens(p.tokens)}**`,
-			inputLine,
+			`📥 Input: **${input.label}**`,
 			`📤 Output: **${formatTokens(p.completionTokens)}**`,
 			`💰 Est. Cost: **${formatCostMicro(p.estimatedCost)}**`,
 		];

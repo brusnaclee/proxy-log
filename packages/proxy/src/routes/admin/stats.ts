@@ -3,7 +3,7 @@ import { db } from "../../db/index.js";
 import { requestLogs, apiKeys, devices, chatSessions, monthlyStats } from "../../db/schema.js";
 import { eq, sql, and } from "drizzle-orm";
 import { getModelRates } from "../../utils/cost-calculator.js";
-import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, wibTodayStartSql, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, sanitizeRows, resolvePeriodRange, chartDaysForPeriod, groupedInputSumSql, type PeriodKey } from "../../utils/counting.js";
+import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, wibTodayStartSql, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, resolvePeriodRange, chartDaysForPeriod, groupedInputSumSql, type PeriodKey } from "../../utils/counting.js";
 import { applyTokenMultiplierRows, getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { statsCache } from "../../utils/cache.js";
 
@@ -65,6 +65,8 @@ stats.get("/stats/overview", async (c) => {
     requests: turnCountSql(todayWhere),
     tokens: turnTotalTokensSql(todayWhere),
     promptTokens: turnPromptTokensSql(todayWhere),
+    billablePromptTokens: turnBillablePromptTokensSql(todayWhere),
+    cachedTokens: turnCachedTokensSql(todayWhere),
     completionTokens: turnCompletionTokensSql(todayWhere),
     contextTokens: sql<number>`0`,
     uniqueDevices: sql<number>`COUNT(DISTINCT device_fingerprint)`
@@ -95,6 +97,8 @@ stats.get("/stats/overview", async (c) => {
     requests: turnCountSql(weekWhere),
     tokens: turnTotalTokensSql(weekWhere),
     promptTokens: turnPromptTokensSql(weekWhere),
+    billablePromptTokens: turnBillablePromptTokensSql(weekWhere),
+    cachedTokens: turnCachedTokensSql(weekWhere),
     completionTokens: turnCompletionTokensSql(weekWhere),
     contextTokens: sql<number>`0`
   })
@@ -124,6 +128,8 @@ stats.get("/stats/overview", async (c) => {
     requests: turnCountSql(monthWhere),
     tokens: turnTotalTokensSql(monthWhere),
     promptTokens: turnPromptTokensSql(monthWhere),
+    billablePromptTokens: turnBillablePromptTokensSql(monthWhere),
+    cachedTokens: turnCachedTokensSql(monthWhere),
     completionTokens: turnCompletionTokensSql(monthWhere),
     contextTokens: sql<number>`0`
   })
@@ -153,6 +159,8 @@ stats.get("/stats/overview", async (c) => {
     requests: turnCountSql(allTimeWhere),
     tokens: turnTotalTokensSql(allTimeWhere),
     promptTokens: turnPromptTokensSql(allTimeWhere),
+    billablePromptTokens: turnBillablePromptTokensSql(allTimeWhere),
+    cachedTokens: turnCachedTokensSql(allTimeWhere),
     completionTokens: turnCompletionTokensSql(allTimeWhere),
     contextTokens: sql<number>`0`
   })
@@ -175,6 +183,9 @@ stats.get("/stats/overview", async (c) => {
     requests: (allTimeLive?.requests || 0) + (allTimeArchived?.requests || 0),
     tokens: (allTimeLive?.tokens || 0) + (allTimeArchived?.tokens || 0),
     promptTokens: (allTimeLive?.promptTokens || 0) + (allTimeArchived?.promptTokens || 0),
+    // Archived monthly_stats has no cache split — attribute archived input to billable
+    billablePromptTokens: (allTimeLive?.billablePromptTokens || 0) + (allTimeArchived?.promptTokens || 0),
+    cachedTokens: allTimeLive?.cachedTokens || 0,
     completionTokens: (allTimeLive?.completionTokens || 0) + (allTimeArchived?.completionTokens || 0),
     contextTokens: 0,
   };
@@ -237,6 +248,8 @@ stats.get("/stats/overview", async (c) => {
       requests: todayStats?.requests || 0, 
       tokens: todayStats?.tokens || 0,
       promptTokens: todayStats?.promptTokens || 0,
+      billablePromptTokens: todayStats?.billablePromptTokens || 0,
+      cachedTokens: todayStats?.cachedTokens || 0,
       completionTokens: todayStats?.completionTokens || 0,
       contextTokens: todayStats?.contextTokens || 0,
       promptCost: todayCosts.promptCost,
@@ -248,6 +261,8 @@ stats.get("/stats/overview", async (c) => {
       requests: weekStats?.requests || 0, 
       tokens: weekStats?.tokens || 0,
       promptTokens: weekStats?.promptTokens || 0,
+      billablePromptTokens: weekStats?.billablePromptTokens || 0,
+      cachedTokens: weekStats?.cachedTokens || 0,
       completionTokens: weekStats?.completionTokens || 0,
       contextTokens: weekStats?.contextTokens || 0,
       promptCost: weekCosts.promptCost,
@@ -258,6 +273,8 @@ stats.get("/stats/overview", async (c) => {
       requests: monthStats?.requests || 0, 
       tokens: monthStats?.tokens || 0,
       promptTokens: monthStats?.promptTokens || 0,
+      billablePromptTokens: monthStats?.billablePromptTokens || 0,
+      cachedTokens: monthStats?.cachedTokens || 0,
       completionTokens: monthStats?.completionTokens || 0,
       contextTokens: monthStats?.contextTokens || 0,
       promptCost: monthCosts.promptCost,
@@ -268,6 +285,8 @@ stats.get("/stats/overview", async (c) => {
       requests: allTimeStats?.requests || 0, 
       tokens: allTimeStats?.tokens || 0,
       promptTokens: allTimeStats?.promptTokens || 0,
+      billablePromptTokens: allTimeStats?.billablePromptTokens || 0,
+      cachedTokens: allTimeStats?.cachedTokens || 0,
       completionTokens: allTimeStats?.completionTokens || 0,
       contextTokens: allTimeStats?.contextTokens || 0,
       promptCost: allTimeCosts.promptCost,
@@ -524,17 +543,21 @@ stats.get("/stats/top-users", async (c) => {
       COUNT(*) as "requests",
       COALESCE(SUM(sum_delta + sum_c), 0) as tokens,
       COALESCE(SUM(sum_delta), 0) as "promptTokens",
+      COALESCE(SUM(sum_bill), 0) as "billablePromptTokens",
+      COALESCE(SUM(sum_cache), 0) as "cachedTokens",
       COALESCE(SUM(sum_c), 0) as "completionTokens"
     FROM (
       SELECT api_key_id, turn_id,
         ${sql.raw(groupedInputSumSql())} as sum_delta,
+        SUM(COALESCE(prompt_tokens, 0)) as sum_bill,
+        SUM(COALESCE(cached_tokens, 0)) as sum_cache,
         SUM(completion_tokens) as sum_c
       FROM request_logs
       WHERE turn_id IS NOT NULL ${dateFilter} AND status_code BETWEEN 200 AND 299
       GROUP BY api_key_id, turn_id
     )
     GROUP BY api_key_id
-  `)).rows as any[], ['requests', 'tokens', 'promptTokens', 'completionTokens']);
+  `)).rows as any[], ['requests', 'tokens', 'promptTokens', 'billablePromptTokens', 'cachedTokens', 'completionTokens']);
   const enriched = await Promise.all(
     (aggRows as any[])
       .filter(r => r.apiKeyId != null)
@@ -553,6 +576,8 @@ stats.get("/stats/top-users", async (c) => {
 
         const { input, output } = getTokenMultipliers();
         const promptTokens = Math.round((r.promptTokens || 0) * input);
+        const billablePromptTokens = Math.round((r.billablePromptTokens || 0) * input);
+        const cachedTokens = Math.round((r.cachedTokens || 0) * input);
         const completionTokens = Math.round((r.completionTokens || 0) * output);
         const tokens = promptTokens + completionTokens;
         const estimatedCost = Math.round(promptTokens * 1.5 + completionTokens * 6.0);
@@ -566,6 +591,8 @@ stats.get("/stats/top-users", async (c) => {
           turns: Number(r.requests) || 0,
           tokens,
           promptTokens,
+          billablePromptTokens,
+          cachedTokens,
           completionTokens,
           cost: estimatedCost,
           estimatedCost,
