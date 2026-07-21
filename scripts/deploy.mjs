@@ -91,6 +91,24 @@ async function main() {
   }
   console.log(envUpdate.stdout || envUpdate.stderr || 'No .env update output');
 
+  // Token multipliers: input 1x (full prompt), output 5x
+  const multUpdate = await ssh.execCommand(
+    "grep -q '^INPUT_TOKEN_MULTIPLIER=' /root/proxy-log/.env && " +
+      "sed -i 's/^INPUT_TOKEN_MULTIPLIER=.*/INPUT_TOKEN_MULTIPLIER=1/' /root/proxy-log/.env || " +
+      "echo 'INPUT_TOKEN_MULTIPLIER=1' >> /root/proxy-log/.env; " +
+    "grep -q '^OUTPUT_TOKEN_MULTIPLIER=' /root/proxy-log/.env && " +
+      "sed -i 's/^OUTPUT_TOKEN_MULTIPLIER=.*/OUTPUT_TOKEN_MULTIPLIER=5/' /root/proxy-log/.env || " +
+      "echo 'OUTPUT_TOKEN_MULTIPLIER=5' >> /root/proxy-log/.env; " +
+    "echo 'Updated token multipliers (in=1 out=5)'"
+  );
+  console.log(multUpdate.stdout || multUpdate.stderr || '');
+
+  // Ensure token_input_mode=full in DB
+  const modeUpdate = await ssh.execCommand(
+    "sudo -u postgres psql -d monit_api -c \"ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS token_input_mode text NOT NULL DEFAULT 'full'; UPDATE admin_config SET token_input_mode='full' WHERE id=1;\" 2>&1"
+  );
+  console.log(modeUpdate.stdout || modeUpdate.stderr || '');
+
   // 6. Update DB admin_config agverif_channel_id (for bot dashboard settings)
   console.log('\n--- Updating DB admin_config ---');
   const dbUpdate = await ssh.execCommand(

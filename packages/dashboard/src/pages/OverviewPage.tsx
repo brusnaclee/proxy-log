@@ -533,7 +533,20 @@ export default function OverviewPage() {
                     </td>
                     <td className="py-2 px-3 text-xs hide-mobile">{log.ideDetected || " - "}</td>
                     <td className="py-2 px-3 text-right font-mono text-xs">
-                      {formatNumber(log.totalTokens || 0)}
+                      <div title={
+                        (log.billablePromptTokens != null || log.cachedTokens != null)
+                          ? `in ${formatNumber((log.inputTokens ?? log.promptTokens) || 0)} = bill ${formatNumber(log.billablePromptTokens || 0)} + cache ${formatNumber(log.cachedTokens || 0)} · out ${formatNumber(log.completionTokens || 0)}`
+                          : undefined
+                      }>
+                        {formatNumber(log.totalTokens || 0)}
+                      </div>
+                      {(Number(log.cachedTokens) > 0 || Number(log.billablePromptTokens) > 0) && (
+                        <div className="text-[10px] text-muted-foreground">
+                          ↑{formatNumber((log.inputTokens ?? log.promptTokens) || 0)}
+                          {Number(log.cachedTokens) > 0 ? ` (c${formatNumber(log.cachedTokens)})` : ""}
+                          {" · "}↓{formatNumber(log.completionTokens || 0)}
+                        </div>
+                      )}
                     </td>
                     <td className="py-2 px-3 text-right text-xs text-muted-foreground hide-mobile">
                       {log.latencyMs || 0}ms

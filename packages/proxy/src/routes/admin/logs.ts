@@ -37,8 +37,19 @@ function getTurnKey(row: any): string {
 }
 
 function mapTimelineRow(row: any) {
+  const billable = Number(row.promptTokens) || 0;
+  const cached = Number(row.cachedTokens) || 0;
+  const completion = Number(row.completionTokens) || 0;
+  const inputTokens = billable + cached;
   return {
     ...row,
+    billablePromptTokens: billable,
+    cachedTokens: cached,
+    /** Full input (billable + cached) — matches upstream In */
+    inputTokens,
+    promptTokens: inputTokens,
+    completionTokens: completion,
+    totalTokens: inputTokens + completion,
     isTrial: row.apiKeyIsTrial ?? false,
     toolsUsed: parseToolJson(row.toolsUsed),
     transcript: parseTranscriptSnapshot(row.transcriptSnapshot),

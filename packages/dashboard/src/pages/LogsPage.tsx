@@ -380,6 +380,11 @@ export default function LogsPage() {
                           </td>
                           <td className="py-2 px-3 text-right font-mono text-xs">
                             <span className="text-blue-400">{formatNumber(log.promptTokens || 0)}</span>
+                            {Number(log.cachedTokens) > 0 && (
+                              <span className="text-[10px] text-muted-foreground ml-0.5" title={`bill ${formatNumber(log.billablePromptTokens ?? ((log.promptTokens || 0) - (log.cachedTokens || 0)))} + cache ${formatNumber(log.cachedTokens)}`}>
+                                (c{formatNumber(log.cachedTokens)})
+                              </span>
+                            )}
                             <span className="text-muted-foreground mx-1">/</span>
                             <span className="text-purple-400">{formatNumber(log.completionTokens || 0)}</span>
                           </td>

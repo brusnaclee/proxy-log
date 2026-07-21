@@ -30,29 +30,49 @@ export const BILLABLE_LOG_SQL = sql`status_code BETWEEN 200 AND 299`;
 export const VALID_LOG_SQL = sql`status_code BETWEEN 200 AND 299`;
 
 /**
- * Per-turn token aggregation helpers.
+ * Input accounting mode (admin_config.token_input_mode):
+ * - full: SUM(prompt_tokens + cached_tokens) — matches upstream In (amanai etc.)
+ * - billable: net context_delta per turn (legacy)
  *
- * Problem: Each tool call within a turn re-sends the full conversation history
- * as prompt tokens. SUM(prompt_tokens) across all requests counts the same
- * context window multiple times (3.27x inflation on average).
- *
- * Solution: For input tokens, use context_delta_tokens which represents only
- * the NEW tokens added since the last request (user message + tool results).
- * This excludes system prompt and conversation history.
- *
- * Compact cycles: IDE/agent compact drops context (negative delta) then rebuilds
- * it (positive delta). Summing only positive deltas double-counts every rebuild.
- * Bill GREATEST(0, SUM(all deltas)) per turn so compact↔rebuild nets out.
- *
- * For output tokens, SUM(completion_tokens) across all requests in the turn
- * since each tool call produces genuinely new output.
+ * Multipliers (INPUT_TOKEN_MULTIPLIER / OUTPUT_TOKEN_MULTIPLIER) still apply
+ * at read time on top of these raw sums.
  */
+export type TokenInputMode = "full" | "billable";
 
-/**
- * Raw SQL fragment used inside GROUP BY turn_id subqueries.
- * Prefer this over SUM(positive-only) everywhere stats/limits are computed.
- */
+let tokenInputModeCache: TokenInputMode = "full";
+
+export function normalizeTokenInputMode(raw: unknown): TokenInputMode {
+  const m = String(raw || "full").toLowerCase().trim();
+  return m === "billable" ? "billable" : "full";
+}
+
+export function setTokenInputModeCache(mode: TokenInputMode | unknown): void {
+  tokenInputModeCache = normalizeTokenInputMode(mode);
+}
+
+export function getTokenInputModeSync(): TokenInputMode {
+  return tokenInputModeCache;
+}
+
+/** SQL expr for SUM(input) inside GROUP BY — mode-aware. */
+export function groupedInputSumSql(): string {
+  if (tokenInputModeCache === "billable") {
+    return `GREATEST(0, COALESCE(SUM(context_delta_tokens), 0))`;
+  }
+  return `COALESCE(SUM(COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)), 0)`;
+}
+
+/** @deprecated use groupedInputSumSql() */
 export const TURN_NET_INPUT_DELTA_SQL = `GREATEST(0, COALESCE(SUM(context_delta_tokens), 0))`;
+
+/** Per-row helpers for API/UI mappers (no multiplier). */
+export function rowInputTokens(promptTokens: number, cachedTokens: number): number {
+  return Math.max(0, num(promptTokens)) + Math.max(0, num(cachedTokens));
+}
+
+export function rowDisplayTotal(promptTokens: number, cachedTokens: number, completionTokens: number): number {
+  return rowInputTokens(promptTokens, cachedTokens) + Math.max(0, num(completionTokens));
+}
 
 /** Turn-based request count: COUNT(DISTINCT turn_id) */
 export function turnCountSql(whereCondition: SQL | undefined): SQL<number> {
@@ -60,23 +80,41 @@ export function turnCountSql(whereCondition: SQL | undefined): SQL<number> {
 }
 
 /**
- * Turn-based input tokens: net context growth per turn (compacts cancel rebuilds).
- * context_delta_tokens = change since last request (can be negative on compact).
+ * Input tokens for limits/stats (× INPUT_TOKEN_MULTIPLIER).
+ * full: flat SUM(prompt+cached); billable: net delta per turn.
  */
 export function turnPromptTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
   const { input } = getTokenMultipliers(opts);
+  if (tokenInputModeCache === "full") {
+    return sql<number>`COALESCE((SELECT SUM(COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) * ${input} FROM request_logs WHERE ${whereCondition!}), 0)`;
+  }
   return sql<number>`COALESCE((SELECT SUM(sum_delta) * ${input} FROM (SELECT GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
 }
 
-/** Turn-based completion tokens: SUM(completion) per turn, then SUM across turns */
+/** Billable prompt only (excludes cache), × input multiplier. */
+export function turnBillablePromptTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
+  const { input } = getTokenMultipliers(opts);
+  return sql<number>`COALESCE((SELECT SUM(COALESCE(prompt_tokens, 0)) * ${input} FROM request_logs WHERE ${whereCondition!}), 0)`;
+}
+
+/** Cached tokens sum, × input multiplier. */
+export function turnCachedTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
+  const { input } = getTokenMultipliers(opts);
+  return sql<number>`COALESCE((SELECT SUM(COALESCE(cached_tokens, 0)) * ${input} FROM request_logs WHERE ${whereCondition!}), 0)`;
+}
+
+/** Completion tokens: SUM(completion) per turn, then SUM × OUTPUT multiplier */
 export function turnCompletionTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
   const { output } = getTokenMultipliers(opts);
   return sql<number>`COALESCE((SELECT SUM(sum_c) * ${output} FROM (SELECT SUM(completion_tokens) as sum_c FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
 }
 
-/** Turn-based total tokens: (input + output) per turn, then SUM */
+/** Total: mode-aware input + completion, with multipliers. */
 export function turnTotalTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
   const { input, output } = getTokenMultipliers(opts);
+  if (tokenInputModeCache === "full") {
+    return sql<number>`COALESCE((SELECT SUM((COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) * ${input} + COALESCE(completion_tokens, 0) * ${output}) FROM request_logs WHERE ${whereCondition!}), 0)`;
+  }
   return sql<number>`COALESCE((SELECT SUM(sum_delta * ${input} + sum_c * ${output}) FROM (SELECT GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta, SUM(completion_tokens) as sum_c FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
 }
 

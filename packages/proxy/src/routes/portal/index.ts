@@ -7,8 +7,7 @@ import {
 import { eq, sql, and, desc } from "drizzle-orm";
 import { generateApiKey, getKeyPrefix, sha256, maskKey } from "../../utils/crypto.js";
 import { createPortalSession, destroyPortalSession, getPortalDiscordUserId, isPortalAuthenticated } from "../../middleware/portal-session.js";
-import { resolvePeriodRange, chartDaysForPeriod, type PeriodKey } from "../../utils/counting.js";
-import { turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, sanitizeRows } from "../../utils/counting.js";
+import { resolvePeriodRange, chartDaysForPeriod, type PeriodKey, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, sanitizeRows, groupedInputSumSql } from "../../utils/counting.js";
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { getRecapWindow } from "../../utils/recap-window.js";
@@ -501,7 +500,7 @@ portal.get("/stats/overview", async (c) => {
       COALESCE(SUM(sum_c), 0) as "completionTokens"
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model, turn_id,
-        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta,
+        ${sql.raw(groupedInputSumSql())} as sum_delta,
         SUM(completion_tokens) as sum_c
       FROM request_logs
       WHERE api_key_id IN (${userApiKeyIds(discordUserId)})
@@ -553,7 +552,7 @@ portal.get("/stats/timeseries", async (c) => {
       COALESCE(SUM(sum_c), 0) as "completionTokens"
     FROM (
       SELECT ${groupExpr} as period_group, turn_id,
-        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta,
+        ${sql.raw(groupedInputSumSql())} as sum_delta,
         SUM(completion_tokens) as sum_c
       FROM request_logs
       WHERE api_key_id IN (${userApiKeyIds(discordUserId)})
@@ -586,7 +585,7 @@ portal.get("/stats/by-model", async (c) => {
       COALESCE(SUM(sum_c), 0) as "completionTokens"
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model, turn_id,
-        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta,
+        ${sql.raw(groupedInputSumSql())} as sum_delta,
         SUM(completion_tokens) as sum_c
       FROM request_logs
       WHERE api_key_id IN (${userApiKeyIds(discordUserId)})
@@ -706,7 +705,7 @@ portal.get("/stats/compare", async (c) => {
         COALESCE(SUM(sum_c), 0) as "completionTokens"
       FROM (
         SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model, turn_id,
-          GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta,
+          ${sql.raw(groupedInputSumSql())} as sum_delta,
           SUM(completion_tokens) as sum_c
         FROM request_logs
         WHERE api_key_id IN (${userApiKeyIds(discordUserId)})
@@ -1078,6 +1077,7 @@ portal.get("/logs", async (c) => {
     promptTokens: requestLogs.promptTokens,
     completionTokens: requestLogs.completionTokens,
     totalTokens: requestLogs.totalTokens,
+    cachedTokens: requestLogs.cachedTokens,
     ideDetected: requestLogs.ideDetected,
     provider: requestLogs.provider,
     endpointPath: requestLogs.endpointPath,
@@ -1092,12 +1092,24 @@ portal.get("/logs", async (c) => {
   const total = (await db.select({ count: sql<number>`count(*)` }).from(requestLogs).where(where))[0];
 
   return c.json({
-    data: rows.map(r => ({
-      ...r,
-      errorMessage: sanitizeErrorMsg(r.errorMessage),
-      requestPreview: sanitizePreview(r.requestPreview),
-      responsePreview: sanitizePreview(r.responsePreview),
-    })),
+    data: rows.map(r => {
+      const billable = Number(r.promptTokens) || 0;
+      const cached = Number(r.cachedTokens) || 0;
+      const completion = Number(r.completionTokens) || 0;
+      const inputTokens = billable + cached;
+      return {
+        ...r,
+        billablePromptTokens: billable,
+        cachedTokens: cached,
+        inputTokens,
+        promptTokens: inputTokens,
+        completionTokens: completion,
+        totalTokens: inputTokens + completion,
+        errorMessage: sanitizeErrorMsg(r.errorMessage),
+        requestPreview: sanitizePreview(r.requestPreview),
+        responsePreview: sanitizePreview(r.responsePreview),
+      };
+    }),
     pagination: {
       page,
       limit,

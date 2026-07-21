@@ -352,7 +352,11 @@ export interface LogEntry {
   endpointPath?: string | null;
   sessionId?: string | null;
   model: string;
+  /** Full input (billable + cache) when token_input_mode=full */
   promptTokens: number;
+  billablePromptTokens?: number;
+  cachedTokens?: number;
+  inputTokens?: number;
   completionTokens: number;
   totalTokens: number;
   estimatedCost?: number;
@@ -525,6 +529,8 @@ export interface GlobalSettings {
   globalMonthlyTokenLimit: number;
   globalDailyInputTokenLimit: number;
   globalDailyOutputTokenLimit: number;
+  /** full = prompt+cache (upstream In); billable = context_delta legacy */
+  tokenInputMode?: "full" | "billable";
   tokenSaverRtkEnabled?: boolean;
   tokenSaverRtkMaxChars?: number;
   tokenSaverHeadroomEnabled?: boolean;

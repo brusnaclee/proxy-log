@@ -1741,6 +1741,10 @@ proxy.all('/*', async (c) => {
 			.from(adminConfig)
 			.then((r) => r[0]),
 	);
+	if (config) {
+		const { setTokenInputModeCache } = await import('../utils/counting.js');
+		setTokenInputModeCache((config as any).tokenInputMode);
+	}
 	if (!config) {
 		return c.json(
 			{

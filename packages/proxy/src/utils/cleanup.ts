@@ -2,6 +2,7 @@ import { db } from "../db/index.js";
 import { sql } from "drizzle-orm";
 import { requestLogs, chatSessions, cleanupState, monthlyStats } from "../db/schema.js";
 import { eq } from "drizzle-orm";
+import { groupedInputSumSql } from "./counting.js";
 
 /**
  * Stateful cleanup system that tracks what has been cleaned.
@@ -155,7 +156,7 @@ async function snapshotMonthStats(yearMonth: string): Promise<void> {
         api_key_id,
         CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
         turn_id,
-        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta,
+        ${sql.raw(groupedInputSumSql())} as sum_delta,
         SUM(completion_tokens) as sum_c,
         SUM(estimated_cost) as est
       FROM request_logs
@@ -180,7 +181,7 @@ async function snapshotMonthStats(yearMonth: string): Promise<void> {
         api_key_id,
         TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
         turn_id,
-        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta,
+        ${sql.raw(groupedInputSumSql())} as sum_delta,
         SUM(completion_tokens) as sum_c,
         SUM(estimated_cost) as est
       FROM request_logs
@@ -203,7 +204,7 @@ async function snapshotMonthStats(yearMonth: string): Promise<void> {
       SELECT
         CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
         turn_id,
-        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta,
+        ${sql.raw(groupedInputSumSql())} as sum_delta,
         SUM(completion_tokens) as sum_c,
         SUM(estimated_cost) as est
       FROM request_logs
@@ -224,7 +225,7 @@ async function snapshotMonthStats(yearMonth: string): Promise<void> {
     FROM (
       SELECT
         turn_id,
-        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta,
+        ${sql.raw(groupedInputSumSql())} as sum_delta,
         SUM(completion_tokens) as sum_c,
         SUM(estimated_cost) as est
       FROM request_logs

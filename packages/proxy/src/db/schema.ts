@@ -53,6 +53,8 @@ export const adminConfig = pgTable('admin_config', {
 	tokenSaverPonytailLevel: text('token_saver_ponytail_level').notNull().default('lite'),
 	/** off | notif_only | auto — default notif_only (manual catalog publish) */
 	monitorAutoMode: text('monitor_auto_mode').notNull().default('notif_only'),
+	/** full = prompt_tokens+cached_tokens (match upstream In); billable = net context_delta */
+	tokenInputMode: text('token_input_mode').notNull().default('full'),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
 	updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });

@@ -27,6 +27,7 @@ export default function SettingsPage() {
   const [globalDailyInputTokenLimit, setGlobalDailyInputTokenLimit] = useState(0);
   const [globalDailyOutputTokenLimit, setGlobalDailyOutputTokenLimit] = useState(0);
   const [tokenSaverRtkEnabled, setTokenSaverRtkEnabled] = useState(true);
+  const [tokenInputMode, setTokenInputMode] = useState<"full" | "billable">("full");
   const [tokenSaverRtkMaxChars, setTokenSaverRtkMaxChars] = useState(2000);
   const [tokenSaverHeadroomEnabled, setTokenSaverHeadroomEnabled] = useState(false);
   const [tokenSaverHeadroomUrl, setTokenSaverHeadroomUrl] = useState("");
@@ -112,6 +113,7 @@ export default function SettingsPage() {
       setGlobalMonthlyTokenLimit(g.globalMonthlyTokenLimit || 0);
       setGlobalDailyInputTokenLimit(g.globalDailyInputTokenLimit || 0);
       setGlobalDailyOutputTokenLimit(g.globalDailyOutputTokenLimit || 0);
+      setTokenInputMode(g.tokenInputMode === "billable" ? "billable" : "full");
       setTokenSaverRtkEnabled(g.tokenSaverRtkEnabled ?? true);
       setTokenSaverRtkMaxChars(g.tokenSaverRtkMaxChars ?? 2000);
       setTokenSaverHeadroomEnabled(g.tokenSaverHeadroomEnabled ?? false);
@@ -149,6 +151,7 @@ export default function SettingsPage() {
         globalPerModelPromptLimit, globalPerModelPromptLimitWindow,
         globalDailyTokenLimit, globalMonthlyTokenLimit,
         globalDailyInputTokenLimit, globalDailyOutputTokenLimit,
+        tokenInputMode,
         tokenSaverRtkEnabled, tokenSaverRtkMaxChars,
         tokenSaverHeadroomEnabled, tokenSaverHeadroomUrl,
         tokenSaverCavemanEnabled, tokenSaverCavemanLevel,
@@ -464,6 +467,20 @@ export default function SettingsPage() {
                   />
                   <p className="text-xs text-muted-foreground mt-1">Max tokens per user per month (0 = unlimited)</p>
                   </div>
+                </div>
+                <div>
+                  <Label>Input token mode</Label>
+                  <select
+                    className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                    value={tokenInputMode}
+                    onChange={(e) => setTokenInputMode(e.target.value === "billable" ? "billable" : "full")}
+                  >
+                    <option value="full">Full (billable + cache) — match upstream In</option>
+                    <option value="billable">Billable / delta only (legacy)</option>
+                  </select>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Full = prompt + cached (amanai-style). Billable = net context growth only.
+                  </p>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>

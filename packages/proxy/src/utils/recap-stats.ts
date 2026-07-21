@@ -13,6 +13,7 @@ import { sql } from "drizzle-orm";
 import { getTokenMultipliers } from "./token-multiplier.js";
 import { getMonthRangeUtc } from "./recap-window.js";
 import { getModelRates } from "./cost-calculator.js";
+import { groupedInputSumSql } from "./counting.js";
 
 function num(v: any): number {
   if (v === null || v === undefined) return 0;
@@ -210,7 +211,7 @@ async function fetchTotals(keyIds: number[], start: Date, end: Date) {
       COALESCE(SUM(est), 0) AS est_cost
     FROM (
       SELECT turn_id,
-        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) AS sum_delta,
+        ${sql.raw(groupedInputSumSql())} AS sum_delta,
         SUM(completion_tokens) AS sum_c,
         SUM(estimated_cost) AS est
       FROM request_logs
@@ -247,7 +248,7 @@ async function fetchModels(keyIds: number[], start: Date, end: Date): Promise<Mo
     FROM (
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END AS model,
         turn_id,
-        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) AS sum_delta,
+        ${sql.raw(groupedInputSumSql())} AS sum_delta,
         SUM(completion_tokens) AS sum_c,
         AVG(NULLIF(latency_ms, 0)) AS avg_lat
       FROM request_logs
@@ -332,7 +333,7 @@ async function fetchPerDay(keyIds: number[], start: Date, end: Date): Promise<Da
     FROM (
       SELECT to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') AS day,
         turn_id,
-        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) AS sum_delta,
+        ${sql.raw(groupedInputSumSql())} AS sum_delta,
         SUM(completion_tokens) AS sum_c
       FROM request_logs
       WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
@@ -518,7 +519,7 @@ async function fetchKeyBreakdown(keyIds: number[], start: Date, end: Date): Prom
     LEFT JOIN (
       SELECT api_key_id, turn_id,
         1 AS turn_present,
-        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) AS sum_delta,
+        ${sql.raw(groupedInputSumSql())} AS sum_delta,
         SUM(completion_tokens) AS sum_c
       FROM request_logs
       WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
@@ -649,7 +650,7 @@ export async function getMonthLeaderboard(yearMonth: string): Promise<{
     FROM (
       SELECT api_key_id, turn_id,
         1 AS turn_present,
-        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) AS sum_delta,
+        ${sql.raw(groupedInputSumSql())} AS sum_delta,
         SUM(completion_tokens) AS sum_c
       FROM request_logs
       WHERE created_at >= ${start} AND created_at < ${end}
@@ -731,7 +732,7 @@ async function fetchPerDayTokens(keyIds: number[], start: Date, end: Date): Prom
     FROM (
       SELECT to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') AS day,
         turn_id,
-        GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) AS sum_delta,
+        ${sql.raw(groupedInputSumSql())} AS sum_delta,
         SUM(completion_tokens) AS sum_c
       FROM request_logs
       WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}

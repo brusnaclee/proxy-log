@@ -5848,10 +5848,16 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 	}
 
 	function periodField(p) {
+		const bill = Number(p.billablePromptTokens) || 0;
+		const cache = Number(p.cachedTokens) || 0;
+		const inputLine =
+			bill > 0 || cache > 0
+				? `📥 Input: **${formatTokens(p.promptTokens)}** _(bill ${formatTokens(bill)} · cache ${formatTokens(cache)})_`
+				: `📥 Input: **${formatTokens(p.promptTokens)}**`;
 		const lines = [
 			`📨 Requests: **${p.requests.toLocaleString()}**`,
 			`🔢 Total Tokens: **${formatTokens(p.tokens)}**`,
-			`📥 Input: **${formatTokens(p.promptTokens)}**`,
+			inputLine,
 			`📤 Output: **${formatTokens(p.completionTokens)}**`,
 			`💰 Est. Cost: **${formatCostMicro(p.estimatedCost)}**`,
 		];

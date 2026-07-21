@@ -123,6 +123,15 @@ export async function initializeDatabase() {
 	// Monitor auto mode (off | notif_only | auto)
 	await migrateMonitorAutoModeColumn();
 
+	// Token input mode (full = prompt+cache, billable = context_delta)
+	const { migrateTokenInputModeColumn } = await import('./migrate-token-input-mode.js');
+	await migrateTokenInputModeColumn();
+	try {
+		const { setTokenInputModeCache } = await import('../utils/counting.js');
+		const modeRow = await pool.query(`SELECT token_input_mode FROM admin_config LIMIT 1`);
+		setTokenInputModeCache(modeRow.rows[0]?.token_input_mode);
+	} catch (_) {}
+
 	// Add-ons (assignable model access + quota packs)
 	try {
 		await pool.query(`

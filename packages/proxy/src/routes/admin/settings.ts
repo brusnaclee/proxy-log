@@ -25,6 +25,7 @@ settings.get("/settings/global", async (c) => {
     globalMonthlyTokenLimit: config.globalMonthlyTokenLimit || 0,
     globalDailyInputTokenLimit: config.globalDailyInputTokenLimit || 0,
     globalDailyOutputTokenLimit: config.globalDailyOutputTokenLimit || 0,
+    tokenInputMode: (config as any).tokenInputMode === "billable" ? "billable" : "full",
     tokenSaverRtkEnabled: config.tokenSaverRtkEnabled ?? true,
     tokenSaverRtkMaxChars: config.tokenSaverRtkMaxChars ?? 2000,
     tokenSaverHeadroomEnabled: config.tokenSaverHeadroomEnabled ?? false,
@@ -54,6 +55,10 @@ settings.put("/settings/global", async (c) => {
     if (body.globalMonthlyTokenLimit !== undefined) updates.globalMonthlyTokenLimit = body.globalMonthlyTokenLimit;
     if (body.globalDailyInputTokenLimit !== undefined) updates.globalDailyInputTokenLimit = body.globalDailyInputTokenLimit;
     if (body.globalDailyOutputTokenLimit !== undefined) updates.globalDailyOutputTokenLimit = body.globalDailyOutputTokenLimit;
+  if (body.tokenInputMode !== undefined) {
+    const m = String(body.tokenInputMode || "full").toLowerCase();
+    updates.tokenInputMode = m === "billable" ? "billable" : "full";
+  }
   if (body.tokenSaverRtkEnabled !== undefined) updates.tokenSaverRtkEnabled = !!body.tokenSaverRtkEnabled;
   if (body.tokenSaverRtkMaxChars !== undefined) updates.tokenSaverRtkMaxChars = Math.max(200, Number(body.tokenSaverRtkMaxChars) || 2000);
   if (body.tokenSaverHeadroomEnabled !== undefined) updates.tokenSaverHeadroomEnabled = !!body.tokenSaverHeadroomEnabled;
@@ -70,6 +75,10 @@ settings.put("/settings/global", async (c) => {
 
   await db.update(adminConfig).set(updates).where(eq(adminConfig.id, config.id));
   configCache.invalidate("admin_config"); // invalidate cached config
+  if (updates.tokenInputMode !== undefined) {
+    const { setTokenInputModeCache } = await import("../../utils/counting.js");
+    setTokenInputModeCache(updates.tokenInputMode);
+  }
   return c.json({ success: true, message: "Global settings updated" });
 });
 
