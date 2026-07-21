@@ -167,17 +167,11 @@ export default function OverviewPage() {
   }, []);
   useRealtimeSSE(handleSSEMessage, 800);
 
-  // Re-fetch timeseries on chart period change
+  // Soft refresh cards/charts every 45s (cache-backed on server; logs stay SSE-live)
   useEffect(() => {
-    const tsdays = CHART_DAYS[chartPeriod];
-    const tsperiod = tsdays <= 1 ? "hourly" : "daily";
-    stats.timeseries(tsperiod, tsdays).then(setTimeseries).catch(() => {});
-  }, [chartPeriod]);
-
-  // Re-fetch model data on model chart period change
-  useEffect(() => {
-    stats.byModel(modelChartDays).then(setModelStats).catch(() => {});
-  }, [modelChartDays]);
+    const id = setInterval(() => { void loadData(); }, 45_000);
+    return () => clearInterval(id);
+  }, [loadData]);
 
   // ─── Export ─────────────────────────────────────────────────────────────────
   const handleExport = () => {

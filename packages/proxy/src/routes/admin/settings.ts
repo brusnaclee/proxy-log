@@ -4,8 +4,9 @@ import { adminConfig, apiKeys, requestLogs, chatSessions, devices, allowedDevice
 import { eq, and, sql } from "drizzle-orm";
 import { maskKey } from "../../utils/crypto.js";
 import { refreshModelCatalog, getModelCatalogResponse } from "../../utils/model-catalog.js";
-import { configCache, apiKeyCache } from "../../utils/cache.js";
+import { configCache, apiKeyCache, statsCache } from "../../utils/cache.js";
 import { enrichModelLimitsWithCatalog } from "../../utils/model-limits-enrich.js";
+import { normalizeTokenInputMode } from "../../utils/counting.js";
 
 const settings = new Hono();
 
@@ -25,7 +26,7 @@ settings.get("/settings/global", async (c) => {
     globalMonthlyTokenLimit: config.globalMonthlyTokenLimit || 0,
     globalDailyInputTokenLimit: config.globalDailyInputTokenLimit || 0,
     globalDailyOutputTokenLimit: config.globalDailyOutputTokenLimit || 0,
-    tokenInputMode: (config as any).tokenInputMode === "billable" ? "billable" : "full",
+    tokenInputMode: normalizeTokenInputMode((config as any).tokenInputMode),
     tokenSaverRtkEnabled: config.tokenSaverRtkEnabled ?? true,
     tokenSaverRtkMaxChars: config.tokenSaverRtkMaxChars ?? 2000,
     tokenSaverHeadroomEnabled: config.tokenSaverHeadroomEnabled ?? false,
@@ -56,8 +57,7 @@ settings.put("/settings/global", async (c) => {
     if (body.globalDailyInputTokenLimit !== undefined) updates.globalDailyInputTokenLimit = body.globalDailyInputTokenLimit;
     if (body.globalDailyOutputTokenLimit !== undefined) updates.globalDailyOutputTokenLimit = body.globalDailyOutputTokenLimit;
   if (body.tokenInputMode !== undefined) {
-    const m = String(body.tokenInputMode || "full").toLowerCase();
-    updates.tokenInputMode = m === "billable" ? "billable" : "full";
+    updates.tokenInputMode = normalizeTokenInputMode(body.tokenInputMode);
   }
   if (body.tokenSaverRtkEnabled !== undefined) updates.tokenSaverRtkEnabled = !!body.tokenSaverRtkEnabled;
   if (body.tokenSaverRtkMaxChars !== undefined) updates.tokenSaverRtkMaxChars = Math.max(200, Number(body.tokenSaverRtkMaxChars) || 2000);
@@ -78,6 +78,7 @@ settings.put("/settings/global", async (c) => {
   if (updates.tokenInputMode !== undefined) {
     const { setTokenInputModeCache } = await import("../../utils/counting.js");
     setTokenInputModeCache(updates.tokenInputMode);
+    statsCache.clear(); // aggregates depend on input mode
   }
   return c.json({ success: true, message: "Global settings updated" });
 });

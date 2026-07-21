@@ -533,8 +533,8 @@ export interface GlobalSettings {
   globalMonthlyTokenLimit: number;
   globalDailyInputTokenLimit: number;
   globalDailyOutputTokenLimit: number;
-  /** full = prompt+cache (upstream In); billable = context_delta legacy */
-  tokenInputMode?: "full" | "billable";
+  /** per_turn_peak | full | billable */
+  tokenInputMode?: "per_turn_peak" | "full" | "billable";
   tokenSaverRtkEnabled?: boolean;
   tokenSaverRtkMaxChars?: number;
   tokenSaverHeadroomEnabled?: boolean;

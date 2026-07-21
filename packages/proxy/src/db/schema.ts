@@ -54,7 +54,7 @@ export const adminConfig = pgTable('admin_config', {
 	/** off | notif_only | auto — default notif_only (manual catalog publish) */
 	monitorAutoMode: text('monitor_auto_mode').notNull().default('notif_only'),
 	/** full = prompt_tokens+cached_tokens (match upstream In); billable = net context_delta */
-	tokenInputMode: text('token_input_mode').notNull().default('full'),
+	tokenInputMode: text('token_input_mode').notNull().default('per_turn_peak'),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
 	updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });

@@ -103,9 +103,9 @@ async function main() {
   );
   console.log(multUpdate.stdout || multUpdate.stderr || '');
 
-  // Ensure token_input_mode=full in DB
+  // Ensure token_input_mode=per_turn_peak in DB (fair agent accounting)
   const modeUpdate = await ssh.execCommand(
-    "sudo -u postgres psql -d monit_api -c \"ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS token_input_mode text NOT NULL DEFAULT 'full'; UPDATE admin_config SET token_input_mode='full' WHERE id=1;\" 2>&1"
+    "sudo -u postgres psql -d monit_api -c \"ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS token_input_mode text NOT NULL DEFAULT 'per_turn_peak'; UPDATE admin_config SET token_input_mode='per_turn_peak' WHERE id=1;\" 2>&1"
   );
   console.log(modeUpdate.stdout || modeUpdate.stderr || '');
 

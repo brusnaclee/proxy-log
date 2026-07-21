@@ -3,7 +3,7 @@ import { db } from "../../db/index.js";
 import { requestLogs, apiKeys, devices, chatSessions, monthlyStats } from "../../db/schema.js";
 import { eq, sql, and } from "drizzle-orm";
 import { getModelRates } from "../../utils/cost-calculator.js";
-import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, wibTodayStartSql, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, resolvePeriodRange, chartDaysForPeriod, groupedInputSumSql, type PeriodKey } from "../../utils/counting.js";
+import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, wibTodayStartSql, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, resolvePeriodRange, chartDaysForPeriod, groupedInputSumSql, getTokenInputModeSync, type PeriodKey } from "../../utils/counting.js";
 import { applyTokenMultiplierRows, getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { statsCache } from "../../utils/cache.js";
 
@@ -475,6 +475,8 @@ stats.get("/stats/timeseries", async (c) => {
   const newPeriod = c.req.query("period") as PeriodKey | undefined;
   const legacyPeriod = c.req.query("period") as string | undefined; // daily|hourly
   const days = parseInt(c.req.query("days") || "7");
+  const cacheKey = `timeseries:${newPeriod || legacyPeriod || "daily"}:${days}`;
+  return c.json(await statsCache.getOrFetch(cacheKey, async () => {
   let startDate: Date;
   let groupPeriod: "hourly" | "daily";
 
@@ -493,6 +495,7 @@ stats.get("/stats/timeseries", async (c) => {
     ? sql`to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD HH24:00')`
     : sql`to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD')`;
 
+  // Simpler grouping: period + turn only (device count via DISTINCT in outer)
   const result = applyTokenMultiplierRows(sanitizeRows((await db.execute(sql`
     SELECT
       period_group as period,
@@ -517,7 +520,8 @@ stats.get("/stats/timeseries", async (c) => {
     ORDER BY period_group
   `)).rows as any[], ['requests', 'tokens', 'promptTokens', 'completionTokens', 'estimatedCost', 'uniqueDevices']));
 
-  return c.json(result);
+  return result;
+  })); // end statsCache
 });
 
 // ─── Top Users ────────────────────────────────────────────────────────────────
@@ -535,9 +539,41 @@ stats.get("/stats/top-users", async (c) => {
   }
 
   const dateFilter = startDate ? sql`AND created_at >= ${startDate}` : sql``;
+  const peakMode = getTokenInputModeSync() === "per_turn_peak";
 
   // Aggregate per api_key_id using turn-level token aggregation
-  const aggRows = sanitizeRows((await db.execute(sql`
+  const aggRows = sanitizeRows((await db.execute(peakMode ? sql`
+    SELECT
+      api_key_id as "apiKeyId",
+      COUNT(*) as "requests",
+      COALESCE(SUM(sum_delta + sum_c), 0) as tokens,
+      COALESCE(SUM(sum_delta), 0) as "promptTokens",
+      COALESCE(SUM(sum_bill), 0) as "billablePromptTokens",
+      COALESCE(SUM(sum_cache), 0) as "cachedTokens",
+      COALESCE(SUM(sum_c), 0) as "completionTokens"
+    FROM (
+      SELECT p.api_key_id, p.turn_id,
+        p.sum_delta, p.sum_bill, p.sum_cache,
+        COALESCE(c.sum_c, 0) as sum_c
+      FROM (
+        SELECT DISTINCT ON (api_key_id, turn_id)
+          api_key_id, turn_id,
+          COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0) as sum_delta,
+          COALESCE(prompt_tokens, 0) as sum_bill,
+          COALESCE(cached_tokens, 0) as sum_cache
+        FROM request_logs
+        WHERE turn_id IS NOT NULL ${dateFilter} AND status_code BETWEEN 200 AND 299
+        ORDER BY api_key_id, turn_id, (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) DESC
+      ) p
+      LEFT JOIN (
+        SELECT api_key_id, turn_id, SUM(completion_tokens) as sum_c
+        FROM request_logs
+        WHERE turn_id IS NOT NULL ${dateFilter} AND status_code BETWEEN 200 AND 299
+        GROUP BY api_key_id, turn_id
+      ) c ON c.api_key_id = p.api_key_id AND c.turn_id = p.turn_id
+    ) turns
+    GROUP BY api_key_id
+  ` : sql`
     SELECT
       api_key_id as "apiKeyId",
       COUNT(*) as "requests",

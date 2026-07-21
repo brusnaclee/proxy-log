@@ -6,6 +6,7 @@ import { logEmitter } from "../../utils/event-emitter.js";
 import { parseToolJson } from "../../utils/telemetry.js";
 import { forceTranscriptCleanup, forceCleanMonth, getCleanupStatus } from "../../utils/cleanup.js";
 import { resolvePeriodRange, type PeriodKey } from "../../utils/counting.js";
+import { statsCache } from "../../utils/cache.js";
 
 const logs = new Hono();
 
@@ -109,8 +110,8 @@ function collapseTimelineRows(rows: any[]) {
 
 logs.get("/logs", async (c) => {
   try {
-  const page = parseInt(c.req.query("page") || "1");
-  const limit = Math.min(parseInt(c.req.query("limit") || "50"), 200);
+  const page = Math.max(1, parseInt(c.req.query("page") || "1"));
+  const limit = Math.min(Math.max(1, parseInt(c.req.query("limit") || "50")), 100);
   const offset = (page - 1) * limit;
   // Overview / Key detail: skip heavy preview columns so first paint is fast.
   const lite = c.req.query("lite") === "1" || c.req.query("lite") === "true";
@@ -204,20 +205,27 @@ logs.get("/logs", async (c) => {
   .where(whereClause)
   .orderBy(desc(requestLogs.createdAt)).limit(limit).offset(offset);
 
-  const totalResult = (
-    await db.select({ count: sql<number>`count(*)::int` }).from(requestLogs).where(whereClause)
-  )[0];
-  const total = Number(totalResult?.count) || 0;
+  // Cap expensive COUNT(*) — cache 30s; hard-cap reported pages so UI stays snappy
+  const countKey = `logs-count:${c.req.url}`;
+  const total = await statsCache.getOrFetch(countKey, async () => {
+    const totalResult = (
+      await db.select({ count: sql<number>`count(*)::int` }).from(requestLogs).where(whereClause)
+    )[0];
+    return Number(totalResult?.count) || 0;
+  }, 30_000);
+  const maxPages = 50; // never paginate more than 50 pages of results in UI
+  const totalPages = Math.min(maxPages, Math.max(1, Math.ceil(total / limit)));
+  const cappedTotal = Math.min(total, maxPages * limit);
 
   const mappedRows = rows.map((row: any) => mapTimelineRow(row));
 
   return c.json({
     data: mappedRows,
     pagination: {
-      page,
+      page: Math.min(page, totalPages),
       limit,
-      total,
-      totalPages: Math.max(1, Math.ceil(total / limit)),
+      total: cappedTotal,
+      totalPages,
     }
   });
   } catch (err: any) {

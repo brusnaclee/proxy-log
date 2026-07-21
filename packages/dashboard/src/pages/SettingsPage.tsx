@@ -27,7 +27,7 @@ export default function SettingsPage() {
   const [globalDailyInputTokenLimit, setGlobalDailyInputTokenLimit] = useState(0);
   const [globalDailyOutputTokenLimit, setGlobalDailyOutputTokenLimit] = useState(0);
   const [tokenSaverRtkEnabled, setTokenSaverRtkEnabled] = useState(true);
-  const [tokenInputMode, setTokenInputMode] = useState<"full" | "billable">("full");
+  const [tokenInputMode, setTokenInputMode] = useState<"per_turn_peak" | "full" | "billable">("per_turn_peak");
   const [tokenSaverRtkMaxChars, setTokenSaverRtkMaxChars] = useState(2000);
   const [tokenSaverHeadroomEnabled, setTokenSaverHeadroomEnabled] = useState(false);
   const [tokenSaverHeadroomUrl, setTokenSaverHeadroomUrl] = useState("");
@@ -113,7 +113,11 @@ export default function SettingsPage() {
       setGlobalMonthlyTokenLimit(g.globalMonthlyTokenLimit || 0);
       setGlobalDailyInputTokenLimit(g.globalDailyInputTokenLimit || 0);
       setGlobalDailyOutputTokenLimit(g.globalDailyOutputTokenLimit || 0);
-      setTokenInputMode(g.tokenInputMode === "billable" ? "billable" : "full");
+      setTokenInputMode(
+        g.tokenInputMode === "full" || g.tokenInputMode === "billable"
+          ? g.tokenInputMode
+          : "per_turn_peak",
+      );
       setTokenSaverRtkEnabled(g.tokenSaverRtkEnabled ?? true);
       setTokenSaverRtkMaxChars(g.tokenSaverRtkMaxChars ?? 2000);
       setTokenSaverHeadroomEnabled(g.tokenSaverHeadroomEnabled ?? false);
@@ -473,13 +477,19 @@ export default function SettingsPage() {
                   <select
                     className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
                     value={tokenInputMode}
-                    onChange={(e) => setTokenInputMode(e.target.value === "billable" ? "billable" : "full")}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setTokenInputMode(
+                        v === "full" || v === "billable" ? v : "per_turn_peak",
+                      );
+                    }}
                   >
-                    <option value="full">Full (billable + cache) — match upstream In</option>
+                    <option value="per_turn_peak">Per-turn peak (recommended) — MAX context once per prompt</option>
+                    <option value="full">Full hop sum — match upstream In / amanai</option>
                     <option value="billable">Billable / delta only (legacy)</option>
                   </select>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Full = prompt + cached (amanai-style). Billable = net context growth only.
+                    Peak = cache+prompt counted once per user prompt (tool loops don’t multiply). Full = sum every API hop.
                   </p>
                 </div>
                 <div className="grid grid-cols-2 gap-4">

@@ -8,7 +8,7 @@ import { normalizeIdeName } from "../../utils/detect-ide.js";
 import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindowResetMs } from "../../utils/rate-limit.js";
 import { isInternalRequest } from "../../middleware/session.js";
 import { configCache } from "../../utils/cache.js";
-import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql } from "../../utils/counting.js";
+import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, getTokenInputModeSync } from "../../utils/counting.js";
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
 import { resolveKeyDailyTokenLimit, resolveKeyPromptLimit } from "../../utils/trial-config.js";
@@ -541,7 +541,35 @@ internal.get("/internal/stats/ranking", async (c) => {
   }
 
     async function getTopUsersByTokens(since: Date) {
-    const rows = (await db.execute(sql`
+    const peakMode = getTokenInputModeSync() === "per_turn_peak";
+    const rows = (await db.execute(peakMode ? sql`
+      SELECT api_key_id as "apiKeyId", COUNT(*) as requests,
+        COALESCE(SUM(sum_delta * ${tmInput} + sum_c * ${tmOutput}), 0) as tokens,
+        COALESCE(SUM(sum_delta) * ${tmInput}, 0) as "promptTokens",
+        COALESCE(SUM(sum_bill) * ${tmInput}, 0) as "billablePromptTokens",
+        COALESCE(SUM(sum_cache) * ${tmInput}, 0) as "cachedTokens",
+        COALESCE(SUM(sum_c) * ${tmOutput}, 0) as "completionTokens"
+      FROM (
+        SELECT p.api_key_id, p.turn_id, p.sum_delta, p.sum_bill, p.sum_cache, COALESCE(c.sum_c, 0) as sum_c
+        FROM (
+          SELECT DISTINCT ON (api_key_id, turn_id)
+            api_key_id, turn_id,
+            COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0) as sum_delta,
+            COALESCE(prompt_tokens, 0) as sum_bill,
+            COALESCE(cached_tokens, 0) as sum_cache
+          FROM request_logs
+          WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 AND is_billable_token = true
+          ORDER BY api_key_id, turn_id, (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) DESC
+        ) p
+        LEFT JOIN (
+          SELECT api_key_id, turn_id, SUM(completion_tokens) as sum_c
+          FROM request_logs
+          WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 AND is_billable_token = true
+          GROUP BY api_key_id, turn_id
+        ) c ON c.api_key_id = p.api_key_id AND c.turn_id = p.turn_id
+      ) turns
+      GROUP BY api_key_id ORDER BY tokens DESC LIMIT 20
+    ` : sql`
       SELECT api_key_id as "apiKeyId", COUNT(*) as requests,
         COALESCE(SUM(sum_delta * ${tmInput} + sum_c * ${tmOutput}), 0) as tokens,
         COALESCE(SUM(sum_delta) * ${tmInput}, 0) as "promptTokens",

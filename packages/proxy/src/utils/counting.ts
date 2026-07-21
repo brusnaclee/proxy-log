@@ -31,19 +31,22 @@ export const VALID_LOG_SQL = sql`status_code BETWEEN 200 AND 299`;
 
 /**
  * Input accounting mode (admin_config.token_input_mode):
- * - full: SUM(prompt_tokens + cached_tokens) — matches upstream In (amanai etc.)
+ * - per_turn_peak: MAX(prompt+cache) once per turn_id — fair for agents (default)
+ * - full: SUM(prompt+cached) every hop — matches upstream In / amanai
  * - billable: net context_delta per turn (legacy)
  *
  * Multipliers (INPUT_TOKEN_MULTIPLIER / OUTPUT_TOKEN_MULTIPLIER) still apply
  * at read time on top of these raw sums.
  */
-export type TokenInputMode = "full" | "billable";
+export type TokenInputMode = "per_turn_peak" | "full" | "billable";
 
-let tokenInputModeCache: TokenInputMode = "full";
+let tokenInputModeCache: TokenInputMode = "per_turn_peak";
 
 export function normalizeTokenInputMode(raw: unknown): TokenInputMode {
-  const m = String(raw || "full").toLowerCase().trim();
-  return m === "billable" ? "billable" : "full";
+  const m = String(raw || "per_turn_peak").toLowerCase().trim();
+  if (m === "full") return "full";
+  if (m === "billable") return "billable";
+  return "per_turn_peak";
 }
 
 export function setTokenInputModeCache(mode: TokenInputMode | unknown): void {
@@ -54,12 +57,19 @@ export function getTokenInputModeSync(): TokenInputMode {
   return tokenInputModeCache;
 }
 
-/** SQL expr for SUM(input) inside GROUP BY — mode-aware. */
+/**
+ * SQL expr for input inside GROUP BY turn_id — mode-aware.
+ * Outer queries SUM() these per-turn values.
+ */
 export function groupedInputSumSql(): string {
   if (tokenInputModeCache === "billable") {
     return `GREATEST(0, COALESCE(SUM(context_delta_tokens), 0))`;
   }
-  return `COALESCE(SUM(COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)), 0)`;
+  if (tokenInputModeCache === "full") {
+    return `COALESCE(SUM(COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)), 0)`;
+  }
+  // per_turn_peak: one full-In snapshot per user prompt (tool hops don't multiply)
+  return `COALESCE(MAX(COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)), 0)`;
 }
 
 /** @deprecated use groupedInputSumSql() */
@@ -81,25 +91,42 @@ export function turnCountSql(whereCondition: SQL | undefined): SQL<number> {
 
 /**
  * Input tokens for limits/stats (× INPUT_TOKEN_MULTIPLIER).
- * full: flat SUM(prompt+cached); billable: net delta per turn.
  */
 export function turnPromptTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
   const { input } = getTokenMultipliers(opts);
   if (tokenInputModeCache === "full") {
     return sql<number>`COALESCE((SELECT SUM(COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) * ${input} FROM request_logs WHERE ${whereCondition!}), 0)`;
   }
-  return sql<number>`COALESCE((SELECT SUM(sum_delta) * ${input} FROM (SELECT GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
+  if (tokenInputModeCache === "billable") {
+    return sql<number>`COALESCE((SELECT SUM(sum_delta) * ${input} FROM (SELECT GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
+  }
+  // per_turn_peak
+  return sql<number>`COALESCE((SELECT SUM(peak) * ${input} FROM (SELECT MAX(COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) as peak FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
 }
 
-/** Billable prompt only (excludes cache), × input multiplier. */
+/** Billable prompt only (excludes cache), × input multiplier. Peak mode: from peak hop per turn. */
 export function turnBillablePromptTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
   const { input } = getTokenMultipliers(opts);
+  if (tokenInputModeCache === "per_turn_peak") {
+    return sql<number>`COALESCE((SELECT SUM(p) * ${input} FROM (
+      SELECT DISTINCT ON (turn_id) COALESCE(prompt_tokens, 0) as p
+      FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL
+      ORDER BY turn_id, (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) DESC
+    ) t), 0)`;
+  }
   return sql<number>`COALESCE((SELECT SUM(COALESCE(prompt_tokens, 0)) * ${input} FROM request_logs WHERE ${whereCondition!}), 0)`;
 }
 
-/** Cached tokens sum, × input multiplier. */
+/** Cached tokens sum, × input multiplier. Peak mode: from peak hop per turn. */
 export function turnCachedTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
   const { input } = getTokenMultipliers(opts);
+  if (tokenInputModeCache === "per_turn_peak") {
+    return sql<number>`COALESCE((SELECT SUM(c) * ${input} FROM (
+      SELECT DISTINCT ON (turn_id) COALESCE(cached_tokens, 0) as c
+      FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL
+      ORDER BY turn_id, (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) DESC
+    ) t), 0)`;
+  }
   return sql<number>`COALESCE((SELECT SUM(COALESCE(cached_tokens, 0)) * ${input} FROM request_logs WHERE ${whereCondition!}), 0)`;
 }
 
@@ -115,7 +142,11 @@ export function turnTotalTokensSql(whereCondition: SQL | undefined, opts?: Token
   if (tokenInputModeCache === "full") {
     return sql<number>`COALESCE((SELECT SUM((COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) * ${input} + COALESCE(completion_tokens, 0) * ${output}) FROM request_logs WHERE ${whereCondition!}), 0)`;
   }
-  return sql<number>`COALESCE((SELECT SUM(sum_delta * ${input} + sum_c * ${output}) FROM (SELECT GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta, SUM(completion_tokens) as sum_c FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
+  if (tokenInputModeCache === "billable") {
+    return sql<number>`COALESCE((SELECT SUM(sum_delta * ${input} + sum_c * ${output}) FROM (SELECT GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta, SUM(completion_tokens) as sum_c FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
+  }
+  // per_turn_peak
+  return sql<number>`COALESCE((SELECT SUM(peak * ${input} + sum_c * ${output}) FROM (SELECT MAX(COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) as peak, SUM(completion_tokens) as sum_c FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
 }
 
 /** WIB midnight as PostgreSQL datetime string (UTC storage). */
