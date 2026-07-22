@@ -10,10 +10,10 @@
 
 import { db } from "../db/index.js";
 import { sql } from "drizzle-orm";
-import { getTokenMultipliers } from "./token-multiplier.js";
+import { getTokenMultipliers, type TokenMultiplierOpts } from "./token-multiplier.js";
 import { getMonthRangeUtc } from "./recap-window.js";
 import { getModelRates } from "./cost-calculator.js";
-import { groupedInputSumSql } from "./counting.js";
+import { getTokenInputModeSync, groupedInputSumSql } from "./counting.js";
 
 function num(v: any): number {
   if (v === null || v === undefined) return 0;
@@ -52,7 +52,12 @@ export interface RecapStats {
   source: "live" | "archived";
   totals: {
     requests: number;
+    /** Mode-aware full input (peak / full / billable). */
     inputTokens: number;
+    /** Billable prompt portion of input (excludes cache); peak-aware when mode=per_turn_peak. */
+    billablePromptTokens: number;
+    /** Cached / context-read portion; peak-aware when mode=per_turn_peak. */
+    cachedTokens: number;
     outputTokens: number;
     totalTokens: number;
     estimatedCost: number; // micro-dollars
@@ -169,13 +174,29 @@ function keyScopeSql(keyIds: number[]) {
   return sql`api_key_id IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`;
 }
 
-async function resolveRecapKeyIds(keyId: number): Promise<number[]> {
-  const row = (await db.execute(sql`SELECT discord_user_id FROM api_keys WHERE id = ${keyId}`)).rows[0] as any;
+/** Resolve all API keys for a Discord account + whether the account is trial-only. */
+async function resolveRecapAccount(keyId: number): Promise<{ keyIds: number[]; isTrial: boolean }> {
+  const row = (await db.execute(sql`
+    SELECT discord_user_id, is_trial FROM api_keys WHERE id = ${keyId}
+  `)).rows[0] as any;
   const discordUserId = row?.discord_user_id ? String(row.discord_user_id) : null;
-  if (!discordUserId) return [keyId];
-  const rows = (await db.execute(sql`SELECT id FROM api_keys WHERE discord_user_id = ${discordUserId}`)).rows as any[];
+  if (!discordUserId) {
+    return { keyIds: [keyId], isTrial: !!row?.is_trial };
+  }
+  const rows = (await db.execute(sql`
+    SELECT id, is_trial, is_active FROM api_keys WHERE discord_user_id = ${discordUserId}
+  `)).rows as any[];
   const ids = rows.map((r) => num(r.id)).filter((id) => id > 0);
-  return ids.length ? ids : [keyId];
+  // Trial-only account = no active non-trial key (same rule as portal).
+  const hasNonTrialActive = rows.some((r) => !r.is_trial && r.is_active);
+  return {
+    keyIds: ids.length ? ids : [keyId],
+    isTrial: !hasNonTrialActive,
+  };
+}
+
+async function resolveRecapKeyIds(keyId: number): Promise<number[]> {
+  return (await resolveRecapAccount(keyId)).keyIds;
 }
 
 /** Compute longest consecutive-day streak from a sorted set of YYYY-MM-DD strings. */
@@ -200,9 +221,10 @@ function longestStreak(days: string[]): number {
 /**
  * Per-turn aggregated totals for one api key in a month (multiplier-aware).
  * Mirrors counting.ts turn-based logic but inlined to also extract latency/tools.
+ * Also returns prompt vs cache split (peak-hop aware when mode=per_turn_peak).
  */
-async function fetchTotals(keyIds: number[], start: Date, end: Date) {
-  const { input, output } = getTokenMultipliers();
+async function fetchTotals(keyIds: number[], start: Date, end: Date, tmOpts?: TokenMultiplierOpts) {
+  const { input, output } = getTokenMultipliers(tmOpts);
   const row = (await db.execute(sql`
     SELECT
       COUNT(*) AS turns,
@@ -221,13 +243,48 @@ async function fetchTotals(keyIds: number[], start: Date, end: Date) {
     ) t
   `)).rows[0] as any;
 
+  // Prompt vs cache breakdown (same rules as turnBillablePromptTokensSql / turnCachedTokensSql).
+  let billableRaw = 0;
+  let cacheRaw = 0;
+  if (getTokenInputModeSync() === "per_turn_peak") {
+    const bc = (await db.execute(sql`
+      SELECT COALESCE(SUM(p), 0) AS billable_raw, COALESCE(SUM(c), 0) AS cache_raw
+      FROM (
+        SELECT DISTINCT ON (turn_id)
+          COALESCE(prompt_tokens, 0) AS p,
+          COALESCE(cached_tokens, 0) AS c
+        FROM request_logs
+        WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
+          AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+        ORDER BY turn_id, (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) DESC
+      ) h
+    `)).rows[0] as any;
+    billableRaw = num(bc?.billable_raw);
+    cacheRaw = num(bc?.cache_raw);
+  } else {
+    const bc = (await db.execute(sql`
+      SELECT
+        COALESCE(SUM(COALESCE(prompt_tokens, 0)), 0) AS billable_raw,
+        COALESCE(SUM(COALESCE(cached_tokens, 0)), 0) AS cache_raw
+      FROM request_logs
+      WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
+        AND status_code BETWEEN 200 AND 299
+    `)).rows[0] as any;
+    billableRaw = num(bc?.billable_raw);
+    cacheRaw = num(bc?.cache_raw);
+  }
+
   const requests = num(row?.turns);
   const inputTokens = Math.round(num(row?.input_raw) * input);
+  const billablePromptTokens = Math.round(billableRaw * input);
+  const cachedTokens = Math.round(cacheRaw * input);
   const outputTokens = Math.round(num(row?.output_raw) * output);
   const totalTokens = inputTokens + outputTokens;
   return {
     requests,
     inputTokens,
+    billablePromptTokens,
+    cachedTokens,
     outputTokens,
     totalTokens,
     estimatedCost: Math.round(num(row?.est_cost)),
@@ -237,8 +294,8 @@ async function fetchTotals(keyIds: number[], start: Date, end: Date) {
 }
 
 /** Per-model breakdown with latency (auto normalized to base model). */
-async function fetchModels(keyIds: number[], start: Date, end: Date): Promise<ModelStat[]> {
-  const { input, output } = getTokenMultipliers();
+async function fetchModels(keyIds: number[], start: Date, end: Date, tmOpts?: TokenMultiplierOpts): Promise<ModelStat[]> {
+  const { input, output } = getTokenMultipliers(tmOpts);
   const rows = (await db.execute(sql`
     SELECT model,
       COUNT(*) AS requests,
@@ -323,8 +380,8 @@ function buildCost(models: ModelStat[], buckets: { day: any; hour: any }): Recap
 }
 
 /** Per-day (WIB) request + token buckets. */
-async function fetchPerDay(keyIds: number[], start: Date, end: Date): Promise<DayStat[]> {
-  const { input, output } = getTokenMultipliers();
+async function fetchPerDay(keyIds: number[], start: Date, end: Date, tmOpts?: TokenMultiplierOpts): Promise<DayStat[]> {
+  const { input, output } = getTokenMultipliers(tmOpts);
   const rows = (await db.execute(sql`
     SELECT day,
       COUNT(*) AS requests,
@@ -352,8 +409,8 @@ async function fetchPerDay(keyIds: number[], start: Date, end: Date): Promise<Da
 }
 
 /** Per-hour-of-day (WIB) request + output token buckets. */
-async function fetchPerHour(keyIds: number[], start: Date, end: Date): Promise<HourStat[]> {
-  const { output } = getTokenMultipliers();
+async function fetchPerHour(keyIds: number[], start: Date, end: Date, tmOpts?: TokenMultiplierOpts): Promise<HourStat[]> {
+  const { output } = getTokenMultipliers(tmOpts);
   const rows = (await db.execute(sql`
     SELECT hour,
       COUNT(DISTINCT turn_id) AS requests,
@@ -505,11 +562,11 @@ function deriveActivity(perDay: DayStat[], perHour: HourStat[], aux: Awaited<Ret
 }
 
 /** Per-key usage breakdown for multi-key Discord accounts. */
-async function fetchKeyBreakdown(keyIds: number[], start: Date, end: Date): Promise<RecapStats["keys"]> {
+async function fetchKeyBreakdown(keyIds: number[], start: Date, end: Date, tmOpts?: TokenMultiplierOpts): Promise<RecapStats["keys"]> {
   if (keyIds.length === 0) {
     return { count: 0, favorite: null, top: [] };
   }
-  const { input, output } = getTokenMultipliers();
+  const { input, output } = getTokenMultipliers(tmOpts);
   const rows = (await db.execute(sql`
     SELECT k.id AS key_id,
       COALESCE(NULLIF(k.name, ''), 'key-' || k.id::text) AS name,
@@ -559,16 +616,17 @@ async function fetchKeyBreakdown(keyIds: number[], start: Date, end: Date): Prom
  */
 export async function getRecapStats(keyId: number, yearMonth: string): Promise<RecapStats> {
   const { start, end } = getMonthRangeUtc(yearMonth);
-  const keyIds = await resolveRecapKeyIds(keyId);
+  const { keyIds, isTrial } = await resolveRecapAccount(keyId);
+  const tmOpts: TokenMultiplierOpts | undefined = isTrial ? { isTrial: true } : undefined;
 
   const [totals, models, perDay, perHour, aux, costBuckets, keyBreakdown] = await Promise.all([
-    fetchTotals(keyIds, start, end),
-    fetchModels(keyIds, start, end),
-    fetchPerDay(keyIds, start, end),
-    fetchPerHour(keyIds, start, end),
+    fetchTotals(keyIds, start, end, tmOpts),
+    fetchModels(keyIds, start, end, tmOpts),
+    fetchPerDay(keyIds, start, end, tmOpts),
+    fetchPerHour(keyIds, start, end, tmOpts),
     fetchAux(keyIds, start, end),
     fetchCostBuckets(keyIds, start, end),
-    fetchKeyBreakdown(keyIds, start, end),
+    fetchKeyBreakdown(keyIds, start, end, tmOpts),
   ]);
 
   const hasData = totals.requests > 0;
@@ -756,6 +814,8 @@ export async function getRaceTimelapse(
   leaderboard: { byRequests: LeaderboardEntry[]; byTokens: LeaderboardEntry[] },
 ): Promise<RaceTimelapse | null> {
   const { start, end } = getMonthRangeUtc(yearMonth);
+  const accountKeyIds = await resolveRecapKeyIds(keyId);
+  const accountSet = new Set(accountKeyIds);
 
   // Shared day axis: day 1 of month .. min(today, month end), WIB.
   const WIB = 7 * 60 * 60 * 1000;
@@ -803,9 +863,12 @@ export async function getRaceTimelapse(
 
     const users: TimelapseUser[] = [];
     for (const e of windowed) {
+      // Expand to all keys on the Discord account (leaderboard stores MIN(api_key_id)).
+      const ids = e.apiKeyId != null ? await resolveRecapKeyIds(e.apiKeyId) : [];
+      if (!ids.length) continue;
       const perDay = metric === "requests"
-        ? await fetchPerDayRequests(e.apiKeyId!, start, end)
-        : await fetchPerDayTokens(e.apiKeyId!, start, end);
+        ? await fetchPerDayRequests(ids, start, end)
+        : await fetchPerDayTokens(ids, start, end);
       const cumulative: number[] = [];
       let c = 0;
       for (const d of days) { c += perDay.get(d) || 0; cumulative.push(c); }
@@ -952,14 +1015,15 @@ export async function enrichRankAndComparison(
   leaderboard: { byRequests: LeaderboardEntry[]; byTokens: LeaderboardEntry[] },
   prevYearMonth: string,
 ): Promise<RecapStats> {
-  const keyIds = await resolveRecapKeyIds(keyId);
+  const { keyIds, isTrial } = await resolveRecapAccount(keyId);
+  const tmOpts: TokenMultiplierOpts | undefined = isTrial ? { isTrial: true } : undefined;
   stats.rank.requests = findRank(leaderboard.byRequests, keyId, keyIds);
   stats.rank.tokens = findRank(leaderboard.byTokens, keyId, keyIds);
   stats.rank.totalParticipants = leaderboard.byRequests.filter((e) => e.requests > 0).length;
   stats.population = computePopulation(leaderboard);
 
   try {
-    const prev = await fetchTotals(keyIds, getMonthRangeUtc(prevYearMonth).start, getMonthRangeUtc(prevYearMonth).end);
+    const prev = await fetchTotals(keyIds, getMonthRangeUtc(prevYearMonth).start, getMonthRangeUtc(prevYearMonth).end, tmOpts);
     if (prev.requests > 0) {
       stats.comparison.hasPrev = true;
       stats.comparison.requestsDeltaPercent = Math.round(((stats.totals.requests - prev.requests) / prev.requests) * 100);

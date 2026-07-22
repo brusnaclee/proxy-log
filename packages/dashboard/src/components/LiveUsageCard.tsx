@@ -111,7 +111,10 @@ export function LiveUsageCard({
       value: usageToday.promptCount ?? 0,
       max: limits.promptLimit,
       remaining: remaining.prompt,
-      sublabel: "prompts",
+      sublabel:
+        (usageToday.hopCount || 0) > (usageToday.requests || 0)
+          ? `prompts · ${formatNumber(usageToday.hopCount || 0)} hops in logs`
+          : "prompts",
       source: sourceLabel(limits.promptLimitSource),
       reset: formatReset(promptResetAt),
     });
@@ -122,12 +125,19 @@ export function LiveUsageCard({
       usageToday.cachedTokens,
       usageToday.promptTokens,
     );
+    const full = Number(usageToday.fullInputTokens) || 0;
+    const peak = Number(usageToday.promptTokens) || 0;
+    const fullNote =
+      full > peak * 1.5
+        ? ` · full ${formatNumber(full)} (amanai-style)`
+        : "";
     bars.push({
-      label: "Input Tokens",
+      label: "Input Tokens (peak)",
       value: usageToday.promptTokens,
       max: limits.dailyInputTokenLimit,
       remaining: remaining.input,
-      sublabel: inputBd.label !== inputBd.total ? inputBd.label : "tokens",
+      sublabel:
+        (inputBd.label !== inputBd.total ? inputBd.label : "tokens") + fullNote,
       source: sourceLabel(limits.dailyInputTokenLimitSource),
       reset: formatReset(dailyResetAt),
     });
@@ -223,7 +233,14 @@ export function LiveUsageCard({
             ).label}{" "}
             in / {formatNumber(usageToday.completionTokens)} out
           </span>{" "}
-          ({formatNumber(usageToday.requests)} requests).
+          ({formatNumber(usageToday.requests)} turns
+          {(usageToday.hopCount || 0) > 0
+            ? ` · ${formatNumber(usageToday.hopCount || 0)} hops`
+            : ""}
+          {(usageToday.fullInputTokens || 0) > (usageToday.promptTokens || 0) * 1.5
+            ? ` · full In ${formatNumber(usageToday.fullInputTokens || 0)}`
+            : ""}
+          ).
         </p>
       </div>
     );
@@ -254,6 +271,15 @@ export function LiveUsageCard({
           />
         ))}
       </div>
+      {(usageToday.fullInputTokens || 0) > (usageToday.promptTokens || 0) * 1.5 && (
+        <p className="text-[10px] text-muted-foreground leading-relaxed border-t border-border/40 pt-2">
+          Credit uses <span className="text-foreground">per-turn peak</span> input
+          ({formatNumber(usageToday.promptTokens)}), not amanai hop-sum
+          ({formatNumber(usageToday.fullInputTokens || 0)}). Logs list every hop (
+          {formatNumber(usageToday.hopCount || 0)}), while prompts/turns are{" "}
+          {formatNumber(usageToday.requests)}.
+        </p>
+      )}
       {modelLimits.length > 0 && (
         <div className="pt-2 border-t border-border/50 space-y-1.5">
           <p className="text-xs text-muted-foreground">

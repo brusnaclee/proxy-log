@@ -696,9 +696,9 @@ export API_TIMEOUT_MS=500000`}
           return (
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
               {[
-                { label: "Requests",      value: formatNumber(s.requests) },
+                { label: "Turns (prompts)", value: formatNumber(s.requests), sub: (s.hopCount || 0) > s.requests ? `${formatNumber(s.hopCount || 0)} hops in logs` : undefined },
                 { label: "Total Tokens",  value: formatNumber(s.tokens) },
-                { label: "Input Tokens",  value: formatInputBreakdown(s.billablePromptTokens, s.cachedTokens, s.promptTokens).label },
+                { label: "Input (peak)",  value: formatInputBreakdown(s.billablePromptTokens, s.cachedTokens, s.promptTokens).label, sub: (s.fullInputTokens || 0) > (s.promptTokens || 0) * 1.5 ? `full ${formatNumber(s.fullInputTokens || 0)} (amanai)` : undefined },
                 { label: "Output Tokens", value: formatNumber(s.completionTokens) },
                 { label: "Context Tokens",value: formatNumber(s.contextTokens) },
                 { label: "Est. Cost",     value: `$${(s.estimatedCost/1e6).toFixed(4)}` },
@@ -708,6 +708,7 @@ export API_TIMEOUT_MS=500000`}
                   <CardContent className="p-3">
                     <p className="text-[10px] text-muted-foreground">{c.label}</p>
                     <p className="text-lg font-bold mt-1 truncate">{c.value}</p>
+                    {c.sub && <p className="text-[10px] text-muted-foreground mt-0.5 truncate">{c.sub}</p>}
                   </CardContent>
                 </Card>
               ))}

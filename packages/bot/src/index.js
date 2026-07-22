@@ -4882,7 +4882,11 @@ async function generateAndReplyRecap(interaction, targetUser, opts = {}) {
 				},
 				{
 					name: '📥 Input',
-					value: fmtRecapNum(totals.inputTokens),
+					value: formatInputBreakdown(
+						totals.billablePromptTokens,
+						totals.cachedTokens,
+						totals.inputTokens,
+					).label,
 					inline: true,
 				},
 				{

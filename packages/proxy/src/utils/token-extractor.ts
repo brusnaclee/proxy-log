@@ -257,6 +257,7 @@ export function resolveBillableTokens(
     promptTokens: pToks,
     completionTokens: cToks,
     cachedTokens: cached,
-    totalTokens: pToks + cToks
+    /** Full row total for display: billable input + cache + completion */
+    totalTokens: pToks + cached + cToks,
   };
 }

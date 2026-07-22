@@ -154,9 +154,20 @@ export default function OverviewPage() {
   const handleSSEMessage = useCallback((data: any) => {
     // Live prepend only on page 1 so other pages stay stable
     if (recentPageRef.current !== 1) return;
+    const billable = Number(data?.billablePromptTokens ?? data?.promptTokens) || 0;
+    const cached = Number(data?.cachedTokens) || 0;
+    const completion = Number(data?.completionTokens) || 0;
+    // SSE used to emit promptTokens=billable only; normalize like API mapTimelineRow
+    const inputTokens = Number(data?.inputTokens) || billable + cached;
     const entry = {
       ...data,
       createdAt: data?.createdAt || data?.created_at || new Date().toISOString(),
+      billablePromptTokens: Number(data?.billablePromptTokens) || billable,
+      cachedTokens: cached,
+      inputTokens,
+      promptTokens: inputTokens,
+      completionTokens: completion,
+      totalTokens: inputTokens + completion,
     };
     setRecentLogs((prev) => {
       const id = entry?.id;

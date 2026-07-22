@@ -14,6 +14,8 @@ import {
 	turnTotalTokensSql,
 	turnBillablePromptTokensSql,
 	turnCachedTokensSql,
+	hopCountSql,
+	hopFullInputTokensSql,
 	wibMonthStartSql,
 	sanitizeRows,
 } from './counting.js';
@@ -41,10 +43,15 @@ export interface LiveUsagePayload {
 	scope: 'account' | 'key';
 	accountKeyCount: number;
 	usageToday: {
+		/** Distinct turns (user prompts + tool chains), not log-row hops. */
 		requests: number;
+		/** Every upstream API call today (matches Logs table row count). */
+		hopCount: number;
 		promptTokens: number;
 		billablePromptTokens: number;
 		cachedTokens: number;
+		/** SUM(prompt+cache) every hop — amanai / provider In style. */
+		fullInputTokens: number;
 		completionTokens: number;
 		totalTokens: number;
 		/** Rolling prompt-window usage (not all-day request count). */
@@ -170,9 +177,11 @@ export async function buildLiveUsageForKey(
 		db
 			.select({
 				requests: turnCountSql(whereToday),
+				hopCount: hopCountSql(whereToday),
 				promptTokens: turnPromptTokensSql(whereToday, tmOpts),
 				billablePromptTokens: turnBillablePromptTokensSql(whereToday, tmOpts),
 				cachedTokens: turnCachedTokensSql(whereToday, tmOpts),
+				fullInputTokens: hopFullInputTokensSql(whereToday, tmOpts),
 				completionTokens: turnCompletionTokensSql(whereToday, tmOpts),
 			})
 			.from(requestLogs)
@@ -190,6 +199,8 @@ export async function buildLiveUsageForKey(
 	const promptTokens = usageToday?.promptTokens || 0;
 	const billablePromptTokens = usageToday?.billablePromptTokens || 0;
 	const cachedTokens = usageToday?.cachedTokens || 0;
+	const fullInputTokens = usageToday?.fullInputTokens || 0;
+	const hopCount = usageToday?.hopCount || 0;
 	const completionTokens = usageToday?.completionTokens || 0;
 	const totalTokens = promptTokens + completionTokens;
 	const monthTokens = usageMonth?.tokens || 0;
@@ -323,9 +334,11 @@ export async function buildLiveUsageForKey(
 		accountKeyCount: keyIds.length,
 		usageToday: {
 			requests: usageToday?.requests || 0,
+			hopCount,
 			promptTokens,
 			billablePromptTokens,
 			cachedTokens,
+			fullInputTokens,
 			completionTokens,
 			totalTokens,
 			promptCount: promptUsed,

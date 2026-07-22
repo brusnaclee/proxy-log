@@ -182,6 +182,28 @@ function fmtNum(n: number): string {
   return String(Math.round(n));
 }
 
+/** Full input = prompt + cache. Matches dashboard/Discord format. */
+function fmtInputBreakdown(
+  billable: number | undefined | null,
+  cached: number | undefined | null,
+  fullInput?: number | undefined | null,
+  compact = false,
+): string {
+  const cache = Math.max(0, Number(cached) || 0);
+  const totalNum =
+    fullInput != null && Number.isFinite(Number(fullInput))
+      ? Math.max(0, Number(fullInput))
+      : Math.max(0, Number(billable) || 0) + cache;
+  const bill =
+    billable != null && Number.isFinite(Number(billable))
+      ? Math.max(0, Number(billable))
+      : Math.max(0, totalNum - cache);
+  const total = fmtNum(totalNum);
+  if (cache <= 0) return total;
+  if (compact) return `${total} (${fmtNum(bill)} p + ${fmtNum(cache)} c)`;
+  return `${total} (${fmtNum(bill)} prompt + ${fmtNum(cache)} cache)`;
+}
+
 function fmtLatency(ms: number): string {
   ms = Math.round(Number(ms) || 0);
   if (ms <= 0) return "—";
@@ -641,6 +663,9 @@ function buildSectionItems(d: RecapHtmlData): SlideItem[] {
   });
 
   const inputTok = n(s, "totals.inputTokens");
+  const billableTok = n(s, "totals.billablePromptTokens");
+  const cachedTok = n(s, "totals.cachedTokens");
+  const inputLabel = fmtInputBreakdown(billableTok, cachedTok, inputTok);
   const outputTok = n(s, "totals.outputTokens");
   const maxTok = Math.max(inputTok, outputTok, 1);
   const inPct = Math.round((inputTok / maxTok) * 100);
@@ -791,7 +816,7 @@ function buildSectionItems(d: RecapHtmlData): SlideItem[] {
         <div class="big reveal" data-count="${n(s, "totals.requests")}">0</div>
         <div class="card reveal">
           <div class="bars">
-            <div><div class="barlbl"><span>${phosphor("arrow-down", 14)} Input</span><span>${fmtNum(inputTok)}</span></div>
+            <div><div class="barlbl"><span>${phosphor("arrow-down", 14)} Input</span><span>${inputLabel}</span></div>
               <div class="bar" style="--w:${inPct}%"><span class="b-in"></span></div></div>
             <div><div class="barlbl"><span>${phosphor("arrow-up", 14)} Output</span><span>${fmtNum(outputTok)}</span></div>
               <div class="bar" style="--w:${outPct}%"><span class="b-out"></span></div></div>
@@ -992,7 +1017,7 @@ function buildSectionItems(d: RecapHtmlData): SlideItem[] {
       const fallbackTiles = [
         { key: "rank", icon: "🏆", label: "Peringkat", value: d.rank.requests ? "#" + d.rank.requests : "—", sub: "dari semua developer", size: "hero" as const },
         { key: "requests", icon: "🚀", label: "Request", value: fmtNum(n(s, "totals.requests")), sub: "bulan ini", size: "sm" as const },
-        { key: "tokens", icon: "🪙", label: "Token", value: fmtNum(n(s, "totals.totalTokens")), sub: fmtNum(n(s, "totals.inputTokens")) + " in / " + fmtNum(n(s, "totals.outputTokens")) + " out", size: "sm" as const },
+        { key: "tokens", icon: "🪙", label: "Token", value: fmtNum(n(s, "totals.totalTokens")), sub: fmtInputBreakdown(n(s, "totals.billablePromptTokens"), n(s, "totals.cachedTokens"), n(s, "totals.inputTokens"), true) + " in / " + fmtNum(n(s, "totals.outputTokens")) + " out", size: "sm" as const },
         { key: "growth", icon: cmp.hasPrev && growthPct < 0 ? "📉" : "📈", label: "vs bulan lalu", value: cmp.hasPrev ? ((growthPct >= 0 ? "+" : "") + growthPct + "%") : "NEW", sub: cmp.hasPrev ? "pertumbuhan request" : "bulan pertama", size: "sm" as const },
         { key: "favModel", icon: "🤖", label: "Model favorit", value: fav?.model ? truncateModel(String(fav.model)) : "—", sub: fav?.requests ? fmtNum(fav.requests) + " req" : "belum ada", size: "sm" as const },
         { key: "latency", icon: "⏱️", label: "Avg respond", value: fmtLatency(n(s, "latency.avgMs")), sub: "request sukses", size: "sm" as const },

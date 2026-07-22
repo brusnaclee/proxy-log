@@ -154,7 +154,20 @@ export default function LogsPage() {
     if (!liveMode) return;
     if (viewMode === "requests") {
       if (requestPage !== 1) return;
-      setRequestData((prev) => [newLog, ...prev].slice(0, 50));
+      const billable = Number(newLog?.billablePromptTokens ?? newLog?.promptTokens) || 0;
+      const cached = Number(newLog?.cachedTokens) || 0;
+      const completion = Number(newLog?.completionTokens) || 0;
+      const inputTokens = Number(newLog?.inputTokens) || billable + cached;
+      const normalized = {
+        ...newLog,
+        billablePromptTokens: Number(newLog?.billablePromptTokens) || billable,
+        cachedTokens: cached,
+        inputTokens,
+        promptTokens: inputTokens,
+        completionTokens: completion,
+        totalTokens: inputTokens + completion,
+      };
+      setRequestData((prev) => [normalized, ...prev].slice(0, 50));
     } else {
       void loadSessions();
       if (selectedSessionId) {

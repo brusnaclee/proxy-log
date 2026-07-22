@@ -3649,6 +3649,17 @@ proxy.all('/*', async (c) => {
 				isTrial: !!keyRecord.isTrial,
 				discordUserId: keyRecord.discordUserId || null,
 				discordUsername: keyRecord.discordUsername || null,
+				// Dashboard expects billable + full input split (same as mapTimelineRow)
+				billablePromptTokens: logEntry.promptTokens || 0,
+				cachedTokens: logEntry.cachedTokens || 0,
+				inputTokens:
+					(Number(logEntry.promptTokens) || 0) + (Number(logEntry.cachedTokens) || 0),
+				promptTokens:
+					(Number(logEntry.promptTokens) || 0) + (Number(logEntry.cachedTokens) || 0),
+				totalTokens:
+					(Number(logEntry.promptTokens) || 0) +
+					(Number(logEntry.cachedTokens) || 0) +
+					(Number(logEntry.completionTokens) || 0),
 			});
 
 			if (counted && messageAnalysis.messageHash) {

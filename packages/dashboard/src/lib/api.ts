@@ -80,10 +80,15 @@ export interface LiveUsagePayload {
   scope: "account" | "key";
   accountKeyCount: number;
   usageToday: {
+    /** Distinct turns (not log hops). */
     requests: number;
+    /** Every upstream API call (matches Logs rows). */
+    hopCount?: number;
     promptTokens: number;
     billablePromptTokens?: number;
     cachedTokens?: number;
+    /** SUM(prompt+cache) every hop — amanai / provider In. */
+    fullInputTokens?: number;
     completionTokens: number;
     totalTokens: number;
     promptCount: number;
@@ -162,10 +167,12 @@ export interface ApiKeyListItem {
 
 export interface KeyPeriodStats {
   requests: number;
+  hopCount?: number;
   tokens: number;
   promptTokens: number;
   billablePromptTokens?: number;
   cachedTokens?: number;
+  fullInputTokens?: number;
   completionTokens: number;
   contextTokens: number;
   estimatedCost: number;

@@ -55,8 +55,22 @@ Spaces are required between the number and `p`/`c` so Discord does not render `6
 | Metric | Field / rule | Window |
 |--------|----------------|--------|
 | **Prompt count** | `is_counted_request = true` (new user prompt detection) | `prompt_limit` + window (e.g. 5h) |
-| **Input tokens** | Mode-aware sum above | Daily input limit (WIB day) |
+| **Turns / Requests (stats)** | `COUNT(DISTINCT turn_id)` | Today / week / … |
+| **Hops (Logs table)** | Every upstream API row | Same period |
+| **Input tokens (credit)** | Mode-aware sum above (default: peak) | Daily input limit (WIB day) |
+| **Full input (amanai)** | `SUM(prompt+cache)` every hop | Informational on Key Detail |
 | **Output tokens** | `SUM(completion)` per turn | Daily output limit |
+
+### Real example (ZCode agent, imam77, one WIB day)
+
+| Metric | Value |
+|--------|------:|
+| Hops in Logs | ~150 |
+| Turns / prompts | **3** |
+| Peak input (credit) | **~180K** |
+| Full input (amanai-style) | **~8.6M** |
+
+One user prompt can spawn 50–100+ tool hops. Amanai bills every hop; our default `per_turn_peak` bills once per prompt at the largest context snapshot. This is **not** the orphan-turn undercount bug.
 
 A user can show **0 prompts** in the rolling prompt window and still have large **input today** if:
 

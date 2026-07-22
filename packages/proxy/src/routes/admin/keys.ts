@@ -5,7 +5,7 @@ import { eq, sql, and, desc } from "drizzle-orm";
 import { generateApiKey, getKeyPrefix, sha256, maskKey } from "../../utils/crypto.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
-import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql } from "../../utils/counting.js";
+import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, hopCountSql, hopFullInputTokensSql, sanitizeRows, groupedInputSumSql } from "../../utils/counting.js";
 import { applyTokenMultiplierRows, getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { apiKeyCache, statsCache } from "../../utils/cache.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
@@ -239,10 +239,12 @@ keys.get("/keys/:id", async (c) => {
 
     const s = (await db.select({
       turns:            turnCountSql(whereClause),
+      hops:             hopCountSql(whereClause),
       tokens:           turnTotalTokensSql(whereClause, tmOpts),
       promptTokens:     turnPromptTokensSql(whereClause, tmOpts),
       billablePromptTokens: turnBillablePromptTokensSql(whereClause, tmOpts),
       cachedTokens:     turnCachedTokensSql(whereClause, tmOpts),
+      fullInputTokens:  hopFullInputTokensSql(whereClause, tmOpts),
       completionTokens: turnCompletionTokensSql(whereClause, tmOpts),
       contextTokens:    sql<number>`0`,
       estimatedCost:    sql<number>`COALESCE(SUM(estimated_cost), 0)`,
@@ -266,10 +268,12 @@ keys.get("/keys/:id", async (c) => {
     const costs = calculateBreakdownCosts(breakdown as any);
     return {
       requests:         s?.turns           || 0,
+      hopCount:         s?.hops            || 0,
       tokens:           s?.tokens          || 0,
       promptTokens:     s?.promptTokens    || 0,
       billablePromptTokens: s?.billablePromptTokens || 0,
       cachedTokens:     s?.cachedTokens    || 0,
+      fullInputTokens:  s?.fullInputTokens || 0,
       completionTokens: s?.completionTokens|| 0,
       contextTokens:    s?.contextTokens   || 0,
       estimatedCost:    costs.totalCost,

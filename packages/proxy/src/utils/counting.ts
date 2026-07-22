@@ -149,6 +149,20 @@ export function turnTotalTokensSql(whereCondition: SQL | undefined, opts?: Token
   return sql<number>`COALESCE((SELECT SUM(peak * ${input} + sum_c * ${output}) FROM (SELECT MAX(COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) as peak, SUM(completion_tokens) as sum_c FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
 }
 
+/**
+ * Upstream-style full input: SUM(prompt+cache) every hop (amanai / provider In).
+ * Independent of token_input_mode — for admin comparison only.
+ */
+export function hopFullInputTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
+  const { input } = getTokenMultipliers(opts);
+  return sql<number>`COALESCE((SELECT SUM(COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) * ${input} FROM request_logs WHERE ${whereCondition!}), 0)`;
+}
+
+/** Raw API hop count (every upstream call), not turn/prompt count. */
+export function hopCountSql(whereCondition: SQL | undefined): SQL<number> {
+  return sql<number>`(SELECT COUNT(*) FROM request_logs WHERE ${whereCondition!})`;
+}
+
 /** WIB midnight as PostgreSQL datetime string (UTC storage). */
 export function wibTodayStartSql(): string {
   const now = new Date();

@@ -48,6 +48,26 @@ function fmtNum(n: number): string {
   return String(Math.round(n));
 }
 
+/** Full input = prompt + cache (compact for card subtext). */
+function fmtInputBreakdown(
+  billable: number | undefined | null,
+  cached: number | undefined | null,
+  fullInput?: number | undefined | null,
+): string {
+  const cache = Math.max(0, Number(cached) || 0);
+  const totalNum =
+    fullInput != null && Number.isFinite(Number(fullInput))
+      ? Math.max(0, Number(fullInput))
+      : Math.max(0, Number(billable) || 0) + cache;
+  const bill =
+    billable != null && Number.isFinite(Number(billable))
+      ? Math.max(0, Number(billable))
+      : Math.max(0, totalNum - cache);
+  const total = fmtNum(totalNum);
+  if (cache <= 0) return total;
+  return `${total} (${fmtNum(bill)} p + ${fmtNum(cache)} c)`;
+}
+
 function fmtLatency(ms: number): string {
   ms = Math.round(Number(ms) || 0);
   if (ms <= 0) return "—";
@@ -298,7 +318,7 @@ function buildTiles(stats: any): CardTile[] {
       icon: "🪙",
       label: "Token",
       value: fmtNum(totals.totalTokens || 0),
-      sub: fmtNum(totals.inputTokens || 0) + " in / " + fmtNum(totals.outputTokens || 0) + " out",
+      sub: fmtInputBreakdown(totals.billablePromptTokens, totals.cachedTokens, totals.inputTokens) + " in / " + fmtNum(totals.outputTokens || 0) + " out",
       size: "sm",
     },
     {

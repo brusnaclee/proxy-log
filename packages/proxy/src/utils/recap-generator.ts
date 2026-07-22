@@ -145,7 +145,10 @@ export function buildStatsSummary(stats: RecapStats, monthLabel: string): string
   const lines: string[] = [];
   lines.push(`Bulan: ${monthLabel}`);
   lines.push(`Total request: ${stats.totals.requests}`);
-  lines.push(`Input token: ${stats.totals.inputTokens}, Output token: ${stats.totals.outputTokens}, Total: ${stats.totals.totalTokens}`);
+  const cachePart = stats.totals.cachedTokens > 0
+    ? ` (${stats.totals.billablePromptTokens} prompt + ${stats.totals.cachedTokens} cache)`
+    : "";
+  lines.push(`Input token: ${stats.totals.inputTokens}${cachePart}, Output token: ${stats.totals.outputTokens}, Total: ${stats.totals.totalTokens}`);
   lines.push(`Rasio output/input: ${stats.totals.ioRatio.toFixed(2)} -> persona: ${persona.title} (${persona.hint})`);
   if (stats.population) {
     const p = stats.population;
@@ -192,6 +195,11 @@ export function templateNarrative(stats: RecapStats, monthLabel: string, assets:
   const req = stats.totals.requests;
   const tok = stats.totals.totalTokens;
   const inTok = stats.totals.inputTokens;
+  const billTok = stats.totals.billablePromptTokens ?? 0;
+  const cacheTok = stats.totals.cachedTokens ?? 0;
+  const inLabel = cacheTok > 0
+    ? `${fmtNum(inTok)} (${fmtNum(billTok)} prompt + ${fmtNum(cacheTok)} cache)`
+    : fmtNum(inTok);
   const outTok = stats.totals.outputTokens;
   const fav = stats.models.favorite ?? "-";
   const least = stats.models.leastUsed[0]?.model;
@@ -218,7 +226,7 @@ export function templateNarrative(stats: RecapStats, monthLabel: string, assets:
     stats: {
       headline: `${fmtNum(req)} request · ${fmtNum(tok)} token`,
       caption: ch([
-        `Input ${fmtNum(inTok)}, output ${fmtNum(outTok)}. ${inTok > outTok * 8 ? "Lo suapin konteks segunung." : "Lumayan imbang sih."}`,
+        `Input ${inLabel}, output ${fmtNum(outTok)}. ${inTok > outTok * 8 ? "Lo suapin konteks segunung." : "Lumayan imbang sih."}`,
         `${fmtNum(req)} request & ${fmtNum(tok)} token kebakar bulan ini.`,
       ]),
       assetId: pick("reactions"),
@@ -226,7 +234,7 @@ export function templateNarrative(stats: RecapStats, monthLabel: string, assets:
     tokens: {
       headline: `${fmtNum(tok)} token`,
       caption: ch([
-        `Input ${fmtNum(inTok)}, output ${fmtNum(outTok)}. ${inTok > outTok * 8 ? "Lo suapin konteks segunung." : "Lumayan imbang sih."}`,
+        `Input ${inLabel}, output ${fmtNum(outTok)}. ${inTok > outTok * 8 ? "Lo suapin konteks segunung." : "Lumayan imbang sih."}`,
         `${fmtNum(tok)} token kebakar. Dompet provider nangis.`,
       ]),
       assetId: pick("personas"),

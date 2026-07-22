@@ -17,22 +17,32 @@ export function formatInputBreakdown(
   fullInput?: number | undefined | null,
 ): { total: string; label: string; compact: string; totalNum: number } {
   const cache = Math.max(0, Number(cached) || 0);
-  const totalNum =
-    fullInput != null && Number.isFinite(Number(fullInput))
-      ? Math.max(0, Number(fullInput))
-      : Math.max(0, Number(billable) || 0) + cache;
-  const bill =
-    billable != null && Number.isFinite(Number(billable))
-      ? Math.max(0, Number(billable))
-      : Math.max(0, totalNum - cache);
+  const hasBillable = billable != null && Number.isFinite(Number(billable));
+  const hasFull = fullInput != null && Number.isFinite(Number(fullInput));
+  const billRaw = hasBillable ? Math.max(0, Number(billable)) : null;
+  const fullRaw = hasFull ? Math.max(0, Number(fullInput)) : null;
+
+  let bill: number;
+  let totalNum: number;
+  if (billRaw != null) {
+    bill = billRaw;
+    const sum = bill + cache;
+    // Ignore undersized fullInput (SSE raw: promptTokens=billable only)
+    totalNum = fullRaw != null && fullRaw >= sum ? fullRaw : sum;
+  } else if (fullRaw != null) {
+    bill = fullRaw;
+    totalNum = bill + cache;
+  } else {
+    bill = 0;
+    totalNum = cache;
+  }
+
   const total = formatNumber(totalNum);
   if (cache > 0) {
     return {
       totalNum,
       total,
-      // Cards / tooltips: "100K (10K prompt + 90K cache)"
       label: `${total} (${formatNumber(bill)} prompt + ${formatNumber(cache)} cache)`,
-      // Tables / Discord: "100K (10K p + 90K c)" — spaces so letters don't glue to numbers
       compact: `${total} (${formatNumber(bill)} p + ${formatNumber(cache)} c)`,
     };
   }
