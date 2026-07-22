@@ -241,11 +241,11 @@ export default function KeysPage() {
                           <th className="text-left py-2 px-4 text-muted-foreground font-medium text-xs hide-mobile">Prefix</th>
                           <th className="text-left py-2 px-4 text-muted-foreground font-medium text-xs">Source</th>
                           <th className="text-center py-2 px-4 text-muted-foreground font-medium text-xs">Status</th>
-                          <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs">Requests</th>
+                          <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs">Turns</th>
                           <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs hide-mobile">Tokens</th>
                           <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs hide-mobile">In left</th>
                           <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs hide-mobile">Out left</th>
-                          <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs hide-mobile">Prompt left</th>
+                          <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs hide-mobile">Prompts left</th>
                           <th className="text-center py-2 px-4 text-muted-foreground font-medium text-xs">Active</th>
                         </tr>
                       </thead>

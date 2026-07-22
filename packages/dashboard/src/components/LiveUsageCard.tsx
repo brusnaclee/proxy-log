@@ -90,6 +90,7 @@ export function LiveUsageCard({
     dailyResetAt,
     monthlyResetAt,
     promptResetAt,
+    apiCallResetAt,
     scope,
     accountKeyCount,
     modelUsageLimits,
@@ -107,16 +108,27 @@ export function LiveUsageCard({
 
   if (limits.promptLimit > 0) {
     bars.push({
-      label: `Prompt Limit (${limits.promptLimitWindow})`,
+      label: `Prompts (${limits.promptLimitWindow})`,
       value: usageToday.promptCount ?? 0,
       max: limits.promptLimit,
       remaining: remaining.prompt,
-      sublabel:
-        (usageToday.hopCount || 0) > (usageToday.requests || 0)
-          ? `prompts · ${formatNumber(usageToday.hopCount || 0)} hops in logs`
-          : "prompts",
+      sublabel: "1 per turn",
       source: sourceLabel(limits.promptLimitSource),
       reset: formatReset(promptResetAt),
+    });
+  }
+  if ((limits.apiCallLimit || 0) > 0) {
+    bars.push({
+      label: `API calls (${limits.apiCallLimitWindow || "5h"})`,
+      value: usageToday.apiCallCount ?? 0,
+      max: limits.apiCallLimit,
+      remaining: remaining.apiCalls ?? null,
+      sublabel:
+        (usageToday.hopCount || 0) > 0
+          ? `${formatNumber(usageToday.hopCount || 0)} hops today`
+          : "every upstream hop",
+      source: sourceLabel(limits.apiCallLimitSource),
+      reset: formatReset(apiCallResetAt),
     });
   }
   if (limits.dailyInputTokenLimit > 0) {
@@ -181,7 +193,10 @@ export function LiveUsageCard({
   if (compact) {
     const chips: string[] = [];
     if (remaining.prompt != null) {
-      chips.push(`Prompt ${formatNumber(remaining.prompt)} left (${limits.promptLimitWindow})`);
+      chips.push(`Prompts ${formatNumber(remaining.prompt)} left (${limits.promptLimitWindow})`);
+    }
+    if (remaining.apiCalls != null) {
+      chips.push(`API calls ${formatNumber(remaining.apiCalls)} left (${limits.apiCallLimitWindow || "5h"})`);
     }
     if (remaining.input != null) chips.push(`In ${formatNumber(remaining.input)} left`);
     if (remaining.output != null) chips.push(`Out ${formatNumber(remaining.output)} left`);

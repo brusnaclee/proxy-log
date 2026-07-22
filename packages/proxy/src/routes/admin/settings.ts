@@ -17,9 +17,9 @@ settings.get("/settings/global", async (c) => {
     globalMaxDevices: config.globalMaxDevices || 0,
     realtimeEnabled: config.realtimeEnabled || false,
     globalRateLimit: config.globalRateLimit || 0,
-    globalRateLimitWindow: config.globalRateLimitWindow || "1h",
+    globalRateLimitWindow: config.globalRateLimitWindow || "5h",
     globalPromptLimit: config.globalPromptLimit || 0,
-    globalPromptLimitWindow: config.globalPromptLimitWindow || "1d",
+    globalPromptLimitWindow: config.globalPromptLimitWindow || "5h",
     globalPerModelPromptLimit: config.globalPerModelPromptLimit || 0,
     globalPerModelPromptLimitWindow: config.globalPerModelPromptLimitWindow || "1d",
     globalDailyTokenLimit: config.globalDailyTokenLimit || 0,
@@ -47,9 +47,9 @@ settings.put("/settings/global", async (c) => {
   if (body.globalMaxDevices !== undefined) updates.globalMaxDevices = body.globalMaxDevices;
   if (body.realtimeEnabled !== undefined) updates.realtimeEnabled = body.realtimeEnabled;
   if (body.globalRateLimit !== undefined) updates.globalRateLimit = body.globalRateLimit;
-  if (body.globalRateLimitWindow !== undefined) updates.globalRateLimitWindow = body.globalRateLimitWindow || "1h";
+  if (body.globalRateLimitWindow !== undefined) updates.globalRateLimitWindow = body.globalRateLimitWindow || "5h";
   if (body.globalPromptLimit !== undefined) updates.globalPromptLimit = body.globalPromptLimit;
-  if (body.globalPromptLimitWindow !== undefined) updates.globalPromptLimitWindow = body.globalPromptLimitWindow || "1d";
+  if (body.globalPromptLimitWindow !== undefined) updates.globalPromptLimitWindow = body.globalPromptLimitWindow || "5h";
   if (body.globalPerModelPromptLimit !== undefined) updates.globalPerModelPromptLimit = body.globalPerModelPromptLimit;
   if (body.globalPerModelPromptLimitWindow !== undefined) updates.globalPerModelPromptLimitWindow = body.globalPerModelPromptLimitWindow || "1d";
   if (body.globalDailyTokenLimit !== undefined) updates.globalDailyTokenLimit = body.globalDailyTokenLimit;
@@ -268,12 +268,12 @@ settings.post("/settings/factory-reset", async (c) => {
       upstreamApiKey: "",
       globalMaxDevices: 0,
       realtimeEnabled: false,
-      globalRateLimit: 0,
-      globalRateLimitWindow: "30m",
+      globalRateLimit: 500,
+      globalRateLimitWindow: "5h",
       globalPromptLimit: 50,
-      globalPromptLimitWindow: "30m",
+      globalPromptLimitWindow: "5h",
       globalPerModelPromptLimit: 10,
-      globalPerModelPromptLimitWindow: "30m",
+      globalPerModelPromptLimitWindow: "5h",
       discordBotToken: "",
       agverifChannelId: "",
       tokitoChannelId: "",

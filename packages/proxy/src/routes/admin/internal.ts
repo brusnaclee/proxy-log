@@ -5,13 +5,13 @@ import { adminConfig, allowedDevices, allowedIdes, apiKeys, devices, requestLogs
 import { generateApiKey, getKeyPrefix, sha256 } from "../../utils/crypto.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
-import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindowResetMs } from "../../utils/rate-limit.js";
+import { checkPromptLimit, checkModelPromptLimit, checkApiCallLimit, parseRateLimitWindow, getWindowResetMs, getApiCallWindowResetMs } from "../../utils/rate-limit.js";
 import { isInternalRequest } from "../../middleware/session.js";
 import { configCache } from "../../utils/cache.js";
 import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, getTokenInputModeSync } from "../../utils/counting.js";
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
-import { resolveKeyDailyTokenLimit, resolveKeyPromptLimit } from "../../utils/trial-config.js";
+import { resolveKeyDailyTokenLimit, resolveKeyPromptLimit, resolveKeyApiCallLimit } from "../../utils/trial-config.js";
 import { listGpyCatalogModels } from "../../utils/trial-routing.js";
 
 const internal = new Hono();
@@ -766,6 +766,19 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     promptResetAt = resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null;
   }
 
+  const { limit: apiCallLimit, window: apiCallLimitWindow } = resolveKeyApiCallLimit(key, config);
+  let apiCallUsed = 0;
+  let apiCallResetMins = 0;
+  let apiCallResetAt: string | null = null;
+  if (apiCallLimit > 0) {
+    const acCheck = await checkApiCallLimit(key.id, apiCallLimit, apiCallLimitWindow);
+    apiCallUsed = acCheck.used;
+    const windowMs = parseRateLimitWindow(apiCallLimitWindow);
+    const resetMs = await getApiCallWindowResetMs(key.id, windowMs);
+    apiCallResetMins = Math.ceil(resetMs / 60000);
+    apiCallResetAt = resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null;
+  }
+
   const activeModelLimits = isTrialKey
     ? []
     : await db.select().from(modelLimits).where(eq(modelLimits.scope, 'global'));
@@ -885,6 +898,11 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     promptUsed: globalUsed,
     promptResetMins: globalResetMins,
     promptResetAt,
+    rateLimit: apiCallLimit,
+    rateLimitWindow: apiCallLimitWindow,
+    apiCallUsed,
+    apiCallResetMins,
+    apiCallResetAt,
     modelUsage,
     perModelPromptLimit: perModelLimitFallback,
     perModelPromptLimitWindow: perModelWindowFallback,

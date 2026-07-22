@@ -444,8 +444,8 @@ async function handleAdminCommand(message) {
 					'`!aghelp`\n' +
 					'`!agcheck` (Tokito Model Status)\n' +
 					'`!agstatus <@user|id>`\n' +
-					'`!agsetratelimit <@user|id> <limit> <window>`\n' +
-					'`!agsetpromptlimit <@user|id> <limit> <window>`\n' +
+					'`!agsetratelimit <@user|id> <limit> <window>` — API call (hop) limit\n' +
+					'`!agsetpromptlimit <@user|id> <limit> <window>` — prompt (1/turn) limit\n' +
 					'`!agsetmodellimit <@user|id> <model> <limit>`\n' +
 					'`!agrefresh <@user|id>`\n' +
 					'`!agreset <@user|id>`\n' +
@@ -521,7 +521,7 @@ async function handleAdminCommand(message) {
 		if (cmd === '!agsetratelimit') {
 			if (!a2 || !parts[3]) {
 				await message.reply(
-					'Gunakan format: !agsetratelimit <user> <limit> <window> (contoh: !agsetratelimit @user 100 1h)',
+					'Gunakan format: !agsetratelimit <user> <limit> <window> (contoh: !agsetratelimit @user 500 5h) — batas panggilan API (hop)',
 				);
 				return true;
 			}
@@ -545,11 +545,11 @@ async function handleAdminCommand(message) {
 
 			if (res.success) {
 				await message.reply(
-					`Rate limit untuk user diubah menjadi **${limit}** request per **${windowStr}**.`,
+					`API call limit untuk user diubah menjadi **${limit}** panggilan API per **${windowStr}**.`,
 				);
 			} else {
 				await message.reply(
-					'Gagal mengubah rate limit: ' + (res.error || 'Unknown error'),
+					'Gagal mengubah API call limit: ' + (res.error || 'Unknown error'),
 				);
 			}
 			return true;
@@ -558,7 +558,7 @@ async function handleAdminCommand(message) {
 		if (cmd === '!agsetpromptlimit') {
 			if (!a2 || !parts[3]) {
 				await message.reply(
-					'Gunakan format: !agsetpromptlimit <user> <limit> <window> (contoh: !agsetpromptlimit @user 50 1d)',
+					'Gunakan format: !agsetpromptlimit <user> <limit> <window> (contoh: !agsetpromptlimit @user 50 5h) — 1 prompt per turn',
 				);
 				return true;
 			}
@@ -664,8 +664,13 @@ async function handleAdminCommand(message) {
 
 			const globalLimitStr =
 				data.promptLimit > 0
-					? `${data.promptUsed} / ${data.promptLimit} req (${data.promptLimitWindow})` +
+					? `${data.promptUsed} / ${data.promptLimit} prompts (${data.promptLimitWindow})` +
 						formatResetTime(data.promptResetAt)
+					: 'Unlimited';
+			const apiCallLimitStr =
+				data.rateLimit > 0
+					? `${data.apiCallUsed || 0} / ${data.rateLimit} API calls (${data.rateLimitWindow})` +
+						formatResetTime(data.apiCallResetAt)
 					: 'Unlimited';
 
 			let modelLimitStr = '';
@@ -694,10 +699,11 @@ async function handleAdminCommand(message) {
 				`**Status ${data.discordUsername || data.discordUserId}**\n` +
 					`Key: ${data.keyPrefix}...\n` +
 					`Active: ${data.isActive ? 'Yes 🟢' : 'No 🔴'}\n` +
-					`Usage Today: ${data.today?.requests || 0} reqs / ${formatTokens(data.today?.tokens || 0)} tokens\n` +
+					`Usage Today: ${data.today?.requests || 0} turns / ${formatTokens(data.today?.tokens || 0)} tokens\n` +
 					`Prompt Limit: ${globalLimitStr}\n` +
+					`API Call Limit: ${apiCallLimitStr}\n` +
 					(modelLimitStr ? `Model Limits:\n${modelLimitStr}\n` : '') +
-					`ℹ️ *Tool follow-ups (tool calls, sub-agent) hanya dihitung 1x prompt per turn. Jika hitungan prompt terasa tidak sesuai, hubungi admin untuk koreksi.*\n` +
+					`ℹ️ *Tool follow-ups dihitung 1 prompt per turn; setiap hop menghitung 1 API call.*\n` +
 					`Daily Token Limits:\n` +
 					`  • Total: ${data.dailyTokenLimit > 0 ? `${formatTokens(data.dailyTokensUsed)} / ${formatTokens(data.dailyTokenLimit)}` : `${formatTokens(data.dailyTokensUsed)} / ∞`}${formatResetTime(data.dailyResetAt)}\n` +
 					`  • Input: ${data.dailyInputTokenLimit > 0 ? `${formatTokens(data.dailyInputUsed)} / ${formatTokens(data.dailyInputTokenLimit)}` : `${formatTokens(data.dailyInputUsed)} / ∞`}\n` +
@@ -4194,10 +4200,10 @@ async function buildSearchEmbed() {
 		'Setelah itu, gunakan **Cari Usage User Lain** jika ingin cek user lain.',
 		`Untuk detail lebih lengkap (charts, keys, activity, models), buka **Dashboard**: ${PORTAL_DASHBOARD_URL}`,
 		'',
-		'**Global Prompt Limits:**',
-		`- Prompt Limit: ${fmt(limits.globalPromptLimit, 'req')} (${limits.globalPromptLimitWindow || '1d'})`,
-		`- Rate Limit: ${fmt(limits.globalRateLimit, 'req')} (${limits.globalRateLimitWindow || '1h'})`,
-		`- Per-Model Default: ${limits.globalPerModelPromptLimit > 0 ? `${limits.globalPerModelPromptLimit} req (${limits.globalPerModelPromptLimitWindow || '1d'})` : 'Unlimited'}`,
+		'**Global Quotas:**',
+		`- Prompts: ${fmt(limits.globalPromptLimit, 'prompts')} (${limits.globalPromptLimitWindow || '5h'}) — 1 per turn`,
+		`- API calls: ${fmt(limits.globalRateLimit, 'calls')} (${limits.globalRateLimitWindow || '5h'}) — every hop`,
+		`- Per-Model Default: ${limits.globalPerModelPromptLimit > 0 ? `${limits.globalPerModelPromptLimit} prompts (${limits.globalPerModelPromptLimitWindow || '5h'})` : 'Unlimited'}`,
 		'',
 		'**Token Limits:**',
 		`- Input Harian: ${fmtTok(limits.globalDailyInputTokenLimit)}`,
@@ -4319,7 +4325,7 @@ async function buildTrialLimitsEmbed() {
 	const desc = [
 		'**🎁 Trial Limits** _(provider gpy saja)_',
 		'',
-		`• **Prompt:** ${cfg.trialPromptLimit ?? 50} req / ${cfg.trialPromptLimitWindow || '5h'}`,
+		`• **Prompt:** ${cfg.trialPromptLimit ?? 50} prompts / ${cfg.trialPromptLimitWindow || '5h'}`,
 		`• **Token harian:** ${(cfg.trialDailyTokenLimit ?? 0).toLocaleString()}`,
 		`• **Durasi default:** ${cfg.trialDefaultDurationDays ?? 30} hari`,
 		`• **Max klaim/akun:** ${cfg.trialMaxPerAccount ?? 1}`,
@@ -5805,9 +5811,15 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 
 	const globalLimitStr =
 		promptLimit > 0
-			? `**${promptUsed} / ${promptLimit}** req (${promptLimitWindow})` +
+			? `**${promptUsed} / ${promptLimit}** prompts (${promptLimitWindow})` +
 				(promptUsed >= promptLimit ? ' 🔴' : '') +
 				formatResetTime(data.promptResetAt)
+			: '**Unlimited**';
+	const apiCallLimitStr =
+		(data.rateLimit || 0) > 0
+			? `**${data.apiCallUsed || 0} / ${data.rateLimit}** API calls (${data.rateLimitWindow || '5h'})` +
+				((data.apiCallUsed || 0) >= data.rateLimit ? ' 🔴' : '') +
+				formatResetTime(data.apiCallResetAt)
 			: '**Unlimited**';
 
 	let modelLimitStr = '';
@@ -5825,13 +5837,13 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 		} else {
 			modelLimitStr =
 				perModelPromptLimit > 0
-					? `Default: **${perModelPromptLimit}** req (${perModelPromptLimitWindow})`
+					? `Default: **${perModelPromptLimit}** prompts (${perModelPromptLimitWindow})`
 					: '**Unlimited**';
 		}
 	} else {
 		modelLimitStr =
 			perModelPromptLimit > 0
-				? `Default: **${perModelPromptLimit}** req (${perModelPromptLimitWindow})`
+				? `Default: **${perModelPromptLimit}** prompts (${perModelPromptLimitWindow})`
 				: '**Unlimited**';
 	}
 
@@ -5882,7 +5894,7 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 			p.promptTokens,
 		);
 		const lines = [
-			`📨 Requests: **${p.requests.toLocaleString()}**`,
+			`📨 Turns: **${p.requests.toLocaleString()}**`,
 			`🔢 Total Tokens: **${formatTokens(p.tokens)}**`,
 			`📥 Input: **${input.label}**`,
 			`📤 Output: **${formatTokens(p.completionTokens)}**`,
@@ -5901,11 +5913,11 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 
 	const trialUser = isTrial || trial?.isTrial;
 	const limitSection = trialUser
-		? `**🎁 Trial Limits**\nPrompt: ${globalLimitStr}\nPer-Model (gpy):\n${modelLimitStr}\n` +
-			`-# ℹ️ Tool follow-ups hanya dihitung 1x prompt per turn.\n\n` +
+		? `**🎁 Trial Limits**\nPrompt: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\nPer-Model (gpy):\n${modelLimitStr}\n` +
+			`-# ℹ️ 1 prompt per turn; setiap hop = 1 API call.\n\n` +
 			`**🔢 Token Limits (Trial)**\nTotal Harian: ${dailyTokenStr}`
-		: `**🎯 Prompt Limits**\nGlobal: ${globalLimitStr}\nPer-Model:\n${modelLimitStr}\n` +
-			`-# ℹ️ Tool follow-ups hanya dihitung 1x prompt per turn.\n\n` +
+		: `**🎯 Quotas**\nPrompts: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\nPer-Model:\n${modelLimitStr}\n` +
+			`-# ℹ️ 1 prompt per turn; setiap hop = 1 API call.\n\n` +
 			`**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}\nBulanan: ${monthlyTokenStr}`;
 
 	const tokenSaverHint =

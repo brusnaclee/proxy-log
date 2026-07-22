@@ -1,7 +1,6 @@
 import { db } from "../db/index.js";
 import { requestLogs, modelLimits, apiKeys } from "../db/schema.js";
 import { sql, and, eq, gte, inArray, type SQL } from "drizzle-orm";
-import { COUNTED_LOG_SQL } from "./counting.js";
 import { stripProviderPrefix } from "./model-catalog.js";
 
 function normalizeKeyIds(apiKeyId: number | number[]): number[] {
@@ -163,9 +162,7 @@ export async function findActiveOverrideInTx(
 }
 
 /**
- * Count user prompts for an API key (or all keys in a Discord account) within a time window.
- * Uses a fixed window that starts on the first request and lasts for `windowStr`.
- * When multiple key IDs are passed, usage is summed across them (shared account quota).
+ * Count prompts as distinct turns (1 turn = 1 prompt) within a fixed window.
  * Window start is read from the first key ID (pass primary/window owner first).
  */
 export async function checkPromptLimit(
@@ -191,27 +188,84 @@ export async function checkPromptLimit(
 
   // If window has expired or doesn't exist, this request will start a new window
   if (!windowStartMs || nowMs >= windowStartMs + windowMs) {
-    // We don't write the new window start here to avoid extra DB writes on every check.
-    // The actual update will happen when the request is successfully completed and logged.
-    // For the check itself, we consider it a fresh window with 0 used.
     return { allowed: true, remaining: promptLimit, resetMs: windowMs, used: 0 };
   }
 
-  // Window is active, calculate how many requests have been made since windowStart
   const windowStartDate = new Date(windowStartMs);
+
+  // 1 turn_id = 1 prompt (tool hops in the same turn do not add extra)
+  const usage = await db.select({
+    count: sql<number>`COUNT(DISTINCT ${requestLogs.turnId})`,
+  })
+    .from(requestLogs)
+    .where(and(
+      keyIdMatch(apiKeyIds),
+      gte(requestLogs.createdAt, windowStartDate),
+      sql`status_code BETWEEN 200 AND 299`,
+      sql`turn_id IS NOT NULL`,
+    ));
+
+  const used = Number(usage[0]?.count) || 0;
+  const resetMs = Math.max(0, windowStartMs + windowMs - nowMs);
   
+  return { allowed: used < promptLimit, remaining: Math.max(0, promptLimit - used), resetMs, used };
+}
+
+/**
+ * Count API calls (every successful upstream hop) within a fixed window.
+ * Uses rate_window_start on the window-owner key (first id).
+ */
+export async function checkApiCallLimit(
+  apiKeyId: number | number[],
+  apiCallLimit: number,
+  windowStr: string,
+): Promise<{ allowed: boolean; remaining: number; resetMs: number; used: number }> {
+  if (apiCallLimit <= 0) return { allowed: true, remaining: -1, resetMs: 0, used: 0 };
+  const windowMs = parseRateLimitWindow(windowStr);
+  if (windowMs <= 0) return { allowed: true, remaining: -1, resetMs: 0, used: 0 };
+
+  const apiKeyIds = normalizeKeyIds(apiKeyId);
+  const windowKeyId = apiKeyIds[0];
+
+  const keyRecord = (await db.select({ rateWindowStart: apiKeys.rateWindowStart }).from(apiKeys).where(eq(apiKeys.id, windowKeyId)))[0];
+
+  let windowStartMs = 0;
+  if (keyRecord?.rateWindowStart) {
+    windowStartMs = Date.parse(String(keyRecord.rateWindowStart).replace(" ", "T") + "Z");
+  }
+
+  const nowMs = Date.now();
+  if (!windowStartMs || nowMs >= windowStartMs + windowMs) {
+    return { allowed: true, remaining: apiCallLimit, resetMs: windowMs, used: 0 };
+  }
+
+  const windowStartDate = new Date(windowStartMs);
   const usage = await db.select({ count: sql<number>`count(*)` })
     .from(requestLogs)
     .where(and(
       keyIdMatch(apiKeyIds),
       gte(requestLogs.createdAt, windowStartDate),
-      COUNTED_LOG_SQL,
+      sql`status_code BETWEEN 200 AND 299`,
     ));
 
-  const used = (usage[0])?.count || 0;
+  const used = Number(usage[0]?.count) || 0;
   const resetMs = Math.max(0, windowStartMs + windowMs - nowMs);
-  
-  return { allowed: used < promptLimit, remaining: Math.max(0, promptLimit - used), resetMs, used };
+  return { allowed: used < apiCallLimit, remaining: Math.max(0, apiCallLimit - used), resetMs, used };
+}
+
+export async function getApiCallWindowResetMs(apiKeyId: number | number[], windowMs: number): Promise<number> {
+  if (windowMs <= 0) return 0;
+  const apiKeyIds = normalizeKeyIds(apiKeyId);
+  const windowKeyId = apiKeyIds[0];
+  const keyRecord = (await db.select({ rateWindowStart: apiKeys.rateWindowStart }).from(apiKeys).where(eq(apiKeys.id, windowKeyId)))[0];
+  const nowMs = Date.now();
+  if (keyRecord?.rateWindowStart) {
+    const windowStartMs = Date.parse(String(keyRecord.rateWindowStart).replace(" ", "T") + "Z");
+    if (nowMs < windowStartMs + windowMs) {
+      return Math.max(0, windowStartMs + windowMs - nowMs);
+    }
+  }
+  return windowMs;
 }
 
 /**
@@ -271,16 +325,19 @@ export async function checkModelPromptLimit(
 
   const windowStartDate = new Date(windowStartMs);
 
-  const usage = await db.select({ count: sql<number>`count(*)` })
+  const usage = await db.select({
+    count: sql<number>`COUNT(DISTINCT ${requestLogs.turnId})`,
+  })
     .from(requestLogs)
     .where(and(
       keyIdMatch(apiKeyIds),
       getModelMatchCondition(normalizedModel),
       gte(requestLogs.createdAt, windowStartDate),
-      COUNTED_LOG_SQL,
+      sql`status_code BETWEEN 200 AND 299`,
+      sql`turn_id IS NOT NULL`,
     ));
 
-  const used = (usage[0])?.count || 0;
+  const used = Number(usage[0]?.count) || 0;
   const resetMs = Math.max(0, windowStartMs + windowMs - nowMs);
   
   return {

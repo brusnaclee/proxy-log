@@ -50,16 +50,21 @@ In `per_turn_peak`, **p** and **c** are taken from the **peak hop** of each turn
 
 Spaces are required between the number and `p`/`c` so Discord does not render `606.2Kp`.
 
-## Prompt limit vs input tokens (do not confuse)
+## Prompt limit vs API calls vs input tokens (do not confuse)
 
-| Metric | Field / rule | Window |
-|--------|----------------|--------|
-| **Prompt count** | `is_counted_request = true` (new user prompt detection) | `prompt_limit` + window (e.g. 5h) |
-| **Turns / Requests (stats)** | `COUNT(DISTINCT turn_id)` | Today / week / … |
-| **Hops (Logs table)** | Every upstream API row | Same period |
-| **Input tokens (credit)** | Mode-aware sum above (default: peak) | Daily input limit (WIB day) |
-| **Full input (amanai)** | `SUM(prompt+cache)` every hop | Informational on Key Detail |
-| **Output tokens** | `SUM(completion)` per turn | Daily output limit |
+| Metric | Meaning | Storage / count | Window |
+|--------|---------|-----------------|--------|
+| **Prompts** | 1 per user turn (`turn_id`) | `prompt_limit`; gate on new turn only; display `COUNT(DISTINCT turn_id)` in window | e.g. 50 / 5h |
+| **API calls** | Every successful upstream hop | `rate_limit` / `global_rate_limit`; count all 2xx rows | e.g. 500 / 5h |
+| **Turns** (stats field `requests`) | Distinct turns in a period | `COUNT(DISTINCT turn_id)` | Today / week / … |
+| **Hops** (Logs table) | Every upstream API row | One `request_logs` row per hop | Same period |
+| **Input tokens (credit)** | Mode-aware sum (default: peak) | See modes above | Daily input limit (WIB day) |
+| **Full input (amanai)** | `SUM(prompt+cache)` every hop | Informational on Key Detail | — |
+| **Output tokens** | `SUM(completion)` | Per turn aggregation | Daily output limit |
+
+Defaults (global): **50 prompts / 5h** and **500 API calls / 5h**.
+
+Tool follow-ups do **not** burn prompt quota (same `turn_id`) but **do** burn API-call quota and tokens.
 
 ### Real example (ZCode agent, imam77, one WIB day)
 

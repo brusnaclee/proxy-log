@@ -78,6 +78,7 @@ export interface MeResponse {
     cachedTokens?: number;
     completionTokens: number;
     promptCount?: number;
+    apiCallCount?: number;
     totalTokens?: number;
   };
   usageMonth?: {
@@ -85,6 +86,8 @@ export interface MeResponse {
   };
   promptResetAt?: string | null;
   promptResetMins?: number;
+  apiCallResetAt?: string | null;
+  apiCallResetMins?: number;
   dailyResetAt?: string | null;
   monthlyResetAt?: string | null;
   modelUsageLimits?: Array<{

@@ -158,6 +158,8 @@ type KeyLimitFields = {
   isTrial: boolean;
   promptLimit?: number | null;
   promptLimitWindow?: string | null;
+  rateLimit?: number | null;
+  rateLimitWindow?: string | null;
   dailyTokenLimit?: number | null;
 };
 
@@ -173,7 +175,7 @@ export function resolveKeyPromptLimit(
       window:
         key.promptLimitWindow ||
         (key.isTrial ? config?.trialPromptLimitWindow : config?.globalPromptLimitWindow) ||
-        (key.isTrial ? "5h" : "30m"),
+        (key.isTrial ? "5h" : "5h"),
     };
   }
   if (key.isTrial) {
@@ -184,7 +186,28 @@ export function resolveKeyPromptLimit(
   }
   return {
     limit: config?.globalPromptLimit || 0,
-    window: config?.globalPromptLimitWindow || "30m",
+    window: config?.globalPromptLimitWindow || "5h",
+  };
+}
+
+/**
+ * Resolve API-call (hop) limit/window.
+ * Key override → global; trial uses global hop limit when set (same shared infra).
+ */
+export function resolveKeyApiCallLimit(
+  key: KeyLimitFields,
+  config: AdminConfig | null | undefined,
+): { limit: number; window: string } {
+  const keyLimit = key.rateLimit || 0;
+  if (keyLimit > 0) {
+    return {
+      limit: keyLimit,
+      window: key.rateLimitWindow || config?.globalRateLimitWindow || "5h",
+    };
+  }
+  return {
+    limit: config?.globalRateLimit || 0,
+    window: config?.globalRateLimitWindow || "5h",
   };
 }
 

@@ -94,10 +94,12 @@ import {
 	markProviderModelsOffline,
 } from '../utils/model-monitor-store.js';
 import {
+	checkApiCallLimit,
 	checkModelPromptLimit,
 	checkPromptLimit,
 	findActiveOverride,
 	findActiveOverrideInTx,
+	getApiCallWindowResetMs,
 	getModelMatchCondition,
 	getWindowResetMs,
 	parseRateLimitWindow,
@@ -132,7 +134,7 @@ import {
 	buildTrialModelsToTry,
 	isRetryableUpstreamStatus,
 } from '../utils/trial-routing.js';
-import { isGpyProviderOrModel, resolveKeyDailyTokenLimit, resolveKeyPromptLimit } from '../utils/trial-config.js';
+import { isGpyProviderOrModel, resolveKeyApiCallLimit, resolveKeyDailyTokenLimit, resolveKeyPromptLimit } from '../utils/trial-config.js';
 import { queueTrialNotification } from '../utils/trial-notify.js';
 import {
 	sseTextToOpenAICompletion,
@@ -2069,40 +2071,39 @@ proxy.all('/*', async (c) => {
 	const messageAnalysis = analyzeRequestMessages(requestBody);
 	const fullLastUserTurnText = getLastTurnTextForTokenEstimate(requestBody);
 
-	// ─── 9-pre-auto. Global Prompt Limit Check (all models, both auto & non-auto) ─
-	// This runs BEFORE the auto-model handler so auto requests are also rate-limited.
+	// ─── 9-pre. API call (hop) limit — every upstream hop ─────────────────────
 	{
-		const { limit: effectivePromptLimit, window: effectivePromptLimitWindow } =
-			resolveKeyPromptLimit(keyRecord, config);
-
-		if (effectivePromptLimit > 0) {
-			const plCheck = await checkPromptLimit(
+		const { limit: apiCallLimit, window: apiCallWindow } = resolveKeyApiCallLimit(
+			keyRecord,
+			config,
+		);
+		if (apiCallLimit > 0) {
+			const acCheck = await checkApiCallLimit(
 				accountKeyIds,
-				effectivePromptLimit,
-				effectivePromptLimitWindow,
+				apiCallLimit,
+				apiCallWindow,
 			);
-			if (!plCheck.allowed) {
-				const windowMs = parseRateLimitWindow(effectivePromptLimitWindow);
-				const resetMs = await getWindowResetMs(accountKeyIds, windowMs);
+			if (!acCheck.allowed) {
+				const windowMs = parseRateLimitWindow(apiCallWindow);
+				const resetMs = await getApiCallWindowResetMs(accountKeyIds, windowMs);
 				const resetMins = Math.ceil(resetMs / 60000);
-				const isKeyOverride = (keyRecord.promptLimit || 0) > 0;
-				const trialTag = keyRecord.isTrial ? ' (trial)' : '';
-				const limitMsg = `All model limit reached${isKeyOverride ? ' (key override)' : ''}${trialTag}: ${plCheck.used}/${effectivePromptLimit} prompts used in this ${effectivePromptLimitWindow} window. Resets in ~${resetMins} minute(s).`;
+				const isKeyOverride = (keyRecord.rateLimit || 0) > 0;
+				const limitMsg = `API call limit reached${isKeyOverride ? ' (key override)' : ''}: ${acCheck.used}/${apiCallLimit} API calls in this ${apiCallWindow} window. Resets in ~${resetMins} minute(s).`;
 				await notifyTrialLimitIfNeeded(keyRecord, limitMsg);
 				return c.json(
 					{
 						error: {
 							message: limitMsg,
 							type: 'rate_limit_error',
-							code: 'prompt_limit_exceeded',
+							code: 'api_call_limit_exceeded',
 						},
 					},
 					429,
 					{
-						'x-prompt-limit': String(effectivePromptLimit),
-						'x-prompt-remaining': '0',
-						'x-prompt-used': String(plCheck.used),
-						'x-prompt-reset-mins': String(resetMins),
+						'x-api-call-limit': String(apiCallLimit),
+						'x-api-call-remaining': '0',
+						'x-api-call-used': String(acCheck.used),
+						'x-api-call-reset-mins': String(resetMins),
 					},
 				);
 			}
@@ -2111,6 +2112,7 @@ proxy.all('/*', async (c) => {
 
 	// ─── 8-auto. Auto Model Handler ────────────────────────────────────────────────
 	// Virtual "auto" model: try online models in order of lowest latency until one works.
+	// Prompt limit for auto is enforced after session resolve (1 turn = 1 prompt).
 	if (model === 'auto') {
 		let onlineModels = await getOnlineModelsByLatency();
 		onlineModels = onlineModels.filter((m) => isAutoCompatible(m.modelId));
@@ -2169,6 +2171,8 @@ proxy.all('/*', async (c) => {
 		// Assign turn_id for auto-model requests (same logic as regular proxy path)
 		const autoTurnKey = `${autoSessionInfo.sessionId}:${keyRecord.id}`;
 		let autoTurnId: string;
+		const autoWillStartNewTurn =
+			autoIsNewPrompt || !turnIdCache.get(autoTurnKey);
 		if (autoIsNewPrompt) {
 			autoTurnId = `turn_${generateSessionId().slice(0, 16)}`;
 			turnIdCache.set(autoTurnKey, autoTurnId);
@@ -2177,6 +2181,44 @@ proxy.all('/*', async (c) => {
 				turnIdCache.get(autoTurnKey) ||
 				`turn_${generateSessionId().slice(0, 16)}`;
 			turnIdCache.set(autoTurnKey, autoTurnId);
+		}
+
+		// Prompt quota: only when starting a new turn (1 turn = 1 prompt)
+		if (autoWillStartNewTurn) {
+			const { limit: effectivePromptLimit, window: effectivePromptLimitWindow } =
+				resolveKeyPromptLimit(keyRecord, config);
+			if (effectivePromptLimit > 0) {
+				const plCheck = await checkPromptLimit(
+					accountKeyIds,
+					effectivePromptLimit,
+					effectivePromptLimitWindow,
+				);
+				if (!plCheck.allowed) {
+					const windowMs = parseRateLimitWindow(effectivePromptLimitWindow);
+					const resetMs = await getWindowResetMs(accountKeyIds, windowMs);
+					const resetMins = Math.ceil(resetMs / 60000);
+					const isKeyOverride = (keyRecord.promptLimit || 0) > 0;
+					const trialTag = keyRecord.isTrial ? ' (trial)' : '';
+					const limitMsg = `Prompt limit reached${isKeyOverride ? ' (key override)' : ''}${trialTag}: ${plCheck.used}/${effectivePromptLimit} prompts (turns) in this ${effectivePromptLimitWindow} window. Resets in ~${resetMins} minute(s).`;
+					await notifyTrialLimitIfNeeded(keyRecord, limitMsg);
+					return c.json(
+						{
+							error: {
+								message: limitMsg,
+								type: 'rate_limit_error',
+								code: 'prompt_limit_exceeded',
+							},
+						},
+						429,
+						{
+							'x-prompt-limit': String(effectivePromptLimit),
+							'x-prompt-remaining': '0',
+							'x-prompt-used': String(plCheck.used),
+							'x-prompt-reset-mins': String(resetMins),
+						},
+					);
+				}
+			}
 		}
 
 		const wantedStream = requestBody?.stream === true;
@@ -3173,13 +3215,16 @@ proxy.all('/*', async (c) => {
 		}
 	}
 
-	// Global / Per-Key Prompt Limit (all models combined) ΓÇö checked for EVERY request
-	// so retries cannot bypass the limit when isNewPrompt=false.
+	// Global / Per-Key Prompt Limit — only when starting a NEW turn (1 turn = 1 prompt).
+	// Tool follow-ups on an existing turn do not burn prompt quota and are not blocked
+	// solely for being over the prompt cap (API-call hop quota still applies).
 	{
+		const turnKeyForLimit = `${sessionInfo.sessionId}:${keyRecord.id}`;
+		const willStartNewTurn = isNewPrompt || !turnIdCache.get(turnKeyForLimit);
 		const { limit: effectivePromptLimit, window: effectivePromptLimitWindow } =
 			resolveKeyPromptLimit(keyRecord, config);
 
-		if (effectivePromptLimit > 0) {
+		if (willStartNewTurn && effectivePromptLimit > 0) {
 			const plCheck = await checkPromptLimit(
 				accountKeyIds,
 				effectivePromptLimit,
@@ -3191,7 +3236,7 @@ proxy.all('/*', async (c) => {
 				const resetMins = Math.ceil(resetMs / 60000);
 				const isKeyOverride = (keyRecord.promptLimit || 0) > 0;
 				const trialTag = keyRecord.isTrial ? ' (trial)' : '';
-				const limitMsg = `All model limit reached${isKeyOverride ? ' (key override)' : ''}${trialTag}: ${plCheck.used}/${effectivePromptLimit} prompts used in this ${effectivePromptLimitWindow} window. Resets in ~${resetMins} minute(s).`;
+				const limitMsg = `Prompt limit reached${isKeyOverride ? ' (key override)' : ''}${trialTag}: ${plCheck.used}/${effectivePromptLimit} prompts (turns) in this ${effectivePromptLimitWindow} window. Resets in ~${resetMins} minute(s).`;
 				await notifyTrialLimitIfNeeded(keyRecord, limitMsg);
 				return c.json(
 					{
@@ -3677,11 +3722,11 @@ proxy.all('/*', async (c) => {
 			}
 
 			if (counted) {
-				// Global limit tracking
+				// Prompt window tracking (distinct-turn quota)
 				const globalWindowStr =
 					keyRecord.promptLimitWindow ||
 					config.globalPromptLimitWindow ||
-					'30m';
+					'5h';
 				const globalWindowMs = parseRateLimitWindow(globalWindowStr);
 				let globalWindowStartMs = 0;
 				if (keyRecord.promptWindowStart) {
@@ -3704,6 +3749,7 @@ proxy.all('/*', async (c) => {
 						.update(apiKeys)
 						.set({ promptWindowStart: nowStr })
 						.where(inArray(apiKeys.id, accountKeyIds));
+					keyRecord.promptWindowStart = nowStr;
 				}
 
 				// Model limit tracking — use pattern-aware helper inside the tx.
@@ -3714,7 +3760,7 @@ proxy.all('/*', async (c) => {
 					const modelWindowStr =
 						keyRecord.perModelPromptLimitWindow ||
 						config.globalPerModelPromptLimitWindow ||
-						'30m';
+						'5h';
 					const modelWindowMs = parseRateLimitWindow(modelWindowStr);
 					let modelWindowStartMs = 0;
 					if (activeOverride.promptWindowStart) {
@@ -3731,6 +3777,30 @@ proxy.all('/*', async (c) => {
 							.set({ promptWindowStart: nowStr })
 							.where(eq(modelLimits.id, activeOverride.id));
 					}
+				}
+			}
+
+			// API-call (hop) window — update on every successful billable hop
+			if (isBillableToken) {
+				const { window: apiCallWindow } = resolveKeyApiCallLimit(keyRecord, config);
+				const apiWindowMs = parseRateLimitWindow(apiCallWindow || '5h');
+				let apiWindowStartMs = 0;
+				if (keyRecord.rateWindowStart) {
+					apiWindowStartMs = Date.parse(
+						String(keyRecord.rateWindowStart).replace(' ', 'T') + 'Z',
+					);
+				}
+				const nowMs = Date.now();
+				const nowStr = new Date()
+					.toISOString()
+					.replace('T', ' ')
+					.substring(0, 19);
+				if (!apiWindowStartMs || nowMs >= apiWindowStartMs + apiWindowMs) {
+					await tx
+						.update(apiKeys)
+						.set({ rateWindowStart: nowStr })
+						.where(inArray(apiKeys.id, accountKeyIds));
+					keyRecord.rateWindowStart = nowStr;
 				}
 			}
 

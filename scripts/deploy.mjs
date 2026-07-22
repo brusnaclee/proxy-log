@@ -109,6 +109,12 @@ async function main() {
   );
   console.log(modeUpdate.stdout || modeUpdate.stderr || '');
 
+  // Dual quotas: 50 prompts/5h + 500 API calls/5h; rate_window_start column
+  const quotaUpdate = await ssh.execCommand(
+    "sudo -u postgres psql -d monit_api -c \"ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS rate_window_start text; UPDATE admin_config SET global_prompt_limit=50, global_prompt_limit_window='5h', global_rate_limit=500, global_rate_limit_window='5h' WHERE id=1;\" 2>&1"
+  );
+  console.log(quotaUpdate.stdout || quotaUpdate.stderr || '');
+
   // 6. Update DB admin_config agverif_channel_id (for bot dashboard settings)
   console.log('\n--- Updating DB admin_config ---');
   const dbUpdate = await ssh.execCommand(

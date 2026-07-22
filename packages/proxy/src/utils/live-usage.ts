@@ -19,12 +19,14 @@ import {
 	wibMonthStartSql,
 	sanitizeRows,
 } from './counting.js';
-import { resolveKeyDailyTokenLimit, resolveKeyPromptLimit } from './trial-config.js';
+import { resolveKeyApiCallLimit, resolveKeyDailyTokenLimit, resolveKeyPromptLimit } from './trial-config.js';
 import {
+	checkApiCallLimit,
 	checkPromptLimit,
 	checkModelPromptLimit,
 	parseRateLimitWindow,
 	getWindowResetMs,
+	getApiCallWindowResetMs,
 } from './rate-limit.js';
 
 export type LimitSource = 'override' | 'global' | 'none';
@@ -54,8 +56,10 @@ export interface LiveUsagePayload {
 		fullInputTokens: number;
 		completionTokens: number;
 		totalTokens: number;
-		/** Rolling prompt-window usage (not all-day request count). */
+		/** Rolling prompt-window usage: distinct turns in prompt window. */
 		promptCount: number;
+		/** Rolling API-call window usage: every 2xx hop. */
+		apiCallCount: number;
 	};
 	usageMonth: {
 		totalTokens: number;
@@ -72,6 +76,9 @@ export interface LiveUsagePayload {
 		promptLimit: number;
 		promptLimitWindow: string;
 		promptLimitSource: LimitSource;
+		apiCallLimit: number;
+		apiCallLimitWindow: string;
+		apiCallLimitSource: LimitSource;
 		perModelPromptLimit: number;
 		perModelPromptLimitWindow: string;
 		perModelPromptLimitSource: LimitSource;
@@ -82,11 +89,14 @@ export interface LiveUsagePayload {
 		daily: number | null;
 		monthly: number | null;
 		prompt: number | null;
+		apiCalls: number | null;
 	};
 	dailyResetAt: string;
 	monthlyResetAt: string;
 	promptResetAt: string | null;
 	promptResetMins: number;
+	apiCallResetAt: string | null;
+	apiCallResetMins: number;
 	modelUsageLimits: ModelPromptUsage[];
 }
 
@@ -230,6 +240,17 @@ export async function buildLiveUsageForKey(
 				: 'global'
 			: 'none';
 
+	const { limit: apiCallLimit, window: apiCallLimitWindow } = resolveKeyApiCallLimit(
+		limitKey as any,
+		cfg,
+	);
+	const apiCallLimitSource: LimitSource =
+		apiCallLimit > 0
+			? Number(limitKey.rateLimit) > 0
+				? 'override'
+				: 'global'
+			: 'none';
+
 	const perModelPick = pickLimit(
 		limitKey.perModelPromptLimit,
 		cfg?.globalPerModelPromptLimit,
@@ -237,7 +258,7 @@ export async function buildLiveUsageForKey(
 	const perModelWindow =
 		limitKey.perModelPromptLimitWindow ||
 		cfg?.globalPerModelPromptLimitWindow ||
-		'30m';
+		'5h';
 
 	// Prompt window usage — account-scoped (shared across Discord keys)
 	let promptUsed = 0;
@@ -255,6 +276,18 @@ export async function buildLiveUsageForKey(
 		const resetMs = await getWindowResetMs(promptScopeIds, windowMs);
 		promptResetMins = Math.ceil(resetMs / 60000);
 		promptResetAt = resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null;
+	}
+
+	let apiCallUsed = 0;
+	let apiCallResetAt: string | null = null;
+	let apiCallResetMins = 0;
+	if (apiCallLimit > 0 && promptScopeIds.length > 0) {
+		const acCheck = await checkApiCallLimit(promptScopeIds, apiCallLimit, apiCallLimitWindow);
+		apiCallUsed = acCheck.used;
+		const windowMs = parseRateLimitWindow(apiCallLimitWindow);
+		const resetMs = await getApiCallWindowResetMs(promptScopeIds, windowMs);
+		apiCallResetMins = Math.ceil(resetMs / 60000);
+		apiCallResetAt = resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null;
 	}
 
 	const modelUsageLimits: ModelPromptUsage[] = [];
@@ -342,6 +375,7 @@ export async function buildLiveUsageForKey(
 			completionTokens,
 			totalTokens,
 			promptCount: promptUsed,
+			apiCallCount: apiCallUsed,
 		},
 		usageMonth: {
 			totalTokens: monthTokens,
@@ -358,6 +392,9 @@ export async function buildLiveUsageForKey(
 			promptLimit,
 			promptLimitWindow,
 			promptLimitSource,
+			apiCallLimit,
+			apiCallLimitWindow,
+			apiCallLimitSource,
 			perModelPromptLimit: perModelPick.value,
 			perModelPromptLimitWindow: perModelWindow,
 			perModelPromptLimitSource: perModelPick.source,
@@ -368,11 +405,14 @@ export async function buildLiveUsageForKey(
 			daily: rem(dailyTok.value, totalTokens),
 			monthly: rem(monthly.value, monthTokens),
 			prompt: rem(promptLimit, promptUsed),
+			apiCalls: rem(apiCallLimit, apiCallUsed),
 		},
 		dailyResetAt,
 		monthlyResetAt,
 		promptResetAt,
 		promptResetMins,
+		apiCallResetAt,
+		apiCallResetMins,
 		modelUsageLimits,
 	};
 }

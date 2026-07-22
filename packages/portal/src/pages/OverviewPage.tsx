@@ -280,15 +280,24 @@ export default function OverviewPage() {
         label: `${t("Prompt Limit")} (${limits.promptLimitWindow})`,
         value: usageToday.promptCount ?? 0,
         max: limits.promptLimit,
-        sublabel: "prompts",
+        sublabel: t("Prompts"),
         source: sourceLabel(limits.promptLimitSource),
         reset: formatReset(user.promptResetAt),
       });
     }
+    if (limits.rateLimit > 0) {
+      bars.push({
+        label: `${t("API Call Limit")} (${limits.rateLimitWindow})`,
+        value: usageToday.apiCallCount ?? 0,
+        max: limits.rateLimit,
+        sublabel: t("API calls"),
+        source: sourceLabel(limits.rateLimitSource),
+        reset: formatReset(user.apiCallResetAt),
+      });
+    }
 
     const modelLimits = (user.modelUsageLimits || []).filter((m) => m.limit > 0 || m.used > 0);
-    const hasRate = limits.rateLimit > 0;
-    if (!bars.length && !hasRate && !modelLimits.length) return null;
+    if (!bars.length && !modelLimits.length) return null;
 
     return (
       <div className="bg-card border border-border rounded-xl p-4 space-y-3 animate-fade-in">
@@ -314,17 +323,6 @@ export default function OverviewPage() {
                   </span>
                 </div>
               ))}
-            </div>
-          )}
-          {hasRate && (
-            <div className="flex items-center justify-between text-xs pt-1 border-t border-border/50">
-              <span className="text-muted-foreground">{t("Rate Limit")}</span>
-              <span className="text-foreground">
-                {formatNumber(limits.rateLimit)} / {limits.rateLimitWindow}
-                {limits.rateLimitSource && limits.rateLimitSource !== "none" && (
-                  <span className="text-muted-foreground ml-1.5">({sourceLabel(limits.rateLimitSource)})</span>
-                )}
-              </span>
             </div>
           )}
         </div>

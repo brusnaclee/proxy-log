@@ -91,7 +91,10 @@ export interface LiveUsagePayload {
     fullInputTokens?: number;
     completionTokens: number;
     totalTokens: number;
+    /** Distinct turns in prompt window. */
     promptCount: number;
+    /** Hops in API-call window. */
+    apiCallCount?: number;
   };
   usageMonth: {
     totalTokens: number;
@@ -108,6 +111,9 @@ export interface LiveUsagePayload {
     promptLimit: number;
     promptLimitWindow: string;
     promptLimitSource: "override" | "global" | "none";
+    apiCallLimit?: number;
+    apiCallLimitWindow?: string;
+    apiCallLimitSource?: "override" | "global" | "none";
     perModelPromptLimit: number;
     perModelPromptLimitWindow: string;
     perModelPromptLimitSource: "override" | "global" | "none";
@@ -118,10 +124,14 @@ export interface LiveUsagePayload {
     daily: number | null;
     monthly: number | null;
     prompt: number | null;
+    apiCalls?: number | null;
   };
   dailyResetAt: string;
   monthlyResetAt: string;
   promptResetAt: string | null;
+  promptResetMins?: number;
+  apiCallResetAt?: string | null;
+  apiCallResetMins?: number;
   promptResetMins: number;
   modelUsageLimits: Array<{
     model: string;

@@ -19,9 +19,11 @@ export default function SettingsPage() {
   const { realtimeEnabled, setRealtimeEnabled } = useRealtime();
   const [globalMaxDevices, setGlobalMaxDevices] = useState(0);
   const [globalPromptLimit, setGlobalPromptLimit] = useState(50);
-  const [globalPromptLimitWindow, setGlobalPromptLimitWindow] = useState("30m");
+  const [globalPromptLimitWindow, setGlobalPromptLimitWindow] = useState("5h");
+  const [globalRateLimit, setGlobalRateLimit] = useState(500);
+  const [globalRateLimitWindow, setGlobalRateLimitWindow] = useState("5h");
   const [globalPerModelPromptLimit, setGlobalPerModelPromptLimit] = useState(10);
-  const [globalPerModelPromptLimitWindow, setGlobalPerModelPromptLimitWindow] = useState("30m");
+  const [globalPerModelPromptLimitWindow, setGlobalPerModelPromptLimitWindow] = useState("5h");
   const [globalDailyTokenLimit, setGlobalDailyTokenLimit] = useState(0);
   const [globalMonthlyTokenLimit, setGlobalMonthlyTokenLimit] = useState(0);
   const [globalDailyInputTokenLimit, setGlobalDailyInputTokenLimit] = useState(0);
@@ -106,9 +108,11 @@ export default function SettingsPage() {
       const g = await globalSettings.get();
       setGlobalMaxDevices(g.globalMaxDevices || 0);
       setGlobalPromptLimit(g.globalPromptLimit || 0);
-      setGlobalPromptLimitWindow(g.globalPromptLimitWindow || "30m");
+      setGlobalPromptLimitWindow(g.globalPromptLimitWindow || "5h");
+      setGlobalRateLimit(g.globalRateLimit || 0);
+      setGlobalRateLimitWindow(g.globalRateLimitWindow || "5h");
       setGlobalPerModelPromptLimit(g.globalPerModelPromptLimit || 0);
-      setGlobalPerModelPromptLimitWindow(g.globalPerModelPromptLimitWindow || "30m");
+      setGlobalPerModelPromptLimitWindow(g.globalPerModelPromptLimitWindow || "5h");
       setGlobalDailyTokenLimit(g.globalDailyTokenLimit || 0);
       setGlobalMonthlyTokenLimit(g.globalMonthlyTokenLimit || 0);
       setGlobalDailyInputTokenLimit(g.globalDailyInputTokenLimit || 0);
@@ -152,6 +156,7 @@ export default function SettingsPage() {
       await settings.update(updates);
       await globalSettings.update({
         globalMaxDevices, globalPromptLimit, globalPromptLimitWindow,
+        globalRateLimit, globalRateLimitWindow,
         globalPerModelPromptLimit, globalPerModelPromptLimitWindow,
         globalDailyTokenLimit, globalMonthlyTokenLimit,
         globalDailyInputTokenLimit, globalDailyOutputTokenLimit,
@@ -403,7 +408,7 @@ export default function SettingsPage() {
                     className="mt-1"
                   />
                   <p className="text-[10px] text-muted-foreground mt-1">
-                    Total prompts across all models (0 = unlimited)
+                    1 per user turn (distinct turn_id). 0 = unlimited. Default 50/5h.
                   </p>
                 </div>
                 <div>
@@ -411,11 +416,38 @@ export default function SettingsPage() {
                   <Input
                     value={globalPromptLimitWindow}
                     onChange={(e) => setGlobalPromptLimitWindow(e.target.value)}
-                    placeholder="30m"
+                    placeholder="5h"
                     className="mt-1"
                   />
                   <p className="text-[10px] text-muted-foreground mt-1">
-                    e.g. 30m, 1h, 1d
+                    e.g. 5h, 1d
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label>Global API Call Limit</Label>
+                  <Input
+                    type="number"
+                    value={globalRateLimit}
+                    onChange={(e) => setGlobalRateLimit(parseInt(e.target.value) || 0)}
+                    placeholder="500"
+                    className="mt-1"
+                  />
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    Every successful upstream hop. 0 = unlimited. Default 500/5h.
+                  </p>
+                </div>
+                <div>
+                  <Label>Window</Label>
+                  <Input
+                    value={globalRateLimitWindow}
+                    onChange={(e) => setGlobalRateLimitWindow(e.target.value)}
+                    placeholder="5h"
+                    className="mt-1"
+                  />
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    e.g. 5h, 1d
                   </p>
                 </div>
               </div>
@@ -438,11 +470,11 @@ export default function SettingsPage() {
                   <Input
                     value={globalPerModelPromptLimitWindow}
                     onChange={(e) => setGlobalPerModelPromptLimitWindow(e.target.value)}
-                    placeholder="30m"
+                    placeholder="5h"
                     className="mt-1"
                   />
                   <p className="text-[10px] text-muted-foreground mt-1">
-                    e.g. 30m, 1h, 1d
+                    e.g. 5h, 1d
                   </p>
                 </div>
               </div>

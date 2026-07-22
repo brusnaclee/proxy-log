@@ -12,8 +12,8 @@ import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { getRecapWindow } from "../../utils/recap-window.js";
 import { getModelCatalogResponse, getClientCatalogMonitorRows } from "../../utils/model-catalog.js";
-import { parseTrialModelWhitelist, resolveKeyDailyTokenLimit, resolveKeyPromptLimit } from "../../utils/trial-config.js";
-import { checkPromptLimit, checkModelPromptLimit, parseRateLimitWindow, getWindowResetMs } from "../../utils/rate-limit.js";
+import { parseTrialModelWhitelist, resolveKeyDailyTokenLimit, resolveKeyPromptLimit, resolveKeyApiCallLimit } from "../../utils/trial-config.js";
+import { checkPromptLimit, checkModelPromptLimit, checkApiCallLimit, parseRateLimitWindow, getWindowResetMs, getApiCallWindowResetMs } from "../../utils/rate-limit.js";
 import { logEmitter } from "../../utils/event-emitter.js";
 import { randomBytes } from "crypto";
 import { isProtectedPrimaryApiKey } from "../../utils/api-key-primary.js";
@@ -283,6 +283,21 @@ portal.get("/me", async (c) => {
     promptResetAt = resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null;
   }
 
+  const { limit: apiCallLimit, window: apiCallLimitWindow } = primaryKey
+    ? resolveKeyApiCallLimit(primaryKey as any, config)
+    : { limit: 0, window: "5h" };
+  let apiCallUsed = 0;
+  let apiCallResetAt: string | null = null;
+  let apiCallResetMins = 0;
+  if (primaryKey && apiCallLimit > 0 && promptScopeIds.length > 0) {
+    const acCheck = await checkApiCallLimit(promptScopeIds, apiCallLimit, apiCallLimitWindow);
+    apiCallUsed = acCheck.used;
+    const windowMs = parseRateLimitWindow(apiCallLimitWindow);
+    const resetMs = await getApiCallWindowResetMs(promptScopeIds, windowMs);
+    apiCallResetMins = Math.ceil(resetMs / 60000);
+    apiCallResetAt = resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null;
+  }
+
   // Per-model prompt usage (same as Discord /usage) — account-scoped
   const modelUsageLimits: Array<{
     model: string; used: number; limit: number; window: string; resetAt: string | null;
@@ -428,7 +443,7 @@ portal.get("/me", async (c) => {
       dailyOutputTokenLimit: dailyOutput.value,
       dailyOutputTokenLimitSource: dailyOutput.source,
       rateLimit: rate.value,
-      rateLimitWindow: primaryKey?.rateLimitWindow || config?.globalRateLimitWindow || "1h",
+      rateLimitWindow: primaryKey?.rateLimitWindow || config?.globalRateLimitWindow || apiCallLimitWindow || "5h",
       rateLimitSource: rate.source,
       promptLimit: prompt.value,
       promptLimitWindow,
@@ -436,7 +451,7 @@ portal.get("/me", async (c) => {
       perModelPromptLimit: isTrial ? 0 : ((primaryKey?.perModelPromptLimit && primaryKey.perModelPromptLimit > 0)
         ? primaryKey.perModelPromptLimit
         : (config?.globalPerModelPromptLimit || 0)),
-      perModelPromptLimitWindow: primaryKey?.perModelPromptLimitWindow || config?.globalPerModelPromptLimitWindow || "30m",
+      perModelPromptLimitWindow: primaryKey?.perModelPromptLimitWindow || config?.globalPerModelPromptLimitWindow || "5h",
     },
     usageToday: {
       requests: usageToday?.requests || 0,
@@ -446,6 +461,7 @@ portal.get("/me", async (c) => {
       completionTokens: usageToday?.completionTokens || 0,
       // Rolling prompt window usage (matches Discord), NOT all-day requests
       promptCount: promptUsed,
+      apiCallCount: apiCallUsed,
       totalTokens: (usageToday?.promptTokens || 0) + (usageToday?.completionTokens || 0),
     },
     usageMonth: {
@@ -453,6 +469,8 @@ portal.get("/me", async (c) => {
     },
     promptResetAt,
     promptResetMins,
+    apiCallResetAt,
+    apiCallResetMins,
     dailyResetAt,
     monthlyResetAt,
     modelUsageLimits,

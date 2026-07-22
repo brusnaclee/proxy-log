@@ -65,6 +65,7 @@ export async function initializeDatabase() {
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_embed_config text NOT NULL DEFAULT '{}'`);
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_dm_templates text NOT NULL DEFAULT '{}'`);
 		await pool.query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS is_trial boolean NOT NULL DEFAULT false`);
+		await pool.query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS rate_window_start text`);
 		await pool.query(`
 			CREATE TABLE IF NOT EXISTS trial_users (
 				id SERIAL PRIMARY KEY,

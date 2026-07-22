@@ -397,7 +397,7 @@ export default function KeyDetailPage() {
         note: "Usage stats across all time periods",
         headers: ["Metric", "Today", "Last 7 Days", "Last 30 Days", "All Time"],
         rows: [
-          ["Requests",        s.today.requests,         s.week.requests,         s.month.requests,         s.allTime.requests],
+          ["Turns",           s.today.requests,         s.week.requests,         s.month.requests,         s.allTime.requests],
           ["Total Tokens",    s.today.tokens,           s.week.tokens,           s.month.tokens,           s.allTime.tokens],
           ["Input Tokens",    formatInputBreakdown(s.today.billablePromptTokens, s.today.cachedTokens, s.today.promptTokens).label,
                               formatInputBreakdown(s.week.billablePromptTokens, s.week.cachedTokens, s.week.promptTokens).label,
@@ -411,7 +411,7 @@ export default function KeyDetailPage() {
     }
 
     // Sheet 2: Request logs (filtered by period)
-    sheets.push(buildLogsSection(keyLogs, `Request Logs (${periodLabel})`));
+    sheets.push(buildLogsSection(keyLogs, `API Call Logs (${periodLabel})`));
 
     exportXlsx(sheets, `key-${id}-logs-${dateStr}`, {
       title: `API Key Report: ${keyData?.name || id}`,
@@ -434,7 +434,7 @@ export default function KeyDetailPage() {
         note: "Usage stats for this API key across all time periods",
         headers: ["Metric", "Today", "Last 7 Days", "Last 30 Days", "All Time"],
         rows: [
-          ["Requests",   s.today.requests,  s.week.requests,  s.month.requests,  s.allTime.requests],
+          ["Turns",      s.today.requests,  s.week.requests,  s.month.requests,  s.allTime.requests],
           ["Tokens",     s.today.tokens,    s.week.tokens,    s.month.tokens,    s.allTime.tokens],
           ["Input",
             formatInputBreakdown(s.today.billablePromptTokens, s.today.cachedTokens, s.today.promptTokens).label,
@@ -696,7 +696,7 @@ export API_TIMEOUT_MS=500000`}
           return (
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
               {[
-                { label: "Turns (prompts)", value: formatNumber(s.requests), sub: (s.hopCount || 0) > s.requests ? `${formatNumber(s.hopCount || 0)} hops in logs` : undefined },
+                { label: "Turns", value: formatNumber(s.requests), sub: (s.hopCount || 0) > s.requests ? `${formatNumber(s.hopCount || 0)} API calls (hops)` : undefined },
                 { label: "Total Tokens",  value: formatNumber(s.tokens) },
                 { label: "Input (peak)",  value: formatInputBreakdown(s.billablePromptTokens, s.cachedTokens, s.promptTokens).label, sub: (s.fullInputTokens || 0) > (s.promptTokens || 0) * 1.5 ? `full ${formatNumber(s.fullInputTokens || 0)} (amanai)` : undefined },
                 { label: "Output Tokens", value: formatNumber(s.completionTokens) },
@@ -886,14 +886,42 @@ export API_TIMEOUT_MS=500000`}
         disabled={!editing}
         className="mt-1"
       />
+      <p className="text-[10px] text-muted-foreground mt-1">1 per user turn</p>
     </div>
     <div>
       <Label>Prompt Limit Window</Label>
       <Input
-        value={keyData?.promptLimitWindow || "1d"}
+        value={keyData?.promptLimitWindow || "5h"}
         onChange={(e) => {
           if (!editing) return;
           setKeyData(prev => prev ? { ...prev, promptLimitWindow: e.target.value } : prev);
+        }}
+        disabled={!editing}
+        className="mt-1"
+      />
+    </div>
+    <div>
+      <Label>API Call Limit (0 = use global)</Label>
+      <Input
+        type="number"
+        value={keyData?.rateLimit || 0}
+        onChange={(e) => {
+          if (!editing) return;
+          const val = parseInt(e.target.value) || 0;
+          setKeyData(prev => prev ? { ...prev, rateLimit: val } : prev);
+        }}
+        disabled={!editing}
+        className="mt-1"
+      />
+      <p className="text-[10px] text-muted-foreground mt-1">Every successful upstream hop</p>
+    </div>
+    <div>
+      <Label>API Call Limit Window</Label>
+      <Input
+        value={keyData?.rateLimitWindow || "5h"}
+        onChange={(e) => {
+          if (!editing) return;
+          setKeyData(prev => prev ? { ...prev, rateLimitWindow: e.target.value } : prev);
         }}
         disabled={!editing}
         className="mt-1"
@@ -1522,7 +1550,7 @@ export API_TIMEOUT_MS=500000`}
                     <th className="text-left py-3 px-4 text-muted-foreground font-medium">IP</th>
                     <th className="text-left py-3 px-4 text-muted-foreground font-medium">IDE / OS</th>
                     <th className="text-right py-3 px-4 text-muted-foreground font-medium">Sessions</th>
-                    <th className="text-right py-3 px-4 text-muted-foreground font-medium">Requests</th>
+                    <th className="text-right py-3 px-4 text-muted-foreground font-medium">Turns</th>
                     <th className="text-right py-3 px-4 text-muted-foreground font-medium">Tokens</th>
                     <th className="text-left py-3 px-4 text-muted-foreground font-medium">Last Seen</th>
                   </tr>
@@ -1705,7 +1733,7 @@ export API_TIMEOUT_MS=500000`}
               {(["tokens", "requests"] as const).map(s => (
                 <button key={s} onClick={() => setModelTabSort(s)}
                   className={`px-2 py-1 text-xs rounded transition-colors ${modelTabSort === s ? "bg-primary text-primary-foreground font-medium" : "text-muted-foreground hover:text-foreground"}`}>
-                  By {s === "tokens" ? "Tokens" : "Requests"}
+                  By {s === "tokens" ? "Tokens" : "Turns"}
                 </button>
               ))}
             </div>
@@ -1715,7 +1743,7 @@ export API_TIMEOUT_MS=500000`}
           <Card className="border-border/50 mb-4">
             <CardHeader className="pb-2">
               <CardTitle className="text-base font-medium">
-                Model Usage Chart — {modelTabSort === "tokens" ? "By Tokens" : "By Requests"}
+                Model Usage Chart — {modelTabSort === "tokens" ? "By Tokens" : "By Turns"}
               </CardTitle>
             </CardHeader>
             <CardContent>

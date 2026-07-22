@@ -36,6 +36,47 @@ export function isTitleGenRequest(requestBody: any): boolean {
   );
 }
 
+/** Cline/Roo XML wrappers that often trail a real user message — do NOT treat as tool-result alone. */
+const CLINE_META_TAGS = [
+	"<open_and_recently_viewed_files>",
+	"<system-reminder>",
+	"<environment_details>",
+	"<user-prompt-submit-hook>",
+	"<conversation-summary>",
+] as const;
+
+/**
+ * True when content is primarily Cline/Roo metadata or a bare "continue",
+ * not a real user prompt that happens to include those tags at the end.
+ */
+function isPrimarilyClineMetadata(content: string): boolean {
+	const raw = content.trimStart();
+	if (!raw) return false;
+	const head = raw.slice(0, 800).toLowerCase();
+
+	// Bare continuation (tool loop), not "continue working on X…"
+	if (/^continue\s*$/i.test(raw.trim())) return true;
+	if (/^continue\s*</i.test(raw.trim())) return true;
+
+	// Message opens with a known metadata tag
+	if (CLINE_META_TAGS.some((t) => head.startsWith(t))) return true;
+
+	// Dominated by metadata: after stripping tags + common wrappers, little user text left
+	let stripped = raw;
+	for (const tag of CLINE_META_TAGS) {
+		const re = new RegExp(`${tag.replace(/[<>]/g, "\\$&")}[\\s\\S]*?(?:<\\/${tag.slice(1)}|$)`, "gi");
+		stripped = stripped.replace(re, " ");
+	}
+	stripped = stripped
+		.replace(/<\/?[a-z0-9_-]+>/gi, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+	if (stripped.length === 0) return true;
+	// Mostly metadata if remaining text is tiny vs original
+	if (stripped.length < 40 && raw.length > 200) return true;
+	return false;
+}
+
 /**
  * Check if a "user" message is actually a tool result / automated response
  * that should NOT count as a real user prompt.
@@ -118,13 +159,10 @@ function isToolResultContent(content: string): boolean {
 	// Antigravity patterns
 	if (trimmed.includes("antigravity")) return true;
 
-	// Generic continue pattern (Cline/Roo Code continuation)
-	if (trimmed.startsWith("continue")) return true;
-	if (trimmed.includes("<open_and_recently_viewed_files>")) return true;
-	if (trimmed.includes("<system-reminder>")) return true;
-	if (trimmed.includes("<environment_details>")) return true;
-	if (trimmed.includes("<user-prompt-submit-hook>")) return true;
-	if (trimmed.includes("<conversation-summary>")) return true;
+	// Cline/Roo metadata: ONLY when the message is primarily metadata / continuation,
+	// NOT when a real user prompt merely appends <environment_details> at the end.
+	// Blanket includes() falsely zeroed prompt counts for Cline (Reynaldo-class bug).
+	if (isPrimarilyClineMetadata(content)) return true;
 
 	// MCP tool patterns (Continue, Kilo, Windsurf)
 	if (trimmed.startsWith("[mcp_tool")) return true;
