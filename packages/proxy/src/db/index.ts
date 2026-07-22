@@ -191,6 +191,24 @@ export async function initializeDatabase() {
 		console.warn('⚠️ devices unique index migration warning (may have duplicate data):', err?.message || err);
 	}
 
+	// model_monitor: one row per (model_id, provider) — concurrent sweeps used to insert twins
+	try {
+		await pool.query(`
+			DELETE FROM model_monitor a
+			USING model_monitor b
+			WHERE a.model_id = b.model_id
+			  AND COALESCE(a.provider, '') = COALESCE(b.provider, '')
+			  AND a.id < b.id
+		`);
+		await pool.query(`
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_model_monitor_model_provider
+			ON model_monitor (model_id, COALESCE(provider, ''))
+		`);
+		console.log('✅ Applied model_monitor unique (model_id, provider) index');
+	} catch (err: any) {
+		console.warn('⚠️ model_monitor unique index migration warning:', err?.message || err);
+	}
+
 	// Push schema using drizzle-kit push equivalent at runtime:
 	// We rely on drizzle-kit push:pg being run before first start.
 	// But we still seed defaults below.

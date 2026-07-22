@@ -635,9 +635,23 @@ export default function ModelMonitorPage() {
                       )}
                     </td>
                     <td className="py-3 px-4">
-                      <span className={`text-xs ${d.httpStatus === 200 ? 'text-muted-foreground' : 'text-amber-500 font-medium'}`}>
-                        {d.httpStatus || "timeout"}
+                      <span
+                        className={`text-xs ${d.probeOk ? "text-muted-foreground" : "text-amber-500 font-medium"}`}
+                        title={d.errorMessage || undefined}
+                      >
+                        {d.httpStatus > 0
+                          ? d.httpStatus
+                          : /timeout/i.test(d.errorMessage || "")
+                            ? "timeout"
+                            : d.errorMessage
+                              ? "err"
+                              : "—"}
                       </span>
+                      {!d.probeOk && d.errorMessage && (
+                        <div className="text-[10px] text-amber-600/90 mt-0.5 max-w-[220px] truncate" title={d.errorMessage}>
+                          {d.errorMessage.replace(/^HTTP \d+:\s*/i, "").slice(0, 80)}
+                        </div>
+                      )}
                     </td>
                     <td className="py-3 px-4 text-xs text-muted-foreground">
                       <div>{formatRelativeTime(d.checkedAt)}</div>

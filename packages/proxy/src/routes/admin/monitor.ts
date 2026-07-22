@@ -23,6 +23,7 @@ import {
   buildModelListCandidateUrls,
   extractModelsArray,
 } from "../../utils/probe-validate.js";
+import { refreshUsableProviderKeys } from "../../utils/model-catalog.js";
 
 const monitor = new Hono();
 
@@ -89,23 +90,39 @@ async function getProviderProbeKey(providerId: number, legacyApiKey: string | nu
  * Never use limited keys, and never fall back to legacy api_key when the
  * provider already has rows in provider_api_keys (that caused false-Online:
  * probe via legacy while traffic saw 0 usable keys → 502).
+ * Applies the same limited-key TTL expiry as live traffic.
  */
 async function getProviderProbeKeys(providerId: number, legacyApiKey: string | null): Promise<string[]> {
-  const allActive = await db
-    .select()
-    .from(providerApiKeys)
-    .where(sql`${providerApiKeys.providerId} = ${providerId} AND ${providerApiKeys.isActive} = true`)
-    .orderBy(providerApiKeys.id);
-
-  if (allActive.length > 0) {
-    return allActive
-      .filter((r) => !r.isLimited)
-      .map((r) => r.apiKey)
-      .filter(Boolean);
+  const usable = await refreshUsableProviderKeys(providerId);
+  if (usable.length > 0) {
+    return usable.map((r) => r.apiKey).filter(Boolean);
   }
 
   // True legacy mode: no rows in provider_api_keys at all.
+  const hasRows = (
+    await db
+      .select({ id: providerApiKeys.id })
+      .from(providerApiKeys)
+      .where(sql`${providerApiKeys.providerId} = ${providerId}`)
+      .limit(1)
+  ).length > 0;
+  if (hasRows) return [];
   return legacyApiKey ? [legacyApiKey] : [];
+}
+
+/** Short upstream error for monitor UI (403 billing, 429 quota, …). */
+function summarizeProbeFailure(status: number, bodyText: string, fallback: string): string {
+  if (status <= 0) return fallback;
+  const raw = String(bodyText || "").replace(/\s+/g, " ").trim();
+  let msg = raw;
+  try {
+    const j = JSON.parse(raw);
+    msg = String(j?.error?.message || j?.error || j?.message || raw);
+  } catch {
+    /* keep raw */
+  }
+  msg = msg.replace(/\s+/g, " ").trim().slice(0, 180);
+  return msg ? `HTTP ${status}: ${msg}` : `HTTP ${status}`;
 }
 
 const SWEEP_PROBE_TIMEOUT_MS = Number(process.env.SWEEP_PROBE_TIMEOUT_MS) || 180_000;
@@ -215,27 +232,28 @@ monitor.get("/internal/monitor/auto-mode", async (c) => {
 monitor.get("/monitor/models", async (c) => {
   const activeNames = await getActiveProviderNames();
 
-  const latestSubquery = db
-    .select({
-      modelId: modelMonitor.modelId,
-      provider: modelMonitor.provider,
-      maxCheckedAt: sql<string>`MAX(checked_at)`.as('max_checked_at'),
-    })
-    .from(modelMonitor)
-    .groupBy(modelMonitor.modelId, modelMonitor.provider)
-    .as('latest');
-
-  const rows = await db
-    .select()
-    .from(modelMonitor)
-    .innerJoin(
-      latestSubquery,
-      sql`${modelMonitor.modelId} = ${latestSubquery.modelId} AND COALESCE(${modelMonitor.provider}, '') = COALESCE(${latestSubquery.provider}, '') AND ${modelMonitor.checkedAt} = ${latestSubquery.maxCheckedAt}`
-    )
-    .orderBy(modelMonitor.provider, modelMonitor.modelId);
+  // One row per (model_id, provider): latest checked_at, then highest id.
+  // Prevents duplicate Fail+OK rows from concurrent upsert races.
+  const rows = (await db.execute(sql`
+    SELECT DISTINCT ON (model_id, COALESCE(provider, ''))
+      id, model_id, provider, is_online, latency_ms, http_status,
+      error_message, base_url, checked_at
+    FROM model_monitor
+    ORDER BY model_id, COALESCE(provider, ''), checked_at DESC, id DESC
+  `)).rows as any[];
 
   const data = rows
-    .map((r) => r.model_monitor)
+    .map((d) => ({
+      id: d.id,
+      modelId: d.model_id,
+      provider: d.provider,
+      isOnline: d.is_online,
+      latencyMs: d.latency_ms,
+      httpStatus: d.http_status,
+      errorMessage: d.error_message,
+      baseUrl: d.base_url,
+      checkedAt: d.checked_at,
+    }))
     .filter((d) => d.provider && activeNames.has(d.provider))
     .map((d) => ({
       ...d,
@@ -606,13 +624,25 @@ monitor.post("/monitor/sweep", async (c) => {
 
   (async () => {
     try {
-      // Snapshot previous rows so soft-retain can re-probe when /models list fails.
       const previousRows = await db.select().from(modelMonitor);
-      // Clear ALL old model_monitor rows before sweep to remove stale data
-      await db.delete(modelMonitor);
+      // Keep existing rows (preserve Published ON/OFF). Dedupe stale twins first.
+      await db.execute(sql`
+        DELETE FROM model_monitor a
+        USING model_monitor b
+        WHERE a.model_id = b.model_id
+          AND COALESCE(a.provider, '') = COALESCE(b.provider, '')
+          AND a.id < b.id
+      `);
       await resetAllTestStates();
       const activeProviders = await db.select().from(providers).where(eq(providers.isActive, true)).orderBy(sql`${providers.priority} DESC`);
       const allModels: Array<{ modelId: string; providerName: string; providerId: number; baseUrl: string; apiKey: string; endpointType: string }> = [];
+      const seenModelKeys = new Set<string>();
+      const pushModel = (m: (typeof allModels)[number]) => {
+        const key = `${m.providerId}::${m.modelId}`;
+        if (seenModelKeys.has(key)) return;
+        seenModelKeys.add(key);
+        allModels.push(m);
+      };
 
       for (const prov of activeProviders) {
         const probeKeys = await getProviderProbeKeys(prov.id, prov.apiKey);
@@ -644,7 +674,7 @@ monitor.post("/monitor/sweep", async (c) => {
               for (const m of models) {
                 const mid = String(m?.id || m?.name || "").trim();
                 if (!mid) continue;
-                allModels.push({
+                pushModel({
                   modelId: mid,
                   providerName: prov.name,
                   providerId: prov.id,
@@ -665,7 +695,7 @@ monitor.post("/monitor/sweep", async (c) => {
           // Soft-retain only for transient list failures when keys exist.
           const retained = previousRows.filter((r) => r.provider === prov.name);
           for (const row of retained) {
-            allModels.push({
+            pushModel({
               modelId: row.modelId,
               providerName: prov.name,
               providerId: prov.id,
@@ -688,17 +718,14 @@ monitor.post("/monitor/sweep", async (c) => {
         // Also include custom models for this provider
         const customModelsList = await db.select().from(customModels).where(sql`${customModels.providerId} = ${prov.id} AND ${customModels.isActive} = true`);
         for (const cm of customModelsList) {
-          const alreadyHas = allModels.some(m => m.modelId === cm.modelId && m.providerId === prov.id);
-          if (!alreadyHas) {
-            allModels.push({
-              modelId: cm.modelId,
-              providerName: prov.name,
-              providerId: prov.id,
-              baseUrl: prov.endpoint,
-              apiKey: probeKeys[0],
-              endpointType,
-            });
-          }
+          pushModel({
+            modelId: cm.modelId,
+            providerName: prov.name,
+            providerId: prov.id,
+            baseUrl: prov.endpoint,
+            apiKey: probeKeys[0],
+            endpointType,
+          });
         }
       }
 
@@ -743,7 +770,9 @@ monitor.post("/monitor/sweep", async (c) => {
                   ok = true;
                   break;
                 }
-                lastError = res.ok ? "Empty/invalid probe body" : `HTTP ${res.status}`;
+                lastError = res.ok
+                  ? "Empty/invalid probe body"
+                  : summarizeProbeFailure(res.status, text, `HTTP ${res.status}`);
               } catch (err: any) {
                 lastStatus = 0;
                 lastError = err?.name === "AbortError" ? "Timeout" : (err?.message || "Network error");

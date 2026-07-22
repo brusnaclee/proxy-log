@@ -292,6 +292,8 @@ export const modelMonitor = pgTable('model_monitor', {
 }, (table) => ({
 	modelIdIdx: index('idx_monitor_model_id').on(table.modelId),
 	checkedAtIdx: index('idx_monitor_checked_at').on(table.checkedAt),
+	// Unique (model_id, provider) enforced via expression index in db/index.ts
+	// (COALESCE(provider,'')) — drizzle pgTable can't express COALESCE unique easily.
 }));
 
 // ─── Model Test State ──────────────────────────────────────────────────────────

@@ -1331,9 +1331,15 @@ export async function checkProviderApiKeyHealth(
  * auth/rate-limit parks don't permanently brick a provider (fast 502s).
  * Falls back to the provider's legacy api_key column if no keys in the new table.
  */
-const KEY_LIMITED_TTL_MS = 15 * 60 * 1000;
+export const KEY_LIMITED_TTL_MS = 15 * 60 * 1000;
 
-export async function getNextApiKey(providerId: number): Promise<{ keyId: number; apiKey: string } | null> {
+/**
+ * Clear stale is_limited flags (TTL elapsed, or limited_at missing = stuck).
+ * Shared by live traffic (getNextApiKey) and monitor probes.
+ */
+export async function refreshUsableProviderKeys(
+  providerId: number,
+): Promise<Array<{ id: number; apiKey: string; requestCount: number | null }>> {
   const activeRows = await db
     .select()
     .from(providerApiKeys)
@@ -1345,22 +1351,48 @@ export async function getNextApiKey(providerId: number): Promise<{ keyId: number
     )
     .orderBy(asc(providerApiKeys.requestCount));
 
+  if (activeRows.length === 0) return [];
+
+  const now = Date.now();
+  const usable: Array<{ id: number; apiKey: string; requestCount: number | null }> = [];
+  for (const k of activeRows) {
+    if (!k.isLimited) {
+      usable.push({ id: k.id, apiKey: k.apiKey, requestCount: k.requestCount });
+      continue;
+    }
+    const limitedAtMs = k.limitedAt ? new Date(k.limitedAt as string | Date).getTime() : 0;
+    // Missing limited_at = stuck flag — treat as expired so one bad park can't brick forever.
+    const expired =
+      !Number.isFinite(limitedAtMs) ||
+      limitedAtMs <= 0 ||
+      now - limitedAtMs >= KEY_LIMITED_TTL_MS;
+    if (expired) {
+      await resetKeyLimited(k.id);
+      usable.push({ id: k.id, apiKey: k.apiKey, requestCount: k.requestCount });
+    }
+  }
+  return usable;
+}
+
+export async function getNextApiKey(providerId: number): Promise<{ keyId: number; apiKey: string } | null> {
+  const usable = await refreshUsableProviderKeys(providerId);
+
   // If the provider has key rows, ONLY use non-limited ones — never silently
   // fall back to legacy api_key (that desynced monitor Online vs live 502).
-  if (activeRows.length > 0) {
-    const now = Date.now();
-    const usable = [];
-    for (const k of activeRows) {
-      if (!k.isLimited) {
-        usable.push(k);
-        continue;
-      }
-			const limitedAtMs = k.limitedAt ? new Date(k.limitedAt as string | Date).getTime() : 0;
-      if (Number.isFinite(limitedAtMs) && limitedAtMs > 0 && now - limitedAtMs >= KEY_LIMITED_TTL_MS) {
-        await resetKeyLimited(k.id);
-        usable.push({ ...k, isLimited: false, limitedAt: null });
-      }
-    }
+  const hasKeyRows = (
+    await db
+      .select({ id: providerApiKeys.id })
+      .from(providerApiKeys)
+      .where(
+        and(
+          eq(providerApiKeys.providerId, providerId),
+          eq(providerApiKeys.isActive, true),
+        ),
+      )
+      .limit(1)
+  ).length > 0;
+
+  if (hasKeyRows) {
     if (usable.length === 0) return null;
 
     const chosen = usable[0];

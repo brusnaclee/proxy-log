@@ -257,6 +257,13 @@ export async function upsertModelStatus(
         checkedAt: now,
       })
       .where(eq(modelMonitor.id, existing.id));
+    // Drop twin rows for the same model+provider (concurrent upsert races).
+    await db.execute(sql`
+      DELETE FROM model_monitor
+      WHERE model_id = ${params.modelId}
+        AND COALESCE(provider, '') = ${params.provider || ""}
+        AND id <> ${existing.id}
+    `);
   } else {
     await db.insert(modelMonitor).values({
       modelId: params.modelId,
@@ -384,7 +391,8 @@ export async function markProviderModelsOffline(
 ): Promise<void> {
   const mode = await getMonitorAutoMode();
   if (mode === "notif_only" || mode === "off") {
-    // Don't clobber manual catalog; only annotate non-forced rows' probe fields.
+    // Don't clobber manual catalog or last probe HTTP status (UI showed "timeout"
+    // when we zeroed http_status for key-pool failures).
     const rows = await db
       .select()
       .from(modelMonitor)
@@ -394,7 +402,6 @@ export async function markProviderModelsOffline(
       await db
         .update(modelMonitor)
         .set({
-          httpStatus: 0,
           errorMessage,
           checkedAt: new Date(),
         })
