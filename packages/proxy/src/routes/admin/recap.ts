@@ -39,7 +39,14 @@ import { isInternalRequest } from "../../middleware/session.js";
 const recap = new Hono();
 
 async function findKeyByDiscordUser(discordUserId: string) {
-  return (await db.select().from(apiKeys).where(eq(apiKeys.discordUserId, discordUserId)))[0];
+  const keys = await db.select().from(apiKeys).where(eq(apiKeys.discordUserId, discordUserId));
+  if (keys.length === 0) return null;
+  // Prefer active non-trial (member) key — first row is often a stale/trial key.
+  const member = keys.find((k) => !k.isTrial && k.isActive);
+  if (member) return member;
+  const anyActive = keys.find((k) => k.isActive);
+  if (anyActive) return anyActive;
+  return keys[0];
 }
 
 function publicBase(): string {
@@ -103,7 +110,13 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
   const key = await findKeyByDiscordUser(discordUserId);
 
   const win = getRecapWindow();
-  const yearMonth = body.yearMonth || win.yearMonth;
+  // Mid-month (window closed): interactive views should open the *previous*
+  // completed month (where cached recaps exist). Otherwise every "lihat orang
+  // lain" targets the in-progress month with no cache → AI generate → 503 busy.
+  let yearMonth = body.yearMonth || win.yearMonth;
+  if (body.interactive && !body.yearMonth && !win.isOpen) {
+    yearMonth = previousYearMonth(win.yearMonth);
+  }
   const monthLabel = monthLabelFromYearMonth(yearMonth);
   const today = wibTodayDateStr();
 
@@ -129,7 +142,12 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
     return c.json({ error: "User not found", found: false }, 404);
   }
 
-  if (existing && existing.generatedDate === today && (body.skipIfToday || !body.force)) {
+  if (existing && !body.force) {
+    const sameDay = existing.generatedDate === today;
+    // Mid-cycle admin/debug views target the previous month — always serve cache.
+    const viewingClosedMonth =
+      !!body.interactive && (!win.isOpen || yearMonth !== win.yearMonth);
+    if (sameDay || body.skipIfToday || viewingClosedMonth) {
     // For interactive opens, mint a fresh single-use share token each time.
     let shareToken = existing.shareToken;
     if (body.interactive) {
@@ -160,6 +178,7 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
       rank: { requests: existing.rankRequests || 0, tokens: existing.rankTokens || 0 },
       shareToken: body.interactive ? dayToken(discordUserId, yearMonth) : undefined,
     });
+    }
   }
 
   // Compute fresh stats + ranks
@@ -172,16 +191,20 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
 
   const assets = loadAssets();
   const interactive = !!body.interactive;
-  // Interactive: fewer retries + shorter timeout to keep Discord fetch alive.
+  // Interactive: short budget — Discord interaction must finish. Prefer a
+  // concrete RECAP_MODEL over "auto" (auto often 429/empty → false "AI busy").
   const { ok, narrative } = await generateNarrative(stats, monthLabel, assets, {
-    retries: interactive ? 5 : 3,
-    timeoutMs: interactive ? 45_000 : 60_000,
+    retries: interactive ? 2 : 3,
+    timeoutMs: interactive ? 25_000 : 60_000,
   });
 
-  // Interactive request that couldn't get AI output -> tell the bot we're busy
-  // (do NOT cache a fallback so a later attempt can still produce a real recap).
-  if (body.interactive && !ok && !existing) {
-    return c.json({ busy: true, error: "AI busy" }, 503);
+  // Never 503 interactive opens. Template fallback is still a valid recap;
+  // refusing it made admin "lihat orang lain" always show "server sibuk"
+  // whenever Gemini/auto was down and no cache row existed.
+  if (body.interactive && !ok) {
+    console.warn(
+      `[recap] interactive narrative fallback for ${discordUserId} ${yearMonth} (AI unavailable)`,
+    );
   }
 
   // Resolve GIFs + card meta. Interactive skips live GIF/wallpaper search (slow
@@ -229,6 +252,7 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
 
   return c.json({
     cached: false,
+    degraded: !ok,
     apiKeyName: key.name,
     yearMonth,
     monthLabel,

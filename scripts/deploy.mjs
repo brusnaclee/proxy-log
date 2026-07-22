@@ -91,6 +91,15 @@ async function main() {
   }
   console.log(envUpdate.stdout || envUpdate.stderr || 'No .env update output');
 
+  // Preferred recap narrative model (reliable published model; not "auto")
+  const recapModelUpdate = await ssh.execCommand(
+    "grep -q '^RECAP_MODEL=' /root/proxy-log/.env && " +
+      "sed -i 's|^RECAP_MODEL=.*|RECAP_MODEL=phantomv2/amanai/claude-haiku-4.5|' /root/proxy-log/.env || " +
+      "echo 'RECAP_MODEL=phantomv2/amanai/claude-haiku-4.5' >> /root/proxy-log/.env; " +
+      "echo 'Updated RECAP_MODEL'",
+  );
+  console.log(recapModelUpdate.stdout || recapModelUpdate.stderr || "");
+
   // Token multipliers: input 1x (full prompt), output 10x
   const multUpdate = await ssh.execCommand(
     "grep -q '^INPUT_TOKEN_MULTIPLIER=' /root/proxy-log/.env && " +

@@ -431,8 +431,11 @@ function parseJsonLoose(text: string): any | null {
 }
 
 /**
- * Generate the recap narrative via the proxy's own auto model.
+ * Generate the recap narrative via the proxy's own chat completions.
  * Falls back to a deterministic template on any error / invalid output.
+ *
+ * Model order (first success wins):
+ *   RECAP_MODEL env → published-friendly defaults → "auto"
  */
 export async function generateNarrative(
   stats: RecapStats,
@@ -448,67 +451,101 @@ export async function generateNarrative(
   const summary = buildStatsSummary(stats, monthLabel);
   const maxAttempts = Math.max(1, opts.retries ?? 30);
   const reqTimeoutMs = opts.timeoutMs ?? 60_000;
+  const models = [
+    process.env.RECAP_MODEL,
+    "phantomv2/amanai/claude-haiku-4.5",
+    "phantomv2/amanai/gpt-5.4-mini",
+    "tokito/gemini/gemini-3-flash-preview",
+    "tokito/ag/gemini-3-flash",
+    "auto",
+  ].filter((m, i, arr): m is string => !!m && arr.indexOf(m) === i);
 
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), reqTimeoutMs);
-      const res = await fetch(`${baseUrl}/v1/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model: "auto",
-          temperature: 1.0,
-          stream: false,
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content: buildUserPrompt(summary, assets) },
-          ],
-        }),
-        signal: controller.signal,
-      }).finally(() => clearTimeout(timeout));
+  for (const model of models) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), reqTimeoutMs);
+        const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+          body: JSON.stringify({
+            model,
+            temperature: 1.0,
+            stream: false,
+            messages: [
+              { role: "system", content: SYSTEM_PROMPT },
+              { role: "user", content: buildUserPrompt(summary, assets) },
+            ],
+          }),
+          signal: controller.signal,
+        }).finally(() => clearTimeout(timeout));
 
-      if (!res.ok) { await backoff(attempt); continue; }
-      const data = await res.json().catch(() => null);
-      const content = data?.choices?.[0]?.message?.content;
-      const parsed = parseJsonLoose(typeof content === "string" ? content : "");
-      if (!parsed || typeof parsed !== "object" || !parsed.sections) { await backoff(attempt); continue; }
-
-      // Merge: prefer AI text but guarantee every section exists (fallback fills gaps).
-      const sections: RecapNarrative["sections"] = { ...fallback.sections };
-      for (const k of SECTION_KEYS) {
-        const s = parsed.sections?.[k];
-        if (s && typeof s.headline === "string" && typeof s.caption === "string") {
-          sections[k] = { headline: sanitizeText(String(s.headline)).slice(0, 80), caption: sanitizeText(String(s.caption)).slice(0, 280), assetId: typeof s.assetId === "string" ? s.assetId : undefined };
+        if (!res.ok) {
+          const errText = await res.text().catch(() => "");
+          console.warn(
+            `[recap] narrative ${model} HTTP ${res.status}: ${errText.slice(0, 120)}`,
+          );
+          await backoff(attempt);
+          continue;
         }
-      }
+        const data = await res.json().catch(() => null);
+        const content = data?.choices?.[0]?.message?.content;
+        const parsed = parseJsonLoose(typeof content === "string" ? content : "");
+        if (!parsed || typeof parsed !== "object" || !parsed.sections) {
+          await backoff(attempt);
+          continue;
+        }
 
-      const rawChoices: Record<string, any> = {};
-      for (const k of SECTION_KEYS) rawChoices[k] = parsed.sections?.[k]?.assetId;
-      const assetChoices = validateAssetChoices(rawChoices, assets, fallback);
-      for (const k of SECTION_KEYS) {
-        if (sections[k]) sections[k].assetId = assetChoices[k];
-      }
+        // Merge: prefer AI text but guarantee every section exists (fallback fills gaps).
+        const sections: RecapNarrative["sections"] = { ...fallback.sections };
+        for (const k of SECTION_KEYS) {
+          const s = parsed.sections?.[k];
+          if (s && typeof s.headline === "string" && typeof s.caption === "string") {
+            sections[k] = {
+              headline: sanitizeText(String(s.headline)).slice(0, 80),
+              caption: sanitizeText(String(s.caption)).slice(0, 280),
+              assetId: typeof s.assetId === "string" ? s.assetId : undefined,
+            };
+          }
+        }
 
-      const badges = validateBadges(parsed.badges, fallback.badges);
-      const layoutHints = validateLayoutHints(parsed.layoutHints, fallback.layoutHints);
+        const rawChoices: Record<string, any> = {};
+        for (const k of SECTION_KEYS) rawChoices[k] = parsed.sections?.[k]?.assetId;
+        const assetChoices = validateAssetChoices(rawChoices, assets, fallback);
+        for (const k of SECTION_KEYS) {
+          if (sections[k]) sections[k].assetId = assetChoices[k];
+        }
 
-      return {
-        ok: true,
-        narrative: {
-          persona: {
-            title: typeof parsed.persona?.title === "string" ? sanitizeText(String(parsed.persona.title)).slice(0, 60) : fallback.persona.title,
-            subtitle: typeof parsed.persona?.subtitle === "string" ? sanitizeText(String(parsed.persona.subtitle)).slice(0, 120) : fallback.persona.subtitle,
+        const badges = validateBadges(parsed.badges, fallback.badges);
+        const layoutHints = validateLayoutHints(parsed.layoutHints, fallback.layoutHints);
+
+        return {
+          ok: true,
+          narrative: {
+            persona: {
+              title:
+                typeof parsed.persona?.title === "string"
+                  ? sanitizeText(String(parsed.persona.title)).slice(0, 60)
+                  : fallback.persona.title,
+              subtitle:
+                typeof parsed.persona?.subtitle === "string"
+                  ? sanitizeText(String(parsed.persona.subtitle)).slice(0, 120)
+                  : fallback.persona.subtitle,
+            },
+            sections,
+            closing:
+              typeof parsed.closing === "string"
+                ? sanitizeText(String(parsed.closing)).slice(0, 200)
+                : fallback.closing,
+            assetChoices,
+            badges,
+            layoutHints,
           },
-          sections,
-          closing: typeof parsed.closing === "string" ? sanitizeText(String(parsed.closing)).slice(0, 200) : fallback.closing,
-          assetChoices,
-          badges,
-          layoutHints,
-        },
-      };
-    } catch {
-      await backoff(attempt);
+        };
+      } catch (err: any) {
+        console.warn(`[recap] narrative ${model} attempt ${attempt + 1}: ${err?.message || err}`);
+        await backoff(attempt);
+      }
     }
   }
   return { ok: false, narrative: fallback };

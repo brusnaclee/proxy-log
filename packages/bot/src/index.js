@@ -4911,7 +4911,9 @@ async function generateAndReplyRecap(interaction, targetUser, opts = {}) {
 			.setFooter({
 				text: self
 					? 'Buka recap web buat kasih testimoni • pesan ini hilang dalam 60 detik'
-					: 'Pesan ini hilang dalam 60 detik',
+					: data.degraded
+						? 'Recap template (AI offline) • pesan hilang dalam 60 detik'
+						: 'Pesan ini hilang dalam 60 detik',
 			});
 		if (avatarUrl) embed.setThumbnail(avatarUrl);
 
@@ -4932,7 +4934,8 @@ async function generateAndReplyRecap(interaction, targetUser, opts = {}) {
 		clearInterval(timer);
 		let msg;
 		if (/AI busy|busy|sibuk/i.test(err.message)) {
-			msg = 'Server lagi sibuk, coba lagi nanti ya 🙏';
+			msg =
+				'Generate AI lagi penuh — coba lagi sebentar. Kalau masih gagal, hubungi admin (recap cache bulan ini mungkin belum ada).';
 		} else if (/not found/i.test(err.message)) {
 			msg = self
 				? 'Kamu belum punya API key. Verifikasi dulu untuk dapat recap ya!'
