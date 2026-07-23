@@ -106,8 +106,10 @@ import {
 	normalizeModelForLimit,
 } from '../utils/rate-limit.js';
 import {
+	addonGrantsModelAccess,
 	checkAddonModelAccess,
 	getActiveAddonsForUser,
+	isAddonTeaseModel,
 	resolveAddonModelDailyTokenLimit,
 	sumAddonDailyTokenBonus,
 	sumAddonMonthlyTokenBonus,
@@ -2875,34 +2877,6 @@ proxy.all('/*', async (c) => {
 		);
 	}
 
-	// Add-on model access gate (non-trial): models listed on any active add-on require assignment.
-	const activeAddons = !keyRecord.isTrial
-		? await getActiveAddonsForUser({
-				discordUserId: keyRecord.discordUserId,
-				apiKeyId: keyRecord.id,
-			})
-		: [];
-	if (!keyRecord.isTrial) {
-		const addonAccess = await checkAddonModelAccess({
-			model,
-			discordUserId: keyRecord.discordUserId,
-			apiKeyId: keyRecord.id,
-		});
-		if (!addonAccess.allowed) {
-			return c.json(
-				{
-					error: {
-						message: addonAccess.reason || 'Add-on required for this model.',
-						type: 'access_error',
-						code: 'addon_required',
-						param: addonAccess.requiredAddon || null,
-					},
-				},
-				403,
-			);
-		}
-	}
-
 	// Strip provider prefix for upstream request: "tokito/glm/glm-5.1" -> "glm/glm-5.1"
 	// Amanai nested ids stay as "amanai/glm-5.2" (never bare "glm-5.2").
 	const upstreamModel = await stripProviderPrefix(model);
@@ -2918,7 +2892,7 @@ proxy.all('/*', async (c) => {
 		requestBodyBytes = new TextEncoder().encode(bodyStr);
 	}
 
-	// ─── 8a. Model Monitor Check ─────────────────────────────────────────
+	// ─── 8a. Model Monitor Check (before add-on — offline ≠ buy add-on) ───
 	// Requestable = Published ON. Probe Fail must not 503 when admin published.
 	if (
 		!keyRecord.isTrial &&
@@ -2983,6 +2957,39 @@ proxy.all('/*', async (c) => {
 					503,
 				);
 			}
+		}
+	}
+
+	// Add-on model access gate (non-trial): models listed on any active add-on require assignment.
+	// Claude / ChatGPT 5.6+ get a small non-addon tease (enforced later via model_limits).
+	const activeAddons = !keyRecord.isTrial
+		? await getActiveAddonsForUser({
+				discordUserId: keyRecord.discordUserId,
+				apiKeyId: keyRecord.id,
+			})
+		: [];
+	if (!keyRecord.isTrial) {
+		const addonAccess = await checkAddonModelAccess({
+			model,
+			discordUserId: keyRecord.discordUserId,
+			apiKeyId: keyRecord.id,
+		});
+		if (
+			!addonAccess.allowed &&
+			!isAddonTeaseModel(model) &&
+			!isAddonTeaseModel(upstreamModel)
+		) {
+			return c.json(
+				{
+					error: {
+						message: addonAccess.reason || 'Add-on required for this model.',
+						type: 'access_error',
+						code: 'addon_required',
+						param: addonAccess.requiredAddon || null,
+					},
+				},
+				403,
+			);
 		}
 	}
 
@@ -3160,7 +3167,10 @@ proxy.all('/*', async (c) => {
 	//
 	// Per-model limit: checked for EVERY request (not just new prompts).
 	// Trial keys use global prompt limit only — skip per-model global overrides.
-	if (!keyRecord.isTrial) {
+	// Add-on holders skip tease / global per-model prompt caps for models their pack grants.
+	const skipModelPromptTease =
+		!keyRecord.isTrial && addonGrantsModelAccess(activeAddons, model);
+	if (!keyRecord.isTrial && !skipModelPromptTease) {
 		const mlCheck = await checkModelPromptLimit(
 			accountKeyIds,
 			model,
@@ -3196,10 +3206,14 @@ proxy.all('/*', async (c) => {
 				globalRemaining >= 0
 					? ` You have ${globalRemaining} prompt(s) remaining for other models.`
 					: '';
+			const teaseHint =
+				isAddonTeaseModel(model) || isAddonTeaseModel(upstreamModel)
+					? ' Upgrade with an add-on (e.g. vibecodeaddon) for full access.'
+					: '';
 			return c.json(
 				{
 					error: {
-						message: `Limit reached for model "${model}" (${limitSource}): ${mlCheck.used}/${mlCheck.effectiveLimit} prompts used. Resets in ~${resetMins} minute(s).${globalInfo}`,
+						message: `Limit reached for model "${model}" (${limitSource}): ${mlCheck.used}/${mlCheck.effectiveLimit} prompts used. Resets in ~${resetMins} minute(s).${globalInfo}${teaseHint}`,
 						type: 'rate_limit_error',
 						code: 'model_prompt_limit_exceeded',
 					},
@@ -3301,8 +3315,8 @@ proxy.all('/*', async (c) => {
 
 		const baseDailyTokenLimit = resolveKeyDailyTokenLimit(keyRecord, config);
 		const addonDailyBonus = sumAddonDailyTokenBonus(activeAddons);
-		const globalDailyTokenLimit =
-			baseDailyTokenLimit > 0 ? baseDailyTokenLimit + addonDailyBonus : 0;
+		// Pack daily bonus applies even when base key/global daily is 0.
+		const globalDailyTokenLimit = Math.max(0, baseDailyTokenLimit || 0) + Math.max(0, addonDailyBonus || 0);
 		if (globalDailyTokenLimit > 0) {
 			const dw = new Date(wibNow);
 			dw.setUTCHours(0, 0, 0, 0);

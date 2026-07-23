@@ -216,4 +216,32 @@ export function resolveAddonModelDailyTokenLimit(
   return best;
 }
 
+/** Premium tease models: non-addon users may use a small prompt allowance instead of hard lock. */
+const ADDON_TEASE_PATTERNS = ["claude", "gpt-5.6", "chatgpt-5.6"];
+
+export function isAddonTeaseModel(model: string): boolean {
+  const lower = (model || "").toLowerCase();
+  return ADDON_TEASE_PATTERNS.some((p) => lower.includes(p));
+}
+
+/** True if any active add-on grants access to this model (allowlist match or all_except). */
+export function addonGrantsModelAccess(active: ActiveAddon[], model: string): boolean {
+  if (!active.length) return false;
+  const lower = model.toLowerCase();
+  for (const a of active) {
+    if (getAccessMode(a) === "all_except") {
+      const deny = parsePatternList(a.modelDenylist);
+      if (!modelMatchesAllowlist(model, deny) && !modelMatchesAllowlist(lower, deny)) {
+        return true;
+      }
+    } else {
+      const list = parseAllowlist(a.modelAllowlist);
+      if (modelMatchesAllowlist(model, list) || modelMatchesAllowlist(lower, list)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 export { parseAllowlist };
