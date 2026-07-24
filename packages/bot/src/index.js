@@ -4209,7 +4209,7 @@ async function buildSearchEmbed() {
 		'**Token Limits:**',
 		`- Input Harian: ${fmtTok(limits.globalDailyInputTokenLimit)}`,
 		`- Output Harian: ${fmtTok(limits.globalDailyOutputTokenLimit)}`,
-		`- Total Harian: ${fmtTok(limits.globalDailyTokenLimit)}`,
+		`- Total Harian: ${fmtTok(limits.globalDailyTokenLimit)} _(Phantom non-addon = Unlimited; angka global hanya base stack add-on)_`,
 		`- Bulanan: ${fmtTok(limits.globalMonthlyTokenLimit)}`,
 		'',
 		'_Per-user limits bervariasi per API key. Klik tombol untuk cek usage spesifik._',
@@ -4274,9 +4274,10 @@ function buildUsageDetailRow(includeOther = false) {
 	buttons.push(buildDashboardLinkButton());
 	return new ActionRowBuilder().addComponents(...buttons);
 }
-function fmtGlobalModelLimitRow(r) {
+function fmtGlobalModelLimitRow(r, perModelWindow = '1d') {
 	const parts = [];
-	if (r.promptLimit > 0) parts.push(r.promptLimit + ' prompt / 30m');
+	const win = (r.promptLimitWindow || perModelWindow || '1d').trim() || '1d';
+	if (r.promptLimit > 0) parts.push(r.promptLimit + ' prompt / ' + win);
 	if (r.dailyTokenLimit > 0)
 		parts.push(r.dailyTokenLimit.toLocaleString() + ' daily tok');
 	if (r.monthlyTokenLimit > 0)
@@ -4357,9 +4358,15 @@ async function buildSeeModelLimitsEmbed(filter, access = null) {
 	}
 
 	let rows = [];
+	let perModelWindow = '1d';
 	try {
-		const r = await proxyInternal('/admin/settings/model-limits');
+		const [r, settings] = await Promise.all([
+			proxyInternal('/admin/settings/model-limits'),
+			proxyInternal('/admin/settings/global').catch(() => null),
+		]);
 		rows = (r && r.data) || [];
+		perModelWindow =
+			(settings && settings.globalPerModelPromptLimitWindow) || '1d';
 	} catch (err) {
 		return {
 			error:
@@ -4414,8 +4421,12 @@ async function buildSeeModelLimitsEmbed(filter, access = null) {
 			exacts.length +
 			' · Pattern: ' +
 			patterns.length,
+		'_Window per-model (tease/override): **' + perModelWindow + '**_',
 		'',
-		chosen.slice(0, 15).map(fmtGlobalModelLimitRow).join('\n\n'),
+		chosen
+			.slice(0, 15)
+			.map((row) => fmtGlobalModelLimitRow(row, perModelWindow))
+			.join('\n\n'),
 		chosen.length > 15
 			? '_...dan ' + (chosen.length - 15) + ' entry lainnya_'
 			: '',

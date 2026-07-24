@@ -429,7 +429,7 @@ export async function buildLiveUsageForKey(
 		const perKeyDefault = limitKey.perModelPromptLimit || 0;
 		const perKeyWindow = limitKey.perModelPromptLimitWindow || null;
 		const globalPerModel = cfg?.globalPerModelPromptLimit || 0;
-		const globalPerModelWindow = cfg?.globalPerModelPromptLimitWindow || '30m';
+		const globalPerModelWindow = cfg?.globalPerModelPromptLimitWindow || '1d';
 
 		for (const tm of todayModels) {
 			if (!tm.model) continue;

@@ -681,7 +681,10 @@ export default function SettingsPage() {
                     placeholder="0 = unlimited"
                     className="mt-1"
                   />
-                  <p className="text-xs text-muted-foreground mt-1">Max tokens per user per day (0 = unlimited)</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Phantom non-addon: set <strong>0 = Unlimited</strong> (Daily Total).
+                    Nilai &gt;0 hanya dipakai sebagai base stack kalau user punya add-on.
+                  </p>
                 </div>
                 <div>
                   <Label>Monthly Token Limit</Label>

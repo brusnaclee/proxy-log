@@ -347,7 +347,7 @@ export async function checkModelPromptLimit(
     return { allowed: true, remaining: -1, resetMs: 0, used: 0, effectiveLimit: 0, source: "none" };
   }
 
-  const effectiveWindow = perKeyDefaultWindow || globalDefaultWindow || "30m";
+  const effectiveWindow = perKeyDefaultWindow || globalDefaultWindow || "1d";
   const windowMs = parseRateLimitWindow(effectiveWindow);
   if (windowMs <= 0) {
     return { allowed: true, remaining: -1, resetMs: 0, used: 0, effectiveLimit, source };
