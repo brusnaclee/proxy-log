@@ -385,10 +385,20 @@ portal.get("/me", async (c) => {
     addonDailyBonus,
   });
   const dailyInput = quotaStack.bypassIo
-    ? { value: 0, source: "none" as const }
+    ? {
+        value: quotaStack.inputBase > 0 ? quotaStack.inputBase : rawDailyInput.value,
+        source: (rawDailyInput.source === "none" && quotaStack.inputBase > 0
+          ? "global"
+          : rawDailyInput.source) as "override" | "global" | "none",
+      }
     : rawDailyInput;
   const dailyOutput = quotaStack.bypassIo
-    ? { value: 0, source: "none" as const }
+    ? {
+        value: quotaStack.outputBase > 0 ? quotaStack.outputBase : rawDailyOutput.value,
+        source: (rawDailyOutput.source === "none" && quotaStack.outputBase > 0
+          ? "global"
+          : rawDailyOutput.source) as "override" | "global" | "none",
+      }
     : rawDailyOutput;
   const dailyTokenLimit = quotaStack.effectiveDaily;
   // Match Discord: key override OR global monthly
@@ -508,6 +518,8 @@ portal.get("/me", async (c) => {
       addonBonus: quotaStack.addonBonus,
       effective: quotaStack.effectiveDaily,
       bypassIo: quotaStack.bypassIo,
+      inputBase: quotaStack.inputBase,
+      outputBase: quotaStack.outputBase,
     },
     activeAddons: activeAddons.map((a) => ({
       name: a.name,

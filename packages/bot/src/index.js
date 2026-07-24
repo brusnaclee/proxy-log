@@ -5868,21 +5868,25 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 	const dailyInputStr =
 		(dailyInputTokenLimit || 0) > 0
 			? `**${formatTokens(dailyInputUsed)} / ${formatTokens(dailyInputTokenLimit)}**` +
-				(dailyInputUsed >= dailyInputTokenLimit ? ' 🔴' : '') +
+				(data.dailyTokenBreakdown?.bypassIo
+					? ' _(soft · pooled)_'
+					: dailyInputUsed >= dailyInputTokenLimit
+						? ' 🔴'
+						: '') +
 				formatResetTime(data.dailyResetAt)
-			: data.dailyTokenBreakdown?.bypassIo
-				? '**Unlimited** _(bypassed by add-on)_'
-				: `**${formatTokens(dailyInputUsed)} / Unlimited**` +
-					formatResetTime(data.dailyResetAt);
+			: `**${formatTokens(dailyInputUsed)} / Unlimited**` +
+				formatResetTime(data.dailyResetAt);
 	const dailyOutputStr =
 		(dailyOutputTokenLimit || 0) > 0
 			? `**${formatTokens(dailyOutputUsed)} / ${formatTokens(dailyOutputTokenLimit)}**` +
-				(dailyOutputUsed >= dailyOutputTokenLimit ? ' 🔴' : '') +
+				(data.dailyTokenBreakdown?.bypassIo
+					? ' _(soft · pooled)_'
+					: dailyOutputUsed >= dailyOutputTokenLimit
+						? ' 🔴'
+						: '') +
 				formatResetTime(data.dailyResetAt)
-			: data.dailyTokenBreakdown?.bypassIo
-				? '**Unlimited** _(bypassed by add-on)_'
-				: `**${formatTokens(dailyOutputUsed)} / Unlimited**` +
-					formatResetTime(data.dailyResetAt);
+			: `**${formatTokens(dailyOutputUsed)} / Unlimited**` +
+				formatResetTime(data.dailyResetAt);
 
 	const isSelf = viewerUserId === discordUserId;
 	const keyDisplay = isSelf ? data.key || `${keyPrefix}...` : '[HIDDEN]';
@@ -5923,7 +5927,9 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 	const bd = data.dailyTokenBreakdown;
 	const stackNote =
 		bd && bd.addonBonus > 0
-			? `\n-# Stack: base ${formatTokens(bd.base)} + pack ${formatTokens(bd.addonBonus)} = ${formatTokens(bd.effective)}`
+			? (bd.inputBase || 0) > 0 || (bd.outputBase || 0) > 0
+				? `\n-# Stack: in ${formatTokens(bd.inputBase || 0)} + out ${formatTokens(bd.outputBase || 0)} + pack ${formatTokens(bd.addonBonus)} = ${formatTokens(bd.effective)}`
+				: `\n-# Stack: base ${formatTokens(bd.base)} + pack ${formatTokens(bd.addonBonus)} = ${formatTokens(bd.effective)}`
 			: '';
 	const addonBlock =
 		Array.isArray(data.activeAddons) && data.activeAddons.length > 0
@@ -5938,7 +5944,7 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 					)
 					.join(', ')}` +
 				(data.perModelPromptsBypassedByAddon
-					? '\n-# Per-model prompts + Input/Output bypassed · daily pool only · global Prompts still apply'
+					? '\n-# Per-model prompts bypassed · Input/Output soft (pooled into daily)'
 					: '') +
 				(Array.isArray(data.addonModelTokenCaps) && data.addonModelTokenCaps.length
 					? `\n-# Pack token subcaps: ${data.addonModelTokenCaps
@@ -5952,8 +5958,8 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 			`**🔢 Token Limits (Trial)**\nTotal Harian: ${dailyTokenStr}`
 		: data.dailyTokenBreakdown?.bypassIo
 			? `**🎯 Quotas**\nPrompts: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\n` +
-				`-# ℹ️ Per-model prompts + Input/Output bypassed (add-on) · 1 prompt per turn.\n\n` +
-				`**🔢 Token Limits**\nTotal Harian: ${dailyTokenStr}${stackNote}\nBulanan: ${monthlyTokenStr}` +
+				`-# ℹ️ Per-model prompts bypassed · Input/Output soft (no separate hard cap).\n\n` +
+				`**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}${stackNote}\nBulanan: ${monthlyTokenStr}` +
 				addonBlock
 			: `**🎯 Quotas**\nPrompts: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\nPer-Model:\n${modelLimitStr}\n` +
 				`-# ℹ️ 1 prompt per turn; setiap hop = 1 API call.\n\n` +

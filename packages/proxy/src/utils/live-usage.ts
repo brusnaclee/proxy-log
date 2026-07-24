@@ -112,6 +112,8 @@ export interface LiveUsagePayload {
 		addonBonus: number;
 		effective: number;
 		bypassIo?: boolean;
+		inputBase?: number;
+		outputBase?: number;
 	};
 	activeAddons?: Array<{
 		name: string;
@@ -276,11 +278,21 @@ export async function buildLiveUsageForKey(
 		dailyOutput: rawDailyOutput.value,
 		addonDailyBonus,
 	});
+	// Display: keep soft I/O bases visible when add-on (enforcement is daily-only).
 	const dailyInput = stack.bypassIo
-		? { value: 0, source: 'none' as LimitSource }
+		? {
+				value: stack.inputBase > 0 ? stack.inputBase : rawDailyInput.value,
+				source: rawDailyInput.source === 'none' && stack.inputBase > 0 ? 'global' : rawDailyInput.source,
+			}
 		: rawDailyInput;
 	const dailyOutput = stack.bypassIo
-		? { value: 0, source: 'none' as LimitSource }
+		? {
+				value: stack.outputBase > 0 ? stack.outputBase : rawDailyOutput.value,
+				source:
+					rawDailyOutput.source === 'none' && stack.outputBase > 0
+						? 'global'
+						: rawDailyOutput.source,
+			}
 		: rawDailyOutput;
 	const dailyTokenLimit = stack.effectiveDaily;
 	const dailyTok =
@@ -299,8 +311,9 @@ export async function buildLiveUsageForKey(
 		base: stack.baseDaily,
 		addonBonus: stack.addonBonus,
 		effective: stack.effectiveDaily,
-		/** When true, input/output bars are suppressed — pool is daily only */
 		bypassIo: stack.bypassIo,
+		inputBase: stack.inputBase,
+		outputBase: stack.outputBase,
 	};
 	const activeAddonsSummary = activeAddons.map((a) => ({
 		name: a.name,
@@ -502,8 +515,8 @@ export async function buildLiveUsageForKey(
 			perModelPromptLimitSource: perModelPick.source,
 		},
 		remaining: {
-			input: rem(dailyInput.value, promptTokens),
-			output: rem(dailyOutput.value, completionTokens),
+			input: stack.bypassIo ? null : rem(dailyInput.value, promptTokens),
+			output: stack.bypassIo ? null : rem(dailyOutput.value, completionTokens),
 			daily: rem(dailyTok.value, totalTokens),
 			monthly: rem(monthly.value, monthTokens),
 			prompt: rem(promptLimit, promptUsed),

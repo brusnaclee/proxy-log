@@ -249,7 +249,13 @@ export default function OverviewPage() {
     };
 
     const bars: Array<{ label: string; value: number; max: number; sublabel?: string; source?: string; reset?: string }> = [];
-    if (limits.dailyInputTokenLimit > 0 && !(user.dailyTokenBreakdown?.bypassIo)) {
+    if (
+      limits.dailyInputTokenLimit > 0 ||
+      (user.dailyTokenBreakdown?.bypassIo && (user.dailyTokenBreakdown.inputBase || 0) > 0)
+    ) {
+      const inputMax = user.dailyTokenBreakdown?.bypassIo
+        ? user.dailyTokenBreakdown.inputBase || limits.dailyInputTokenLimit
+        : limits.dailyInputTokenLimit;
       const inputBd = formatInputBreakdown(
         usageToday.billablePromptTokens,
         usageToday.cachedTokens,
@@ -258,19 +264,33 @@ export default function OverviewPage() {
       bars.push({
         label: t("Input Tokens"),
         value: usageToday.promptTokens,
-        max: limits.dailyInputTokenLimit,
-        sublabel: inputBd.label !== inputBd.total ? inputBd.label : "tokens",
-        source: sourceLabel(limits.dailyInputTokenLimitSource),
+        max: inputMax,
+        sublabel: user.dailyTokenBreakdown?.bypassIo
+          ? `soft · pooled · ${inputBd.label !== inputBd.total ? inputBd.label : "tokens"}`
+          : inputBd.label !== inputBd.total
+            ? inputBd.label
+            : "tokens",
+        source: user.dailyTokenBreakdown?.bypassIo
+          ? "no separate hard cap"
+          : sourceLabel(limits.dailyInputTokenLimitSource),
         reset: formatReset(user.dailyResetAt),
       });
     }
-    if (limits.dailyOutputTokenLimit > 0 && !(user.dailyTokenBreakdown?.bypassIo)) {
+    if (
+      limits.dailyOutputTokenLimit > 0 ||
+      (user.dailyTokenBreakdown?.bypassIo && (user.dailyTokenBreakdown.outputBase || 0) > 0)
+    ) {
+      const outputMax = user.dailyTokenBreakdown?.bypassIo
+        ? user.dailyTokenBreakdown.outputBase || limits.dailyOutputTokenLimit
+        : limits.dailyOutputTokenLimit;
       bars.push({
         label: t("Output Tokens"),
         value: usageToday.completionTokens,
-        max: limits.dailyOutputTokenLimit,
-        sublabel: "tokens",
-        source: sourceLabel(limits.dailyOutputTokenLimitSource),
+        max: outputMax,
+        sublabel: user.dailyTokenBreakdown?.bypassIo ? "soft · pooled into daily" : "tokens",
+        source: user.dailyTokenBreakdown?.bypassIo
+          ? "no separate hard cap"
+          : sourceLabel(limits.dailyOutputTokenLimitSource),
         reset: formatReset(user.dailyResetAt),
       });
     }
@@ -278,7 +298,9 @@ export default function OverviewPage() {
       const bd = user.dailyTokenBreakdown;
       const stack =
         bd && bd.addonBonus > 0
-          ? `base ${(bd.base / 1e6).toFixed(1)}M + pack ${(bd.addonBonus / 1e6).toFixed(1)}M`
+          ? (bd.inputBase || 0) > 0 || (bd.outputBase || 0) > 0
+            ? `in ${(bd.inputBase! / 1e6).toFixed(1)}M + out ${(bd.outputBase! / 1e6).toFixed(1)}M + pack ${(bd.addonBonus / 1e6).toFixed(1)}M`
+            : `base ${(bd.base / 1e6).toFixed(1)}M + pack ${(bd.addonBonus / 1e6).toFixed(1)}M`
           : "tokens";
       bars.push({
         label: t("Daily Limit"),

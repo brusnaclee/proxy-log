@@ -136,7 +136,10 @@ export function LiveUsageCard({
       reset: formatReset(apiCallResetAt),
     });
   }
-  if (limits.dailyInputTokenLimit > 0 && !(dailyTokenBreakdown?.bypassIo)) {
+  if (limits.dailyInputTokenLimit > 0 || (dailyTokenBreakdown?.bypassIo && (dailyTokenBreakdown.inputBase || 0) > 0)) {
+    const inputMax = dailyTokenBreakdown?.bypassIo
+      ? dailyTokenBreakdown.inputBase || limits.dailyInputTokenLimit
+      : limits.dailyInputTokenLimit;
     const inputBd = formatInputBreakdown(
       usageToday.billablePromptTokens,
       usageToday.cachedTokens,
@@ -151,30 +154,44 @@ export function LiveUsageCard({
     bars.push({
       label: "Input Tokens (peak)",
       value: usageToday.promptTokens,
-      max: limits.dailyInputTokenLimit,
-      remaining: remaining.input,
+      max: inputMax,
+      remaining: dailyTokenBreakdown?.bypassIo ? null : remaining.input,
       sublabel:
-        (inputBd.label !== inputBd.total ? inputBd.label : "tokens") + fullNote,
-      source: sourceLabel(limits.dailyInputTokenLimitSource),
+        (dailyTokenBreakdown?.bypassIo ? "soft · pooled into daily · " : "") +
+        (inputBd.label !== inputBd.total ? inputBd.label : "tokens") +
+        fullNote,
+      source: dailyTokenBreakdown?.bypassIo
+        ? "no separate hard cap"
+        : sourceLabel(limits.dailyInputTokenLimitSource),
       reset: formatReset(dailyResetAt),
     });
   }
-  if (limits.dailyOutputTokenLimit > 0 && !(dailyTokenBreakdown?.bypassIo)) {
+  if (limits.dailyOutputTokenLimit > 0 || (dailyTokenBreakdown?.bypassIo && (dailyTokenBreakdown.outputBase || 0) > 0)) {
+    const outputMax = dailyTokenBreakdown?.bypassIo
+      ? dailyTokenBreakdown.outputBase || limits.dailyOutputTokenLimit
+      : limits.dailyOutputTokenLimit;
     bars.push({
       label: "Output Tokens",
       value: usageToday.completionTokens,
-      max: limits.dailyOutputTokenLimit,
-      remaining: remaining.output,
-      sublabel: "tokens",
-      source: sourceLabel(limits.dailyOutputTokenLimitSource),
+      max: outputMax,
+      remaining: dailyTokenBreakdown?.bypassIo ? null : remaining.output,
+      sublabel: dailyTokenBreakdown?.bypassIo ? "soft · pooled into daily" : "tokens",
+      source: dailyTokenBreakdown?.bypassIo
+        ? "no separate hard cap"
+        : sourceLabel(limits.dailyOutputTokenLimitSource),
       reset: formatReset(dailyResetAt),
     });
   }
   if (limits.dailyTokenLimit > 0) {
-    const stack =
-      dailyTokenBreakdown && dailyTokenBreakdown.addonBonus > 0
-        ? `base ${formatNumber(dailyTokenBreakdown.base)} + pack ${formatNumber(dailyTokenBreakdown.addonBonus)}`
-        : "tokens";
+    const bd = dailyTokenBreakdown;
+    let stack = "tokens";
+    if (bd && bd.addonBonus > 0) {
+      if ((bd.inputBase || 0) > 0 || (bd.outputBase || 0) > 0) {
+        stack = `in ${formatNumber(bd.inputBase || 0)} + out ${formatNumber(bd.outputBase || 0)} + pack ${formatNumber(bd.addonBonus)}`;
+      } else {
+        stack = `base ${formatNumber(bd.base)} + pack ${formatNumber(bd.addonBonus)}`;
+      }
+    }
     bars.push({
       label: "Daily Total",
       value: usageToday.totalTokens,
@@ -182,7 +199,7 @@ export function LiveUsageCard({
       remaining: remaining.daily,
       sublabel: stack,
       source:
-        dailyTokenBreakdown && dailyTokenBreakdown.addonBonus > 0
+        bd && bd.addonBonus > 0
           ? "base + add-on"
           : sourceLabel(limits.dailyTokenLimitSource),
       reset: formatReset(dailyResetAt),
@@ -315,13 +332,24 @@ export function LiveUsageCard({
           ))}
           {dailyTokenBreakdown && dailyTokenBreakdown.addonBonus > 0 && (
             <p className="text-muted-foreground">
-              Daily stack: {formatNumber(dailyTokenBreakdown.base)} + {formatNumber(dailyTokenBreakdown.addonBonus)} ={" "}
+              Daily stack:{" "}
+              {(dailyTokenBreakdown.inputBase || 0) > 0 || (dailyTokenBreakdown.outputBase || 0) > 0 ? (
+                <>
+                  in {formatNumber(dailyTokenBreakdown.inputBase || 0)} + out{" "}
+                  {formatNumber(dailyTokenBreakdown.outputBase || 0)} + pack{" "}
+                  {formatNumber(dailyTokenBreakdown.addonBonus)} ={" "}
+                </>
+              ) : (
+                <>
+                  {formatNumber(dailyTokenBreakdown.base)} + {formatNumber(dailyTokenBreakdown.addonBonus)} ={" "}
+                </>
+              )}
               <span className="text-foreground font-medium">{formatNumber(dailyTokenBreakdown.effective)}</span>
             </p>
           )}
           {perModelPromptsBypassedByAddon && (
             <p className="text-[10px] text-muted-foreground">
-              Per-model prompt caps bypassed · Input/Output unlimited while add-on active · global Prompts still apply · daily pool only
+              Per-model prompt caps bypassed · Input/Output soft (pooled into daily, no separate hard cap) · global Prompts still apply
             </p>
           )}
           {(addonModelTokenCaps || []).length > 0 && (

@@ -216,10 +216,11 @@ export function sumAddonMonthlyTokenBonus(active: ActiveAddon[]): number {
 
 /**
  * When any add-on is active:
- * - Input / output caps are bypassed (unlimited)
- * - Daily pool = (input+output if either set, else key/global daily) + pack bonus
- *   e.g. Phantom daily 2M + vibecode-10m → 12M
- *   e.g. Input 2M + Output 5M + pack 10M → 17M (I/O bars hidden)
+ * - Separate input/output hard caps are NOT enforced (pooled into daily)
+ * - Daily pool = (input + output if either set, else key/global daily) + pack
+ *   e.g. In 2M + Out 5M + pack 10M → 17M
+ *   e.g. only daily 2M + pack 10M → 12M
+ * - UI still shows Input/Output indicators (soft / informational)
  */
 export function resolveAddonQuotaStack(opts: {
   hasActiveAddon: boolean;
@@ -228,8 +229,14 @@ export function resolveAddonQuotaStack(opts: {
   dailyOutput: number;
   addonDailyBonus: number;
 }): {
+  /** Enforced input cap (0 = unlimited when add-on) */
   dailyInputLimit: number;
+  /** Enforced output cap (0 = unlimited when add-on) */
   dailyOutputLimit: number;
+  /** Soft/display input base folded into daily */
+  inputBase: number;
+  /** Soft/display output base folded into daily */
+  outputBase: number;
   baseDaily: number;
   addonBonus: number;
   effectiveDaily: number;
@@ -245,6 +252,8 @@ export function resolveAddonQuotaStack(opts: {
     return {
       dailyInputLimit: input,
       dailyOutputLimit: output,
+      inputBase: input,
+      outputBase: output,
       baseDaily: keyDaily,
       addonBonus: 0,
       effectiveDaily: keyDaily,
@@ -254,11 +263,13 @@ export function resolveAddonQuotaStack(opts: {
   }
 
   const ioSum = input + output;
-  // Prefer explicit daily when set; otherwise fold input+output into the daily pool.
-  const baseDaily = keyDaily > 0 ? keyDaily : ioSum;
+  // Prefer input+output when either is configured; else pure daily base.
+  const baseDaily = ioSum > 0 ? ioSum : keyDaily;
   return {
     dailyInputLimit: 0,
     dailyOutputLimit: 0,
+    inputBase: input,
+    outputBase: output,
     baseDaily,
     addonBonus: bonus,
     effectiveDaily: baseDaily + bonus,

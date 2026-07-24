@@ -922,6 +922,8 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
       addonBonus: quotaStack.addonBonus,
       effective: quotaStack.effectiveDaily,
       bypassIo: quotaStack.bypassIo,
+      inputBase: quotaStack.inputBase,
+      outputBase: quotaStack.outputBase,
     },
     activeAddons: activeAddons.map((a) => ({
       name: a.name,
@@ -943,8 +945,12 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     })(),
     perModelPromptsBypassedByAddon: quotaStack.bypassPerModelPrompts,
     monthlyTokenLimit: key.isTrial ? 0 : (config?.globalMonthlyTokenLimit || 0),
-    dailyInputTokenLimit: quotaStack.dailyInputLimit,
-    dailyOutputTokenLimit: quotaStack.dailyOutputLimit,
+    dailyInputTokenLimit: quotaStack.bypassIo
+      ? quotaStack.inputBase
+      : quotaStack.dailyInputLimit,
+    dailyOutputTokenLimit: quotaStack.bypassIo
+      ? quotaStack.outputBase
+      : quotaStack.dailyOutputLimit,
     dailyTokensUsed: todayStats?.tokens || 0,
     monthlyTokensUsed: monthStats?.tokens || 0,
     dailyInputUsed: todayStats?.promptTokens || 0,

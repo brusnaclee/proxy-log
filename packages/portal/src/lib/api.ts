@@ -102,6 +102,8 @@ export interface MeResponse {
     addonBonus: number;
     effective: number;
     bypassIo?: boolean;
+    inputBase?: number;
+    outputBase?: number;
   };
   activeAddons?: Array<{
     name: string;
