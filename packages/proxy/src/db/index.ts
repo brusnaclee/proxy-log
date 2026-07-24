@@ -432,6 +432,16 @@ export async function initializeDatabase() {
 		console.warn('⚠️  Could not ensure provider_api_keys health columns:', err);
 	}
 
+	// Auth sessions (admin dashboard + portal client) — survive PM2 restart
+	try {
+		const { ensureAuthSessionsTable, startAuthSessionPurgeJob } = await import('../utils/auth-sessions.js');
+		await ensureAuthSessionsTable();
+		startAuthSessionPurgeJob();
+		console.log('✅ auth_sessions table ensured');
+	} catch (err) {
+		console.warn('⚠️  Could not ensure auth_sessions table:', err);
+	}
+
 	try {
 		const { ensureVibecodeCatalog } = await import('../utils/addons.js');
 		await ensureVibecodeCatalog();

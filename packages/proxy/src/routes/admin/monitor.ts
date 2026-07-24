@@ -137,7 +137,7 @@ const checkInternal = (c: any) => {
 };
 
 const checkAdminSession = (c: any) => {
-  if (!isAuthenticated(c)) {
+  if (!(await isAuthenticated(c))) {
     return c.json({ error: "Unauthorized" }, 401);
   }
   return null;
@@ -609,7 +609,7 @@ monitor.get("/monitor/models/details", async (c) => {
 
 /** Force re-fetch /models into Model Monitor for all active upstreams. */
 monitor.post("/monitor/sync-catalog", async (c) => {
-  if (!isAuthenticated(c)) return c.json({ error: "Unauthorized" }, 401);
+  if (!(await isAuthenticated(c))) return c.json({ error: "Unauthorized" }, 401);
   const { syncAllActiveProvidersToMonitor } = await import("../../utils/model-catalog.js");
   const result = await syncAllActiveProvidersToMonitor();
   return c.json({ success: true, ...result });
@@ -620,7 +620,7 @@ let sweepRunning = false;
 let sweepProgress = { total: 0, tested: 0, online: 0, offline: 0, rateLimited: 0, startedAt: "", status: "idle" as string };
 
 monitor.post("/monitor/sweep", async (c) => {
-  if (!isAuthenticated(c)) return c.json({ error: "Unauthorized" }, 401);
+  if (!(await isAuthenticated(c))) return c.json({ error: "Unauthorized" }, 401);
   if (sweepRunning) return c.json({ error: "Sweep already running", progress: sweepProgress });
 
   sweepRunning = true;
@@ -813,7 +813,7 @@ monitor.post("/monitor/sweep", async (c) => {
 });
 
 monitor.get("/monitor/sweep/progress", async (c) => {
-  if (!isAuthenticated(c)) return c.json({ error: "Unauthorized" }, 401);
+  if (!(await isAuthenticated(c))) return c.json({ error: "Unauthorized" }, 401);
   return c.json(sweepProgress);
 });
 

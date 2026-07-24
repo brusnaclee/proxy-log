@@ -7,6 +7,9 @@ import { refreshModelCatalog, getModelCatalogResponse } from "../../utils/model-
 import { configCache, apiKeyCache, statsCache } from "../../utils/cache.js";
 import { enrichModelLimitsWithCatalog } from "../../utils/model-limits-enrich.js";
 import { normalizeTokenInputMode, normalizeTokenLimitWeightPercent } from "../../utils/counting.js";
+import { destroyAllAuthSessions } from "../../utils/auth-sessions.js";
+import { destroySession } from "../../middleware/session.js";
+import { authSessions } from "../../db/schema.js";
 
 const settings = new Hono();
 
@@ -199,6 +202,9 @@ settings.put("/password", async (c) => {
     updatedAt: new Date(),
   }).where(eq(adminConfig.id, config.id));
 
+  await destroyAllAuthSessions("admin");
+  await destroySession(c);
+
   return c.json({ success: true, message: "Password updated successfully" });
 });
 
@@ -319,6 +325,7 @@ settings.post("/settings/factory-reset", async (c) => {
     await db.delete(devices);
     await db.delete(apiKeys);
     await db.delete(modelLimits);
+    await db.delete(authSessions);
 
     // Reset admin config to defaults (keep password hash)
     await db.update(adminConfig).set({

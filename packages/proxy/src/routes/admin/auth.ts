@@ -5,7 +5,32 @@ import { createSession, destroySession, isAuthenticated } from "../../middleware
 
 const auth = new Hono();
 
+// Simple login rate limit: IP -> { count, resetAt } (same shape as portal)
+const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+const LOGIN_MAX = 10;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+
+function checkLoginRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const row = loginAttempts.get(ip);
+  if (!row || now > row.resetAt) {
+    loginAttempts.set(ip, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
+    return true;
+  }
+  if (row.count >= LOGIN_MAX) return false;
+  row.count += 1;
+  return true;
+}
+
 auth.post("/login", async (c) => {
+  const ip =
+    c.req.header("cf-connecting-ip") ||
+    c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
+    "unknown";
+  if (!checkLoginRateLimit(ip)) {
+    return c.json({ error: "Too many login attempts. Try again later." }, 429);
+  }
+
   const { password } = await c.req.json<{ password: string }>();
   if (!password) return c.json({ error: "Password is required" }, 400);
 
@@ -16,17 +41,17 @@ auth.post("/login", async (c) => {
   const isValid = await verify(config.passwordHash, password);
   if (!isValid) return c.json({ error: "Invalid password" }, 401);
 
-  createSession(c);
+  await createSession(c);
   return c.json({ success: true, message: "Logged in successfully" });
 });
 
-auth.post("/logout", (c) => {
-  destroySession(c);
+auth.post("/logout", async (c) => {
+  await destroySession(c);
   return c.json({ success: true, message: "Logged out" });
 });
 
-auth.get("/me", (c) => {
-  return c.json({ authenticated: isAuthenticated(c) });
+auth.get("/me", async (c) => {
+  return c.json({ authenticated: await isAuthenticated(c) });
 });
 
 export default auth;

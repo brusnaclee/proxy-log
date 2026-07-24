@@ -130,7 +130,7 @@ keys.post("/keys", async (c) => {
 // Use case: VIP / sponsor / trusted user who needs API access without
 // the standard agverif flow.
 keys.post("/keys/override-discord", async (c) => {
-  if (!isAuthenticated(c)) return c.json({ error: "Unauthorized" }, 401);
+  if (!(await isAuthenticated(c))) return c.json({ error: "Unauthorized" }, 401);
 
   const body = await c.req.json<{ discordUserId: string; discordUsername?: string; note?: string }>();
   if (!body.discordUserId || !/^\d{15,25}$/.test(body.discordUserId)) {

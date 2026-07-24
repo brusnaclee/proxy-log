@@ -573,3 +573,22 @@ export const userPortalSettings = pgTable('user_portal_settings', {
 
 export type UserPortalSettings = typeof userPortalSettings.$inferSelect;
 export type NewUserPortalSettings = typeof userPortalSettings.$inferInsert;
+
+// ─── Auth sessions (admin dashboard + portal client) ───────────────────────────
+export const authSessions = pgTable('auth_sessions', {
+	id: serial('id').primaryKey(),
+	sessionHash: text('session_hash').notNull(),
+	kind: text('kind').notNull(), // 'admin' | 'portal'
+	discordUserId: text('discord_user_id'),
+	createdAt: timestamp('created_at').notNull().defaultNow(),
+	lastSeenAt: timestamp('last_seen_at').notNull().defaultNow(),
+	ip: text('ip'),
+	userAgent: text('user_agent'),
+}, (table) => ({
+	hashIdx: uniqueIndex('idx_auth_sessions_hash').on(table.sessionHash),
+	kindUserIdx: index('idx_auth_sessions_kind_user').on(table.kind, table.discordUserId),
+	createdIdx: index('idx_auth_sessions_created').on(table.createdAt),
+}));
+
+export type AuthSession = typeof authSessions.$inferSelect;
+export type NewAuthSession = typeof authSessions.$inferInsert;

@@ -12,8 +12,8 @@ import {
 
 const quotaGuard = new Hono();
 
-const checkAdmin = (c: any) => {
-  if (!isAuthenticated(c)) {
+const checkAdmin = async (c: any) => {
+  if (!(await isAuthenticated(c))) {
     return c.json({ error: "Unauthorized" }, 401);
   }
   return null;
@@ -21,7 +21,7 @@ const checkAdmin = (c: any) => {
 
 // GET /admin/quota-guard/status
 quotaGuard.get("/quota-guard/status", async (c) => {
-  const authErr = checkAdmin(c);
+  const authErr = await checkAdmin(c);
   if (authErr) return authErr;
 
   const snapshot = getQuotaGuardSnapshot();
@@ -30,7 +30,7 @@ quotaGuard.get("/quota-guard/status", async (c) => {
 
 // POST /admin/quota-guard/disable
 quotaGuard.post("/quota-guard/disable", async (c) => {
-  const authErr = checkAdmin(c);
+  const authErr = await checkAdmin(c);
   if (authErr) return authErr;
 
   const body = await c.req.json<{ providerAlias: string; type: "model" | "connection" | "category"; id: string }>();
@@ -44,7 +44,7 @@ quotaGuard.post("/quota-guard/disable", async (c) => {
 
 // POST /admin/quota-guard/enable
 quotaGuard.post("/quota-guard/enable", async (c) => {
-  const authErr = checkAdmin(c);
+  const authErr = await checkAdmin(c);
   if (authErr) return authErr;
 
   const body = await c.req.json<{ providerAlias: string; type: "model" | "connection" | "category"; id: string }>();
@@ -58,7 +58,7 @@ quotaGuard.post("/quota-guard/enable", async (c) => {
 
 // PUT /admin/quota-guard/scheduler
 quotaGuard.put("/quota-guard/scheduler", async (c) => {
-  const authErr = checkAdmin(c);
+  const authErr = await checkAdmin(c);
   if (authErr) return authErr;
 
   const body = await c.req.json<{ enabled?: boolean }>();
@@ -71,7 +71,7 @@ quotaGuard.put("/quota-guard/scheduler", async (c) => {
 
 // PUT /admin/quota-guard/provider — toggle guard exclusion AND connections on 9Router
 quotaGuard.put("/quota-guard/provider", async (c) => {
-  const authErr = checkAdmin(c);
+  const authErr = await checkAdmin(c);
   if (authErr) return authErr;
 
   const body = await c.req.json<{ provider: string; excluded: boolean }>();

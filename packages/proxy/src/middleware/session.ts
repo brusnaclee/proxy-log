@@ -1,69 +1,96 @@
 import { Context, Next } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
-import { generateSessionId } from "../utils/crypto.js";
+import {
+  AUTH_SESSION_TTL_MS,
+  createAuthSession,
+  destroyAuthSession,
+  getAuthSession,
+  remainingTtlSeconds,
+  startAuthSessionPurgeJob,
+  touchAuthSession,
+} from "../utils/auth-sessions.js";
 
-// In-memory session store (suitable for single-instance SQLite setup)
-const sessions = new Map<string, { createdAt: number }>();
+const COOKIE_NAME = "session";
 
-// Session expiry: 24 hours
-const SESSION_TTL = 24 * 60 * 60 * 1000;
+startAuthSessionPurgeJob();
 
-// Clean expired sessions periodically
-setInterval(() => {
-  const now = Date.now();
-  for (const [id, session] of sessions) {
-    if (now - session.createdAt > SESSION_TTL) {
-      sessions.delete(id);
-    }
-  }
-}, 60 * 1000); // every minute
+function cookieSecure(): boolean {
+  return process.env.NODE_ENV === "production" || process.env.COOKIE_SECURE === "1";
+}
 
-/**
- * Create a new session and set the cookie
- */
-export function createSession(c: Context): string {
-  const sessionId = generateSessionId();
-  sessions.set(sessionId, { createdAt: Date.now() });
+function clientMeta(c: Context): { ip: string; userAgent: string } {
+  const ip =
+    c.req.header("cf-connecting-ip") ||
+    c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
+    "unknown";
+  const userAgent = c.req.header("user-agent") || "";
+  return { ip, userAgent };
+}
 
-  setCookie(c, "session", sessionId, {
+function setSessionCookie(c: Context, sessionId: string, maxAgeSec: number): void {
+  setCookie(c, COOKIE_NAME, sessionId, {
     httpOnly: true,
-    secure: false, // set to true in production with HTTPS
+    secure: cookieSecure(),
     sameSite: "Lax",
-    maxAge: SESSION_TTL / 1000,
+    maxAge: maxAgeSec,
     path: "/",
   });
+}
 
+/**
+ * Create a new admin session and set the cookie.
+ */
+export async function createSession(c: Context): Promise<string> {
+  const { ip, userAgent } = clientMeta(c);
+  const sessionId = await createAuthSession({
+    kind: "admin",
+    ip,
+    userAgent,
+  });
+  setSessionCookie(c, sessionId, Math.floor(AUTH_SESSION_TTL_MS / 1000));
   return sessionId;
 }
 
 /**
- * Destroy the current session
+ * Destroy the current admin session (DB row + cookie).
+ * Safe to call when session is missing/expired — still clears cookie.
  */
-export function destroySession(c: Context): void {
-  const sessionId = getCookie(c, "session");
+export async function destroySession(c: Context): Promise<void> {
+  const sessionId = getCookie(c, COOKIE_NAME);
   if (sessionId) {
-    sessions.delete(sessionId);
+    try {
+      await destroyAuthSession(sessionId, "admin");
+    } catch {
+      // still clear cookie
+    }
   }
-  deleteCookie(c, "session", { path: "/" });
+  deleteCookie(c, COOKIE_NAME, { path: "/" });
 }
 
 /**
- * Check if the current request has a valid session
+ * Check if the current request has a valid admin session.
+ * On success, refreshes cookie maxAge to remaining TTL and lightly touches last_seen.
  */
-export function isAuthenticated(c: Context): boolean {
-  const sessionId = getCookie(c, "session");
+export async function isAuthenticated(c: Context): Promise<boolean> {
+  const sessionId = getCookie(c, COOKIE_NAME);
   if (!sessionId) return false;
 
-  const session = sessions.get(sessionId);
-  if (!session) return false;
+  try {
+    const session = await getAuthSession(sessionId, "admin");
+    if (!session) return false;
 
-  // Check expiry
-  if (Date.now() - session.createdAt > SESSION_TTL) {
-    sessions.delete(sessionId);
+    const maxAge = remainingTtlSeconds(session.createdAt);
+    if (maxAge <= 0) {
+      await destroyAuthSession(sessionId, "admin");
+      return false;
+    }
+
+    setSessionCookie(c, sessionId, maxAge);
+    void touchAuthSession(session.id, session.lastSeenAt);
+    return true;
+  } catch {
     return false;
   }
-
-  return true;
 }
 
 /**
@@ -80,22 +107,21 @@ export function isInternalRequest(c: Context): boolean {
  * Auth middleware — blocks unauthenticated requests to admin routes
  */
 export async function authMiddleware(c: Context, next: Next) {
-  // Allow login, OPTIONS, and health check without auth
   const path = c.req.path;
   if (
     path === "/admin/login" ||
+    path === "/admin/logout" ||
     path === "/admin/health" ||
     c.req.method === "OPTIONS"
   ) {
     return next();
   }
 
-  // Allow trusted internal calls (Discord bot integration)
   if (isInternalRequest(c)) {
     return next();
   }
 
-  if (!isAuthenticated(c)) {
+  if (!(await isAuthenticated(c))) {
     return c.json({ error: "Unauthorized. Please login first." }, 401);
   }
 

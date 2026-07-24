@@ -6,7 +6,8 @@ import {
 } from "../../db/schema.js";
 import { eq, sql, and, desc } from "drizzle-orm";
 import { generateApiKey, getKeyPrefix, sha256, maskKey } from "../../utils/crypto.js";
-import { createPortalSession, destroyPortalSession, getPortalDiscordUserId, isPortalAuthenticated } from "../../middleware/portal-session.js";
+import { createPortalSession, destroyPortalSession, getPortalDiscordUserId, resolvePortalDiscordUserId } from "../../middleware/portal-session.js";
+import { destroyAllAuthSessions } from "../../utils/auth-sessions.js";
 import { resolvePeriodRange, chartDaysForPeriod, type PeriodKey, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql } from "../../utils/counting.js";
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
@@ -170,7 +171,7 @@ portal.post("/auth/login", async (c) => {
     return c.json({ requiresPassword: true, discordUserId });
   }
 
-  createPortalSession(c, discordUserId);
+  await createPortalSession(c, discordUserId);
 
   // Update lastLoginAt
   if (settings) {
@@ -195,25 +196,33 @@ portal.post("/auth/verify-password", async (c) => {
   const isValid = await verify(settings.passwordHash, password);
   if (!isValid) return c.json({ error: "Invalid password" }, 401);
 
-  createPortalSession(c, discordUserId);
+  await createPortalSession(c, discordUserId);
   await db.update(userPortalSettings)
     .set({ lastLoginAt: new Date(), updatedAt: new Date() })
     .where(eq(userPortalSettings.discordUserId, discordUserId));
   return c.json({ success: true });
 });
 
-portal.post("/auth/logout", (c) => {
-  destroyPortalSession(c);
+portal.post("/auth/logout", async (c) => {
+  await destroyPortalSession(c);
   return c.json({ success: true });
 });
 
 // ─── Auth middleware ───────────────────────────────────────────────────────────
 portal.use("/*", async (c, next) => {
   const path = c.req.path;
-  if (path === "/auth/login" || path === "/auth/verify-password") {
+  if (
+    path === "/auth/login" ||
+    path === "/auth/verify-password" ||
+    path === "/auth/logout" ||
+    path.endsWith("/auth/login") ||
+    path.endsWith("/auth/verify-password") ||
+    path.endsWith("/auth/logout")
+  ) {
     return next();
   }
-  if (!isPortalAuthenticated(c)) {
+  const userId = await resolvePortalDiscordUserId(c);
+  if (!userId) {
     return c.json({ error: "Unauthorized" }, 401);
   }
   return next();
@@ -1479,6 +1488,9 @@ portal.put("/settings/password", async (c) => {
     await db.insert(userPortalSettings).values({ discordUserId, passwordHash: newHash, passwordSetAt: new Date() });
   }
 
+  await destroyAllAuthSessions("portal", discordUserId);
+  await destroyPortalSession(c);
+
   return c.json({ success: true });
 });
 
@@ -1487,6 +1499,10 @@ portal.delete("/settings/password", async (c) => {
   await db.update(userPortalSettings)
     .set({ passwordHash: null, passwordSetAt: null, updatedAt: new Date() })
     .where(eq(userPortalSettings.discordUserId, discordUserId));
+
+  await destroyAllAuthSessions("portal", discordUserId);
+  await destroyPortalSession(c);
+
   return c.json({ success: true });
 });
 
