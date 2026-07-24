@@ -4196,6 +4196,33 @@ async function buildSearchEmbed() {
 		return String(v);
 	};
 
+	const perModelWindow = limits.globalPerModelPromptLimitWindow || '1d';
+	let perModelLine;
+	if (limits.globalPerModelPromptLimit > 0) {
+		perModelLine = `- Per-Model Default: ${limits.globalPerModelPromptLimit} prompts (${perModelWindow})`;
+	} else {
+		let overrideNote =
+			'Unlimited (lihat **See Model Limit** untuk override)';
+		try {
+			const ml = await proxyInternal('/admin/settings/model-limits');
+			const rows = (ml && ml.data) || [];
+			const pats = rows.filter(
+				(r) => r.isPattern && Number(r.promptLimit) > 0,
+			);
+			if (pats.length) {
+				const bits = pats
+					.slice(0, 6)
+					.map((r) => `\`${r.model}\``)
+					.join(' / ');
+				const lim = pats[0].promptLimit;
+				overrideNote = `Unlimited (global) · overrides: ${bits} = ${lim} prompts / ${perModelWindow} — lihat **See Model Limit**`;
+			}
+		} catch {
+			/* keep fallback */
+		}
+		perModelLine = `- Per-Model Default: ${overrideNote}`;
+	}
+
 	const lines = [
 		'Klik tombol **Lihat Usage Saya** untuk melihat penggunaan API Anda langsung (tanpa input ID).',
 		'Setelah itu, gunakan **Cari Usage User Lain** jika ingin cek user lain.',
@@ -4204,16 +4231,16 @@ async function buildSearchEmbed() {
 		'**Global Quotas:**',
 		`- Prompts: ${fmt(limits.globalPromptLimit, 'prompts')} (${limits.globalPromptLimitWindow || '5h'}) — 1 per turn`,
 		`- API calls: ${fmt(limits.globalRateLimit, 'calls')} (${limits.globalRateLimitWindow || '5h'}) — every hop`,
-		`- Per-Model Default: ${limits.globalPerModelPromptLimit > 0 ? `${limits.globalPerModelPromptLimit} prompts (${limits.globalPerModelPromptLimitWindow || '5h'})` : 'Unlimited'}`,
+		perModelLine,
 		'',
-		'**Token Limits:**',
+		'**Global Tokens Limit:**',
 		`- Input Harian: ${fmtTok(limits.globalDailyInputTokenLimit)}`,
 		`- Output Harian: ${fmtTok(limits.globalDailyOutputTokenLimit)}`,
-		`- Total Harian: ${fmtTok(limits.globalDailyTokenLimit)} _(Phantom non-addon = Unlimited; angka global hanya base stack add-on)_`,
+		`- Total Harian: ${fmtTok(limits.globalDailyTokenLimit)}`,
 		`- Bulanan: ${fmtTok(limits.globalMonthlyTokenLimit)}`,
 		'',
 		'_Per-user limits bervariasi per API key. Klik tombol untuk cek usage spesifik._',
-		'_Klik **See Model Limit** untuk lihat override per-model atau pattern._',
+		'_Klik **See Model Limit** / **Add-on Config** untuk detail override & pack._',
 		'_Klik **More di Dashboard** untuk buka portal web._',
 	];
 
@@ -4234,6 +4261,11 @@ function buildSearchRow(includeOther = false) {
 			.setCustomId('ranking_see_model_limits')
 			.setLabel('See Model Limit')
 			.setEmoji('🎯')
+			.setStyle(ButtonStyle.Secondary),
+		new ButtonBuilder()
+			.setCustomId('ranking_see_addons')
+			.setLabel('Add-on Config')
+			.setEmoji('📦')
 			.setStyle(ButtonStyle.Secondary),
 	];
 	if (includeOther) {
@@ -4261,6 +4293,11 @@ function buildUsageDetailRow(includeOther = false) {
 			.setLabel('Token Saver')
 			.setEmoji('💾')
 			.setStyle(ButtonStyle.Primary),
+		new ButtonBuilder()
+			.setCustomId('ranking_see_addons')
+			.setLabel('Add-on Config')
+			.setEmoji('📦')
+			.setStyle(ButtonStyle.Secondary),
 	];
 	if (includeOther) {
 		buttons.push(
@@ -4274,6 +4311,170 @@ function buildUsageDetailRow(includeOther = false) {
 	buttons.push(buildDashboardLinkButton());
 	return new ActionRowBuilder().addComponents(...buttons);
 }
+
+function fmtTokShort(v) {
+	if (!v || v <= 0) return '—';
+	if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+	if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K`;
+	return String(v);
+}
+
+function buildAddonDetailEmbed(addon) {
+	const allow = addon.modelAllowlistParsed || [];
+	const deny = addon.modelDenylistParsed || [];
+	const dailyLimits = addon.modelDailyLimitsParsed || {};
+	const mode = addon.accessMode || 'allowlist';
+	const lines = [
+		addon.description || '_Tidak ada deskripsi_',
+		'',
+		`**Access mode:** \`${mode}\``,
+		`**Daily pack tokens:** ${fmtTokShort(addon.dailyTokenLimit)}`,
+		`**Monthly pack tokens:** ${fmtTokShort(addon.monthlyTokenLimit)}`,
+		`**Max devices:** ${addon.maxDevices > 0 ? addon.maxDevices : '—'}`,
+		`**Default duration:** ${addon.defaultDurationDays > 0 ? `${addon.defaultDurationDays}d` : '—'}`,
+		`**Active:** ${addon.isActive === false ? 'No' : 'Yes'}`,
+	];
+	if (allow.length) {
+		lines.push(
+			`**Allowlist:** ${allow
+				.slice(0, 12)
+				.map((p) => `\`${p}\``)
+				.join(', ')}${allow.length > 12 ? ` (+${allow.length - 12})` : ''}`,
+		);
+	}
+	if (deny.length) {
+		lines.push(
+			`**Denylist:** ${deny
+				.slice(0, 8)
+				.map((p) => `\`${p}\``)
+				.join(', ')}${deny.length > 8 ? ` (+${deny.length - 8})` : ''}`,
+		);
+	}
+	const subcapKeys = Object.keys(dailyLimits);
+	if (subcapKeys.length) {
+		lines.push(
+			`**Per-model daily caps:** ${subcapKeys
+				.slice(0, 6)
+				.map((k) => `\`${k}\`=${fmtTokShort(dailyLimits[k])}`)
+				.join(', ')}`,
+		);
+	}
+	return new EmbedBuilder()
+		.setTitle(`📦 Add-on: ${addon.name}`)
+		.setDescription(lines.join('\n').slice(0, 4000))
+		.setColor(0x5865f2);
+}
+
+function buildAddonPickRow(addonsList) {
+	const menu = new StringSelectMenuBuilder()
+		.setCustomId('ranking_addon_pick')
+		.setPlaceholder('Pilih add-on untuk detail…')
+		.addOptions(
+			addonsList.slice(0, 25).map((a) => ({
+				label: String(a.name || `addon-${a.id}`).slice(0, 100),
+				value: String(a.id),
+				description: String(a.description || 'Add-on pack')
+					.replace(/\s+/g, ' ')
+					.slice(0, 100),
+			})),
+		);
+	return new ActionRowBuilder().addComponents(menu);
+}
+
+async function handleRankingSeeAddons(interaction) {
+	await interaction.deferReply({ ephemeral: true });
+	const access = await getMemberToolAccess(interaction.member);
+	if (!access.canUseTools) {
+		await interaction.editReply({ content: toolAccessDeniedMessage(access) });
+		return;
+	}
+	let res;
+	try {
+		res = await proxyInternal('/admin/addons');
+	} catch (err) {
+		await interaction.editReply({
+			content: '❌ Gagal fetch add-ons: ' + (err.message || err),
+		});
+		return;
+	}
+	const rows = ((res && res.data) || []).filter((a) => a && a.isActive !== false);
+	if (!rows.length) {
+		await interaction.editReply({
+			embeds: [
+				new EmbedBuilder()
+					.setTitle('📦 Add-on Config')
+					.setDescription('Belum ada add-on terdaftar.')
+					.setColor(0x99aab5),
+			],
+		});
+		return;
+	}
+	if (rows.length === 1) {
+		await interaction.editReply({ embeds: [buildAddonDetailEmbed(rows[0])] });
+		return;
+	}
+	const listLines = rows.slice(0, 15).map((a, i) => {
+		const tok = fmtTokShort(a.dailyTokenLimit);
+		return `${i + 1}. **${a.name}** — daily ${tok} · \`${a.accessMode || 'allowlist'}\``;
+	});
+	await interaction.editReply({
+		embeds: [
+			new EmbedBuilder()
+				.setTitle('📦 Add-on Config')
+				.setDescription(
+					[
+						'Pilih add-on di menu di bawah untuk lihat detail (allowlist, pack token, akses).',
+						'',
+						...listLines,
+						rows.length > 15 ? `\n_…+${rows.length - 15} lainnya_` : '',
+					].join('\n'),
+				)
+				.setColor(0x5865f2),
+		],
+		components: [buildAddonPickRow(rows)],
+	});
+}
+
+async function handleRankingAddonPick(interaction) {
+	await interaction.deferUpdate();
+	const access = await getMemberToolAccess(interaction.member);
+	if (!access.canUseTools) {
+		await interaction.editReply({
+			content: toolAccessDeniedMessage(access),
+			embeds: [],
+			components: [],
+		});
+		return;
+	}
+	const pickId = Number(interaction.values[0]);
+	let res;
+	try {
+		res = await proxyInternal('/admin/addons');
+	} catch (err) {
+		await interaction.editReply({
+			content: '❌ Gagal fetch add-ons: ' + (err.message || err),
+			embeds: [],
+			components: [],
+		});
+		return;
+	}
+	const rows = (res && res.data) || [];
+	const addon = rows.find((a) => Number(a.id) === pickId);
+	if (!addon) {
+		await interaction.editReply({
+			content: '❌ Add-on tidak ditemukan.',
+			embeds: [],
+			components: [],
+		});
+		return;
+	}
+	const active = rows.filter((a) => a && a.isActive !== false);
+	await interaction.editReply({
+		embeds: [buildAddonDetailEmbed(addon)],
+		components: active.length > 1 ? [buildAddonPickRow(active)] : [],
+	});
+}
+
 function fmtGlobalModelLimitRow(r, perModelWindow = '1d') {
 	const parts = [];
 	const win = (r.promptLimitWindow || perModelWindow || '1d').trim() || '1d';
@@ -6976,6 +7177,19 @@ client.on('interactionCreate', async (interaction) => {
 				interaction.customId.startsWith('ranking_see_model_limits:'))
 		) {
 			await handleRankingSeeModelLimits(interaction);
+			return;
+		}
+
+		// ─── Add-on Config ───────────────────────────────────────────────────
+		if (interaction.isButton() && interaction.customId === 'ranking_see_addons') {
+			await handleRankingSeeAddons(interaction);
+			return;
+		}
+		if (
+			interaction.isStringSelectMenu() &&
+			interaction.customId === 'ranking_addon_pick'
+		) {
+			await handleRankingAddonPick(interaction);
 			return;
 		}
 

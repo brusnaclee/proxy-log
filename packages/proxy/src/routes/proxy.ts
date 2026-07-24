@@ -4002,7 +4002,7 @@ proxy.all('/*', async (c) => {
 		} else if (aw.flags.length) {
 			requestPreview = `[${aw.flags.join(',')}]`;
 		}
-		if (aw.shortCircuit) {
+		if (aw.shortCircuit && aw.shortCircuitTool) {
 			const turnKey = `${sessionInfo.sessionId}:${keyRecord.id}`;
 			const turnId = turnIdCache.get(turnKey) || null;
 			try {
@@ -4038,6 +4038,7 @@ proxy.all('/*', async (c) => {
 				model,
 				toolName: aw.signature?.toolName,
 				target: aw.signature?.target,
+				agentTool: aw.shortCircuitTool,
 			};
 			if (isStreaming) {
 				return new Response(buildAntiWasteShortCircuitSse(scOpts), {

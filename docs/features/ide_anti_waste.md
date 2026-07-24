@@ -28,9 +28,12 @@ Flag: `ANTI_WASTE_ENABLED` (default **on**) or header `X-Anti-Waste: off`.
 |---|---|---|
 | Soft nudge | identical noisy tool ≥ 2 (profile) | Inject system line — still upstream |
 | Tool dedupe stub | seen ≥ 3 | Replace huge tool dump with `[cached]…` stub — still upstream, fewer tokens |
-| Short-circuit | consecutive identical ≥ 5 | Local SSE/JSON, **skip upstream**; log `response_preview=short_circuited` |
+| Short-circuit | consecutive identical ≥ 5 **and** request `tools` includes a safe agent tool (`ask_followup_question`, `attempt_completion`, `ask_question`) | Local SSE/JSON with synthetic **`tool_calls`** (never plain assistant text) — skip upstream; log `response_preview=short_circuited` |
+| Short-circuit skip | threshold met but no safe agent tool | Dedupe + nudge only; **forward upstream** (avoids illegal text-only replies that break Cline/Continue) |
 
 Profiles: [`ide-profiles.ts`](../../packages/proxy/src/utils/ide-profiles.ts). Write/edit tools never short-circuited.
+
+Plain `finish_reason: stop` text was removed because agent IDEs require a tool call and otherwise loop with `[ERROR] You did not use a tool`.
 
 ## Testing
 
