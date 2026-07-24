@@ -124,6 +124,12 @@ async function main() {
   );
   console.log(quotaUpdate.stdout || quotaUpdate.stderr || '');
 
+  // Auth sessions table (admin + portal login; monit_api may lack CREATE privilege)
+  const authSessionsSql = await ssh.execCommand(
+    "sudo -u postgres psql -d monit_api -c \"CREATE TABLE IF NOT EXISTS auth_sessions (id SERIAL PRIMARY KEY, session_hash TEXT NOT NULL, kind TEXT NOT NULL, discord_user_id TEXT, created_at TIMESTAMP NOT NULL DEFAULT NOW(), last_seen_at TIMESTAMP NOT NULL DEFAULT NOW(), ip TEXT, user_agent TEXT); CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_sessions_hash ON auth_sessions (session_hash); CREATE INDEX IF NOT EXISTS idx_auth_sessions_kind_user ON auth_sessions (kind, discord_user_id); CREATE INDEX IF NOT EXISTS idx_auth_sessions_created ON auth_sessions (created_at); GRANT ALL PRIVILEGES ON TABLE auth_sessions TO monit_api; GRANT USAGE, SELECT ON SEQUENCE auth_sessions_id_seq TO monit_api;\" 2>&1"
+  );
+  console.log(authSessionsSql.stdout || authSessionsSql.stderr || '');
+
   // 6. Update DB admin_config agverif_channel_id (for bot dashboard settings)
   console.log('\n--- Updating DB admin_config ---');
   const dbUpdate = await ssh.execCommand(

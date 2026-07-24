@@ -136,7 +136,7 @@ const checkInternal = (c: any) => {
   return null;
 };
 
-const checkAdminSession = (c: any) => {
+const checkAdminSession = async (c: any) => {
   if (!(await isAuthenticated(c))) {
     return c.json({ error: "Unauthorized" }, 401);
   }
@@ -171,7 +171,7 @@ monitor.post("/internal/monitor/models", async (c) => {
 
 // GET latest status per model
 monitor.get("/settings/bot", async (c) => {
-  const authErr = checkAdminSession(c);
+  const authErr = await checkAdminSession(c);
   if (authErr) return authErr;
   
   const [config] = await db.select().from(adminConfig);
@@ -194,7 +194,7 @@ monitor.get("/settings/bot", async (c) => {
 });
 
 monitor.post("/settings/bot", async (c) => {
-  const authErr = checkAdminSession(c);
+  const authErr = await checkAdminSession(c);
   if (authErr) return authErr;
   
   const body = await c.req.json();
@@ -450,7 +450,7 @@ async function getLatestMonitorRows() {
 // POST admin force-activate: publish model ON in Discord/client catalog.
 // Sticky until admin OFF (sweeps in notif_only never flip published).
 monitor.post("/monitor/models/activate", async (c) => {
-  const authErr = checkAdminSession(c);
+  const authErr = await checkAdminSession(c);
   if (authErr) return authErr;
 
   const body = await c.req.json<{ modelId: string; provider: string }>();
@@ -474,7 +474,7 @@ monitor.post("/monitor/models/activate", async (c) => {
 
 // POST admin force-deactivate: publish model OFF (sticky until admin ON).
 monitor.post("/monitor/models/deactivate", async (c) => {
-  const authErr = checkAdminSession(c);
+  const authErr = await checkAdminSession(c);
   if (authErr) return authErr;
 
   const body = await c.req.json<{ modelId: string; provider: string }>();
@@ -498,7 +498,7 @@ monitor.post("/monitor/models/deactivate", async (c) => {
 
 // POST bulk override: toggle published ON/OFF for matching models.
 monitor.post("/monitor/models/bulk-override", async (c) => {
-  const authErr = checkAdminSession(c);
+  const authErr = await checkAdminSession(c);
   if (authErr) return authErr;
 
   const body = await c.req.json<{
