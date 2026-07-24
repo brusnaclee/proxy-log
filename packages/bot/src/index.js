@@ -4731,7 +4731,8 @@ function buildRecapPanelEmbed(win) {
 		.setColor(0xec4899)
 		.setDescription(
 			'Jejak ngodingmu bulan ini udah kami rangkum jadi sesuatu yang... menarik. 👀\n' +
-				'Berani buka?',
+				'Berani buka?\n\n' +
+				'_Testimoni: semua peserta lintas bulan (bergilir)._',
 		)
 		.setFooter({
 			text:
@@ -4766,7 +4767,7 @@ function buildRecapDebugEmbed(win) {
 			'Panel debug recap (selalu aktif untuk testing).\n\n' +
 				'🎁 **Generate Recap-ku** — buat & lihat recap kamu sendiri.\n' +
 				'🔍 **Lihat Recap User** — masukkan User ID untuk lihat recap orang lain.\n' +
-				'💬 **Lihat Testimoni** — testimoni bulan ini, bergilir.\n\n' +
+				'💬 **Lihat Testimoni** — semua testimoni di DB (lintas bulan), bergilir 10 menit.\n\n' +
 				(win
 					? `Bulan target: **${win.monthLabel}** • Window: ${win.isOpen ? '🟢 OPEN' : '🔒 CLOSED'}`
 					: ''),
@@ -4953,6 +4954,9 @@ const RECAP_PROGRESS_STAGES = [
 	'✨ Menyelesaikan recap...',
 ];
 
+const TESTI_EXPIRE_MS = 10 * 60 * 1000;
+const RECAP_EPHEMERAL_EXPIRE_MS = 10 * 60 * 1000;
+
 async function handleMonthlyRecap(interaction) {
 	// No role gate: anyone can open their recap (if data exists for the month).
 	// Window gate first (cheap reply before defer when closed).
@@ -5123,10 +5127,10 @@ async function generateAndReplyRecap(interaction, targetUser, opts = {}) {
 			)
 			.setFooter({
 				text: self
-					? 'Buka recap web buat kasih testimoni • pesan ini hilang dalam 60 detik'
+					? 'Buka recap web buat kasih testimoni • pesan ini hilang dalam 10 menit'
 					: data.degraded
-						? 'Recap template (AI offline) • pesan hilang dalam 60 detik'
-						: 'Pesan ini hilang dalam 60 detik',
+						? 'Recap template (AI offline) • pesan hilang dalam 10 menit'
+						: 'Pesan ini hilang dalam 10 menit',
 			});
 		if (avatarUrl) embed.setThumbnail(avatarUrl);
 
@@ -5138,10 +5142,10 @@ async function generateAndReplyRecap(interaction, targetUser, opts = {}) {
 		);
 
 		await interaction.editReply({ embeds: [embed], components: [row] });
-		// Auto-delete the ephemeral after 60s.
+		// Auto-delete the ephemeral after 10 minutes.
 		setTimeout(() => {
 			interaction.deleteReply().catch(() => {});
-		}, 60000);
+		}, RECAP_EPHEMERAL_EXPIRE_MS);
 	} catch (err) {
 		done = true;
 		clearInterval(timer);
@@ -5245,7 +5249,29 @@ async function handleRecapDebugOtherModal(interaction) {
 	}
 }
 
-// ─── Testimonial viewer: rotating ephemeral, 5s cycle, 60s auto-expire ───────
+// ─── Testimonial viewer: rotating ephemeral, 5s cycle, 10m auto-expire ───────
+function formatTestiMonth(ym) {
+	if (!ym || typeof ym !== 'string') return null;
+	const m = ym.match(/^(\d{4})-(\d{2})$/);
+	if (!m) return ym;
+	const months = [
+		'Januari',
+		'Februari',
+		'Maret',
+		'April',
+		'Mei',
+		'Juni',
+		'Juli',
+		'Agustus',
+		'September',
+		'Oktober',
+		'November',
+		'Desember',
+	];
+	const mi = parseInt(m[2], 10) - 1;
+	return `${months[mi] || m[2]} ${m[1]}`;
+}
+
 function buildTestimonialEmbed(t) {
 	const stars =
 		'★'.repeat(Math.max(0, Math.min(5, t.stars || 0))) +
@@ -5259,6 +5285,7 @@ function buildTestimonialEmbed(t) {
 		]
 			.filter(Boolean)
 			.join(' • ') || 'peserta aktif';
+	const monthLabel = formatTestiMonth(t.yearMonth);
 	const embed = new EmbedBuilder()
 		.setColor(0xf59e0b)
 		.setAuthor({
@@ -5269,10 +5296,13 @@ function buildTestimonialEmbed(t) {
 		.setDescription(
 			t.body ? `“${String(t.body).slice(0, 500)}”` : '_(tanpa teks)_',
 		)
-		.addFields({ name: 'Peringkat', value: rankStr, inline: true })
-		.setFooter({
-			text: 'Testimoni bergilir tiap 5 detik • hilang dalam 60 detik',
-		});
+		.addFields({ name: 'Peringkat', value: rankStr, inline: true });
+	if (monthLabel) {
+		embed.addFields({ name: 'Bulan', value: monthLabel, inline: true });
+	}
+	embed.setFooter({
+		text: 'Testimoni bergilir tiap 5 detik • hilang dalam 10 menit',
+	});
 	return embed;
 }
 
@@ -5291,12 +5321,12 @@ async function handleTestimonialViewer(interaction) {
 	if (!list.length) {
 		await interaction
 			.editReply({
-				content: '💬 Belum ada testimoni bulan ini. Jadilah yang pertama!',
+				content: '💬 Belum ada testimoni. Jadilah yang pertama!',
 			})
 			.catch(() => {});
 		setTimeout(() => {
 			interaction.deleteReply().catch(() => {});
-		}, 60000);
+		}, TESTI_EXPIRE_MS);
 		return;
 	}
 
@@ -5317,7 +5347,7 @@ async function handleTestimonialViewer(interaction) {
 	setTimeout(() => {
 		clearInterval(rotate);
 		interaction.deleteReply().catch(() => {});
-	}, 60000);
+	}, TESTI_EXPIRE_MS);
 }
 
 // ─── Daily recap regeneration + debug post ──────────────────────────────────

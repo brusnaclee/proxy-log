@@ -14,6 +14,7 @@ import { getTokenMultipliers, type TokenMultiplierOpts } from "./token-multiplie
 import { getMonthRangeUtc } from "./recap-window.js";
 import { getModelRates } from "./cost-calculator.js";
 import { getTokenInputModeSync, groupedInputSumSql } from "./counting.js";
+import { enrichRecapStory } from "./recap-story-enrich.js";
 
 function num(v: any): number {
   if (v === null || v === undefined) return 0;
@@ -1037,6 +1038,22 @@ export async function enrichRankAndComparison(
 
   // Playful extras (achievements, fun facts, community, projection, rest weekday).
   try { stats.extras = buildExtras(stats, leaderboard); } catch { stats.extras = undefined; }
+
+  // Additive story enricher (addon, burn, providers, eggs, …) — never throws out.
+  try {
+    await enrichRecapStory({
+      stats: stats as any,
+      keyId,
+      keyIds,
+      isTrial,
+      yearMonth: stats.yearMonth,
+      prevYearMonth,
+      communityPeakHours: [0, 1, 2, 20, 21, 23],
+    });
+  } catch (err) {
+    console.warn("[recap] story enrich skipped:", (err as Error)?.message || err);
+  }
+
   return stats;
 }
 

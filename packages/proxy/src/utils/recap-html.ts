@@ -679,11 +679,17 @@ function buildSectionItems(d: RecapHtmlData): SlideItem[] {
 
     intro: () => {
       const introT = txt("intro", `Recap ${d.monthLabel}`, "Yuk lihat perjalanan ngoding kamu!");
+      const story = (s as any).story || {};
+      const chips: string[] = [];
+      if (story.addon?.name) chips.push(chipHtml("star", `Pack: ${story.addon.name}`));
+      else if (story.isTrial) chips.push(chipHtml("rocket", "Explorer Trial"));
+      if (story.communityTwin) chips.push(chipHtml("confetti", "Community Twin"));
       return section("intro", `
         ${d.avatarUrl ? `<img class="avatar pop" src="${escapeHtml(d.avatarUrl)}" alt="" onerror="this.style.display='none'">` : ""}
         <div class="kicker reveal">Monthly Recap</div>
         <div class="big reveal">${escapeHtml(d.monthLabel)}</div>
         <div class="headline reveal">${escapeHtml(d.displayName)}</div>
+        ${chips.join("")}
         <div class="caption reveal">${introT.caption}</div>
         ${mediaTag(A.intro, d.base, "media", true)}
         <div class="hint">Scroll / geser ke bawah ⤵</div>`);
@@ -836,18 +842,113 @@ function buildSectionItems(d: RecapHtmlData): SlideItem[] {
       const rows = top.slice(0, 4).map((k: any) =>
         chipHtml("key", `${k.name}: ${fmtNum(k.requests)} req (${k.sharePercent || 0}%)`),
       ).join("");
+      const multi = (s as any).story?.multiKeyLine;
       return section("keys", `
         <div class="kicker reveal">API Keys</div>
         <div class="big reveal">${fmtNum(count)}</div>
         <div class="headline reveal">key aktif di akun ini</div>
         ${fav ? chipHtml("star", `Paling sering: ${fav}`) : ""}
         ${rows}
-        <div class="caption reveal">Limit & usage digabung per Discord — bikin key tambahan tidak menambah kuota.</div>
+        <div class="caption reveal">${escapeHtml(multi || "Usage digabung per Discord. Kuota & pack mengikuti aturan key/add-on kamu.")}</div>
         ${mediaTag(A.requests, d.base)}`);
     },
 
+    identity: () => {
+      const story = (s as any).story || {};
+      const addon = story.addon;
+      if (!addon?.name && !story.isTrial) return null;
+      const lines: string[] = [];
+      if (addon?.name) {
+        lines.push(chipHtml("star", addon.name));
+        if (addon.dailyTokenLimit > 0) lines.push(chipHtml("coin", `Pack daily ~${fmtNum(addon.dailyTokenLimit)} tok`));
+        if (addon.daysLeft != null) lines.push(chipHtml("calendar-dots", `Sisa ~${addon.daysLeft} hari`));
+        if (addon.description) lines.push(`<div class="caption reveal">${escapeHtml(String(addon.description).slice(0, 180))}</div>`);
+      } else if (story.isTrial) {
+        lines.push(chipHtml("rocket", "Explorer Trial"));
+        lines.push(`<div class="caption reveal">Mode eksplor — fokus ke vibe, bukan ke limit.</div>`);
+      }
+      return section("identity", `
+        <div class="kicker reveal">Status Akun</div>
+        <div class="headline reveal">${addon?.name ? "Pack Holder" : "Trial Explorer"}</div>
+        ${lines.join("")}
+        ${mediaTag(A.persona, d.base)}`);
+    },
+
+    burn: () => {
+      const burn = (s as any).story?.burn;
+      const quota = (s as any).story?.quota;
+      if (!burn?.peakPromptPerHour && !burn?.peakCallsPerHour && !quota?.line) return null;
+      return section("burn", `
+        <div class="kicker reveal">Peak Energy</div>
+        <div class="headline reveal">Jam paling gila</div>
+        ${burn?.peakPromptPerHour ? chipHtml("lightning", `Peak prompt: ${fmtNum(burn.peakPromptPerHour)}/jam${burn.peakPromptAt ? ` · ${burn.peakPromptAt}` : ""}`) : ""}
+        ${burn?.peakCallsPerHour ? chipHtml("flame", `Peak traffic: ${fmtNum(burn.peakCallsPerHour)} calls/jam${burn.peakCallsAt ? ` · ${burn.peakCallsAt}` : ""}`) : ""}
+        ${quota?.line ? `<div class="caption reveal">${escapeHtml(quota.line)}${quota.dailyPeakPct != null ? ` (daily peak ~${quota.dailyPeakPct}%)` : ""}</div>` : ""}
+        ${mediaTag(A.requests, d.base)}`);
+    },
+
+    providers: () => {
+      const p = (s as any).story?.providers;
+      if (!p?.top?.length && !p?.upstream?.length) return null;
+      const top = (p.top || []).slice(0, 4).map((x: any) => chipHtml("wrench", `${x.name}: ${fmtNum(x.requests)}`)).join("");
+      const up = (p.upstream || []).slice(0, 4).map((x: any) => chipHtml("link", `upstream ${x.name}: ${fmtNum(x.requests)}`)).join("");
+      return section("providers", `
+        <div class="kicker reveal">Provider & Upstream</div>
+        <div class="headline reveal">Jalur favoritmu</div>
+        ${top}
+        ${up}
+        <div class="caption reveal">Provider = routing proxy; upstream = prefix model.</div>
+        ${mediaTag(A.favoriteModel, d.base)}`);
+    },
+
+    schedule: () => {
+      const sch = (s as any).story?.schedule;
+      const loyalty = (s as any).story?.loyalty;
+      if (!sch?.firstDay && !sch?.typicalStartHour && !loyalty) return null;
+      return section("schedule", `
+        <div class="kicker reveal">Jadwal Ngoding</div>
+        <div class="headline reveal">${escapeHtml(sch?.warriorLine || "Rhythm kamu")}</div>
+        ${sch?.favoriteWeekday ? chipHtml("calendar-dots", `Hari favorit: ${sch.favoriteWeekday}`) : ""}
+        ${sch?.firstDay ? chipHtml("rocket", `First coding: ${sch.firstDay}`) : ""}
+        ${sch?.lastDay ? chipHtml("trophy", `Last coding: ${sch.lastDay}`) : ""}
+        ${sch?.typicalStartHour != null ? chipHtml("sun-horizon", `Biasanya start jam ${sch.typicalStartHour}:00`) : ""}
+        ${sch?.typicalEndHour != null ? chipHtml("moon-stars", `Biasanya end jam ${sch.typicalEndHour}:00`) : ""}
+        ${sch?.weekendSharePct != null ? chipHtml("confetti", `Weekend share ~${sch.weekendSharePct}%`) : ""}
+        ${loyalty ? chipHtml("star", `Loyalty ${loyalty.streakDays}d → ${loyalty.model}`) : ""}
+        ${mediaTag(A.activeTime, d.base)}`);
+    },
+
+    tokenSaver: () => {
+      const ts = (s as any).story?.tokenSaver;
+      if (!ts) return null;
+      return section("tokenSaver", `
+        <div class="kicker reveal">Token Saver</div>
+        <div class="big reveal">${fmtNum(ts.estimatedSavedTokens || 0)}</div>
+        <div class="headline reveal">estimasi token hemat</div>
+        ${ts.bestDay ? chipHtml("coin", `Hari paling hemat: ${ts.bestDay}`) : ""}
+        ${(ts.modes || []).map((m: string) => chipHtml("lightbulb", m)).join("")}
+        <div class="caption reveal">${escapeHtml(ts.reason || "")}</div>
+        ${mediaTag(A.tokens || A.requests, d.base)}`);
+    },
+
+    easter: () => {
+      const eggs = ((s as any).story?.eggs || []).filter((e: any) => e?.title);
+      if (eggs.length < 2) return null;
+      // Hidden-ish slide: only when enough eggs unlocked
+      return section("easter", `
+        <div class="kicker reveal">Easter Eggs</div>
+        <div class="headline reveal">Rahasia yang terbuka</div>
+        <div class="facts reveal">
+          ${eggs.slice(0, 5).map((e: any) => `<div class="fact"><strong>${escapeHtml(e.title)}</strong> — ${escapeHtml(e.desc || "")}</div>`).join("")}
+        </div>
+        ${(s as any).story?.fortune ? `<div class="caption reveal">🎁 ${escapeHtml((s as any).story.fortune)}</div>` : ""}
+        ${mediaTag(A.ach || A.persona, d.base)}`);
+    },
+
     ach: () => {
-      const ach = nv.badges || [];
+      const ach = (nv.badges && nv.badges.length)
+        ? nv.badges
+        : (s.extras?.achievements || []);
       if (!ach.length) return null;
       const achT = txt("ach", `${ach.length} Badge Kekunci 🏅`, "Bukti kamu konsisten dan eksperimental.");
       return section("ach", `
@@ -871,45 +972,38 @@ function buildSectionItems(d: RecapHtmlData): SlideItem[] {
           ${bentoBig("wrench", fmtNum(n(s, "tools.totalToolCalls")), "Tool calls", "Agentic sejati — nyuruh AI mulu.")}
           ${bentoSm("calendar-dots", n(s, "activity.activeDays"), "Hari aktif")}
           ${bentoSm("flame", n(s, "activity.longestStreak"), "Streak")}
-          ${bentoSm("chat-circle-dots", n(s, "sessions.count"), "Sesi chat")}
+          ${bentoSm("chat-circle-dots", n(s, "sessions.count"), "Percakapan")}
           ${bentoSm("timer", fmtNum(n(s, "latency.avgMs")), "Latency (ms)")}
           ${bentoWide("robot", n(s, "tools.toolTurnPercent") + "%", "turn pakai tool", "Tukang suruh AI.")}
           ${bentoSm("laptop", n(s, "devices.uniqueCount"), "Device")}
         </div>
         <div class="bento-chips reveal">
           ${s.ide?.favorite ? chipHtml("laptop", `IDE favorit: ${s.ide.favorite}`) : ""}
-          ${s.comparison?.hasPrev ? `<div class="chip reveal">${s.comparison.requestsDelta > 0 ? phosphor("trend-up", 14, "chip-ic") : phosphor("trend-down", 14, "chip-ic")}<span>${s.comparison.requestsDelta > 0 ? "+" : ""}${fmtNum(s.comparison.requestsDelta)} req vs bulan lalu</span></div>` : ""}
+          ${s.comparison?.hasPrev ? `<div class="chip reveal">${(s.comparison.requestsDeltaPercent || 0) >= 0 ? phosphor("trend-up", 14, "chip-ic") : phosphor("trend-down", 14, "chip-ic")}<span>${(s.comparison.requestsDeltaPercent || 0) >= 0 ? "+" : ""}${fmtNum(s.comparison.requestsDeltaPercent || 0)}% req vs bulan lalu</span></div>` : ""}
+          ${s.extras?.rankUpVsPrev != null && s.extras.rankUpVsPrev !== 0 ? chipHtml("trophy", s.extras.rankUpVsPrev > 0 ? `Naik ${s.extras.rankUpVsPrev} peringkat` : `Geser ${Math.abs(s.extras.rankUpVsPrev)} peringkat`) : ""}
+          ${(s as any).story?.latencyHero ? chipHtml("lightning", "Latency Hero") : ""}
         </div>
         ${mediaTag(A.requests, d.base)}`),
 
     facts: () => {
-      const facts = (nv.facts || []).slice(0, 4);
+      const facts = ((nv.facts && nv.facts.length) ? nv.facts : (s.extras?.funFacts || [])).slice(0, 5);
       if (!facts.length) return null;
       return section("facts", `
         <div class="kicker reveal">Fakta Iseng</div>
         <div class="headline reveal">Tau Gak? 🤔</div>
         <div class="facts reveal">
-          ${facts.map((f) => `<div class="fact">${escapeHtml(f)}</div>`).join("")}
+          ${facts.map((f: string) => `<div class="fact">${escapeHtml(f)}</div>`).join("")}
         </div>
         ${mediaTag(A.activeTime, d.base)}`);
     },
 
     heatmap: () => {
-      const heat = s.activity?.hourlyHeatmap;
-      if (!heat) return null;
-      const max = Math.max(...Object.values(heat).map((v) => Number(v) || 0), 1);
-      const cells: string[] = [];
-      for (let d = 0; d < 7; d++) {
-        for (let h = 0; h < 24; h++) {
-          const v = Number(heat[`${d}-${h}`] || 0);
-          const a = Math.min(1, v / max);
-          cells.push(`<div class="hc" style="--a:${a.toFixed(2)}" title="${d}:00 ${h}:00 — ${fmtNum(v)} req"></div>`);
-        }
-      }
+      const built = buildHeatmap(s);
+      if (!built) return null;
       return section("heatmap", `
         <div class="kicker reveal">Kapan Kamu Ngoding</div>
         <div class="headline reveal">Pola Jam x Hari</div>
-        <div class="heat reveal">${cells.join("")}</div>
+        <div class="reveal">${built}</div>
         <div class="caption reveal">Makin gelap, makin asik kamu mikir.</div>
         ${mediaTag(A.activeTime, d.base)}`);
     },
@@ -1128,9 +1222,10 @@ function buildSectionItems(d: RecapHtmlData): SlideItem[] {
   // 13) community → 14) rank → 15) race → 16) leaderboard →
   // 17) projection → 18) card → 19) closing
   const order: string[] = [
-    "intro", "persona", "favoriteModel", "leastModel",
-    "modelSpeed", "activeTime", "stats", "keys", "ach",
-    "grid", "facts", "heatmap", "rest",
+    "intro", "persona", "identity", "favoriteModel", "leastModel",
+    "modelSpeed", "activeTime", "burn", "schedule", "stats", "providers",
+    "keys", "tokenSaver", "ach",
+    "grid", "facts", "heatmap", "rest", "easter",
     "community", "rank", "race", "leaderboard",
     "projection", "card", "closing",
   ];

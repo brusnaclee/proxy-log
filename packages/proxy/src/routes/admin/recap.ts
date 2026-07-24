@@ -517,13 +517,18 @@ function verifyDayToken(discordUserId: string, yearMonth: string, token: string)
   return token === dayToken(discordUserId, yearMonth);
 }
 
-// List testimonials for a month (for the Discord viewer).
+// List testimonials (Discord viewer): default ALL months; optional ?yearMonth=YYYY-MM.
 recap.get("/internal/recap/testimonials", async (c) => {
-  const yearMonth = c.req.query("yearMonth") || getRecapWindow().yearMonth;
+  const yearMonth = c.req.query("yearMonth") || "";
+  if (yearMonth) {
+    const rows = await db.select().from(recapTestimonials)
+      .where(eq(recapTestimonials.yearMonth, yearMonth))
+      .orderBy(desc(recapTestimonials.updatedAt));
+    return c.json({ yearMonth, scope: "month", testimonials: rows });
+  }
   const rows = await db.select().from(recapTestimonials)
-    .where(eq(recapTestimonials.yearMonth, yearMonth))
     .orderBy(desc(recapTestimonials.updatedAt));
-  return c.json({ yearMonth, testimonials: rows });
+  return c.json({ yearMonth: null, scope: "all", testimonials: rows });
 });
 
 export default recap;
