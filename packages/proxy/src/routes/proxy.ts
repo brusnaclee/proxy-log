@@ -20,6 +20,11 @@ import {
 	resolveTokenSaverFlags,
 } from '../utils/token-saver/index.js';
 import {
+	applyAntiWaste,
+	buildAntiWasteShortCircuitJson,
+	buildAntiWasteShortCircuitSse,
+} from '../utils/anti-waste.js';
+import {
 	convertResponseToOpenAI,
 	convertStreamEvent,
 	createStreamState,
@@ -3255,6 +3260,7 @@ proxy.all('/*', async (c) => {
 	}
 
 	// Check for infinite tool loops removed as per user request to act as pure pass-through
+	// Anti-waste (dedupe/nudge/short-circuit) runs later — after isStreaming is known — without hard 429.
 
 	// ΓöÇΓöÇΓöÇ 10. Prompt & Model Limit Checks ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 	//
@@ -3757,6 +3763,88 @@ proxy.all('/*', async (c) => {
 	const upstreamUrl = joinUpstreamOpenAIUrl(targetProvider.endpoint, forwardPath);
 	const isStreaming = requestBody?.stream === true;
 
+	// ─── IDE Smart Anti-Waste (dedupe / nudge / optional short-circuit) ─────
+	// After session resolve + limits; mutates messages or returns local SSE (no hard stop).
+	let antiWasteFlags: string[] = [];
+	{
+		const awSessionKey = `${sessionInfo.sessionId}:${keyRecord.id}`;
+		const aw = applyAntiWaste({
+			requestBody,
+			sessionKey: awSessionKey,
+			isNewPrompt,
+			normalizedIde,
+			headers: c.req.raw.headers,
+		});
+		antiWasteFlags = aw.flags;
+		if (aw.deduped || aw.nudged) {
+			try {
+				requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
+			} catch {
+				/* ignore */
+			}
+			console.log(
+				`[anti-waste] ide=${ide} dedupe=${aw.deduped} saved=${aw.charsSaved} nudge=${aw.nudged} consec=${aw.consecutiveIdentical} shortCircuit=${aw.shortCircuit}`,
+			);
+		}
+		if (aw.flags.length && requestPreview) {
+			requestPreview = `${requestPreview} [${aw.flags.join(',')}]`.slice(0, 220);
+		} else if (aw.flags.length) {
+			requestPreview = `[${aw.flags.join(',')}]`;
+		}
+		if (aw.shortCircuit) {
+			const turnKey = `${sessionInfo.sessionId}:${keyRecord.id}`;
+			const turnId = turnIdCache.get(turnKey) || null;
+			try {
+				await db.insert(requestLogs).values({
+					apiKeyId: keyRecord.id,
+					apiKeyName: keyRecord.name,
+					userAgentRaw: userAgent || null,
+					osDetected,
+					clientName: clientName || ide,
+					ipAddress: clientIp,
+					deviceFingerprint: effectiveFingerprint,
+					ideDetected: ide,
+					provider: targetProvider?.name || provider || null,
+					endpointPath: path,
+					sessionId: sessionInfo.sessionId,
+					turnId,
+					model,
+					promptTokens: 0,
+					completionTokens: 0,
+					totalTokens: 0,
+					requestPreview: requestPreview || null,
+					responsePreview: 'short_circuited',
+					isCountedRequest: false,
+					isBillableToken: false,
+					latencyMs: Date.now() - startTime,
+					statusCode: 200,
+					messageRole: messageAnalysis.messageRole,
+				});
+			} catch (err) {
+				console.warn('[anti-waste] short-circuit log failed:', (err as Error)?.message || err);
+			}
+			const scOpts = {
+				model,
+				toolName: aw.signature?.toolName,
+				target: aw.signature?.target,
+			};
+			if (isStreaming) {
+				return new Response(buildAntiWasteShortCircuitSse(scOpts), {
+					status: 200,
+					headers: {
+						'Content-Type': 'text/event-stream; charset=utf-8',
+						'Cache-Control': 'no-cache',
+						Connection: 'keep-alive',
+						'X-Anti-Waste': 'short_circuited',
+					},
+				});
+			}
+			return c.json(buildAntiWasteShortCircuitJson(scOpts), 200, {
+				'X-Anti-Waste': 'short_circuited',
+			});
+		}
+	}
+
 	const toolNameSet = new Set<string>(requestToolNames);
 	const appendToolsFromPayload = (payload: any) => {
 		const tools = extractToolNamesFromPayload(payload);
@@ -3933,7 +4021,7 @@ proxy.all('/*', async (c) => {
 				}
 			}
 
-			if (shouldCountRequest && isNewPrompt) {
+			if (shouldCountRequest && (isNewPrompt || messageAnalysis.turnKind === 'tool_followup')) {
 				await updateSessionAfterRequest(tx, {
 					sessionId: sessionInfo.sessionId,
 					ipAddress: clientIp,

@@ -39,7 +39,7 @@ const IDE_PATTERNS: [RegExp, string][] = [
 	[/\bglm[-/]/i, "GLM"],
 	[/\bkiro\b/i, "Kiro"],
 	[/kilo[\s_-]?code|kilo/i, "Kilo"],
-	[/zcode|z-code/i, "ZCode"],
+	[/zcode\/|zcode|z-code/i, "ZCode"],
 	[/tabby/i, "Tabby IDE"],
 	[/codeium/i, "Codeium"],
 	[/cody|sourcegraph/i, "Cody (Sourcegraph)"],
@@ -54,9 +54,14 @@ const IDE_PATTERNS: [RegExp, string][] = [
 	[/claude.*code/i, "Claude Code"],
 	[/claude.*desktop|claude-desktop/i, "Claude Desktop"],
 
-	// Zed editor
-	[/zed[\/\s]/i, "Zed"],
-	[/zed\.dev/i, "Zed"],
+	// Zed editor (UA is often `Zed/1.x+stable…`)
+	[/^zed\/|zed\/|\bzed\.dev\b/i, "Zed"],
+
+	// Pi coding agent (`pi/0.80.x (linux; node/…)`)
+	[/^pi\/|\bpi\/\d/i, "Pi Agent"],
+
+	// Internal Tokito probes
+	[/tokitoprobe|tokitocompare/i, "Tokito Probe"],
 
 	// Antigravity variants (IDE > Hub > CLI fallback)
 	[/antigravity\/ide/i, "Antigravity IDE"],
@@ -71,12 +76,16 @@ const IDE_PATTERNS: [RegExp, string][] = [
 	// --- SDK / HTTP clients ---
 	[/asyncopenai|openai\/python|openai-python/i, "OpenAI Python SDK"],
 	[/openai\/js|openai-node|openai.*node/i, "OpenAI Node SDK"],
-	[/openai\/(python|js|node)/i, "OpenAI SDK"],
+	[/openai\/go|openai-go/i, "OpenAI Go SDK"],
+	[/openai\/(python|js|node|go)/i, "OpenAI SDK"],
 	[/python\/\d+\.\d+.*aiohttp|aiohttp\/\d/i, "Python aiohttp"],
-	[/python-requests|python\/requests/i, "Python Requests"],
+	[/python-requests|python\/requests|python-urllib|python-httpx/i, "Python Requests"],
 	[/axios/i, "Axios"],
 	[/node-fetch|undici/i, "Node Fetch"],
-	[/Go-http-client/i, "Go HTTP Client"],
+	[/^bun\/|\bbun\/\d/i, "Bun Client"],
+	[/okhttp/i, "OkHttp Client"],
+	[/postmanruntime|postman/i, "Postman"],
+	[/Go-http-client|go-resty/i, "Go HTTP Client"],
 	[/curl/i, "curl"],
 
 	// --- Browser / shell (low priority, catch-all) ---
@@ -95,6 +104,7 @@ export const GENERIC_IDE_LABELS = new Set([
 	"openai sdk",
 	"openai python sdk",
 	"openai node sdk",
+	"openai go sdk",
 	"python requests",
 	"python aiohttp",
 	"axios",
@@ -103,6 +113,11 @@ export const GENERIC_IDE_LABELS = new Set([
 	"powershell",
 	"browser client",
 	"vs code",
+	"bun client",
+	"okhttp client",
+	"postman",
+	"tokito probe",
+	"pi agent",
 ]);
 
 /**
@@ -148,14 +163,28 @@ export function detectIdeFromContent(requestBody: any, transcriptSnapshot?: stri
 
 	const searchText = (systemText + " " + userMessages + " " + transcript).toLowerCase();
 
-	// === OPENCLAW patterns ===
+	// === OPENCLAW patterns (before generic node/claude) ===
 	if (searchText.includes("openclaw")) return "OpenClaw";
 	if (searchText.includes("[openclaw")) return "OpenClaw";
 	if (searchText.includes("[cron:")) return "OpenClaw";
-	if (searchText.includes("[openclaw heartbeat")) return "OpenClaw";
-	if (searchText.includes("read heartbeat")) return "OpenClaw";
+	if (searchText.includes("openclaw heartbeat") || searchText.includes("[openclaw heartbeat")) return "OpenClaw";
+	if (searchText.includes("openclaw runtime context")) return "OpenClaw";
+	if (searchText.includes("read heartbeat.md") || searchText.includes("heartbeat.md if it exists")) return "OpenClaw";
 	if (searchText.includes("mt5") && searchText.includes("monitor")) return "OpenClaw";
-	if (searchText.includes("whatsapp gateway")) return "OpenClaw"; // WhatsApp integration
+	if (searchText.includes("whatsapp gateway")) return "OpenClaw";
+
+	// === CURSOR agent tool dumps (before Claude <system_reminder>) ===
+	if (searchText.includes("called the read tool with the following input")) return "Cursor";
+	if (searchText.includes("called the write tool with the following input")) return "Cursor";
+	if (searchText.includes("called the grep tool with the following input")) return "Cursor";
+	if (searchText.includes("<user_query>") && searchText.includes("called the ")) return "Cursor";
+
+	// === RALPH AGENT ===
+	if (searchText.includes("ralph agent")) return "Ralph Agent";
+	if (searchText.includes("# ralph agent instructions")) return "Ralph Agent";
+
+	// === PI AGENT ===
+	if (searchText.includes("you are pi") || searchText.includes("pi coding agent")) return "Pi Agent";
 
 	// === HERMES patterns ===
 	if (searchText.includes("hermes-agent")) return "Hermes";
@@ -181,15 +210,14 @@ export function detectIdeFromContent(requestBody: any, transcriptSnapshot?: stri
 	if (searchText.includes("<user_request>")) return "Claude Code";
 	if (searchText.includes("exited plan mode") || searchText.includes("re-entering plan mode")) return "Claude Code";
 	if (searchText.includes("exited auto mode") || searchText.includes("re-entering auto mode")) return "Claude Code";
-	if (searchText.includes("claudeMd") && searchText.includes("currentdate")) return "Claude Code";
-	if (searchText.includes("mcp server instructions")) return "Claude Code";
+	if (searchText.includes("claudemd") && searchText.includes("currentdate")) return "Claude Code";
+	if (searchText.includes("mcp server instructions") && !searchText.includes("called the read tool")) return "Claude Code";
 	if (searchText.includes("async delegation batch complete")) return "Claude Code";
 	if (searchText.includes("background fan-out")) return "Claude Code";
-	if (searchText.includes("prompt limits global:")) return "Claude Code"; // Claude Code prompt display
-	if (searchText.includes("token limits harian")) return "Claude Code"; // Indonesian Claude Code
+	if (searchText.includes("prompt limits global:")) return "Claude Code";
+	if (searchText.includes("token limits harian")) return "Claude Code";
 
 	// === Continue extension (MCP-based IDE) ===
-	// Be more specific to avoid matching "continue" in normal text
 	if (searchText.includes("continue") && searchText.includes("mcp")) return "Continue";
 	if (searchText.includes("continue extension")) return "Continue";
 
@@ -197,23 +225,24 @@ export function detectIdeFromContent(requestBody: any, transcriptSnapshot?: stri
 	if (searchText.includes("attempt_completion")) return "Roo Code";
 	if (searchText.includes("roocode")) return "Roo Code";
 	if (searchText.includes("roo-code")) return "Roo Code";
+	if (searchText.includes("<tool_response>")) return "Roo Code";
 
 	// === Cline patterns ===
 	if (searchText.includes("[read_file for")) return "Cline";
 	if (searchText.includes("[search_files for")) return "Cline";
 	if (searchText.includes("[execute_command for")) return "Cline";
 	if (searchText.includes("[write_to_file for")) return "Cline";
+	if (searchText.includes("[duplicate read]")) return "Cline";
 
 	// === GENERIC AGENT patterns ===
 	if (searchText.includes("<system-message>") || searchText.includes("<system_message>")) return "Generic Agent";
 	if (searchText.includes("deeppresenter")) return "DeepPresenter";
 	if (searchText.includes("brainstorm companion")) return "Brainstorm Companion";
-	if (searchText.includes("ralph agent")) return "Ralph Agent";
 	if (searchText.includes("[role:")) return "Generic Agent";
 
 	// === 9Router / OmniRouter ===
 	if (searchText.includes("via provider 9router")) return "9Router";
-	if (searchText.includes("active model for this chat has changed to")) return "9Router"; // Model switch via router
+	if (searchText.includes("active model for this chat has changed to")) return "9Router";
 
 	// === Gemini specific ===
 	if (searchText.includes("gemini") && searchText.includes("google")) return "Gemini";
@@ -266,8 +295,6 @@ export function detectIdeFromContent(requestBody: any, transcriptSnapshot?: stri
 	if (searchText.includes("aider")) return "Aider";
 
 	// === Final fallback checks ===
-
-	// Check for any Claude Code unique markers in the full text
 	if (searchText.includes("exited plan mode") || searchText.includes("re-entering plan mode")) return "Claude Code";
 	if (searchText.includes("exited auto mode") || searchText.includes("re-entering auto mode")) return "Claude Code";
 
@@ -275,7 +302,7 @@ export function detectIdeFromContent(requestBody: any, transcriptSnapshot?: stri
 	if (searchText.includes("zcode") || searchText.includes("z-code")) return "ZCode";
 	if (searchText.includes("using-superpowers")) return "ZCode";
 	if (searchText.includes("/superpowers/skill")) return "ZCode";
-	if (searchText.includes("fitstamp")) return "ZCode"; // ZCode Flutter projects
+	if (searchText.includes("fitstamp")) return "ZCode";
 
 	// === STAMP/FitStamp patterns ===
 	if (searchText.includes("fitstamp")) return "FitStamp";
