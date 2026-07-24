@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { keys, logs, stats, trialSettings, type ApiKeyDetail, type KeyPeriodStats, type LogEntry, type SessionDetailResponse, type ModelLimitEntry, type TrialUserRow, globalSettings } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
