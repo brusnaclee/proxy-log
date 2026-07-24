@@ -351,8 +351,13 @@ export const keys = {
     request<{ success: boolean }>(`/keys/${keyId}/model-limits`, { method: "PUT", body: JSON.stringify({ model, ...limits }) }),
   matchModelCatalog: (keyId: number, pattern: string) =>
     request<{ data: string[]; total: number; totalAll: number }>(`/keys/${keyId}/model-catalog/match?pattern=${encodeURIComponent(pattern)}`),
-  deleteModelLimit: (keyId: number, model: string) =>
-    request<{ success: boolean }>(`/keys/${keyId}/model-limits/${encodeURIComponent(model)}`, { method: "DELETE" }),
+  deleteModelLimit: (keyId: number, model: string, isPattern?: boolean) =>
+    request<{ success: boolean }>(
+      `/keys/${keyId}/model-limits/${encodeURIComponent(model)}${
+        typeof isPattern === "boolean" ? `?isPattern=${isPattern}` : ""
+      }`,
+      { method: "DELETE" },
+    ),
 };
 
 // ─── Logs ──────────────────────────────────────────────────────────────────────
@@ -590,8 +595,13 @@ export const globalSettings = {
     request<{ success: boolean }>("/settings/model-limits", { method: "PUT", body: JSON.stringify({ model, ...limits }) }),
   matchModelCatalog: (pattern: string) =>
     request<{ data: string[]; total: number; totalAll: number }>(`/settings/model-catalog/match?pattern=${encodeURIComponent(pattern)}`),
-  deleteModelLimit: (model: string) =>
-    request<{ success: boolean }>(`/settings/model-limits/${encodeURIComponent(model)}`, { method: "DELETE" }),
+  deleteModelLimit: (model: string, isPattern?: boolean) =>
+    request<{ success: boolean }>(
+      `/settings/model-limits/${encodeURIComponent(model)}${
+        typeof isPattern === "boolean" ? `?isPattern=${isPattern}` : ""
+      }`,
+      { method: "DELETE" },
+    ),
 };
 
 // ─── Stats ─────────────────────────────────────────────────────────────────────

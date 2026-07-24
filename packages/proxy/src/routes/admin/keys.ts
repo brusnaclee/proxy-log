@@ -677,23 +677,38 @@ keys.put("/keys/:id/model-limits", async (c) => {
   const dailyInputTokenLimit = Math.max(0, body.dailyInputTokenLimit || 0);
   const dailyOutputTokenLimit = Math.max(0, body.dailyOutputTokenLimit || 0);
 
-  // Upsert (key + model + isPattern is the unique triple). Use raw SQL for
-  // the DELETE to avoid a Drizzle issue with the boolean is_pattern column.
+  // Upsert (key + model + isPattern). UPDATE preserves prompt_window_start.
   const { pool } = await import("../../db/index.js");
-  await pool.query(
-    `DELETE FROM model_limits WHERE scope = $1 AND scope_id = $2 AND model = $3 AND is_pattern = $4`,
-    ["key", keyId, modelName, isPattern]
+  const existing = await pool.query(
+    `SELECT id FROM model_limits
+     WHERE scope = $1 AND scope_id = $2 AND model = $3 AND is_pattern = $4 LIMIT 1`,
+    ["key", keyId, modelName, isPattern],
   );
 
   if (limit > 0 || dailyTokenLimit > 0 || monthlyTokenLimit > 0 || dailyInputTokenLimit > 0 || dailyOutputTokenLimit > 0) {
-    await db.insert(modelLimits).values({
-      scope: "key", scopeId: keyId, model: modelName, isPattern,
-      promptLimit: limit,
-      dailyTokenLimit,
-      monthlyTokenLimit,
-      dailyInputTokenLimit,
-      dailyOutputTokenLimit
-    });
+    if (existing.rows[0]?.id) {
+      await pool.query(
+        `UPDATE model_limits SET
+           prompt_limit = $1,
+           daily_token_limit = $2,
+           monthly_token_limit = $3,
+           daily_input_token_limit = $4,
+           daily_output_token_limit = $5
+         WHERE id = $6`,
+        [limit, dailyTokenLimit, monthlyTokenLimit, dailyInputTokenLimit, dailyOutputTokenLimit, existing.rows[0].id],
+      );
+    } else {
+      await db.insert(modelLimits).values({
+        scope: "key", scopeId: keyId, model: modelName, isPattern,
+        promptLimit: limit,
+        dailyTokenLimit,
+        monthlyTokenLimit,
+        dailyInputTokenLimit,
+        dailyOutputTokenLimit,
+      });
+    }
+  } else if (existing.rows[0]?.id) {
+    await pool.query(`DELETE FROM model_limits WHERE id = $1`, [existing.rows[0].id]);
   }
 
   return c.json({ success: true, model: modelName, isPattern, promptLimit: limit, dailyTokenLimit, monthlyTokenLimit, dailyInputTokenLimit, dailyOutputTokenLimit });
@@ -717,11 +732,20 @@ keys.get("/keys/:id/model-catalog/match", async (c) => {
 keys.delete("/keys/:id/model-limits/:model", async (c) => {
   const keyId = parseInt(c.req.param("id"));
   const model = decodeURIComponent(c.req.param("model"));
-  await db.delete(modelLimits).where(and(
-    eq(modelLimits.scope, "key"),
-    eq(modelLimits.scopeId, keyId),
-    eq(modelLimits.model, model),
-  ));
+  const isPatternRaw = c.req.query("isPattern");
+  const { pool } = await import("../../db/index.js");
+  if (isPatternRaw === "true" || isPatternRaw === "false") {
+    await pool.query(
+      `DELETE FROM model_limits WHERE scope = $1 AND scope_id = $2 AND model = $3 AND is_pattern = $4`,
+      ["key", keyId, model, isPatternRaw === "true"],
+    );
+  } else {
+    await db.delete(modelLimits).where(and(
+      eq(modelLimits.scope, "key"),
+      eq(modelLimits.scopeId, keyId),
+      eq(modelLimits.model, model),
+    ));
+  }
   return c.json({ success: true, message: `Model limit for "${model}" removed` });
 });
 

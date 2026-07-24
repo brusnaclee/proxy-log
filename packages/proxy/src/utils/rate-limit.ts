@@ -97,37 +97,78 @@ export function getModelMatchCondition(normalizedModel: string): SQL {
   )`;
 }
 
+/** Pattern family: count all logged models containing the pattern substring. */
+export function getPatternModelMatchCondition(pattern: string): SQL {
+  const p = pattern.toLowerCase();
+  return sql`position(${p} in lower(${requestLogs.model})) > 0`;
+}
+
+/** Exact match against normalized runtime id OR catalog-style `provider/id`. */
+function isExactModelLimit(m: ModelLimitRow, normalizedModel: string): boolean {
+  if (m.isPattern) return false;
+  const lower = normalizedModel.toLowerCase();
+  const stored = (m.model || "").toLowerCase();
+  if (!stored) return false;
+  if (stored === lower) return true;
+  if (stored.endsWith("/" + lower)) return true;
+  if (lower.endsWith("/" + stored)) return true;
+  const storedBase = stored.includes("/") ? stored.slice(stored.lastIndexOf("/") + 1) : stored;
+  return storedBase === lower;
+}
+
+function isPatternModelLimit(m: ModelLimitRow, normalizedModel: string): boolean {
+  if (!m.isPattern) return false;
+  const pat = (m.model || "").toLowerCase().trim();
+  if (!pat) return false;
+  const lower = normalizedModel.toLowerCase();
+  return lower.includes(pat) || lower.endsWith("/" + pat);
+}
+
+function pickLongestPattern(rows: ModelLimitRow[]): ModelLimitRow | undefined {
+  if (!rows.length) return undefined;
+  return [...rows].sort((a, b) => (b.model?.length || 0) - (a.model?.length || 0))[0];
+}
+
+function pickOverrideFromCandidates(
+  candidates: ModelLimitRow[],
+  normalizedModel: string,
+): ModelLimitRow | null {
+  const keyEx = candidates.find(
+    (m) => m.scope === "key" && overrideHasLimits(m) && isExactModelLimit(m, normalizedModel),
+  );
+  if (keyEx) return keyEx;
+  const keyPat = pickLongestPattern(
+    candidates.filter(
+      (m) => m.scope === "key" && overrideHasLimits(m) && isPatternModelLimit(m, normalizedModel),
+    ),
+  );
+  if (keyPat) return keyPat;
+  const gEx = candidates.find(
+    (m) => m.scope === "global" && overrideHasLimits(m) && isExactModelLimit(m, normalizedModel),
+  );
+  if (gEx) return gEx;
+  const gPat = pickLongestPattern(
+    candidates.filter(
+      (m) => m.scope === "global" && overrideHasLimits(m) && isPatternModelLimit(m, normalizedModel),
+    ),
+  );
+  return gPat || null;
+}
+
 /**
  * Find the active model limit override for a (key, normalizedModel) pair.
- * Priority: keyExact > keyPattern > globalExact > globalPattern.
- * Returns null if no override applies (caller falls back to per-key default,
- * then global default).
+ * Priority: keyExact > keyPattern (longest) > globalExact > globalPattern (longest).
+ * Exact rows also match catalog IDs like `amanai/gpt-5.6-terra` vs bare `gpt-5.6-terra`.
  */
 export async function findActiveOverride(
   apiKeyId: number,
   normalizedModel: string,
 ): Promise<ModelLimitRow | null> {
-  const lower = normalizedModel.toLowerCase();
-  // Pull all key + global overrides once, then prioritize in JS (cheap, few rows).
   const candidates = await db.select().from(modelLimits).where(
     sql`(${modelLimits.scope} = 'key' AND ${modelLimits.scopeId} = ${apiKeyId})
         OR (${modelLimits.scope} = 'global' AND ${modelLimits.scopeId} = 0)`
   );
-
-  const isExact = (m: ModelLimitRow) =>
-    !m.isPattern && (m.model === normalizedModel || m.model.toLowerCase() === lower);
-  const isPattern = (m: ModelLimitRow) =>
-    !!m.isPattern && lower.includes(m.model.toLowerCase());
-
-  const keyEx = candidates.find(m => m.scope === 'key' && overrideHasLimits(m) && isExact(m));
-  if (keyEx) return keyEx;
-  const keyPat = candidates.find(m => m.scope === 'key' && overrideHasLimits(m) && isPattern(m));
-  if (keyPat) return keyPat;
-  const gEx = candidates.find(m => m.scope === 'global' && overrideHasLimits(m) && isExact(m));
-  if (gEx) return gEx;
-  const gPat = candidates.find(m => m.scope === 'global' && overrideHasLimits(m) && isPattern(m));
-  if (gPat) return gPat;
-  return null;
+  return pickOverrideFromCandidates(candidates, normalizedModel);
 }
 
 /**
@@ -139,26 +180,11 @@ export async function findActiveOverrideInTx(
   apiKeyId: number,
   normalizedModel: string,
 ): Promise<ModelLimitRow | null> {
-  const lower = normalizedModel.toLowerCase();
   const candidates = await tx.select().from(modelLimits).where(
     sql`(${modelLimits.scope} = 'key' AND ${modelLimits.scopeId} = ${apiKeyId})
         OR (${modelLimits.scope} = 'global' AND ${modelLimits.scopeId} = 0)`
   );
-
-  const isExact = (m: ModelLimitRow) =>
-    !m.isPattern && (m.model === normalizedModel || m.model.toLowerCase() === lower);
-  const isPattern = (m: ModelLimitRow) =>
-    !!m.isPattern && lower.includes(m.model.toLowerCase());
-
-  const keyEx = candidates.find(m => m.scope === 'key' && overrideHasLimits(m) && isExact(m));
-  if (keyEx) return keyEx;
-  const keyPat = candidates.find(m => m.scope === 'key' && overrideHasLimits(m) && isPattern(m));
-  if (keyPat) return keyPat;
-  const gEx = candidates.find(m => m.scope === 'global' && overrideHasLimits(m) && isExact(m));
-  if (gEx) return gEx;
-  const gPat = candidates.find(m => m.scope === 'global' && overrideHasLimits(m) && isPattern(m));
-  if (gPat) return gPat;
-  return null;
+  return pickOverrideFromCandidates(candidates, normalizedModel);
 }
 
 /**
@@ -268,9 +294,14 @@ export async function getApiCallWindowResetMs(apiKeyId: number | number[], windo
   return windowMs;
 }
 
+export type CheckModelPromptLimitOpts = {
+  /** Fallback when no override/default applies (e.g. non-addon Claude/GPT-5.6 tease = 5). */
+  teaseDefaultLimit?: number;
+};
+
 /**
  * Check per-model prompt limit for an API key (or Discord account key set).
- * Uses a fixed window that starts on the first request for this model.
+ * Pattern overrides count the whole family (substring match on logged model ids).
  */
 export async function checkModelPromptLimit(
   apiKeyId: number | number[],
@@ -279,7 +310,17 @@ export async function checkModelPromptLimit(
   perKeyDefaultWindow: string | null,
   globalDefaultLimit: number,
   globalDefaultWindow: string,
-): Promise<{ allowed: boolean; remaining: number; resetMs: number; used: number; effectiveLimit: number }> {
+  opts?: CheckModelPromptLimitOpts,
+): Promise<{
+  allowed: boolean;
+  remaining: number;
+  resetMs: number;
+  used: number;
+  effectiveLimit: number;
+  source: "override" | "key_default" | "global_default" | "tease_default" | "none";
+  overrideModel?: string;
+  overrideIsPattern?: boolean;
+}> {
   const apiKeyIds = normalizeKeyIds(apiKeyId);
   const overrideKeyId = apiKeyIds[0];
 
@@ -290,20 +331,31 @@ export async function checkModelPromptLimit(
   const activeOverride = await findActiveOverride(overrideKeyId, normalizedModel);
 
   let effectiveLimit = 0;
+  let source: "override" | "key_default" | "global_default" | "tease_default" | "none" = "none";
 
   if (activeOverride && activeOverride.promptLimit > 0) {
     effectiveLimit = activeOverride.promptLimit;
+    source = "override";
   } else if (perKeyDefaultLimit > 0) {
     effectiveLimit = perKeyDefaultLimit;
-  } else {
+    source = "key_default";
+  } else if (globalDefaultLimit > 0) {
     effectiveLimit = globalDefaultLimit;
+    source = "global_default";
+  } else if ((opts?.teaseDefaultLimit || 0) > 0) {
+    effectiveLimit = opts!.teaseDefaultLimit!;
+    source = "tease_default";
   }
 
-  if (effectiveLimit <= 0) return { allowed: true, remaining: -1, resetMs: 0, used: 0, effectiveLimit: 0 };
+  if (effectiveLimit <= 0) {
+    return { allowed: true, remaining: -1, resetMs: 0, used: 0, effectiveLimit: 0, source: "none" };
+  }
 
   const effectiveWindow = perKeyDefaultWindow || globalDefaultWindow || "30m";
   const windowMs = parseRateLimitWindow(effectiveWindow);
-  if (windowMs <= 0) return { allowed: true, remaining: -1, resetMs: 0, used: 0, effectiveLimit };
+  if (windowMs <= 0) {
+    return { allowed: true, remaining: -1, resetMs: 0, used: 0, effectiveLimit, source };
+  }
 
   const nowMs = Date.now();
   let windowStartMs = 0;
@@ -313,9 +365,18 @@ export async function checkModelPromptLimit(
   // In that case, we fall back to a clock-aligned fixed window.
   if (activeOverride && activeOverride.promptWindowStart) {
     windowStartMs = Date.parse(activeOverride.promptWindowStart.replace(" ", "T") + "Z");
-    
+
     if (nowMs >= windowStartMs + windowMs) {
-      return { allowed: true, remaining: effectiveLimit, resetMs: windowMs, used: 0, effectiveLimit };
+      return {
+        allowed: true,
+        remaining: effectiveLimit,
+        resetMs: windowMs,
+        used: 0,
+        effectiveLimit,
+        source,
+        overrideModel: activeOverride.model,
+        overrideIsPattern: !!activeOverride.isPattern,
+      };
     }
   } else {
     // No override at all (using default limit) OR override exists but no window start yet.
@@ -324,6 +385,10 @@ export async function checkModelPromptLimit(
   }
 
   const windowStartDate = new Date(windowStartMs);
+  const modelMatch =
+    activeOverride?.isPattern && activeOverride.model
+      ? getPatternModelMatchCondition(activeOverride.model)
+      : getModelMatchCondition(normalizedModel);
 
   const usage = await db.select({
     count: sql<number>`COUNT(DISTINCT ${requestLogs.turnId})`,
@@ -331,7 +396,7 @@ export async function checkModelPromptLimit(
     .from(requestLogs)
     .where(and(
       keyIdMatch(apiKeyIds),
-      getModelMatchCondition(normalizedModel),
+      modelMatch,
       gte(requestLogs.createdAt, windowStartDate),
       sql`status_code BETWEEN 200 AND 299`,
       sql`turn_id IS NOT NULL`,
@@ -339,13 +404,16 @@ export async function checkModelPromptLimit(
 
   const used = Number(usage[0]?.count) || 0;
   const resetMs = Math.max(0, windowStartMs + windowMs - nowMs);
-  
+
   return {
     allowed: used < effectiveLimit,
     remaining: Math.max(0, effectiveLimit - used),
     resetMs,
     used,
     effectiveLimit,
+    source,
+    overrideModel: activeOverride?.model,
+    overrideIsPattern: activeOverride ? !!activeOverride.isPattern : undefined,
   };
 }
 

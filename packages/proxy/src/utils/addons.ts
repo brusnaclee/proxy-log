@@ -219,6 +219,9 @@ export function resolveAddonModelDailyTokenLimit(
 /** Premium tease models: non-addon users may use a small prompt allowance instead of hard lock. */
 const ADDON_TEASE_PATTERNS = ["claude", "gpt-5.6", "chatgpt-5.6"];
 
+/** Default prompts/day for non-addon tease when no model_limits row applies. */
+export const ADDON_TEASE_DEFAULT_PROMPT_LIMIT = 5;
+
 export function isAddonTeaseModel(model: string): boolean {
   const lower = (model || "").toLowerCase();
   return ADDON_TEASE_PATTERNS.some((p) => lower.includes(p));

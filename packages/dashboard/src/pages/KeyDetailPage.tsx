@@ -958,7 +958,8 @@ export API_TIMEOUT_MS=500000`}
         <div>
           <Label className="text-sm font-medium">Per-Key Model Limit Overrides</Label>
           <p className="text-[10px] text-muted-foreground">
-            Override prompt and/or token caps for this key. Token-only overrides (daily token without prompt limit) are enforced.
+            Override prompt and/or token caps for this key. Pattern rows share one family quota.
+            Window = Per-Model Prompt Window above. Unlimited token keys still respect these prompt caps.
           </p>
         </div>
         <Dialog>
@@ -987,6 +988,7 @@ export API_TIMEOUT_MS=500000`}
                     if ((window as any).__mlMatchT) {
                       clearTimeout((window as any).__mlMatchT);
                     }
+                    const existing = keyModelLimits.find(ml => ml.model === v);
                     (window as any).__mlMatchT = setTimeout(async () => {
                       if (!v || v.length < 1) {
                         setKeyModelMatchPreview({ ids: [], total: 0 });
@@ -995,21 +997,23 @@ export API_TIMEOUT_MS=500000`}
                       try {
                         const r = await keys.matchModelCatalog(parseInt(id), v);
                         setKeyModelMatchPreview({ ids: r.data, total: r.total });
-                        // Auto-detect pattern: 2+ matches => pattern, 0/1 => exact
-                        if (r.total >= 2) setNewKeyModelOverrideIsPattern(true);
-                        else if (r.total === 1) setNewKeyModelOverrideIsPattern(false);
+                        // Auto-detect pattern only for new rows
+                        if (!existing) {
+                          if (r.total >= 2) setNewKeyModelOverrideIsPattern(true);
+                          else if (r.total === 1) setNewKeyModelOverrideIsPattern(false);
+                        }
                       } catch {
                         setKeyModelMatchPreview({ ids: [], total: 0 });
                       }
                     }, 300);
                     // Pre-fill limits if an existing override matches exactly
-                    const existing = keyModelLimits.find(ml => ml.model === v);
                     if (existing) {
                       setNewKeyModelOverrideLimit(existing.promptLimit || 0);
                       setNewKeyModelOverrideDailyTokenLimit(existing.dailyTokenLimit || 0);
                       setNewKeyModelOverrideMonthlyTokenLimit(existing.monthlyTokenLimit || 0);
                       setNewKeyModelOverrideDailyInputTokenLimit(existing.dailyInputTokenLimit || 0);
                       setNewKeyModelOverrideDailyOutputTokenLimit(existing.dailyOutputTokenLimit || 0);
+                      setNewKeyModelOverrideIsPattern(!!existing.isPattern);
                     } else {
                       setNewKeyModelOverrideLimit(0);
                       setNewKeyModelOverrideDailyTokenLimit(0);
@@ -1102,7 +1106,8 @@ export API_TIMEOUT_MS=500000`}
                         dailyOutputTokenLimit: newKeyModelOverrideDailyOutputTokenLimit,
                       };
                       for (const m of keyModelMatchPreview.ids) {
-                        await keys.setModelLimit(parseInt(id), m, { ...limits, isPattern: false });
+                        const bare = m.includes("/") ? m.slice(m.lastIndexOf("/") + 1) : m;
+                        await keys.setModelLimit(parseInt(id), bare, { ...limits, isPattern: false });
                       }
                       setNewKeyModelOverride("");
                       setNewKeyModelOverrideIsPattern(false);
@@ -1206,7 +1211,7 @@ export API_TIMEOUT_MS=500000`}
                           <td className="p-2 text-right">
                             <Button size="icon" variant="ghost" className="h-6 w-6 text-red-500 hover:text-red-600 hover:bg-red-500/10" onClick={async () => {
                               if (!id) return;
-                              await keys.deleteModelLimit(parseInt(id), ml.model);
+                              await keys.deleteModelLimit(parseInt(id), ml.model, !!ml.isPattern);
                               const r = await keys.getModelLimits(parseInt(id)); setKeyModelLimits(r.data || []);
                             }}><Trash2 className="h-4 w-4" /></Button>
                           </td>

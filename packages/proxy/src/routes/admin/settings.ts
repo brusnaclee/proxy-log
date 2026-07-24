@@ -208,24 +208,39 @@ settings.put("/settings/model-limits", async (c) => {
   // For exact (non-pattern), still allow any string (legacy compat). For pattern,
   // we accept any substring — the matcher runs case-insensitive includes() at lookup.
 
-  // Upsert: delete existing then insert. Use raw SQL here because the Drizzle
-  // query builder hits a known issue with the boolean is_pattern column on
-  // some pg client combinations.
+  // Upsert via UPDATE (preserve prompt_window_start) or INSERT. Raw SQL avoids
+  // a known Drizzle issue with the boolean is_pattern column on some pg clients.
   const { pool } = await import("../../db/index.js");
-  await pool.query(
-    `DELETE FROM model_limits WHERE scope = $1 AND scope_id = $2 AND model = $3 AND is_pattern = $4`,
-    ["global", 0, modelName, isPattern]
+  const existing = await pool.query(
+    `SELECT id, prompt_window_start FROM model_limits
+     WHERE scope = $1 AND scope_id = $2 AND model = $3 AND is_pattern = $4 LIMIT 1`,
+    ["global", 0, modelName, isPattern],
   );
 
   if (limit > 0 || dailyTokenLimit > 0 || monthlyTokenLimit > 0 || dailyInputTokenLimit > 0 || dailyOutputTokenLimit > 0) {
-    await db.insert(modelLimits).values({
-      scope: "global", scopeId: 0, model: modelName, isPattern,
-      promptLimit: limit,
-      dailyTokenLimit,
-      monthlyTokenLimit,
-      dailyInputTokenLimit,
-      dailyOutputTokenLimit
-    });
+    if (existing.rows[0]?.id) {
+      await pool.query(
+        `UPDATE model_limits SET
+           prompt_limit = $1,
+           daily_token_limit = $2,
+           monthly_token_limit = $3,
+           daily_input_token_limit = $4,
+           daily_output_token_limit = $5
+         WHERE id = $6`,
+        [limit, dailyTokenLimit, monthlyTokenLimit, dailyInputTokenLimit, dailyOutputTokenLimit, existing.rows[0].id],
+      );
+    } else {
+      await db.insert(modelLimits).values({
+        scope: "global", scopeId: 0, model: modelName, isPattern,
+        promptLimit: limit,
+        dailyTokenLimit,
+        monthlyTokenLimit,
+        dailyInputTokenLimit,
+        dailyOutputTokenLimit,
+      });
+    }
+  } else if (existing.rows[0]?.id) {
+    await pool.query(`DELETE FROM model_limits WHERE id = $1`, [existing.rows[0].id]);
   }
 
   return c.json({ success: true, model: modelName, isPattern, promptLimit: limit, dailyTokenLimit, monthlyTokenLimit, dailyInputTokenLimit, dailyOutputTokenLimit });
@@ -233,11 +248,20 @@ settings.put("/settings/model-limits", async (c) => {
 
 settings.delete("/settings/model-limits/:model", async (c) => {
   const model = decodeURIComponent(c.req.param("model"));
-  await db.delete(modelLimits).where(and(
-    eq(modelLimits.scope, "global"),
-    eq(modelLimits.scopeId, 0),
-    eq(modelLimits.model, model),
-  ));
+  const isPatternRaw = c.req.query("isPattern");
+  const { pool } = await import("../../db/index.js");
+  if (isPatternRaw === "true" || isPatternRaw === "false") {
+    await pool.query(
+      `DELETE FROM model_limits WHERE scope = $1 AND scope_id = $2 AND model = $3 AND is_pattern = $4`,
+      ["global", 0, model, isPatternRaw === "true"],
+    );
+  } else {
+    await db.delete(modelLimits).where(and(
+      eq(modelLimits.scope, "global"),
+      eq(modelLimits.scopeId, 0),
+      eq(modelLimits.model, model),
+    ));
+  }
   return c.json({ success: true, message: `Model limit for "${model}" removed` });
 });
 

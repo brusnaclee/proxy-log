@@ -106,6 +106,7 @@ import {
 	normalizeModelForLimit,
 } from '../utils/rate-limit.js';
 import {
+	ADDON_TEASE_DEFAULT_PROMPT_LIMIT,
 	addonGrantsModelAccess,
 	checkAddonModelAccess,
 	getActiveAddonsForUser,
@@ -2226,6 +2227,13 @@ proxy.all('/*', async (c) => {
 		const wantedStream = requestBody?.stream === true;
 		const tried: string[] = [];
 
+		const autoActiveAddons = !keyRecord.isTrial
+			? await getActiveAddonsForUser({
+					discordUserId: keyRecord.discordUserId,
+					apiKeyId: keyRecord.id,
+				})
+			: [];
+
 		// Build blocked headers set once
 		const blockedHeaders = new Set([
 			'host',
@@ -2248,6 +2256,27 @@ proxy.all('/*', async (c) => {
 		baseHeaders = sanitizeUpstreamHeaders(baseHeaders);
 
 		for (const candidate of onlineModels) {
+			const candidateModel = `${candidate.provider}/${candidate.modelId}`;
+
+			// Add-on gate (same rules as non-auto): locked models need pack; tease models allowed with prompt cap.
+			if (!keyRecord.isTrial) {
+				const addonAccess = await checkAddonModelAccess({
+					model: candidateModel,
+					discordUserId: keyRecord.discordUserId,
+					apiKeyId: keyRecord.id,
+				});
+				if (
+					!addonAccess.allowed &&
+					!isAddonTeaseModel(candidate.modelId) &&
+					!isAddonTeaseModel(candidateModel)
+				) {
+					tried.push(
+						`${candidate.provider}/${candidate.modelId} (addon required: ${addonAccess.requiredAddon || 'pack'})`,
+					);
+					continue;
+				}
+			}
+
 			// Resolve provider to get API key
 			const providerRow = await db
 				.select()
@@ -2286,15 +2315,24 @@ proxy.all('/*', async (c) => {
 			if (contentType) upstreamHeaders['content-type'] = contentType;
 
 			// Check per-model prompt limit for this candidate before sending request.
-			// If exceeded, skip to next candidate model.
-			{
+			// Skip for add-on holders on granted models; apply tease default for premium families.
+			const autoSkipModelPrompt =
+				!keyRecord.isTrial &&
+				(addonGrantsModelAccess(autoActiveAddons, candidate.modelId) ||
+					addonGrantsModelAccess(autoActiveAddons, candidateModel));
+			if (!keyRecord.isTrial && !autoSkipModelPrompt) {
+				const teaseDefault =
+					isAddonTeaseModel(candidate.modelId) || isAddonTeaseModel(candidateModel)
+						? ADDON_TEASE_DEFAULT_PROMPT_LIMIT
+						: 0;
 				const mlCheck = await checkModelPromptLimit(
 					accountKeyIds,
-					candidate.modelId,
+					candidateModel,
 					keyRecord.perModelPromptLimit || 0,
 					keyRecord.perModelPromptLimitWindow || null,
 					config.globalPerModelPromptLimit || 0,
 					config.globalPerModelPromptLimitWindow || '30m',
+					{ teaseDefaultLimit: teaseDefault },
 				);
 				if (!mlCheck.allowed) {
 					tried.push(
@@ -2312,6 +2350,8 @@ proxy.all('/*', async (c) => {
 
 				// Monthly token limit
 				if (keyRecord.monthlyTokenLimit && keyRecord.monthlyTokenLimit > 0) {
+					const monthlyCap =
+						keyRecord.monthlyTokenLimit + sumAddonMonthlyTokenBonus(autoActiveAddons);
 					const mw = new Date(wibNow);
 					mw.setUTCDate(1);
 					mw.setUTCHours(0, 0, 0, 0);
@@ -2320,14 +2360,17 @@ proxy.all('/*', async (c) => {
 						and(accountKeyFilter, sql`created_at >= ${ms}`, BILLABLE_LOG_SQL),
 						tokenCountOpts(keyRecord),
 					) }).from(requestLogs).where(and(accountKeyFilter, sql`created_at >= ${ms}`, BILLABLE_LOG_SQL)).then((r: any[]) => r[0]);
-					if (mu && mu.total >= keyRecord.monthlyTokenLimit) {
+					if (mu && mu.total >= monthlyCap) {
 						tried.push(`${candidate.provider}/${candidate.modelId} (monthly token limit)`);
 						continue;
 					}
 				}
 
-				// Daily token limit
-				const globalDailyTokenLimit = resolveKeyDailyTokenLimit(keyRecord, config);
+				// Daily token limit (pack bonus stacks; base 0 + no pack = unlimited)
+				const baseDaily = resolveKeyDailyTokenLimit(keyRecord, config);
+				const addonDaily = sumAddonDailyTokenBonus(autoActiveAddons);
+				const globalDailyTokenLimit =
+					Math.max(0, baseDaily || 0) + Math.max(0, addonDaily || 0);
 				if (globalDailyTokenLimit > 0) {
 					const dw = new Date(wibNow);
 					dw.setUTCHours(0, 0, 0, 0);
@@ -2651,7 +2694,8 @@ proxy.all('/*', async (c) => {
 										}
 										// Per-model window start — use pattern-aware helper so substring
 										// overrides like "claude" also match the candidate model.
-										const autoActiveOverride = await findActiveOverrideInTx(tx, keyRecord.id, candidate.modelId);
+										const autoNormModel = await normalizeModelForLimit(candidate.modelId);
+										const autoActiveOverride = await findActiveOverrideInTx(tx, keyRecord.id, autoNormModel);
 										if (autoActiveOverride) {
 											const autoModelWindowStr = keyRecord.perModelPromptLimitWindow || config.globalPerModelPromptLimitWindow || '30m';
 											const autoModelWindowMs = parseRateLimitWindow(autoModelWindowStr);
@@ -2811,7 +2855,8 @@ proxy.all('/*', async (c) => {
 							await tx.update(apiKeys).set({ promptWindowStart: autoNowStr2 }).where(inArray(apiKeys.id, accountKeyIds));
 						}
 						// Per-model window start — pattern-aware
-						const autoActiveOverride2 = await findActiveOverrideInTx(tx, keyRecord.id, candidate.modelId);
+						const autoNormModel2 = await normalizeModelForLimit(candidate.modelId);
+						const autoActiveOverride2 = await findActiveOverrideInTx(tx, keyRecord.id, autoNormModel2);
 						if (autoActiveOverride2) {
 							const autoModelWindowStr2 = keyRecord.perModelPromptLimitWindow || config.globalPerModelPromptLimitWindow || '30m';
 							const autoModelWindowMs2 = parseRateLimitWindow(autoModelWindowStr2);
@@ -3165,76 +3210,85 @@ proxy.all('/*', async (c) => {
 
 	// ΓöÇΓöÇΓöÇ 10. Prompt & Model Limit Checks ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 	//
-	// Per-model limit: checked for EVERY request (not just new prompts).
-	// Trial keys use global prompt limit only — skip per-model global overrides.
-	// Add-on holders skip tease / global per-model prompt caps for models their pack grants.
-	const skipModelPromptTease =
-		!keyRecord.isTrial && addonGrantsModelAccess(activeAddons, model);
-	if (!keyRecord.isTrial && !skipModelPromptTease) {
-		const mlCheck = await checkModelPromptLimit(
-			accountKeyIds,
-			model,
-			keyRecord.perModelPromptLimit || 0,
-			keyRecord.perModelPromptLimitWindow || null,
-			config.globalPerModelPromptLimit || 0,
-			config.globalPerModelPromptLimitWindow || '30m',
-		);
-		if (!mlCheck.allowed) {
-			const windowStr =
-				keyRecord.perModelPromptLimitWindow ||
-				config.globalPerModelPromptLimitWindow ||
-				'30m';
-			const windowMs = parseRateLimitWindow(windowStr);
-			const resetMs = await getWindowResetMs(accountKeyIds, windowMs, model);
-			const resetMins = Math.ceil(resetMs / 60000);
-			const globalLimit =
-				(keyRecord.promptLimit && keyRecord.promptLimit > 0
-					? keyRecord.promptLimit
-					: config.globalPromptLimit) || 0;
-			const globalWindow =
-				keyRecord.promptLimitWindow || config.globalPromptLimitWindow || '30m';
-			const globalCheck =
-				globalLimit > 0
-					? await checkPromptLimit(accountKeyIds, globalLimit, globalWindow)
-					: null;
-			const globalRemaining = globalCheck ? globalCheck.remaining : -1;
-			const isKeyOverride = (keyRecord.perModelPromptLimit || 0) > 0;
-			const limitSource = isKeyOverride
-				? "your key's override"
-				: 'global default';
-			const globalInfo =
-				globalRemaining >= 0
-					? ` You have ${globalRemaining} prompt(s) remaining for other models.`
-					: '';
-			const teaseHint =
-				isAddonTeaseModel(model) || isAddonTeaseModel(upstreamModel)
-					? ' Upgrade with an add-on (e.g. vibecodeaddon) for full access.'
-					: '';
-			return c.json(
-				{
-					error: {
-						message: `Limit reached for model "${model}" (${limitSource}): ${mlCheck.used}/${mlCheck.effectiveLimit} prompts used. Resets in ~${resetMins} minute(s).${globalInfo}${teaseHint}`,
-						type: 'rate_limit_error',
-						code: 'model_prompt_limit_exceeded',
-					},
-				},
-				429,
-				{
-					'x-model-prompt-limit': String(mlCheck.effectiveLimit),
-					'x-model-prompt-remaining': '0',
-					'x-model-prompt-used': String(mlCheck.used),
-					'x-model-prompt-reset-mins': String(resetMins),
-				},
-			);
-		}
-	}
-
-	// Global / Per-Key Prompt Limit — only when starting a NEW turn (1 turn = 1 prompt).
-	// Tool follow-ups on an existing turn do not burn prompt quota and are not blocked
-	// solely for being over the prompt cap (API-call hop quota still applies).
+	// Per-model + global prompt limits: only when starting a NEW turn (1 turn = 1 prompt).
+	// Tool follow-ups must not strand agent loops. Add-on holders skip tease / per-model
+	// prompt caps for models their pack grants. Unlimited token users still get prompt caps.
 	{
 		const turnKeyForLimit = `${sessionInfo.sessionId}:${keyRecord.id}`;
 		const willStartNewTurn = isNewPrompt || !turnIdCache.get(turnKeyForLimit);
+		const skipModelPromptTease =
+			!keyRecord.isTrial && addonGrantsModelAccess(activeAddons, model);
+
+		if (willStartNewTurn && !keyRecord.isTrial && !skipModelPromptTease) {
+			const teaseDefault =
+				isAddonTeaseModel(model) || isAddonTeaseModel(upstreamModel)
+					? ADDON_TEASE_DEFAULT_PROMPT_LIMIT
+					: 0;
+			const mlCheck = await checkModelPromptLimit(
+				accountKeyIds,
+				model,
+				keyRecord.perModelPromptLimit || 0,
+				keyRecord.perModelPromptLimitWindow || null,
+				config.globalPerModelPromptLimit || 0,
+				config.globalPerModelPromptLimitWindow || '30m',
+				{ teaseDefaultLimit: teaseDefault },
+			);
+			if (!mlCheck.allowed) {
+				const windowStr =
+					keyRecord.perModelPromptLimitWindow ||
+					config.globalPerModelPromptLimitWindow ||
+					'30m';
+				const windowMs = parseRateLimitWindow(windowStr);
+				const resetMs = await getWindowResetMs(accountKeyIds, windowMs, model);
+				const resetMins = Math.ceil(resetMs / 60000);
+				const globalLimit =
+					(keyRecord.promptLimit && keyRecord.promptLimit > 0
+						? keyRecord.promptLimit
+						: config.globalPromptLimit) || 0;
+				const globalWindow =
+					keyRecord.promptLimitWindow || config.globalPromptLimitWindow || '30m';
+				const globalCheck =
+					globalLimit > 0
+						? await checkPromptLimit(accountKeyIds, globalLimit, globalWindow)
+						: null;
+				const globalRemaining = globalCheck ? globalCheck.remaining : -1;
+				const limitSource =
+					mlCheck.source === 'override'
+						? mlCheck.overrideIsPattern
+							? `pattern "${mlCheck.overrideModel}"`
+							: `override "${mlCheck.overrideModel}"`
+						: mlCheck.source === 'tease_default'
+							? 'non-addon tease'
+							: mlCheck.source === 'key_default'
+								? "your key's per-model default"
+								: 'global per-model default';
+				const globalInfo =
+					globalRemaining >= 0
+						? ` You have ${globalRemaining} prompt(s) remaining for other models.`
+						: '';
+				const teaseHint =
+					isAddonTeaseModel(model) || isAddonTeaseModel(upstreamModel)
+						? ' Upgrade with an add-on (e.g. vibecodeaddon) for full access.'
+						: '';
+				return c.json(
+					{
+						error: {
+							message: `Limit reached for model "${model}" (${limitSource}): ${mlCheck.used}/${mlCheck.effectiveLimit} prompts used. Resets in ~${resetMins} minute(s).${globalInfo}${teaseHint}`,
+							type: 'rate_limit_error',
+							code: 'model_prompt_limit_exceeded',
+						},
+					},
+					429,
+					{
+						'x-model-prompt-limit': String(mlCheck.effectiveLimit),
+						'x-model-prompt-remaining': '0',
+						'x-model-prompt-used': String(mlCheck.used),
+						'x-model-prompt-reset-mins': String(resetMins),
+					},
+				);
+			}
+		}
+
 		const { limit: effectivePromptLimit, window: effectivePromptLimitWindow } =
 			resolveKeyPromptLimit(keyRecord, config);
 

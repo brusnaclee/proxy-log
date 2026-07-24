@@ -556,7 +556,8 @@ export default function SettingsPage() {
                     <Label className="text-sm font-medium">Model Limit Overrides</Label>
                     <p className="text-[10px] text-muted-foreground">
                       Override prompt and/or token caps per model (global). Token-only rows (daily/monthly without prompt limit) are enforced.
-                      Example: model pattern <span className="font-mono">chatgpt-5.6</span> with Daily Token = 5000000 → max 5M tokens/day.
+                      Pattern rows (e.g. <span className="font-mono">claude</span> / <span className="font-mono">gpt-5.6</span> @ 5 prompts) share one family quota.
+                      Window for all overrides = <b>Default Per-Model Window</b> above (not per-row). Unlimited token users still get these prompt caps.
                     </p>
                   </div>
                   <Dialog>
@@ -584,6 +585,7 @@ export default function SettingsPage() {
                               if ((window as any).__globalMlMatchT) {
                                 clearTimeout((window as any).__globalMlMatchT);
                               }
+                              const existing = globalModelLimits.find(ml => ml.model === v);
                               (window as any).__globalMlMatchT = setTimeout(async () => {
                                 if (!v || v.length < 1) {
                                   setGlobalModelMatchPreview({ ids: [], total: 0 });
@@ -592,20 +594,22 @@ export default function SettingsPage() {
                                 try {
                                   const r = await globalSettings.matchModelCatalog(v);
                                   setGlobalModelMatchPreview({ ids: r.data, total: r.total });
-                                  // Auto-detect pattern: 2+ matches => pattern, 0/1 => exact
-                                  if (r.total >= 2) setNewModelOverrideIsPattern(true);
-                                  else if (r.total === 1) setNewModelOverrideIsPattern(false);
+                                  // Auto-detect pattern only when creating a new row (don't flip existing)
+                                  if (!existing) {
+                                    if (r.total >= 2) setNewModelOverrideIsPattern(true);
+                                    else if (r.total === 1) setNewModelOverrideIsPattern(false);
+                                  }
                                 } catch {
                                   setGlobalModelMatchPreview({ ids: [], total: 0 });
                                 }
                               }, 300);
-                              const existing = globalModelLimits.find(ml => ml.model === v);
                               if (existing) {
                                 setNewModelOverrideLimit(existing.promptLimit || 0);
                                 setNewModelOverrideDailyTokenLimit(existing.dailyTokenLimit || 0);
                                 setNewModelOverrideMonthlyTokenLimit(existing.monthlyTokenLimit || 0);
                                 setNewModelOverrideDailyInputTokenLimit(existing.dailyInputTokenLimit || 0);
                                 setNewModelOverrideDailyOutputTokenLimit(existing.dailyOutputTokenLimit || 0);
+                                setNewModelOverrideIsPattern(!!existing.isPattern);
                               } else {
                                 setNewModelOverrideLimit(0);
                                 setNewModelOverrideDailyTokenLimit(0);
@@ -701,7 +705,9 @@ export default function SettingsPage() {
                                     dailyOutputTokenLimit: newModelOverrideDailyOutputTokenLimit,
                                   };
                                   for (const m of globalModelMatchPreview.ids) {
-                                    await globalSettings.setModelLimit(m, { ...limits, isPattern: false });
+                                    // Store bare id (strip provider/) so runtime normalize matches.
+                                    const bare = m.includes("/") ? m.slice(m.lastIndexOf("/") + 1) : m;
+                                    await globalSettings.setModelLimit(bare, { ...limits, isPattern: false });
                                   }
                                   setMessage(`Berhasil apply ke ${globalModelMatchPreview.ids.length} model exact.`);
                                 } catch (e: any) {
@@ -825,7 +831,7 @@ export default function SettingsPage() {
                                     <td className="p-2">{ml.dailyOutputTokenLimit || '-'}</td>
                                     <td className="p-2 text-right">
                                       <Button size="icon" variant="ghost" className="h-6 w-6 text-red-500 hover:text-red-600 hover:bg-red-500/10" onClick={async () => {
-                                        await globalSettings.deleteModelLimit(ml.model);
+                                        await globalSettings.deleteModelLimit(ml.model, !!ml.isPattern);
                                         const r = await globalSettings.getModelLimits(); setGlobalModelLimits(r.data || []);
                                       }}><Trash2 className="h-4 w-4" /></Button>
                                     </td>
