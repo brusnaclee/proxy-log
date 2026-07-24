@@ -230,8 +230,8 @@ export default function KeysPage() {
           </button>
         )}
         {isTrial && (
-          <span className="text-xs text-muted-foreground italic">
-            Upgrade to Phantom to create additional keys
+          <span className="text-xs text-muted-foreground italic max-w-xs text-right">
+            Trial: 1 key · all models + auto · upgrade to Phantom for multi-key and larger daily base
           </span>
         )}
       </div>

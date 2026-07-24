@@ -331,9 +331,8 @@ export default function AddonsPage() {
             <Package className="h-6 w-6" /> Add-ons
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Packs grant benefits (skip Claude/GPT-5.6 tease, token bonuses, per-model caps, device clamp).
-            Allowlist = models this pack unlocks benefits for — it does <span className="font-medium text-foreground">not</span> lock
-            those models for Phantom. Hard locks live in Settings → Models requiring add-on (empty by default).
+            Premium required to assign · Phantom stacks base daily (e.g. 2M) + pack · without Phantom = pack only.
+            Active pack bypasses per-model prompt caps; global Prompts still apply. Hard locks: Settings → Models requiring add-on.
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
@@ -578,73 +577,48 @@ export default function AddonsPage() {
           <CardTitle className="text-base">Catalog</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {addons.map((a) => {
+              const asgCount = assignments.filter((x) => x.addonId === a.id && x.isActive).length;
+              return (
+                <div
+                  key={a.id}
+                  className={`rounded-lg border p-3 space-y-2 ${
+                    editingId === a.id ? "border-primary/60 bg-primary/5" : a.isActive ? "border-border/60" : "border-border/30 opacity-70"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium font-mono text-sm">{a.name}</span>
+                    <Badge variant={a.isActive ? "default" : "secondary"} className="text-[10px]">
+                      {a.isActive ? "active" : "off"}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {(a.dailyTokenLimit / 1_000_000).toFixed(0)}M/day
+                    {(a.defaultDurationDays || 0) > 0 ? ` · ${a.defaultDurationDays}d` : ""}
+                    {a.maxDevices > 0 ? ` · ${a.maxDevices} device` : ""}
+                    {" · "}
+                    {asgCount} assigned
+                  </p>
+                  {a.description && (
+                    <p className="text-[10px] text-muted-foreground line-clamp-2">{a.description}</p>
+                  )}
+                  <div className="flex items-center gap-2 pt-1">
+                    <Button variant="outline" size="sm" onClick={() => startEdit(a)}>
+                      <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
+                    </Button>
+                    <Switch checked={a.isActive} onCheckedChange={() => void toggleActive(a)} />
+                    <Button variant="ghost" size="icon" onClick={() => void removeAddon(a.id)}>
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
           {addons.length === 0 && !loading && (
             <p className="text-sm text-muted-foreground">No add-ons yet.</p>
           )}
-          {addons.map((a) => {
-            const mode = a.accessMode === "all_except" ? "all_except" : "allowlist";
-            const allow = a.modelAllowlistParsed || [];
-            const deny = a.modelDenylistParsed || [];
-            const limits = a.modelDailyLimitsParsed || {};
-            return (
-              <div
-                key={a.id}
-                className={`flex flex-col gap-2 rounded-lg border p-3 md:flex-row md:items-start md:justify-between ${
-                  editingId === a.id ? "border-primary/60 bg-primary/5" : "border-border/60"
-                }`}
-              >
-                <div className="space-y-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium">{a.name}</span>
-                    <Badge variant={a.isActive ? "default" : "secondary"}>{a.isActive ? "active" : "off"}</Badge>
-                    <Badge variant="outline">{mode === "all_except" ? "all except" : "allowlist"}</Badge>
-                    {(a.maxDevices || 0) > 0 && (
-                      <span className="text-xs text-muted-foreground">{a.maxDevices} device(s)</span>
-                    )}
-                    {(a.defaultDurationDays || 0) > 0 && (
-                      <span className="text-xs text-muted-foreground">default {a.defaultDurationDays}d</span>
-                    )}
-                    <span className="text-xs text-muted-foreground">
-                      pack {(a.dailyTokenLimit || 0).toLocaleString()} tok/day
-                    </span>
-                  </div>
-                  {mode === "allowlist" ? (
-                    <div className="text-xs text-muted-foreground font-mono break-all">
-                      allow: {allow.join(", ") || "(none)"}
-                    </div>
-                  ) : (
-                    <div className="text-xs text-muted-foreground font-mono break-all">
-                      deny: {deny.join(", ") || "(none)"}
-                    </div>
-                  )}
-                  {Object.keys(limits).length > 0 && (
-                    <div className="text-xs text-amber-700 dark:text-amber-300 font-mono break-all">
-                      limits:{" "}
-                      {Object.entries(limits)
-                        .map(([k, v]) => `${k}=${v.toLocaleString()}`)
-                        .join(", ")}
-                    </div>
-                  )}
-                  {a.description && <p className="text-xs text-muted-foreground">{a.description}</p>}
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <Button
-                    variant={editingId === a.id ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => startEdit(a)}
-                    title="Edit add-on"
-                  >
-                    <Pencil className="h-3.5 w-3.5 mr-1" />
-                    Edit
-                  </Button>
-                  <Switch checked={a.isActive} onCheckedChange={() => void toggleActive(a)} />
-                  <Button variant="ghost" size="icon" onClick={() => void removeAddon(a.id)}>
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
-                </div>
-              </div>
-            );
-          })}
         </CardContent>
       </Card>
 

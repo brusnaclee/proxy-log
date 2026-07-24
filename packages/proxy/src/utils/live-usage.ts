@@ -32,6 +32,7 @@ import {
 	ADDON_TEASE_DEFAULT_PROMPT_LIMIT,
 	getActiveAddonsForUser,
 	isAddonTeaseModel,
+	parseModelDailyLimits,
 	sumAddonDailyTokenBonus,
 } from './addons.js';
 
@@ -104,6 +105,20 @@ export interface LiveUsagePayload {
 	apiCallResetAt: string | null;
 	apiCallResetMins: number;
 	modelUsageLimits: ModelPromptUsage[];
+	/** When add-on active: base + pack breakdown for UI */
+	dailyTokenBreakdown?: {
+		base: number;
+		addonBonus: number;
+		effective: number;
+	};
+	activeAddons?: Array<{
+		name: string;
+		expiresAt: string | null;
+		dailyTokenLimit: number;
+	}>;
+	/** Pack per-model token subcaps (not prompt caps) */
+	addonModelTokenCaps?: Array<{ pattern: string; dailyLimit: number }>;
+	perModelPromptsBypassedByAddon?: boolean;
 }
 
 function pickLimit(
@@ -266,6 +281,29 @@ export async function buildLiveUsageForKey(
 				}
 			: { value: 0, source: 'none' as LimitSource };
 
+	const dailyTokenBreakdown = {
+		base: Math.max(0, baseDailyTokenLimit || 0),
+		addonBonus: Math.max(0, addonDailyBonus || 0),
+		effective: dailyTokenLimit,
+	};
+	const activeAddonsSummary = activeAddons.map((a) => ({
+		name: a.name,
+		expiresAt: a.expiresAt ? new Date(a.expiresAt).toISOString() : null,
+		dailyTokenLimit: a.dailyTokenLimit || 0,
+	}));
+	const addonModelTokenCaps: Array<{ pattern: string; dailyLimit: number }> = [];
+	const capSeen = new Set<string>();
+	for (const a of activeAddons) {
+		const caps = parseModelDailyLimits(a.modelDailyLimits);
+		for (const [pattern, dailyLimit] of Object.entries(caps)) {
+			const key = `${pattern}:${dailyLimit}`;
+			if (capSeen.has(key)) continue;
+			capSeen.add(key);
+			addonModelTokenCaps.push({ pattern, dailyLimit });
+		}
+	}
+	const perModelPromptsBypassedByAddon = activeAddons.length > 0;
+
 	const { limit: promptLimit, window: promptLimitWindow } = resolveKeyPromptLimit(
 		limitKey as any,
 		cfg,
@@ -328,7 +366,8 @@ export async function buildLiveUsageForKey(
 	}
 
 	const modelUsageLimits: ModelPromptUsage[] = [];
-	if (!limitKey.isTrial && promptScopeIds.length > 0) {
+	// Any active add-on → bypass all per-model prompt override/tease rows in UI
+	if (!limitKey.isTrial && promptScopeIds.length > 0 && activeAddons.length === 0) {
 		const todayModels = sanitizeRows(
 			(
 				await db.execute(sql`
@@ -461,5 +500,9 @@ export async function buildLiveUsageForKey(
 		apiCallResetAt,
 		apiCallResetMins,
 		modelUsageLimits,
+		dailyTokenBreakdown,
+		activeAddons: activeAddonsSummary,
+		addonModelTokenCaps,
+		perModelPromptsBypassedByAddon,
 	};
 }

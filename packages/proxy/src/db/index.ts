@@ -58,12 +58,18 @@ export async function initializeDatabase() {
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_daily_token_limit integer NOT NULL DEFAULT 1000000`);
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_prompt_limit integer NOT NULL DEFAULT 50`);
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_prompt_limit_window text NOT NULL DEFAULT '5h'`);
-		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_model_selection_mode text NOT NULL DEFAULT 'all_gpy'`);
+		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_model_selection_mode text NOT NULL DEFAULT 'all'`);
+		await pool.query(`UPDATE admin_config SET trial_model_selection_mode = 'all' WHERE trial_model_selection_mode = 'all_gpy'`);
+		await pool.query(`ALTER TABLE admin_config ALTER COLUMN trial_model_selection_mode SET DEFAULT 'all'`).catch(() => undefined);
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_model_whitelist text NOT NULL DEFAULT '[]'`);
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_upstreams text NOT NULL DEFAULT ''`);
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_panel_message_id text`);
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_embed_config text NOT NULL DEFAULT '{}'`);
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_dm_templates text NOT NULL DEFAULT '{}'`);
+		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS pro_role_id text DEFAULT '1354682701453725857'`);
+		await pool.query(`UPDATE admin_config SET required_role_id = '1354646304042651728' WHERE required_role_id IS NULL OR required_role_id = ''`);
+		await pool.query(`UPDATE admin_config SET trial_required_role_id = '1354682641961582632' WHERE trial_required_role_id IS NULL OR trial_required_role_id = ''`);
+		await pool.query(`UPDATE admin_config SET pro_role_id = '1354682701453725857' WHERE pro_role_id IS NULL OR pro_role_id = ''`);
 		await pool.query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS is_trial boolean NOT NULL DEFAULT false`);
 		await pool.query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS rate_window_start text`);
 		await pool.query(`
@@ -424,6 +430,14 @@ export async function initializeDatabase() {
 		console.log('✅ provider_api_keys health columns ensured');
 	} catch (err) {
 		console.warn('⚠️  Could not ensure provider_api_keys health columns:', err);
+	}
+
+	try {
+		const { ensureVibecodeCatalog } = await import('../utils/addons.js');
+		await ensureVibecodeCatalog();
+		console.log('✅ Vibecode add-on catalog ensured');
+	} catch (err) {
+		console.warn('⚠️  Could not ensure Vibecode catalog:', err);
 	}
 
 	console.log('✅ Database initialized successfully');

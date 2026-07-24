@@ -205,7 +205,10 @@ export default function TrialSettingsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">General</CardTitle>
-          <CardDescription>Enable trial mode and configure access rules</CardDescription>
+          <CardDescription>
+            Access · Limits · Models. Defaults: <strong>1 day</strong>, <strong>1M tokens/day</strong>,{" "}
+            <strong>all models + auto</strong>. Premium role required to claim.
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
@@ -230,7 +233,7 @@ export default function TrialSettingsPage() {
               </select>
             </div>
             <div>
-              <Label>Required Role ID</Label>
+              <Label>Premium Role ID (required for claim)</Label>
               <Input
                 className="mt-1 font-mono text-xs"
                 value={settings.trialRequiredRoleId}
@@ -389,15 +392,13 @@ export default function TrialSettingsPage() {
         </CardContent>
       </Card>
 
-      {/* 4. Model Whitelist (per-upstream) */}
+      {/* 4. Models */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Trial Models (per upstream)</CardTitle>
+          <CardTitle className="text-base">Models</CardTitle>
           <CardDescription>
-            Multi-upstream support: centang upstream provider (mis. webnet, anthropic) untuk meng-allow semua model gpy di upstream tsb.
-            Mode whitelist untuk pilih per-model spesifik.
-            <br />
-            <span className="text-amber-400">Default = 6 model dari upstream webnet (combo). Admin bisa tambah upstream lain di bawah.</span>
+            Default: <strong>all catalog models</strong> + auto. Optional upstream filter. Whitelist mode for a fixed list.
+            Hard lock / tease for addon-required models still apply like Phantom without a pack.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -405,7 +406,11 @@ export default function TrialSettingsPage() {
             <Label>Selection mode</Label>
             <select
               className="rounded-md border border-border bg-background px-3 py-2 text-sm"
-              value={settings.trialModelSelectionMode}
+              value={
+                settings.trialModelSelectionMode === "whitelist"
+                  ? "whitelist"
+                  : "all"
+              }
               onChange={(e) =>
                 setSettings({
                   ...settings,
@@ -413,13 +418,13 @@ export default function TrialSettingsPage() {
                 })
               }
             >
-              <option value="all_gpy">All gpy models (respect upstream filter)</option>
+              <option value="all">All models (respect upstream filter)</option>
               <option value="whitelist">Whitelist only</option>
             </select>
           </div>
 
           <div className="space-y-2">
-            <Label className="text-xs text-muted-foreground">Upstream filter (kosongkan = allow semua upstream gpy)</Label>
+            <Label className="text-xs text-muted-foreground">Upstream filter (empty = all providers)</Label>
             <div className="flex flex-wrap gap-2">
               {upstreamGroups.map(([upstream]) => {
                 const on = selectedUpstreams.includes(upstream);
@@ -445,9 +450,7 @@ export default function TrialSettingsPage() {
           <div className="space-y-4 max-h-[420px] overflow-y-auto pr-1">
             {upstreamGroups.map(([upstream, models]) => {
               if (filterByUpstream && !selectedUpstreams.includes(upstream)) return null;
-              const gpyModels = models.filter((m) => m.toLowerCase().startsWith("gpy/"));
-              const visibleModels =
-                settings.trialModelSelectionMode === "whitelist" ? gpyModels : gpyModels.length > 0 ? gpyModels : models.filter((m) => m.toLowerCase().startsWith("gpy/"));
+              const visibleModels = models;
               if (visibleModels.length === 0) return null;
 
               const allSelected = visibleModels.every((m) =>
@@ -457,7 +460,7 @@ export default function TrialSettingsPage() {
               return (
                 <div key={upstream} className="rounded-md border border-border/50 p-3 space-y-2">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-medium capitalize">Upstream: {upstream}</span>
+                    <span className="text-sm font-medium capitalize">Provider: {upstream}</span>
                     {settings.trialModelSelectionMode === "whitelist" && (
                       <Button
                         type="button"
@@ -472,9 +475,10 @@ export default function TrialSettingsPage() {
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {visibleModels.map((m) => {
+                      const modeAll =
+                        settings.trialModelSelectionMode !== "whitelist";
                       const on =
-                        settings.trialModelSelectionMode === "all_gpy" ||
-                        (settings.trialModelWhitelist || []).includes(m);
+                        modeAll || (settings.trialModelWhitelist || []).includes(m);
                       const clickable = settings.trialModelSelectionMode === "whitelist";
                       return (
                         <button

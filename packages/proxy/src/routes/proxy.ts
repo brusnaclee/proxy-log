@@ -107,7 +107,6 @@ import {
 } from '../utils/rate-limit.js';
 import {
 	ADDON_TEASE_DEFAULT_PROMPT_LIMIT,
-	addonGrantsModelAccess,
 	checkAddonModelAccess,
 	getActiveAddonsForUser,
 	isAddonTeaseModel,
@@ -137,7 +136,7 @@ import {
 	buildTrialModelsToTry,
 	isRetryableUpstreamStatus,
 } from '../utils/trial-routing.js';
-import { isGpyProviderOrModel, resolveKeyApiCallLimit, resolveKeyDailyTokenLimit, resolveKeyPromptLimit } from '../utils/trial-config.js';
+import { resolveKeyApiCallLimit, resolveKeyDailyTokenLimit, resolveKeyPromptLimit } from '../utils/trial-config.js';
 import { queueTrialNotification } from '../utils/trial-notify.js';
 import {
 	sseTextToOpenAICompletion,
@@ -1201,9 +1200,8 @@ proxy.all('/*', async (c) => {
 	const anthropicByPath = isAnthropicMessagesPath(path);
 
 	// Public model discovery endpoints from local cache.
-	// If a Bearer token is present, filter by the key's isTrial flag so trial
-	// users only see gpy/* models (their allowlist). Without auth, return full
-	// catalog (browsing in IDEs without API key still works).
+	// If a Bearer token is present and the key is trial, filter by trial model mode
+	// (all catalog or whitelist). Without auth, return full catalog.
 	if (
 		(c.req.method === 'GET' || c.req.method === 'HEAD') &&
 		(normalizedPath === '/v1' || normalizedPath === '/v1/models')
@@ -1237,7 +1235,18 @@ proxy.all('/*', async (c) => {
 			}
 		}
 
-		const catalog = await getFilteredModelCatalogResponse({ isTrial });
+		let trialOpts: { isTrial?: boolean; trialModelSelectionMode?: string | null; trialModelWhitelist?: string | null } = {
+			isTrial,
+		};
+		if (isTrial) {
+			const [cfg] = await db.select().from(adminConfig).limit(1);
+			trialOpts = {
+				isTrial: true,
+				trialModelSelectionMode: cfg?.trialModelSelectionMode,
+				trialModelWhitelist: cfg?.trialModelWhitelist,
+			};
+		}
+		const catalog = await getFilteredModelCatalogResponse(trialOpts);
 		// Client catalog: visible/requestable = Published ON; is_online label = Published AND Probe OK.
 		// Admin Model Monitor still lists all models.
 		try {
@@ -2120,10 +2129,7 @@ proxy.all('/*', async (c) => {
 	if (model === 'auto') {
 		let onlineModels = await getOnlineModelsByLatency();
 		onlineModels = onlineModels.filter((m) => isAutoCompatible(m.modelId));
-		if (keyRecord.isTrial) {
-			const gpyOnly = onlineModels.filter((m) => isGpyProviderOrModel(m.provider, m.modelId));
-			if (gpyOnly.length > 0) onlineModels = gpyOnly;
-		}
+		// Trial uses full online catalog (same as Phantom); whitelist enforced elsewhere if configured.
 
 		if (onlineModels.length === 0) {
 			return c.json(
@@ -2313,10 +2319,7 @@ proxy.all('/*', async (c) => {
 
 			// Check per-model prompt limit for this candidate before sending request.
 			// Skip for add-on holders on granted models; apply tease default for premium families.
-			const autoSkipModelPrompt =
-				!keyRecord.isTrial &&
-				(addonGrantsModelAccess(autoActiveAddons, candidate.modelId) ||
-					addonGrantsModelAccess(autoActiveAddons, candidateModel));
+			const autoSkipModelPrompt = !keyRecord.isTrial && autoActiveAddons.length > 0;
 			if (!keyRecord.isTrial && !autoSkipModelPrompt) {
 				const teaseDefault =
 					isAddonTeaseModel(candidate.modelId) || isAddonTeaseModel(candidateModel)
@@ -2919,6 +2922,22 @@ proxy.all('/*', async (c) => {
 		);
 	}
 
+	if (keyRecord.isTrial && model !== 'auto') {
+		const built = await buildTrialModelsToTry(config, model);
+		if ('error' in built) {
+			return c.json(
+				{
+					error: {
+						message: `Trial whitelist does not include model "${model}"`,
+						type: 'access_error',
+						code: 'trial_model_not_allowed',
+					},
+				},
+				403,
+			);
+		}
+	}
+
 	let targetProvider = await getProviderForModel(model);
 	if (!targetProvider) {
 		return c.json(
@@ -2929,19 +2948,6 @@ proxy.all('/*', async (c) => {
 				},
 			},
 			500,
-		);
-	}
-
-	if (keyRecord.isTrial && !isGpyProviderOrModel(targetProvider.name, model)) {
-		return c.json(
-			{
-				error: {
-					message: `Trial users may only use gpy provider models. Requested: "${model}"`,
-					type: 'access_error',
-					code: 'trial_model_not_allowed',
-				},
-			},
-			403,
 		);
 	}
 
@@ -3239,7 +3245,7 @@ proxy.all('/*', async (c) => {
 		const turnKeyForLimit = `${sessionInfo.sessionId}:${keyRecord.id}`;
 		const willStartNewTurn = isNewPrompt || !turnIdCache.get(turnKeyForLimit);
 		const skipModelPromptTease =
-			!keyRecord.isTrial && addonGrantsModelAccess(activeAddons, model);
+			!keyRecord.isTrial && activeAddons.length > 0;
 
 		if (willStartNewTurn && !keyRecord.isTrial && !skipModelPromptTease) {
 			const teaseDefault =
@@ -4059,7 +4065,7 @@ proxy.all('/*', async (c) => {
 				return c.json(
 					{
 						error: {
-							message: `Trial users may only use gpy provider models. Requested: "${model}"`,
+							message: `Trial whitelist does not include model "${model}"`,
 							type: 'access_error',
 							code: 'trial_model_not_allowed',
 						},
@@ -4170,10 +4176,6 @@ proxy.all('/*', async (c) => {
 				if (pickModel !== originalModel) {
 					const tp = await getProviderForModel(pickModel);
 					if (!tp) {
-						if (attemptModel === '__auto__' || attemptModel === 'auto') break;
-						break;
-					}
-					if (keyRecord.isTrial && !isGpyProviderOrModel(tp.name, pickModel)) {
 						if (attemptModel === '__auto__' || attemptModel === 'auto') break;
 						break;
 					}

@@ -142,6 +142,18 @@ export interface LiveUsagePayload {
     resetAt: string | null;
     source: "override" | "global" | "none";
   }>;
+  dailyTokenBreakdown?: {
+    base: number;
+    addonBonus: number;
+    effective: number;
+  };
+  activeAddons?: Array<{
+    name: string;
+    expiresAt: string | null;
+    dailyTokenLimit: number;
+  }>;
+  addonModelTokenCaps?: Array<{ pattern: string; dailyLimit: number }>;
+  perModelPromptsBypassedByAddon?: boolean;
 }
 
 export interface ApiKeyListItem {
@@ -768,7 +780,7 @@ export interface TrialSettings {
   trialDailyTokenLimit: number;
   trialPromptLimit: number;
   trialPromptLimitWindow: string;
-  trialModelSelectionMode: "all_gpy" | "whitelist";
+  trialModelSelectionMode: "all" | "whitelist" | "all_gpy";
   trialModelWhitelist: string[];
   trialUpstreams: string[];
   trialPanelMessageId: string | null;

@@ -16,6 +16,7 @@ function formatReset(iso?: string | null) {
 function sourceLabel(src?: string) {
   if (src === "override") return "key override";
   if (src === "global") return "global";
+  if (src === "addon") return "base + add-on";
   return "";
 }
 
@@ -94,6 +95,10 @@ export function LiveUsageCard({
     scope,
     accountKeyCount,
     modelUsageLimits,
+    dailyTokenBreakdown,
+    activeAddons,
+    addonModelTokenCaps,
+    perModelPromptsBypassedByAddon,
   } = live;
 
   const bars: Array<{
@@ -166,13 +171,20 @@ export function LiveUsageCard({
     });
   }
   if (limits.dailyTokenLimit > 0) {
+    const stack =
+      dailyTokenBreakdown && dailyTokenBreakdown.addonBonus > 0
+        ? `base ${formatNumber(dailyTokenBreakdown.base)} + pack ${formatNumber(dailyTokenBreakdown.addonBonus)}`
+        : "tokens";
     bars.push({
       label: "Daily Total",
       value: usageToday.totalTokens,
       max: limits.dailyTokenLimit,
       remaining: remaining.daily,
-      sublabel: "tokens",
-      source: sourceLabel(limits.dailyTokenLimitSource),
+      sublabel: stack,
+      source:
+        dailyTokenBreakdown && dailyTokenBreakdown.addonBonus > 0
+          ? "base + add-on"
+          : sourceLabel(limits.dailyTokenLimitSource),
       reset: formatReset(dailyResetAt),
     });
   }
@@ -286,6 +298,42 @@ export function LiveUsageCard({
           />
         ))}
       </div>
+      {(activeAddons && activeAddons.length > 0) && (
+        <div className="rounded-lg border border-border/60 bg-muted/30 p-3 space-y-1.5 text-xs">
+          <p className="font-medium text-foreground">Active add-on</p>
+          {activeAddons.map((a) => (
+            <div key={a.name} className="flex justify-between gap-2 text-muted-foreground">
+              <span className="font-mono text-foreground">{a.name}</span>
+              <span>
+                +{formatNumber(a.dailyTokenLimit)}/day
+                {a.expiresAt ? ` · exp ${new Date(a.expiresAt).toLocaleDateString()}` : ""}
+              </span>
+            </div>
+          ))}
+          {dailyTokenBreakdown && dailyTokenBreakdown.addonBonus > 0 && (
+            <p className="text-muted-foreground">
+              Daily stack: {formatNumber(dailyTokenBreakdown.base)} + {formatNumber(dailyTokenBreakdown.addonBonus)} ={" "}
+              <span className="text-foreground font-medium">{formatNumber(dailyTokenBreakdown.effective)}</span>
+            </p>
+          )}
+          {perModelPromptsBypassedByAddon && (
+            <p className="text-[10px] text-muted-foreground">
+              Per-model prompt caps bypassed while add-on active · global Prompts still apply
+            </p>
+          )}
+          {(addonModelTokenCaps || []).length > 0 && (
+            <div className="pt-1 space-y-0.5">
+              <p className="text-[10px] text-muted-foreground">Pack token subcaps</p>
+              {addonModelTokenCaps!.map((c) => (
+                <div key={c.pattern} className="flex justify-between font-mono text-[10px]">
+                  <span>{c.pattern}</span>
+                  <span>{formatNumber(c.dailyLimit)}/day</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {(usageToday.fullInputTokens || 0) > (usageToday.promptTokens || 0) * 1.5 && (
         <p className="text-[10px] text-muted-foreground leading-relaxed border-t border-border/40 pt-2">
           Daily token limit: first hop of each prompt at 100% In+Out (cache included); later tool hops at Settings weight % (default 10%). Logs still store 100%.

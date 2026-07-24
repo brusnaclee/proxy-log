@@ -181,9 +181,11 @@ monitor.get("/settings/bot", async (c) => {
     discordBotToken: config.discordBotToken || "",
     agverifChannelId: config.agverifChannelId || "",
     tokitoChannelId: config.tokitoChannelId || "",
-    requiredRoleId: config.requiredRoleId || "",
+    requiredRoleId: config.requiredRoleId || "1354646304042651728",
     ownerGroupyRoleId: config.ownerGroupyRoleId || "",
     verifiedRoleId: config.verifiedRoleId || "",
+    proRoleId: (config as any).proRoleId || "1354682701453725857",
+    trialRequiredRoleId: config.trialRequiredRoleId || "1354682641961582632",
     geminiApiKey: config.geminiApiKey || "",
     verifAutoEnabled: Boolean(config.verifAutoEnabled),
     tokitoApiKey: config.tokitoApiKey || "",
@@ -209,6 +211,8 @@ monitor.post("/settings/bot", async (c) => {
   if (body.requiredRoleId !== undefined) updates.requiredRoleId = body.requiredRoleId;
   if (body.ownerGroupyRoleId !== undefined) updates.ownerGroupyRoleId = body.ownerGroupyRoleId;
   if (body.verifiedRoleId !== undefined) updates.verifiedRoleId = body.verifiedRoleId;
+  if (body.proRoleId !== undefined) updates.proRoleId = body.proRoleId;
+  if (body.trialRequiredRoleId !== undefined) updates.trialRequiredRoleId = body.trialRequiredRoleId;
   if (body.geminiApiKey !== undefined) updates.geminiApiKey = body.geminiApiKey;
   if (body.verifAutoEnabled !== undefined) updates.verifAutoEnabled = Boolean(body.verifAutoEnabled);
   if (body.tokitoApiKey !== undefined) updates.tokitoApiKey = body.tokitoApiKey;

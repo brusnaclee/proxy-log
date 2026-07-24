@@ -232,6 +232,15 @@ portal.get("/me", async (c) => {
   const primaryKey = userKeys.find(k => !k.isTrial && k.isActive) || userKeys.find(k => k.isActive) || userKeys[0];
   const config = (await db.select().from(adminConfig).limit(1))[0] ?? null;
 
+  const { getActiveAddonsForUser, sumAddonDailyTokenBonus, parseModelDailyLimits } = await import("../../utils/addons.js");
+  const activeAddons = !isTrial && primaryKey
+    ? await getActiveAddonsForUser({
+        discordUserId,
+        apiKeyId: primaryKey.id,
+      })
+    : [];
+  const addonDailyBonus = sumAddonDailyTokenBonus(activeAddons);
+
   // Today's usage (WIB) — same token aggregation as Discord usage embed
   const todayStart = wibTodayStartDate();
   const todayPw = and(
@@ -261,9 +270,10 @@ portal.get("/me", async (c) => {
   const { limit: promptLimit, window: promptLimitWindow } = primaryKey
     ? resolveKeyPromptLimit(primaryKey as any, config)
     : { limit: 0, window: "1d" };
-  const dailyTokenLimit = primaryKey
+  const baseDailyTokenLimit = primaryKey
     ? resolveKeyDailyTokenLimit(primaryKey as any, config)
     : 0;
+  const dailyTokenLimit = Math.max(0, baseDailyTokenLimit || 0) + Math.max(0, addonDailyBonus || 0);
 
   // Prompt used = shared across all Discord account keys
   let promptUsed = 0;
@@ -302,7 +312,7 @@ portal.get("/me", async (c) => {
   const modelUsageLimits: Array<{
     model: string; used: number; limit: number; window: string; resetAt: string | null;
   }> = [];
-  if (primaryKey && !isTrial && promptScopeIds.length > 0) {
+  if (primaryKey && !isTrial && promptScopeIds.length > 0 && activeAddons.length === 0) {
     const todayModels = sanitizeRows((await db.execute(sql`
       SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
         COUNT(DISTINCT turn_id)::int as requests
@@ -373,7 +383,14 @@ portal.get("/me", async (c) => {
   const monthly = pickLimit(primaryKey?.monthlyTokenLimit, config?.globalMonthlyTokenLimit);
   const rate = pickLimit(primaryKey?.rateLimit, config?.globalRateLimit);
   const dailyTok = dailyTokenLimit > 0
-    ? { value: dailyTokenLimit, source: (Number(primaryKey?.dailyTokenLimit) > 0 ? "override" : "global") as "override" | "global" | "none" }
+    ? {
+        value: dailyTokenLimit,
+        source: (addonDailyBonus > 0
+          ? "override"
+          : Number(primaryKey?.dailyTokenLimit) > 0
+            ? "override"
+            : "global") as "override" | "global" | "none",
+      }
     : { value: 0, source: "none" as const };
   const prompt = promptLimit > 0
     ? { value: promptLimit, source: (Number(primaryKey?.promptLimit) > 0 ? "override" : "global") as "override" | "global" | "none" }
@@ -474,6 +491,30 @@ portal.get("/me", async (c) => {
     dailyResetAt,
     monthlyResetAt,
     modelUsageLimits,
+    dailyTokenBreakdown: {
+      base: Math.max(0, baseDailyTokenLimit || 0),
+      addonBonus: Math.max(0, addonDailyBonus || 0),
+      effective: dailyTokenLimit,
+    },
+    activeAddons: activeAddons.map((a) => ({
+      name: a.name,
+      expiresAt: a.expiresAt ? new Date(a.expiresAt).toISOString() : null,
+      dailyTokenLimit: a.dailyTokenLimit || 0,
+    })),
+    addonModelTokenCaps: (() => {
+      const out: Array<{ pattern: string; dailyLimit: number }> = [];
+      const seen = new Set<string>();
+      for (const a of activeAddons) {
+        for (const [pattern, dailyLimit] of Object.entries(parseModelDailyLimits(a.modelDailyLimits))) {
+          const key = `${pattern}:${dailyLimit}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push({ pattern, dailyLimit });
+        }
+      }
+      return out;
+    })(),
+    perModelPromptsBypassedByAddon: activeAddons.length > 0,
     pendingNotifications,
     tokenSaver: {
       global: {
@@ -1167,20 +1208,18 @@ portal.get("/models", async (c) => {
 
     if (isTrial) {
       const config = (await db.select().from(adminConfig).limit(1))[0];
-      const mode = config?.trialModelSelectionMode || "all_gpy";
+      const mode = String(config?.trialModelSelectionMode || "all").toLowerCase();
       const whitelist = parseTrialModelWhitelist(config?.trialModelWhitelist);
 
       let allowedIds: string[];
       if (mode === "whitelist" && whitelist.length > 0) {
         allowedIds = whitelist;
       } else {
-        allowedIds = allModels
-          .filter(m => (m.owned_by || "").toLowerCase() === "gpy" || m.id.startsWith("gpy/") || m.id.startsWith("gpy:"))
-          .map(m => m.id);
-        if (whitelist.length > 0) {
-          const extra = whitelist.filter(w => !allowedIds.includes(w));
-          allowedIds = [...allowedIds, ...extra];
-        }
+        // Full catalog for trial (mode all / legacy all_gpy)
+        allowedIds = allModels.map((m) => m.id).filter((id) => id && id.toLowerCase() !== "auto");
+      }
+      if (!allowedIds.some((id) => id.toLowerCase() === "auto")) {
+        allowedIds = ["auto", ...allowedIds];
       }
 
       return c.json(allowedIds.map(id => ({

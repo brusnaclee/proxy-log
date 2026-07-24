@@ -97,6 +97,18 @@ export interface MeResponse {
     window: string;
     resetAt: string | null;
   }>;
+  dailyTokenBreakdown?: {
+    base: number;
+    addonBonus: number;
+    effective: number;
+  };
+  activeAddons?: Array<{
+    name: string;
+    expiresAt: string | null;
+    dailyTokenLimit: number;
+  }>;
+  addonModelTokenCaps?: Array<{ pattern: string; dailyLimit: number }>;
+  perModelPromptsBypassedByAddon?: boolean;
   multipliers?: {
     input: number;
     output: number;

@@ -154,7 +154,23 @@ export default function OverviewPage() {
   };
 
   const renderTrialCountdown = () => {
-    if (!user?.trialExpiresAt) return null;
+    if (!user || user.accountType !== "trial") return null;
+    const limitsNote = (
+      <p className="text-xs text-muted-foreground mt-1">
+        Trial: all models + auto · {(user.limits.dailyTokenLimit || 0).toLocaleString()} tokens/day · global prompts apply
+      </p>
+    );
+    if (!user.trialExpiresAt) {
+      return (
+        <div className="p-3 bg-yellow-400/10 border border-yellow-400/20 rounded-lg text-sm text-yellow-400 animate-fade-in">
+          <div className="flex items-center gap-2">
+            <Info className="w-4 h-4 flex-shrink-0" />
+            Trial account
+          </div>
+          {limitsNote}
+        </div>
+      );
+    }
     const diff = new Date(user.trialExpiresAt).getTime() - Date.now();
     if (diff <= 0) return (
       <div className="p-3 bg-red-400/10 border border-red-400/20 rounded-lg text-sm text-red-400 flex items-center gap-2 animate-fade-in">
@@ -165,9 +181,12 @@ export default function OverviewPage() {
     const days = Math.floor(diff / (1000 * 60 * 60 * 24));
     const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
     return (
-      <div className="p-3 bg-yellow-400/10 border border-yellow-400/20 rounded-lg text-sm text-yellow-400 flex items-center gap-2 animate-fade-in">
-        <Info className="w-4 h-4 flex-shrink-0" />
-        {t("Trial expires in")}: {days > 0 ? `${days} ${t("days")}` : `${hours} ${t("hours")}`}
+      <div className="p-3 bg-yellow-400/10 border border-yellow-400/20 rounded-lg text-sm text-yellow-400 animate-fade-in">
+        <div className="flex items-center gap-2">
+          <Info className="w-4 h-4 flex-shrink-0" />
+          {t("Trial expires in")}: {days > 0 ? `${days} ${t("days")}` : `${hours} ${t("hours")}`}
+        </div>
+        {limitsNote}
       </div>
     );
   };
@@ -256,12 +275,17 @@ export default function OverviewPage() {
       });
     }
     if (limits.dailyTokenLimit > 0) {
+      const bd = user.dailyTokenBreakdown;
+      const stack =
+        bd && bd.addonBonus > 0
+          ? `base ${(bd.base / 1e6).toFixed(1)}M + pack ${(bd.addonBonus / 1e6).toFixed(1)}M`
+          : "tokens";
       bars.push({
         label: t("Daily Limit"),
         value: (usageToday.totalTokens ?? usageToday.promptTokens + usageToday.completionTokens),
         max: limits.dailyTokenLimit,
-        sublabel: "tokens",
-        source: sourceLabel(limits.dailyTokenLimitSource),
+        sublabel: stack,
+        source: bd && bd.addonBonus > 0 ? "base + add-on" : sourceLabel(limits.dailyTokenLimitSource),
         reset: formatReset(user.dailyResetAt),
       });
     }
@@ -297,11 +321,37 @@ export default function OverviewPage() {
     }
 
     const modelLimits = (user.modelUsageLimits || []).filter((m) => m.limit > 0 || m.used > 0);
-    if (!bars.length && !modelLimits.length) return null;
+    const hasAddon = (user.activeAddons || []).length > 0;
+    if (!bars.length && !modelLimits.length && !hasAddon) return null;
 
     return (
       <div className="bg-card border border-border rounded-xl p-4 space-y-3 animate-fade-in">
         <h3 className="text-sm font-medium text-foreground">{t("Usage Today")}</h3>
+        {hasAddon && (
+          <div className="rounded-lg border border-border/60 bg-muted/20 p-2.5 space-y-1 text-xs">
+            {(user.activeAddons || []).map((a) => (
+              <div key={a.name} className="flex justify-between gap-2 text-muted-foreground">
+                <span className="font-mono text-foreground">{a.name}</span>
+                <span>+{(a.dailyTokenLimit / 1e6).toFixed(0)}M/day</span>
+              </div>
+            ))}
+            {user.perModelPromptsBypassedByAddon && (
+              <p className="text-[10px] text-muted-foreground">
+                Per-model prompt caps bypassed · global Prompts still apply
+              </p>
+            )}
+            {(user.addonModelTokenCaps || []).length > 0 && (
+              <div className="pt-1 space-y-0.5">
+                {(user.addonModelTokenCaps || []).map((c) => (
+                  <div key={c.pattern} className="flex justify-between font-mono text-[10px] text-muted-foreground">
+                    <span>{c.pattern}</span>
+                    <span>{(c.dailyLimit / 1e6).toFixed(0)}M/day</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <div className="space-y-2">
           {bars.map((b) => (
             <div key={b.label}>

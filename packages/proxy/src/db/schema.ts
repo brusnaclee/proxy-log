@@ -24,7 +24,7 @@ export const adminConfig = pgTable('admin_config', {
 	discordBotToken: text('discord_bot_token').default(''),
 	agverifChannelId: text('agverif_channel_id').default(''),
 	tokitoChannelId: text('tokito_channel_id').default(''),
-	requiredRoleId: text('required_role_id').default(''),
+	requiredRoleId: text('required_role_id').default('1354646304042651728'),
 	ownerGroupyRoleId: text('owner_groupy_role_id').default(''),
 	verifiedRoleId: text('verified_role_id').default(''),
 	geminiApiKey: text('gemini_api_key').default(''),
@@ -38,7 +38,7 @@ export const adminConfig = pgTable('admin_config', {
 	trialDailyTokenLimit: integer('trial_daily_token_limit').notNull().default(1_000_000),
 	trialPromptLimit: integer('trial_prompt_limit').notNull().default(50),
 	trialPromptLimitWindow: text('trial_prompt_limit_window').notNull().default('5h'),
-	trialModelSelectionMode: text('trial_model_selection_mode').notNull().default('all_gpy'),
+	trialModelSelectionMode: text('trial_model_selection_mode').notNull().default('all'),
 	trialModelWhitelist: text('trial_model_whitelist').notNull().default('[]'),
 	trialUpstreams: text('trial_upstreams').notNull().default(''),
 	trialPanelMessageId: text('trial_panel_message_id'),
@@ -59,6 +59,8 @@ export const adminConfig = pgTable('admin_config', {
 	tokenInputMode: text('token_input_mode').notNull().default('per_turn_peak'),
 	/** JSON string array of model patterns that require an active add-on. Empty = nothing hard-locked. */
 	addonRequiredModels: text('addon_required_models').notNull().default('[]'),
+	/** Discord Pro role — display/social only; no proxy perk */
+	proRoleId: text('pro_role_id').default('1354682701453725857'),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
 	updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });

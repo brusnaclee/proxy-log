@@ -26,7 +26,8 @@ export const DEFAULT_TRIAL_EMBED: TrialEmbedConfig = {
     "**Syarat:**\n" +
     "• 1 akun = 1 trial\n" +
     "• Berlaku selama periode trial\n" +
-    "• Model **gpy** saja\n\n" +
+    "• Akses **semua model** (+ auto)\n" +
+    "• Default: 1 hari · 1M token/hari\n\n" +
     "Klik tombol di bawah untuk klaim.",
   color: 0x57f287,
   footer: "Groupy Proxy Trial",
@@ -43,11 +44,11 @@ export const DEFAULT_TRIAL_DM: TrialDmTemplates = {
   keyRotated:
     "🔄 **API Key Trial Di-rotate**\n\nKey trial Anda di-rotate karena terdeteksi penggunaan dari lebih dari 1 device.\n\n**Endpoint:** `{endpoint}`\n**Key baru:** `{apiKey}`",
   claimed:
-    "🎁 **Trial API Aktif**\n\n**A. OpenAI-compatible clients (Cline/Codex/OpenCode/Cursor):**\n```\nEndpoint:   {endpoint}\nAuthorization: Bearer {apiKey}\n```\n\n**B. Anthropic clients (Claude Code) — auto-translated by proxy:**\n```bash\nexport ANTHROPIC_BASE_URL=\"{endpoint}\"\nexport ANTHROPIC_AUTH_TOKEN=\"{apiKey}\"\nexport ANTHROPIC_DEFAULT_SONNET_MODEL=\"{firstModel}\"\nexport ANTHROPIC_DEFAULT_HAIKU_MODEL=\"{firstModel}\"\nexport ANTHROPIC_DEFAULT_OPUS_MODEL=\"{firstModel}\"\nexport API_TIMEOUT_MS=500000\n```\n(Setting `ANTHROPIC_BASE_URL` ke path di atas otomatis route ke `/v1/messages` di proxy.)\n\n**Rules:**\n• Durasi: {durationDays} hari (berakhir {expiresAtFormatted})\n• Token harian: {dailyTokenLimit}\n• Prompt: {promptLimit}/{promptWindow}\n• Model: hanya **gpy**\n\n**Model tersedia:**\n{modelList}",
+    "🎁 **Trial API Aktif**\n\n**A. OpenAI-compatible clients (Cline/Codex/OpenCode/Cursor):**\n```\nEndpoint:   {endpoint}\nAuthorization: Bearer {apiKey}\n```\n\n**B. Anthropic clients (Claude Code) — auto-translated by proxy:**\n```bash\nexport ANTHROPIC_BASE_URL=\"{endpoint}\"\nexport ANTHROPIC_AUTH_TOKEN=\"{apiKey}\"\nexport ANTHROPIC_DEFAULT_SONNET_MODEL=\"{firstModel}\"\nexport ANTHROPIC_DEFAULT_HAIKU_MODEL=\"{firstModel}\"\nexport ANTHROPIC_DEFAULT_OPUS_MODEL=\"{firstModel}\"\nexport API_TIMEOUT_MS=500000\n```\n(Setting `ANTHROPIC_BASE_URL` ke path di atas otomatis route ke `/v1/messages` di proxy.)\n\n**Rules:**\n• Durasi: {durationDays} hari (berakhir {expiresAtFormatted})\n• Token harian: {dailyTokenLimit}\n• Prompt: {promptLimit}/{promptWindow}\n• Model: **semua model** (+ auto)\n\n**Model tersedia:**\n{modelList}",
   reclaimAvailable:
     "🎁 **Trial Baru Tersedia**\n\nAdmin sudah membuka akses trial lagi untuk kamu. Silakan klaim ulang di channel <#{channelId}> dengan menekan tombol **Klaim Trial API**.\n\nDurasi baru: {durationDays} hari\n{upgradePhantom}",
   upgradePhantom:
-    "🚀 **Upgrade ke Phantom Member**\n\nUntuk akses unlimited, semua model, dan token lebih besar, verifikasi AG kamu di channel <#{agverifChannelId}>.\n\nKeuntungan Phantom:\n• Akses semua model (qwen, anthropic, tokito, dll)\n• Token limit lebih besar\n• Multi-device\n• Permanen (selama role aktif)",
+    "🚀 **Upgrade ke Phantom Member**\n\nUntuk token harian lebih besar (base Phantom) dan akses penuh tanpa batas trial, verifikasi AG di channel <#{agverifChannelId}>.\n\nKeuntungan Phantom:\n• Base daily tokens lebih besar\n• Multi-device\n• Permanen (selama role aktif)\n• Bisa stack Vibecode add-on",
   extended:
     "⏰ **Trial Diperpanjang**\n\nAdmin sudah memperpanjang trial API kamu.\n\n• Tambahan: **{days} hari**\n• Baru berakhir: {expiresAtFormatted}\n• Key tetap sama: `{apiKey}`\n\n{upgradePhantom}",
 };
@@ -136,7 +137,7 @@ export function buildTrialSettingsResponse(
     trialDailyTokenLimit: config.trialDailyTokenLimit ?? 1_000_000,
     trialPromptLimit: config.trialPromptLimit ?? 50,
     trialPromptLimitWindow: config.trialPromptLimitWindow || "5h",
-    trialModelSelectionMode: config.trialModelSelectionMode || "all_gpy",
+    trialModelSelectionMode: normalizeTrialModelSelectionMode(config.trialModelSelectionMode),
     trialModelWhitelist: whitelist,
     trialUpstreams,
     trialPanelMessageId: config.trialPanelMessageId || null,
@@ -152,6 +153,15 @@ export function isGpyProviderOrModel(providerName: string | null | undefined, mo
   const p = (providerName || "").toLowerCase();
   const m = (modelId || "").toLowerCase();
   return p === "gpy" || m.startsWith("gpy/") || m.startsWith("gpy:");
+}
+
+/** Normalize legacy `all_gpy` → `all`. */
+export function normalizeTrialModelSelectionMode(
+  mode: string | null | undefined,
+): "all" | "whitelist" {
+  const m = String(mode || "all").toLowerCase();
+  if (m === "whitelist") return "whitelist";
+  return "all"; // includes legacy all_gpy
 }
 
 type KeyLimitFields = {

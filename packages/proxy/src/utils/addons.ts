@@ -200,7 +200,7 @@ export async function checkAddonModelAccess(opts: {
 
   return {
     allowed: false,
-    reason: `Model "${opts.model}" requires an active add-on (${hint}). Upgrade to a Vibecode pack (vibecode-3m / vibecode-5m / vibecode-10m) for access — ask in Discord for payment.`,
+    reason: `Model "${opts.model}" requires an active add-on (${hint}). Upgrade to a Vibecode pack (vibecode-5m / vibecode-10m) for access — ask in Discord for payment.`,
     requiredAddon: names[0] || "vibecode-10m",
   };
 }
@@ -271,3 +271,87 @@ export function addonGrantsModelAccess(active: ActiveAddon[], model: string): bo
 }
 
 export { parseAllowlist };
+
+const VIBECODE_ALLOWLIST = [
+  "claude-opus-4.8",
+  "claude-sonnet-4.6",
+  "claude-sonnet-5",
+  "sonnet-5",
+  "fable-5",
+  "gpt-5.5",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+  "codex",
+  "glm-5.2",
+  "minimax-m2.7",
+  "minimax-m3",
+  "grok-4.5",
+];
+
+const VIBECODE_SUBCAPS = {
+  "gpt-5.6-terra": 3_000_000,
+  "gpt-5.6-sol": 3_000_000,
+  "gpt-5.6-luna": 3_000_000,
+};
+
+/** Upsert Vibecode catalog packs to latest Discord post specs. */
+export async function ensureVibecodeCatalog(): Promise<void> {
+  const packs: Array<{
+    name: string;
+    description: string;
+    daily: number;
+    days: number;
+    slotsNote: number;
+    active: boolean;
+  }> = [
+    {
+      name: "vibecode-5m",
+      description:
+        "Vibecode 5M · @300k · Requires Premium role · if Phantom, stacks with Phantom daily (2M + pack) · max 1 device · slots ~20 · no weekly limit",
+      daily: 5_000_000,
+      days: 15,
+      slotsNote: 20,
+      active: true,
+    },
+    {
+      name: "vibecode-10m",
+      description:
+        "Vibecode 10M · @459k · Requires Premium role · if Phantom, stacks with Phantom daily (2M + pack) · max 1 device · slots ~10 · no weekly limit",
+      daily: 10_000_000,
+      days: 30,
+      slotsNote: 10,
+      active: true,
+    },
+    {
+      name: "vibecode-3m",
+      description: "Deprecated — deactivated (not in current Discord post)",
+      daily: 3_000_000,
+      days: 7,
+      slotsNote: 0,
+      active: false,
+    },
+  ];
+
+  for (const p of packs) {
+    const [existing] = await db.select().from(addons).where(eq(addons.name, p.name)).limit(1);
+    const payload = {
+      description: p.description,
+      modelAllowlist: JSON.stringify(VIBECODE_ALLOWLIST),
+      accessMode: "allowlist" as const,
+      modelDenylist: "[]",
+      modelDailyLimits: JSON.stringify(VIBECODE_SUBCAPS),
+      dailyTokenLimit: p.daily,
+      monthlyTokenLimit: 0,
+      maxDevices: 1,
+      defaultDurationDays: p.days,
+      isActive: p.active,
+      updatedAt: new Date(),
+    };
+    if (existing) {
+      await db.update(addons).set(payload).where(eq(addons.id, existing.id));
+    } else if (p.active) {
+      await db.insert(addons).values({ name: p.name, ...payload });
+    }
+  }
+}

@@ -704,31 +704,48 @@ export async function getModelCatalogResponse() {
   };
 }
 
-export async function getFilteredModelCatalogResponse(opts?: { isTrial?: boolean }) {
+export async function getFilteredModelCatalogResponse(opts?: {
+  isTrial?: boolean;
+  trialModelSelectionMode?: string | null;
+  trialModelWhitelist?: string | null;
+}) {
   const base = await getModelCatalogResponse();
   if (!opts?.isTrial) return base;
 
-  // Trial users see only `gpy/*` models + the virtual `auto`. No hardcoded
-  // fallback — if cache is empty for gpy/*, we just expose `auto` so the
-  // user can still try and hit the upstream auto-routing path.
-  const filtered = (base?.data || []).filter((m) => {
-    const id = String(m?.id || "").toLowerCase();
-    return id.startsWith("gpy/") || id === "auto";
-  });
+  const mode = String(opts.trialModelSelectionMode || "all").toLowerCase();
+  let filtered = base?.data || [];
+
+  if (mode === "whitelist") {
+    try {
+      const parsed = JSON.parse(opts.trialModelWhitelist || "[]");
+      const allowed = new Set(
+        (Array.isArray(parsed) ? parsed : []).map((m: unknown) => String(m).toLowerCase()),
+      );
+      if (allowed.size > 0) {
+        filtered = filtered.filter((m) => allowed.has(String(m?.id || "").toLowerCase()));
+      }
+    } catch {
+      /* keep full list on parse error */
+    }
+  }
+  // mode `all` / legacy `all_gpy`: full catalog (no gpy filter)
 
   // Ensure `auto` virtual model is always present for trial users.
   if (!filtered.some((m) => String(m.id).toLowerCase() === "auto")) {
-    filtered.unshift({
-      id: "auto",
-      object: "model",
-      created: Math.floor(Date.now() / 1000),
-      owned_by: "proxy",
-      provider: "proxy",
-      upstream_provider: "proxy",
-      context_length: 262144,
-      max_output_tokens: 64000,
-      supported_features: ["tools", "reasoning", "structured_outputs"],
-    } as any);
+    filtered = [
+      {
+        id: "auto",
+        object: "model",
+        created: Math.floor(Date.now() / 1000),
+        owned_by: "proxy",
+        provider: "proxy",
+        upstream_provider: "proxy",
+        context_length: 262144,
+        max_output_tokens: 64000,
+        supported_features: ["tools", "reasoning", "structured_outputs"],
+      } as any,
+      ...filtered,
+    ];
   }
 
   return { ...base, data: filtered };

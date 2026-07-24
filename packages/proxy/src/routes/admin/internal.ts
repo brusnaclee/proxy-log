@@ -752,6 +752,15 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   const [config] = await db.select().from(adminConfig);
 
   const isTrialKey = key.isTrial;
+  const { getActiveAddonsForUser, sumAddonDailyTokenBonus, parseModelDailyLimits } = await import("../../utils/addons.js");
+  const activeAddons = !isTrialKey
+    ? await getActiveAddonsForUser({
+        discordUserId: key.discordUserId,
+        apiKeyId: key.id,
+      })
+    : [];
+  const addonDailyBonus = sumAddonDailyTokenBonus(activeAddons);
+  const bypassPerModelPrompts = activeAddons.length > 0;
   const { limit: globalLimit, window: globalWindow } = resolveKeyPromptLimit(key, config);
   let globalUsed = 0;
   let globalResetMins = 0;
@@ -790,6 +799,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     : (key.perModelPromptLimitWindow || config?.globalPerModelPromptLimitWindow || "30m");
 
   let modelUsage = [];
+  if (!bypassPerModelPrompts) {
   for (const tm of todayModels) {
     if (!tm.model) continue;
     const mlCheck = await checkModelPromptLimit(
@@ -814,23 +824,11 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
       window: windowStr
     });
   }
+  }
 
   if (isTrialKey && config) {
-    const gpyModels = await listGpyCatalogModels(config);
-    const usageByModel = new Map(modelUsage.map((m) => [m.model, m]));
-    modelUsage = gpyModels.map((modelId) => {
-      const short = modelId.includes("/") ? modelId.split("/").pop()! : modelId;
-      const existing = usageByModel.get(modelId) || usageByModel.get(short);
-      return existing || {
-        model: modelId,
-        used: 0,
-        limit: 0,
-        resetMins: 0,
-        resetAt: null,
-        window: globalWindow,
-      };
-    });
-  } else {
+    // Trial: show used models only (no per-model prompt caps by default)
+  } else if (!bypassPerModelPrompts) {
   for (const am of activeModelLimits) {
     if (!modelUsage.find(m => m.model === am.model)) {
       modelUsage.push({
@@ -843,6 +841,8 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
       });
     }
   }
+  } else {
+    modelUsage = [];
   }
 
   // Calculate daily and monthly token reset times
@@ -873,14 +873,16 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     trialInfo = { isTrial: false };
   }
 
-  const effectiveDailyTokenLimit = resolveKeyDailyTokenLimit(key, config);
+  const baseDailyTokenLimit = resolveKeyDailyTokenLimit(key, config);
+  const effectiveDailyTokenLimit =
+    Math.max(0, baseDailyTokenLimit || 0) + Math.max(0, addonDailyBonus || 0);
 
   const trialLimits = key.isTrial && config ? {
     dailyTokenLimit: effectiveDailyTokenLimit,
     promptLimit: globalLimit,
     promptLimitWindow: globalWindow,
     models: await listGpyCatalogModels(config),
-    durationDays: config.trialDefaultDurationDays ?? 30,
+    durationDays: config.trialDefaultDurationDays ?? 1,
     maxPerAccount: config.trialMaxPerAccount ?? 1,
   } : null;
 
@@ -904,9 +906,33 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     apiCallResetMins,
     apiCallResetAt,
     modelUsage,
-    perModelPromptLimit: perModelLimitFallback,
+    perModelPromptLimit: bypassPerModelPrompts ? 0 : perModelLimitFallback,
     perModelPromptLimitWindow: perModelWindowFallback,
     dailyTokenLimit: effectiveDailyTokenLimit,
+    dailyTokenBreakdown: {
+      base: Math.max(0, baseDailyTokenLimit || 0),
+      addonBonus: Math.max(0, addonDailyBonus || 0),
+      effective: effectiveDailyTokenLimit,
+    },
+    activeAddons: activeAddons.map((a) => ({
+      name: a.name,
+      expiresAt: a.expiresAt ? new Date(a.expiresAt).toISOString() : null,
+      dailyTokenLimit: a.dailyTokenLimit || 0,
+    })),
+    addonModelTokenCaps: (() => {
+      const out: Array<{ pattern: string; dailyLimit: number }> = [];
+      const seen = new Set<string>();
+      for (const a of activeAddons) {
+        for (const [pattern, dailyLimit] of Object.entries(parseModelDailyLimits(a.modelDailyLimits))) {
+          const key = `${pattern}:${dailyLimit}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push({ pattern, dailyLimit });
+        }
+      }
+      return out;
+    })(),
+    perModelPromptsBypassedByAddon: bypassPerModelPrompts,
     monthlyTokenLimit: key.isTrial ? 0 : (config?.globalMonthlyTokenLimit || 0),
     dailyInputTokenLimit: key.isTrial ? 0 : ((key.dailyInputTokenLimit && key.dailyInputTokenLimit > 0) ? key.dailyInputTokenLimit : (config?.globalDailyInputTokenLimit || 0)),
     dailyOutputTokenLimit: key.isTrial ? 0 : ((key.dailyOutputTokenLimit && key.dailyOutputTokenLimit > 0) ? key.dailyOutputTokenLimit : (config?.globalDailyOutputTokenLimit || 0)),
@@ -1208,8 +1234,10 @@ internal.get("/internal/trial-models", async (c) => {
   if (!config) return c.json({ error: "Admin config missing" }, 500);
   const { listGpyCatalogModels } = await import("../../utils/trial-routing.js");
   const gpyModels = await listGpyCatalogModels(config);
+  const mode =
+    config.trialModelSelectionMode === "whitelist" ? "whitelist" : "all";
   return c.json({
-    mode: config.trialModelSelectionMode || "all_gpy",
+    mode,
     whitelist: JSON.parse(config.trialModelWhitelist || "[]"),
     gpyModels,
   });

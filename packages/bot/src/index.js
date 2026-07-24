@@ -246,7 +246,7 @@ async function proxyInternal(pathname, method = 'GET', body = null, opts = {}) {
 
 let trialModelsCache = {
 	gpyModels: [],
-	mode: 'all_gpy',
+	mode: 'all',
 	whitelist: [],
 	fetchedAt: 0,
 };
@@ -261,9 +261,11 @@ async function getTrialModelsCached() {
 	}
 	try {
 		const data = await proxyInternal('/admin/internal/trial-models');
+		const mode =
+			data.mode === 'whitelist' ? 'whitelist' : 'all';
 		trialModelsCache = {
 			gpyModels: data.gpyModels || [],
-			mode: data.mode || 'all_gpy',
+			mode,
 			whitelist: data.whitelist || [],
 			fetchedAt: Date.now(),
 		};
@@ -271,7 +273,7 @@ async function getTrialModelsCached() {
 	} catch {
 		return {
 			gpyModels: [],
-			mode: 'all_gpy',
+			mode: 'all',
 			whitelist: [],
 			fetchedAt: Date.now(),
 		};
@@ -334,11 +336,9 @@ function toolAccessDeniedMessage(access) {
 }
 
 function entryMatchesTrialModel(entry, trialCache) {
-	const provider = (entry.provider || '').toLowerCase();
 	const modelId = entry.modelId || '';
 	if (modelId === 'auto') return false;
-	if (provider !== 'gpy' && !modelId.toLowerCase().startsWith('gpy/'))
-		return false;
+	const provider = (entry.provider || '').toLowerCase();
 	const fullId = modelId.includes('/') ? modelId : `${provider}/${modelId}`;
 	const candidates = [fullId, modelId, modelId.split('/').pop()].filter(
 		Boolean,
@@ -351,6 +351,7 @@ function entryMatchesTrialModel(entry, trialCache) {
 			);
 		});
 	}
+	// mode all / all_gpy: all models
 	return true;
 }
 
@@ -4323,16 +4324,16 @@ async function buildTrialLimitsEmbed() {
 		.map((m) => `• \`${m}\``)
 		.join('\n');
 	const desc = [
-		'**🎁 Trial Limits** _(provider gpy saja)_',
+		'**🎁 Trial Limits** _(all models + auto)_',
 		'',
 		`• **Prompt:** ${cfg.trialPromptLimit ?? 50} prompts / ${cfg.trialPromptLimitWindow || '5h'}`,
 		`• **Token harian:** ${(cfg.trialDailyTokenLimit ?? 0).toLocaleString()}`,
-		`• **Durasi default:** ${cfg.trialDefaultDurationDays ?? 30} hari`,
+		`• **Durasi default:** ${cfg.trialDefaultDurationDays ?? 1} hari`,
 		`• **Max klaim/akun:** ${cfg.trialMaxPerAccount ?? 1}`,
-		`• **Mode model:** ${cfg.trialModelSelectionMode === 'whitelist' ? 'Whitelist' : 'Semua gpy'}`,
+		`• **Mode model:** ${cfg.trialModelSelectionMode === 'whitelist' ? 'Whitelist' : 'Semua model'}`,
 		'',
 		'**Model tersedia:**',
-		modelLines || '_Belum ada model gpy di catalog_',
+		modelLines || '_Belum ada model di catalog_',
 		(models.gpyModels || []).length > 25
 			? `_...dan ${models.gpyModels.length - 25} model lainnya_`
 			: '',
@@ -5915,13 +5916,40 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 	}
 
 	const trialUser = isTrial || trial?.isTrial;
+	const bd = data.dailyTokenBreakdown;
+	const stackNote =
+		bd && bd.addonBonus > 0
+			? `\n-# Stack: base ${formatTokens(bd.base)} + pack ${formatTokens(bd.addonBonus)} = ${formatTokens(bd.effective)}`
+			: '';
+	const addonBlock =
+		Array.isArray(data.activeAddons) && data.activeAddons.length > 0
+			? `\n\n**📦 Active add-on:** ${data.activeAddons
+					.map(
+						(a) =>
+							`\`${a.name}\` (+${formatTokens(a.dailyTokenLimit || 0)}/day` +
+							(a.expiresAt
+								? `, exp <t:${Math.floor(new Date(a.expiresAt).getTime() / 1000)}:D>`
+								: '') +
+							')',
+					)
+					.join(', ')}` +
+				(data.perModelPromptsBypassedByAddon
+					? '\n-# Per-model prompt caps bypassed · global Prompts still apply'
+					: '') +
+				(Array.isArray(data.addonModelTokenCaps) && data.addonModelTokenCaps.length
+					? `\n-# Pack token subcaps: ${data.addonModelTokenCaps
+							.map((c) => `${c.pattern}=${formatTokens(c.dailyLimit)}`)
+							.join(', ')}`
+					: '')
+			: '';
 	const limitSection = trialUser
-		? `**🎁 Trial Limits**\nPrompt: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\nPer-Model (gpy):\n${modelLimitStr}\n` +
+		? `**🎁 Trial Limits** _(all models + auto)_\nPrompt: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\n` +
 			`-# ℹ️ 1 prompt per turn; setiap hop = 1 API call.\n\n` +
 			`**🔢 Token Limits (Trial)**\nTotal Harian: ${dailyTokenStr}`
 		: `**🎯 Quotas**\nPrompts: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\nPer-Model:\n${modelLimitStr}\n` +
 			`-# ℹ️ 1 prompt per turn; setiap hop = 1 API call.\n\n` +
-			`**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}\nBulanan: ${monthlyTokenStr}`;
+			`**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}${stackNote}\nBulanan: ${monthlyTokenStr}` +
+			addonBlock;
 
 	const tokenSaverHint =
 		`\n\n💡 **Token Saver** — hemat token Cline/Roo (compress tool dump). Tekan tombol **Token Saver** di bawah, atau portal: ${PORTAL_DASHBOARD_URL}`;

@@ -92,6 +92,8 @@ export default function SettingsPage() {
   const [requiredRoleId, setRequiredRoleId] = useState("");
   const [ownerGroupyRoleId, setOwnerGroupyRoleId] = useState("");
   const [verifiedRoleId, setVerifiedRoleId] = useState("");
+  const [proRoleId, setProRoleId] = useState("1354682701453725857");
+  const [trialRequiredRoleId, setTrialRequiredRoleId] = useState("1354682641961582632");
   const [geminiApiKey, setGeminiApiKey] = useState("");
   const [verifAutoEnabled, setVerifAutoEnabled] = useState(false);
   const [tokitoApiKey, setTokitoApiKey] = useState("");
@@ -108,9 +110,11 @@ export default function SettingsPage() {
       setDiscordBotToken(b.discordBotToken || "");
       setAgverifChannelId(b.agverifChannelId || "");
       setTokitoChannelId(b.tokitoChannelId || "");
-      setRequiredRoleId(b.requiredRoleId || "");
+      setRequiredRoleId(b.requiredRoleId || "1354646304042651728");
       setOwnerGroupyRoleId(b.ownerGroupyRoleId || "");
       setVerifiedRoleId(b.verifiedRoleId || "");
+      setProRoleId((b as any).proRoleId || "1354682701453725857");
+      setTrialRequiredRoleId((b as any).trialRequiredRoleId || "1354682641961582632");
       setGeminiApiKey(b.geminiApiKey || "");
       setVerifAutoEnabled(Boolean(b.verifAutoEnabled));
       setTokitoApiKey(b.tokitoApiKey || "");
@@ -270,6 +274,8 @@ export default function SettingsPage() {
           requiredRoleId,
           ownerGroupyRoleId,
           verifiedRoleId,
+          proRoleId,
+          trialRequiredRoleId,
           geminiApiKey,
           verifAutoEnabled,
           tokitoApiKey,
@@ -1229,9 +1235,25 @@ export default function SettingsPage() {
               <Label>Agverif Ticket Channel ID</Label>
               <Input value={agverifChannelId} onChange={(e) => setAgverifChannelId(e.target.value)} placeholder="150764..." className="mt-1" />
             </div>
-            <div>
-              <Label>Required Role ID</Label>
-              <Input value={requiredRoleId} onChange={(e) => setRequiredRoleId(e.target.value)} placeholder="13546..." className="mt-1" />
+            <div className="md:col-span-2 pt-2 border-t border-border/50">
+              <Label className="text-base">Discord roles (proxy)</Label>
+              <p className="text-[10px] text-muted-foreground mt-0.5 mb-3">
+                Premium = required for trial + add-on · Pro = social only (no proxy perk) · Phantom = claim / base daily tokens
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <Label>Premium (required)</Label>
+                  <Input value={trialRequiredRoleId} onChange={(e) => setTrialRequiredRoleId(e.target.value)} placeholder="1354682641961582632" className="mt-1 font-mono text-xs" />
+                </div>
+                <div>
+                  <Label>Pro (display only)</Label>
+                  <Input value={proRoleId} onChange={(e) => setProRoleId(e.target.value)} placeholder="1354682701453725857" className="mt-1 font-mono text-xs" />
+                </div>
+                <div>
+                  <Label>Phantom</Label>
+                  <Input value={requiredRoleId} onChange={(e) => setRequiredRoleId(e.target.value)} placeholder="1354646304042651728" className="mt-1 font-mono text-xs" />
+                </div>
+              </div>
             </div>
             <div>
               <Label>Verified Role ID</Label>

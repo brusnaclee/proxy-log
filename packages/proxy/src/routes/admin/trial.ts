@@ -47,12 +47,15 @@ trial.put("/settings/trial", async (c) => {
   if (body.trialEnabled !== undefined) updates.trialEnabled = Boolean(body.trialEnabled);
   if (body.trialAccessMode !== undefined) updates.trialAccessMode = body.trialAccessMode || "groupy_members";
   if (body.trialRequiredRoleId !== undefined) updates.trialRequiredRoleId = body.trialRequiredRoleId || "";
-  if (body.trialDefaultDurationDays !== undefined) updates.trialDefaultDurationDays = Math.max(1, Number(body.trialDefaultDurationDays) || 30);
+  if (body.trialDefaultDurationDays !== undefined) updates.trialDefaultDurationDays = Math.max(1, Number(body.trialDefaultDurationDays) || 1);
   if (body.trialMaxPerAccount !== undefined) updates.trialMaxPerAccount = Math.max(1, Number(body.trialMaxPerAccount) || 1);
   if (body.trialDailyTokenLimit !== undefined) updates.trialDailyTokenLimit = Math.max(0, Number(body.trialDailyTokenLimit) || 0);
   if (body.trialPromptLimit !== undefined) updates.trialPromptLimit = Math.max(0, Number(body.trialPromptLimit) || 0);
   if (body.trialPromptLimitWindow !== undefined) updates.trialPromptLimitWindow = body.trialPromptLimitWindow || "5h";
-  if (body.trialModelSelectionMode !== undefined) updates.trialModelSelectionMode = body.trialModelSelectionMode || "all_gpy";
+  if (body.trialModelSelectionMode !== undefined) {
+    const mode = String(body.trialModelSelectionMode || "all").toLowerCase();
+    updates.trialModelSelectionMode = mode === "whitelist" ? "whitelist" : "all";
+  }
   if (body.trialModelWhitelist !== undefined) {
     updates.trialModelWhitelist = JSON.stringify(Array.isArray(body.trialModelWhitelist) ? body.trialModelWhitelist : []);
   }
@@ -267,7 +270,7 @@ export async function claimTrialForUser(body: {
     };
   }
 
-  const durationDays = config.trialDefaultDurationDays ?? 30;
+  const durationDays = config.trialDefaultDurationDays ?? 1;
   const expiresAt = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000);
   const dailyLimit = config.trialDailyTokenLimit ?? 1_000_000;
   const promptLimit = config.trialPromptLimit ?? 50;
