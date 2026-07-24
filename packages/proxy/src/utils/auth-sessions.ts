@@ -131,6 +131,14 @@ export function startAuthSessionPurgeJob(): void {
 }
 
 export async function ensureAuthSessionsTable(): Promise<void> {
+  // Prefer SELECT to confirm access; CREATE may fail if monit_api lacks CREATE privilege
+  // (deploy.mjs creates/owns the table as postgres).
+  try {
+    await pool.query(`SELECT 1 FROM auth_sessions LIMIT 1`);
+    return;
+  } catch {
+    // fall through to create
+  }
   await pool.query(`
     CREATE TABLE IF NOT EXISTS auth_sessions (
       id SERIAL PRIMARY KEY,
