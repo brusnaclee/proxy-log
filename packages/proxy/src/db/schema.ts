@@ -522,6 +522,8 @@ export const addons = pgTable('addons', {
 	promptLimitWindow: text('prompt_limit_window').notNull().default('1d'),
 	/** When > 0, assignment clamps api_keys.maxDevices */
 	maxDevices: integer('max_devices').notNull().default(0),
+	/** Default assignment length in days (0 = no auto expiry). Assign UI + API use this unless expiresAt overridden. */
+	defaultDurationDays: integer('default_duration_days').notNull().default(0),
 	/** Optional Discord role: note / future auto-assign */
 	discordRoleId: text('discord_role_id'),
 	isActive: boolean('is_active').notNull().default(true),

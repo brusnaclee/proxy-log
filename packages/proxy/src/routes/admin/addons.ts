@@ -113,6 +113,7 @@ addonsApi.post("/addons", async (c) => {
     promptLimit?: number;
     promptLimitWindow?: string;
     maxDevices?: number;
+    defaultDurationDays?: number;
     discordRoleId?: string | null;
     isActive?: boolean;
   }>();
@@ -134,6 +135,7 @@ addonsApi.post("/addons", async (c) => {
       promptLimit: Math.max(0, body.promptLimit || 0),
       promptLimitWindow: body.promptLimitWindow || "1d",
       maxDevices: Math.max(0, body.maxDevices || 0),
+      defaultDurationDays: Math.max(0, body.defaultDurationDays || 0),
       discordRoleId: body.discordRoleId || null,
       isActive: body.isActive ?? true,
     })
@@ -162,6 +164,9 @@ addonsApi.put("/addons/:id", async (c) => {
   if (body.promptLimit !== undefined) updates.promptLimit = Math.max(0, Number(body.promptLimit) || 0);
   if (typeof body.promptLimitWindow === "string") updates.promptLimitWindow = body.promptLimitWindow;
   if (body.maxDevices !== undefined) updates.maxDevices = Math.max(0, Number(body.maxDevices) || 0);
+  if (body.defaultDurationDays !== undefined) {
+    updates.defaultDurationDays = Math.max(0, Number(body.defaultDurationDays) || 0);
+  }
   if (body.discordRoleId !== undefined) updates.discordRoleId = body.discordRoleId || null;
   if (body.isActive !== undefined) updates.isActive = Boolean(body.isActive);
 
@@ -249,13 +254,20 @@ addonsApi.post("/addon-assignments", async (c) => {
     if (!key) return c.json({ error: "API key not found" }, 404);
   }
 
+  let expiresAt: Date | null = null;
+  if (body.expiresAt) {
+    expiresAt = new Date(body.expiresAt);
+  } else if ((addon.defaultDurationDays || 0) > 0) {
+    expiresAt = new Date(Date.now() + addon.defaultDurationDays * 24 * 60 * 60 * 1000);
+  }
+
   const [row] = await db
     .insert(addonAssignments)
     .values({
       addonId: body.addonId,
       discordUserId: body.discordUserId || null,
       apiKeyId: body.apiKeyId || null,
-      expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
+      expiresAt,
       assignedBy: body.assignedBy || "dashboard",
       isActive: true,
     })

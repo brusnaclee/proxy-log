@@ -863,6 +863,8 @@ export interface AddonEntry {
   promptLimit: number;
   promptLimitWindow: string;
   maxDevices?: number;
+  /** 0 = no auto expiry on assign */
+  defaultDurationDays?: number;
   discordRoleId: string | null;
   isActive: boolean;
   createdAt: string;
@@ -890,6 +892,7 @@ export type AddonWritePayload = Partial<AddonEntry> & {
   modelDailyLimits?: Record<string, number> | string;
   accessMode?: "allowlist" | "all_except";
   maxDevices?: number;
+  defaultDurationDays?: number;
 };
 
 export const addonsApi = {

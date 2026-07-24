@@ -135,6 +135,7 @@ export default function AddonsPage() {
   const [denylist, setDenylist] = useState<string[]>([]);
   const [dailyTokenLimit, setDailyTokenLimit] = useState(0);
   const [maxDevices, setMaxDevices] = useState(0);
+  const [defaultDurationDays, setDefaultDurationDays] = useState(0);
   const [discordRoleId, setDiscordRoleId] = useState("");
   const [limitPattern, setLimitPattern] = useState("");
   const [limitValue, setLimitValue] = useState(5_000_000);
@@ -143,6 +144,20 @@ export default function AddonsPage() {
   const [assignAddonId, setAssignAddonId] = useState<number | "">("");
   const [assignDiscordId, setAssignDiscordId] = useState("");
   const [assignExpires, setAssignExpires] = useState("");
+
+  const formatLocalDatetime = (d: Date) => {
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  const applyDefaultExpiry = (pack: AddonEntry | undefined) => {
+    const days = pack?.defaultDurationDays || 0;
+    if (days > 0) {
+      setAssignExpires(formatLocalDatetime(new Date(Date.now() + days * 24 * 60 * 60 * 1000)));
+    } else {
+      setAssignExpires("");
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -156,7 +171,20 @@ export default function AddonsPage() {
       setAddons(a.data || []);
       setAssignments(asg.data || []);
       setCatalog(models.data || []);
-      setAssignAddonId((prev) => prev || a.data?.[0]?.id || "");
+      setAssignAddonId((prev) => {
+        const next = prev || a.data?.[0]?.id || "";
+        if (next && !prev) {
+          const pack = (a.data || []).find((x) => x.id === next);
+          if (pack && (pack.defaultDurationDays || 0) > 0) {
+            setAssignExpires(
+              formatLocalDatetime(
+                new Date(Date.now() + (pack.defaultDurationDays || 0) * 24 * 60 * 60 * 1000),
+              ),
+            );
+          }
+        }
+        return next;
+      });
     } catch (e: any) {
       setError(e?.message || "Failed to load add-ons");
     } finally {
@@ -177,6 +205,7 @@ export default function AddonsPage() {
     setDenylist([]);
     setDailyTokenLimit(0);
     setMaxDevices(0);
+    setDefaultDurationDays(0);
     setDiscordRoleId("");
     setModelDailyLimits({});
     setLimitPattern("");
@@ -192,6 +221,7 @@ export default function AddonsPage() {
     setDenylist(addon.modelDenylistParsed || []);
     setDailyTokenLimit(addon.dailyTokenLimit || 0);
     setMaxDevices(addon.maxDevices || 0);
+    setDefaultDurationDays(addon.defaultDurationDays || 0);
     setDiscordRoleId(addon.discordRoleId || "");
     setModelDailyLimits({ ...(addon.modelDailyLimitsParsed || {}) });
     setLimitPattern("");
@@ -214,6 +244,7 @@ export default function AddonsPage() {
       modelDailyLimits,
       dailyTokenLimit,
       maxDevices,
+      defaultDurationDays,
       discordRoleId: discordRoleId.trim() || null,
     };
     try {
@@ -261,7 +292,8 @@ export default function AddonsPage() {
         expiresAt: assignExpires ? new Date(assignExpires).toISOString() : null,
       });
       setAssignDiscordId("");
-      setAssignExpires("");
+      const pack = addons.find((a) => a.id === Number(assignAddonId));
+      applyDefaultExpiry(pack);
       await load();
     } catch (e: any) {
       setError(e?.message || "Failed to assign add-on");
@@ -457,6 +489,19 @@ export default function AddonsPage() {
               <p className="text-[10px] text-muted-foreground mt-1">Applied to user keys on assign (e.g. 1 for Vibecode).</p>
             </div>
             <div>
+              <Label>Default assign duration (days)</Label>
+              <Input
+                className="mt-1"
+                type="number"
+                min={0}
+                value={defaultDurationDays}
+                onChange={(e) => setDefaultDurationDays(parseInt(e.target.value) || 0)}
+              />
+              <p className="text-[10px] text-muted-foreground mt-1">
+                0 = no auto expiry. Assign uses this unless you override Expires. Vibecode: 7 / 15 / 30.
+              </p>
+            </div>
+            <div>
               <Label>Discord role ID (optional note)</Label>
               <Input className="mt-1 font-mono text-sm" value={discordRoleId} onChange={(e) => setDiscordRoleId(e.target.value)} placeholder="role snowflake" />
             </div>
@@ -494,41 +539,23 @@ export default function AddonsPage() {
                 onChange={(e) => {
                   const id = e.target.value ? Number(e.target.value) : "";
                   setAssignAddonId(id);
-                  if (id === "") return;
-                  const pack = addons.find((a) => a.id === id);
-                  if (!pack) return;
-                  const days =
-                    pack.name === "vibecode-3m"
-                      ? 7
-                      : pack.name === "vibecode-5m"
-                        ? 15
-                        : pack.name === "vibecode-10m"
-                          ? 30
-                          : 0;
-                  if (days > 0) {
-                    const d = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
-                    const pad = (n: number) => String(n).padStart(2, "0");
-                    const local = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-                    setAssignExpires(local);
+                  if (id === "") {
+                    setAssignExpires("");
+                    return;
                   }
+                  applyDefaultExpiry(addons.find((a) => a.id === id));
                 }}
               >
                 <option value="">Select…</option>
                 {addons.map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.name} {a.isActive ? "" : "(inactive)"}
-                    {a.name === "vibecode-3m"
-                      ? " · 7d"
-                      : a.name === "vibecode-5m"
-                        ? " · 15d"
-                        : a.name === "vibecode-10m"
-                          ? " · 30d"
-                          : ""}
+                    {(a.defaultDurationDays || 0) > 0 ? ` · ${a.defaultDurationDays}d` : ""}
                   </option>
                 ))}
               </select>
               <p className="text-[10px] text-muted-foreground mt-1">
-                Vibecode tiers auto-fill expiry: 3m=7d, 5m=15d, 10m=30d (editable).
+                Expiry auto-fills from pack default duration (editable below). Leave empty + API still applies pack default.
               </p>
             </div>
             <div>
@@ -573,6 +600,9 @@ export default function AddonsPage() {
                     <Badge variant="outline">{mode === "all_except" ? "all except" : "allowlist"}</Badge>
                     {(a.maxDevices || 0) > 0 && (
                       <span className="text-xs text-muted-foreground">{a.maxDevices} device(s)</span>
+                    )}
+                    {(a.defaultDurationDays || 0) > 0 && (
+                      <span className="text-xs text-muted-foreground">default {a.defaultDurationDays}d</span>
                     )}
                     <span className="text-xs text-muted-foreground">
                       pack {(a.dailyTokenLimit || 0).toLocaleString()} tok/day
