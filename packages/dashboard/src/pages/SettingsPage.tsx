@@ -1,10 +1,10 @@
 ﻿import { useEffect, useState } from "react";
-import { settings, logs, type ModelLimitEntry } from "@/lib/api";
+import { settings, logs } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Eye, EyeOff, Save, Trash2, AlertTriangle, X } from "lucide-react";
+import { Eye, EyeOff, Save, Trash2, AlertTriangle, X, Pencil } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
   DialogDescription, DialogFooter, DialogTrigger
@@ -12,8 +12,25 @@ import {
 
 import { useRealtime } from "@/lib/realtime-context";
 import { ProvidersManager } from "@/components/ProvidersManager";
-import { globalSettings, request } from "@/lib/api";
+import { globalSettings, request, type ModelLimitEntry } from "@/lib/api";
 import { Switch } from "@/components/ui/switch";
+
+function bareModelId(id: string): string {
+  const s = String(id || "");
+  return s.includes("/") ? s.slice(s.lastIndexOf("/") + 1) : s;
+}
+
+/** True if model id matches any addon_required pattern (exact / bare / substring). */
+function isLockedByPatterns(modelId: string, patterns: string[]): boolean {
+  if (!patterns.length) return false;
+  const lower = modelId.toLowerCase();
+  const bare = bareModelId(modelId).toLowerCase();
+  return patterns.some((p) => {
+    const pl = String(p || "").toLowerCase().trim();
+    if (!pl) return false;
+    return lower === pl || bare === pl || lower.includes(pl) || bare.includes(pl);
+  });
+}
 
 export default function SettingsPage() {
   const { realtimeEnabled, setRealtimeEnabled } = useRealtime();
@@ -45,6 +62,9 @@ export default function SettingsPage() {
   const [newModelOverride, setNewModelOverride] = useState("");
   const [newModelOverrideIsPattern, setNewModelOverrideIsPattern] = useState(false);
   const [globalModelMatchPreview, setGlobalModelMatchPreview] = useState<{ ids: string[]; total: number }>({ ids: [], total: 0 });
+  /** When on: matched models can be locked (addon-only) via per-row checkboxes. */
+  const [matchLockEnabled, setMatchLockEnabled] = useState(false);
+  const [matchLockedIds, setMatchLockedIds] = useState<string[]>([]);
   const [newModelOverrideLimit, setNewModelOverrideLimit] = useState(0);
   const [newModelOverrideDailyTokenLimit, setNewModelOverrideDailyTokenLimit] = useState(0);
   const [newModelOverrideMonthlyTokenLimit, setNewModelOverrideMonthlyTokenLimit] = useState(0);
@@ -148,6 +168,72 @@ export default function SettingsPage() {
       const catalog = await globalSettings.getModels();
       setModelCatalog(catalog.data || []);
     } catch {}
+  };
+
+  const resetOverrideForm = () => {
+    setNewModelOverride("");
+    setNewModelOverrideIsPattern(false);
+    setNewModelOverrideLimit(0);
+    setNewModelOverrideDailyTokenLimit(0);
+    setNewModelOverrideMonthlyTokenLimit(0);
+    setNewModelOverrideDailyInputTokenLimit(0);
+    setNewModelOverrideDailyOutputTokenLimit(0);
+    setGlobalModelMatchPreview({ ids: [], total: 0 });
+    setMatchLockEnabled(false);
+    setMatchLockedIds([]);
+  };
+
+  const applyMatchPreview = (ids: string[], total: number, pattern: string, required: string[]) => {
+    const capped = ids.slice(0, 200);
+    setGlobalModelMatchPreview({ ids: capped, total });
+    const already = capped.filter((id) => isLockedByPatterns(id, required));
+    const patternLocked = isLockedByPatterns(pattern, required);
+    if (already.length > 0 || patternLocked) {
+      setMatchLockEnabled(true);
+      setMatchLockedIds(already.length > 0 ? already : capped);
+    } else {
+      setMatchLockEnabled(false);
+      setMatchLockedIds([]);
+    }
+  };
+
+  /** Sync exact bare IDs for this match set into addon_required_models (drop covering pattern). */
+  const syncAddonLocksForMatches = async (
+    matchIds: string[],
+    lockedIds: string[],
+    pattern: string,
+  ) => {
+    const lockedSet = new Set(lockedIds);
+    let next = addonRequiredModels.filter(
+      (p) => p.toLowerCase() !== pattern.toLowerCase().trim(),
+    );
+    for (const id of matchIds) {
+      const bare = bareModelId(id);
+      next = next.filter((p) => p !== id && p !== bare);
+      if (lockedSet.has(id)) next.push(bare);
+    }
+    next = Array.from(new Set(next.map((x) => x.trim()).filter(Boolean)));
+    await globalSettings.update({ addonRequiredModels: next });
+    setAddonRequiredModels(next);
+    return next;
+  };
+
+  const startEditOverride = async (ml: ModelLimitEntry) => {
+    setNewModelOverride(ml.model);
+    setNewModelOverrideIsPattern(!!ml.isPattern);
+    setNewModelOverrideLimit(ml.promptLimit || 0);
+    setNewModelOverrideDailyTokenLimit(ml.dailyTokenLimit || 0);
+    setNewModelOverrideMonthlyTokenLimit(ml.monthlyTokenLimit || 0);
+    setNewModelOverrideDailyInputTokenLimit(ml.dailyInputTokenLimit || 0);
+    setNewModelOverrideDailyOutputTokenLimit(ml.dailyOutputTokenLimit || 0);
+    try {
+      const r = await globalSettings.matchModelCatalog(ml.model);
+      applyMatchPreview(r.data || [], r.total || 0, ml.model, addonRequiredModels);
+    } catch {
+      setGlobalModelMatchPreview({ ids: [], total: 0 });
+      setMatchLockEnabled(isLockedByPatterns(ml.model, addonRequiredModels));
+      setMatchLockedIds([]);
+    }
   };
 
   const handleSaveSettings = async () => {
@@ -667,7 +753,8 @@ export default function SettingsPage() {
                       <DialogHeader>
                         <DialogTitle>Manage Global Model Limits</DialogTitle>
                         <DialogDescription>
-                          Configure specific prompt and token limits for individual models globally.
+                          Prompt/token overrides per model atau pattern. Bisa Edit dari tabel.
+                          Centang &quot;Lock matched models&quot; untuk pilih model yang wajib add-on (Select all / satu-satu).
                         </DialogDescription>
                       </DialogHeader>
                       
@@ -688,18 +775,20 @@ export default function SettingsPage() {
                               (window as any).__globalMlMatchT = setTimeout(async () => {
                                 if (!v || v.length < 1) {
                                   setGlobalModelMatchPreview({ ids: [], total: 0 });
+                                  setMatchLockEnabled(false);
+                                  setMatchLockedIds([]);
                                   return;
                                 }
                                 try {
                                   const r = await globalSettings.matchModelCatalog(v);
-                                  setGlobalModelMatchPreview({ ids: r.data, total: r.total });
-                                  // Auto-detect pattern only when creating a new row (don't flip existing)
                                   if (!existing) {
                                     if (r.total >= 2) setNewModelOverrideIsPattern(true);
                                     else if (r.total === 1) setNewModelOverrideIsPattern(false);
                                   }
+                                  applyMatchPreview(r.data || [], r.total || 0, v, addonRequiredModels);
                                 } catch {
                                   setGlobalModelMatchPreview({ ids: [], total: 0 });
+                                  setMatchLockedIds([]);
                                 }
                               }, 300);
                               if (existing) {
@@ -719,37 +808,113 @@ export default function SettingsPage() {
                             }}
                           />
                           {newModelOverride.length > 0 && (
-                            <div className="mt-1 space-y-1 text-xs text-muted-foreground">
+                            <div className="mt-1 space-y-2 text-xs text-muted-foreground">
                               {newModelOverrideIsPattern ? (
-                                <>
-                                  <div>
-                                    Pattern akan apply ke <b>{globalModelMatchPreview.total}</b> model yang mengandung substring <span className="font-mono">"{newModelOverride}"</span>:
-                                  </div>
-                                  {globalModelMatchPreview.total > 0 && (
-                                    <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto p-1 border rounded bg-background/40">
-                                      {globalModelMatchPreview.ids.map((m) => (
-                                        <span key={m} className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 font-mono text-[10px]">
-                                          {m}
-                                        </span>
-                                      ))}
-                                      {globalModelMatchPreview.total > globalModelMatchPreview.ids.length && (
-                                        <span className="px-1.5 py-0.5 rounded bg-muted text-muted-foreground text-[10px]">
-                                          ...{(globalModelMatchPreview.total - globalModelMatchPreview.ids.length).toLocaleString()} lagi
-                                        </span>
-                                      )}
-                                    </div>
-                                  )}
+                                <div>
+                                  Pattern limit apply ke <b>{globalModelMatchPreview.total}</b> model yang mengandung{" "}
+                                  <span className="font-mono">"{newModelOverride}"</span>
                                   {globalModelMatchPreview.total === 0 && (
-                                    <div className="text-amber-600 dark:text-amber-400">
-                                      Belum ada model di catalog yang cocok. Pattern tetap tersimpan dan akan apply ke model baru yang mengandung substring ini.
+                                    <div className="text-amber-600 dark:text-amber-400 mt-1">
+                                      Belum ada model di catalog yang cocok. Pattern tetap tersimpan untuk model baru.
                                     </div>
                                   )}
-                                </>
+                                </div>
                               ) : (
                                 <div>
                                   {globalModelMatchPreview.total > 0
-                                    ? `Cocok dengan ${globalModelMatchPreview.total} model di catalog: ${globalModelMatchPreview.ids.slice(0, 3).join(", ")}${globalModelMatchPreview.total > 3 ? ` +${globalModelMatchPreview.total - 3}` : ""}`
-                                    : "Tidak ada model di catalog yang cocok (entry exact akan tersimpan, tidak match ke model lain)"}
+                                    ? `Cocok ${globalModelMatchPreview.total} model di catalog`
+                                    : "Tidak ada model di catalog yang cocok (entry exact tetap bisa disimpan)"}
+                                </div>
+                              )}
+
+                              {globalModelMatchPreview.ids.length > 0 && (
+                                <div className="space-y-2 border rounded-md p-2 bg-background/50">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <label className="inline-flex items-center gap-1.5 cursor-pointer text-foreground">
+                                      <input
+                                        type="checkbox"
+                                        checked={matchLockEnabled}
+                                        onChange={(e) => {
+                                          const on = e.target.checked;
+                                          setMatchLockEnabled(on);
+                                          setMatchLockedIds(on ? [...globalModelMatchPreview.ids] : []);
+                                        }}
+                                      />
+                                      <span className="text-xs font-medium">
+                                        Lock matched models (addon only)
+                                      </span>
+                                    </label>
+                                    {matchLockEnabled && (
+                                      <>
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="sm"
+                                          className="h-6 text-[10px]"
+                                          onClick={() => setMatchLockedIds([...globalModelMatchPreview.ids])}
+                                        >
+                                          Select all
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="sm"
+                                          className="h-6 text-[10px]"
+                                          onClick={() => setMatchLockedIds([])}
+                                        >
+                                          Clear locks
+                                        </Button>
+                                        <span className="text-[10px] text-muted-foreground">
+                                          {matchLockedIds.length}/{globalModelMatchPreview.ids.length} locked
+                                        </span>
+                                      </>
+                                    )}
+                                  </div>
+                                  <p className="text-[10px] text-muted-foreground">
+                                    {matchLockEnabled
+                                      ? "Ceklis model yang wajib add-on. Uncek = Phantom bisa pakai tanpa pack. Disimpan ke Models requiring add-on (exact id)."
+                                      : "Centang \"Lock matched models\" lalu pilih satu-satu atau Select all."}
+                                  </p>
+                                  <div className="max-h-40 overflow-y-auto divide-y divide-border/40 border rounded bg-background/40">
+                                    {globalModelMatchPreview.ids.map((m) => {
+                                      const locked = matchLockedIds.includes(m);
+                                      return (
+                                        <label
+                                          key={m}
+                                          className={`flex items-center gap-2 px-2 py-1.5 font-mono text-[10px] cursor-pointer hover:bg-accent/40 ${
+                                            matchLockEnabled && locked
+                                              ? "text-amber-700 dark:text-amber-300"
+                                              : "text-foreground"
+                                          }`}
+                                        >
+                                          <input
+                                            type="checkbox"
+                                            disabled={!matchLockEnabled}
+                                            checked={matchLockEnabled && locked}
+                                            onChange={() => {
+                                              setMatchLockedIds((prev) =>
+                                                prev.includes(m)
+                                                  ? prev.filter((x) => x !== m)
+                                                  : [...prev, m],
+                                              );
+                                            }}
+                                          />
+                                          <span className="truncate flex-1">{m}</span>
+                                          {matchLockEnabled && locked && (
+                                            <span className="shrink-0 text-[9px] uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                                              lock
+                                            </span>
+                                          )}
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                  {globalModelMatchPreview.total > globalModelMatchPreview.ids.length && (
+                                    <p className="text-[10px] text-muted-foreground">
+                                      Menampilkan {globalModelMatchPreview.ids.length} / {globalModelMatchPreview.total}{" "}
+                                      match (sisanya tetap kena pattern limit jika pattern ON).
+                                    </p>
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -804,24 +969,23 @@ export default function SettingsPage() {
                                     dailyOutputTokenLimit: newModelOverrideDailyOutputTokenLimit,
                                   };
                                   for (const m of globalModelMatchPreview.ids) {
-                                    // Store bare id (strip provider/) so runtime normalize matches.
-                                    const bare = m.includes("/") ? m.slice(m.lastIndexOf("/") + 1) : m;
+                                    const bare = bareModelId(m);
                                     await globalSettings.setModelLimit(bare, { ...limits, isPattern: false });
                                   }
-                                  setMessage(`Berhasil apply ke ${globalModelMatchPreview.ids.length} model exact.`);
+                                  if (matchLockEnabled || matchLockedIds.length > 0 || globalModelMatchPreview.ids.some((id) => isLockedByPatterns(id, addonRequiredModels))) {
+                                    await syncAddonLocksForMatches(
+                                      globalModelMatchPreview.ids,
+                                      matchLockEnabled ? matchLockedIds : [],
+                                      newModelOverride,
+                                    );
+                                  }
+                                  setMessage(`Berhasil apply ke ${globalModelMatchPreview.ids.length} model exact${matchLockEnabled ? ` · ${matchLockedIds.length} locked` : ""}.`);
                                 } catch (e: any) {
                                   setError(`Gagal bulk apply: ${e?.message || e}`);
                                 } finally {
                                   setLoading(false);
                                 }
-                                setNewModelOverride("");
-                                setNewModelOverrideIsPattern(false);
-                                setNewModelOverrideLimit(0);
-                                setNewModelOverrideDailyTokenLimit(0);
-                                setNewModelOverrideMonthlyTokenLimit(0);
-                                setNewModelOverrideDailyInputTokenLimit(0);
-                                setNewModelOverrideDailyOutputTokenLimit(0);
-                                setGlobalModelMatchPreview({ ids: [], total: 0 });
+                                resetOverrideForm();
                                 const ml = await globalSettings.getModelLimits(); setGlobalModelLimits(ml.data || []);
                               }}
                             >
@@ -842,24 +1006,35 @@ export default function SettingsPage() {
                                   dailyOutputTokenLimit: newModelOverrideDailyOutputTokenLimit,
                                   isPattern: newModelOverrideIsPattern,
                                 });
+                                if (
+                                  globalModelMatchPreview.ids.length > 0 &&
+                                  (matchLockEnabled ||
+                                    matchLockedIds.length > 0 ||
+                                    globalModelMatchPreview.ids.some((id) =>
+                                      isLockedByPatterns(id, addonRequiredModels),
+                                    ))
+                                ) {
+                                  await syncAddonLocksForMatches(
+                                    globalModelMatchPreview.ids,
+                                    matchLockEnabled ? matchLockedIds : [],
+                                    newModelOverride,
+                                  );
+                                }
                                 if (newModelOverrideIsPattern) {
-                                  setMessage(`Pattern "${newModelOverride}" tersimpan. Akan auto-apply ke ${globalModelMatchPreview.total} model yang cocok.`);
+                                  setMessage(
+                                    `Pattern "${newModelOverride}" tersimpan (${globalModelMatchPreview.total} model)${matchLockEnabled ? ` · ${matchLockedIds.length} locked add-on` : ""}.`,
+                                  );
                                 } else {
-                                  setMessage(`Model override untuk "${newModelOverride}" tersimpan.`);
+                                  setMessage(
+                                    `Model override untuk "${newModelOverride}" tersimpan${matchLockEnabled && matchLockedIds.length ? " · locked" : ""}.`,
+                                  );
                                 }
                               } catch (e: any) {
                                 setError(`Gagal simpan: ${e?.message || e}`);
                               } finally {
                                 setLoading(false);
                               }
-                              setNewModelOverride("");
-                              setNewModelOverrideIsPattern(false);
-                              setNewModelOverrideLimit(0);
-                              setNewModelOverrideDailyTokenLimit(0);
-                              setNewModelOverrideMonthlyTokenLimit(0);
-                              setNewModelOverrideDailyInputTokenLimit(0);
-                              setNewModelOverrideDailyOutputTokenLimit(0);
-                              setGlobalModelMatchPreview({ ids: [], total: 0 });
+                              resetOverrideForm();
                               const ml = await globalSettings.getModelLimits(); setGlobalModelLimits(ml.data || []);
                             }}
                           >
@@ -883,11 +1058,18 @@ export default function SettingsPage() {
                                   <th className="p-2 font-medium">Monthly Tokens</th>
                                   <th className="p-2 font-medium">Daily Input</th>
                                   <th className="p-2 font-medium">Daily Output</th>
+                                  <th className="p-2 font-medium">Addon lock</th>
                                   <th className="p-2"></th>
                                 </tr>
                               </thead>
                               <tbody className="divide-y">
-                                {globalModelLimits.map(ml => (
+                                {globalModelLimits.map(ml => {
+                                  const rowLocked = isLockedByPatterns(ml.model, addonRequiredModels)
+                                    || (ml.matchedIds || []).some((id) => isLockedByPatterns(id, addonRequiredModels));
+                                  const lockedCount = (ml.matchedIds || []).filter((id) =>
+                                    isLockedByPatterns(id, addonRequiredModels),
+                                  ).length;
+                                  return (
                                   <tr key={ml.id} className="hover:bg-muted/50 align-top">
                                     <td className="p-2 font-mono">
                                       <div className="flex items-center gap-2 flex-wrap">
@@ -906,8 +1088,15 @@ export default function SettingsPage() {
                                       {ml.isPattern && ml.matchedIds && ml.matchedIds.length > 0 && (
                                         <div className="mt-1 flex flex-wrap gap-1 max-h-20 overflow-y-auto p-1 border rounded bg-background/40">
                                           {ml.matchedIds.slice(0, 20).map((m) => (
-                                            <span key={m} className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-300 font-mono text-[10px]">
-                                              {m}
+                                            <span
+                                              key={m}
+                                              className={`px-1.5 py-0.5 rounded font-mono text-[10px] ${
+                                                isLockedByPatterns(m, addonRequiredModels)
+                                                  ? "bg-amber-500/20 text-amber-700 dark:text-amber-300"
+                                                  : "bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                                              }`}
+                                            >
+                                              {m}{isLockedByPatterns(m, addonRequiredModels) ? " 🔒" : ""}
                                             </span>
                                           ))}
                                           {(ml.matchCount ?? 0) > (ml.matchedIds?.length ?? 0) && (
@@ -928,14 +1117,35 @@ export default function SettingsPage() {
                                     <td className="p-2">{ml.monthlyTokenLimit || '-'}</td>
                                     <td className="p-2">{ml.dailyInputTokenLimit || '-'}</td>
                                     <td className="p-2">{ml.dailyOutputTokenLimit || '-'}</td>
-                                    <td className="p-2 text-right">
+                                    <td className="p-2 text-[10px]">
+                                      {rowLocked ? (
+                                        <span className="text-amber-600 dark:text-amber-400 font-medium">
+                                          {ml.isPattern && lockedCount > 0
+                                            ? `${lockedCount} locked`
+                                            : "locked"}
+                                        </span>
+                                      ) : (
+                                        <span className="text-muted-foreground">open</span>
+                                      )}
+                                    </td>
+                                    <td className="p-2 text-right whitespace-nowrap">
+                                      <Button
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-6 w-6"
+                                        title="Edit"
+                                        onClick={() => void startEditOverride(ml)}
+                                      >
+                                        <Pencil className="h-3.5 w-3.5" />
+                                      </Button>
                                       <Button size="icon" variant="ghost" className="h-6 w-6 text-red-500 hover:text-red-600 hover:bg-red-500/10" onClick={async () => {
                                         await globalSettings.deleteModelLimit(ml.model, !!ml.isPattern);
                                         const r = await globalSettings.getModelLimits(); setGlobalModelLimits(r.data || []);
                                       }}><Trash2 className="h-4 w-4" /></Button>
                                     </td>
                                   </tr>
-                                ))}
+                                  );
+                                })}
                               </tbody>
                             </table>
                           </div>
