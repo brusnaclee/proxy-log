@@ -444,7 +444,7 @@ export default function AddonsPage() {
                 value={dailyTokenLimit}
                 onChange={(e) => setDailyTokenLimit(parseInt(e.target.value) || 0)}
               />
-              <p className="text-[10px] text-muted-foreground mt-1">Stacked on account daily limit. Vibecode unlimited → 0.</p>
+              <p className="text-[10px] text-muted-foreground mt-1">Stacked on account daily limit. Vibecode tiers: 3M / 5M / 10M.</p>
             </div>
             <div>
               <Label>Max devices (0 = no change)</Label>
@@ -491,15 +491,45 @@ export default function AddonsPage() {
               <select
                 className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 value={assignAddonId}
-                onChange={(e) => setAssignAddonId(e.target.value ? Number(e.target.value) : "")}
+                onChange={(e) => {
+                  const id = e.target.value ? Number(e.target.value) : "";
+                  setAssignAddonId(id);
+                  if (id === "") return;
+                  const pack = addons.find((a) => a.id === id);
+                  if (!pack) return;
+                  const days =
+                    pack.name === "vibecode-3m"
+                      ? 7
+                      : pack.name === "vibecode-5m"
+                        ? 15
+                        : pack.name === "vibecode-10m"
+                          ? 30
+                          : 0;
+                  if (days > 0) {
+                    const d = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+                    const pad = (n: number) => String(n).padStart(2, "0");
+                    const local = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+                    setAssignExpires(local);
+                  }
+                }}
               >
                 <option value="">Select…</option>
                 {addons.map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.name} {a.isActive ? "" : "(inactive)"}
+                    {a.name === "vibecode-3m"
+                      ? " · 7d"
+                      : a.name === "vibecode-5m"
+                        ? " · 15d"
+                        : a.name === "vibecode-10m"
+                          ? " · 30d"
+                          : ""}
                   </option>
                 ))}
               </select>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Vibecode tiers auto-fill expiry: 3m=7d, 5m=15d, 10m=30d (editable).
+              </p>
             </div>
             <div>
               <Label>Discord user ID</Label>

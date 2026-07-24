@@ -3049,7 +3049,7 @@ proxy.all('/*', async (c) => {
 					error: {
 						message:
 							addonAccess.reason ||
-							'This model requires an active add-on (e.g. vibecodeaddon). Ask in Discord to upgrade.',
+							'This model requires an active add-on (e.g. vibecode-10m). Ask in Discord to upgrade.',
 						type: 'access_error',
 						code: 'addon_required',
 						param: addonAccess.requiredAddon || null,
@@ -3290,7 +3290,7 @@ proxy.all('/*', async (c) => {
 						: '';
 				const teaseHint =
 					isAddonTeaseModel(model) || isAddonTeaseModel(upstreamModel)
-						? ' Limit reached — upgrade to vibecodeaddon for full Claude / ChatGPT 5.6+ access (ask in Discord for payment).'
+						? ' Limit reached — upgrade to a Vibecode pack (vibecode-10m) for full Claude / ChatGPT 5.6+ access (ask in Discord for payment).'
 						: '';
 				return c.json(
 					{
@@ -3670,7 +3670,7 @@ proxy.all('/*', async (c) => {
 					return c.json(
 						{
 							error: {
-								message: `Add-on daily token limit reached for model "${model}": ${du.total.toLocaleString()}/${addonModelDaily.toLocaleString()} tokens today. Resets tomorrow. Pack subcap — wait for reset or ask Discord about a higher vibecodeaddon tier.`,
+								message: `Add-on daily token limit reached for model "${model}": ${du.total.toLocaleString()}/${addonModelDaily.toLocaleString()} tokens today. Resets tomorrow. Pack subcap — wait for reset or ask Discord about a higher Vibecode tier (vibecode-5m / vibecode-10m).`,
 								type: 'rate_limit_error',
 								code: 'addon_model_daily_token_limit_exceeded',
 							},

@@ -196,12 +196,12 @@ export async function checkAddonModelAccess(opts: {
     );
   });
   const names = suggesting.map((a) => a.name);
-  const hint = names.length ? names.join(", ") : "vibecodeaddon";
+  const hint = names.length ? names.join(", ") : "vibecode-10m";
 
   return {
     allowed: false,
-    reason: `Model "${opts.model}" requires an active add-on (${hint}). Upgrade to vibecodeaddon (or another pack) for access — ask in Discord for payment.`,
-    requiredAddon: names[0] || "vibecodeaddon",
+    reason: `Model "${opts.model}" requires an active add-on (${hint}). Upgrade to a Vibecode pack (vibecode-3m / vibecode-5m / vibecode-10m) for access — ask in Discord for payment.`,
+    requiredAddon: names[0] || "vibecode-10m",
   };
 }
 
