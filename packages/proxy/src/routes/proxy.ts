@@ -111,6 +111,15 @@ import {
 	normalizeModelForLimit,
 } from '../utils/rate-limit.js';
 import {
+	countReserved,
+	formatResetEta,
+	globalPromptBucketKey,
+	hasReservedTurn,
+	modelPromptBucketKey,
+	msUntilNextWibMidnight,
+	tryReserveTurn,
+} from '../utils/quota-reservation.js';
+import {
 	ADDON_TEASE_DEFAULT_PROMPT_LIMIT,
 	checkAddonModelAccess,
 	getActiveAddonsForUser,
@@ -3346,16 +3355,18 @@ proxy.all('/*', async (c) => {
 
 	// ΓöÇΓöÇΓöÇ 10. Prompt & Model Limit Checks ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 	//
-	// Per-model + global prompt limits: only when starting a NEW turn (1 turn = 1 prompt).
-	// Tool follow-ups must not strand agent loops. Add-on holders skip tease / per-model
-	// prompt caps for models their pack grants. Unlimited token users still get prompt caps.
+	// Per-model (incl. Claude/GPT tease) + global prompt caps.
+	// - New user turns: check DB + in-memory reservation (closes async-log race).
+	// - Tool follow-ups: allowed only while continuing a reserved/cached turn;
+	//   if the cap is already exhausted, return 429 (stop IDE loops / short-circuit spam).
 	{
 		const turnKeyForLimit = `${sessionInfo.sessionId}:${keyRecord.id}`;
-		const willStartNewTurn = isNewPrompt || !turnIdCache.get(turnKeyForLimit);
+		const cachedTurnId = turnIdCache.get(turnKeyForLimit) || null;
+		const willStartNewTurn = isNewPrompt || !cachedTurnId;
 		const skipModelPromptTease =
 			!keyRecord.isTrial && activeAddons.length > 0;
 
-		if (willStartNewTurn && !keyRecord.isTrial && !skipModelPromptTease) {
+		if (!keyRecord.isTrial && !skipModelPromptTease) {
 			const teaseDefault =
 				isAddonTeaseModel(model) || isAddonTeaseModel(upstreamModel)
 					? ADDON_TEASE_DEFAULT_PROMPT_LIMIT
@@ -3366,81 +3377,148 @@ proxy.all('/*', async (c) => {
 				keyRecord.perModelPromptLimit || 0,
 				keyRecord.perModelPromptLimitWindow || null,
 				config.globalPerModelPromptLimit || 0,
-				config.globalPerModelPromptLimitWindow || '30m',
+				config.globalPerModelPromptLimitWindow || '1d',
 				{ teaseDefaultLimit: teaseDefault },
 			);
-			if (!mlCheck.allowed) {
+
+			if (mlCheck.effectiveLimit > 0) {
 				const windowStr =
 					keyRecord.perModelPromptLimitWindow ||
 					config.globalPerModelPromptLimitWindow ||
-					'30m';
-				const windowMs = parseRateLimitWindow(windowStr);
-				const resetMs = await getWindowResetMs(accountKeyIds, windowMs, model);
-				const resetMins = Math.ceil(resetMs / 60000);
-				const globalLimit =
-					(keyRecord.promptLimit && keyRecord.promptLimit > 0
-						? keyRecord.promptLimit
-						: config.globalPromptLimit) || 0;
-				const globalWindow =
-					keyRecord.promptLimitWindow || config.globalPromptLimitWindow || '30m';
-				const globalCheck =
-					globalLimit > 0
-						? await checkPromptLimit(accountKeyIds, globalLimit, globalWindow)
-						: null;
-				const globalRemaining = globalCheck ? globalCheck.remaining : -1;
-				const limitSource =
-					mlCheck.source === 'override'
-						? mlCheck.overrideIsPattern
-							? `pattern "${mlCheck.overrideModel}"`
-							: `override "${mlCheck.overrideModel}"`
-						: mlCheck.source === 'tease_default'
-							? 'non-addon Claude/GPT-5.6 tease (5 prompts)'
-							: mlCheck.source === 'key_default'
-								? "your key's per-model default"
-								: 'global per-model default';
-				const globalInfo =
-					globalRemaining >= 0
-						? ` You have ${globalRemaining} prompt(s) remaining for other models.`
-						: '';
-				const teaseHint =
-					isAddonTeaseModel(model) || isAddonTeaseModel(upstreamModel)
-						? ' Limit reached — upgrade to a Vibecode pack (vibecode-10m) for full Claude / ChatGPT 5.6+ access (ask in Discord for payment).'
-						: '';
-				return c.json(
-					{
-						error: {
-							message: `Limit reached for model "${model}" (${limitSource}): ${mlCheck.used}/${mlCheck.effectiveLimit} prompts used. Resets in ~${resetMins} minute(s).${globalInfo}${teaseHint}`,
-							type: 'rate_limit_error',
-							code: 'model_prompt_limit_exceeded',
+					'1d';
+				const windowMs = parseRateLimitWindow(windowStr) || 86_400_000;
+				const norm = await normalizeModelForLimit(model);
+				const bucket =
+					mlCheck.source === 'override' &&
+					mlCheck.overrideIsPattern &&
+					mlCheck.overrideModel
+						? `pat:${String(mlCheck.overrideModel).toLowerCase()}`
+						: `model:${norm}`;
+				const scopeKey = modelPromptBucketKey(accountKeyIds, bucket);
+				const reserved = countReserved(scopeKey, windowMs);
+				const usedTotal = mlCheck.used + reserved;
+				const continuingReserved =
+					!!cachedTurnId && hasReservedTurn(scopeKey, cachedTurnId);
+
+				const blockNow =
+					usedTotal >= mlCheck.effectiveLimit &&
+					(willStartNewTurn || !continuingReserved);
+
+				if (blockNow) {
+					const resetMs =
+						mlCheck.resetMs > 0
+							? mlCheck.resetMs
+							: await getWindowResetMs(accountKeyIds, windowMs, model);
+					const resetMins = Math.max(1, Math.ceil(resetMs / 60000));
+					const globalLimit =
+						(keyRecord.promptLimit && keyRecord.promptLimit > 0
+							? keyRecord.promptLimit
+							: config.globalPromptLimit) || 0;
+					const globalWindow =
+						keyRecord.promptLimitWindow || config.globalPromptLimitWindow || '5h';
+					const globalCheck =
+						globalLimit > 0
+							? await checkPromptLimit(accountKeyIds, globalLimit, globalWindow)
+							: null;
+					const globalRemaining = globalCheck ? globalCheck.remaining : -1;
+					const limitSource =
+						mlCheck.source === 'override'
+							? mlCheck.overrideIsPattern
+								? `pattern "${mlCheck.overrideModel}"`
+								: `override "${mlCheck.overrideModel}"`
+							: mlCheck.source === 'tease_default'
+								? 'non-addon Claude/GPT-5.6 tease (5 prompts / 1d)'
+								: mlCheck.source === 'key_default'
+									? "your key's per-model default"
+									: 'global per-model default';
+					const globalInfo =
+						globalRemaining >= 0
+							? ` You have ${globalRemaining} prompt(s) remaining for other models.`
+							: '';
+					const teaseHint =
+						isAddonTeaseModel(model) || isAddonTeaseModel(upstreamModel)
+							? ' Limit reached — upgrade to a Vibecode pack (vibecode-10m) for full Claude / ChatGPT 5.6+ access (ask in Discord for payment).'
+							: '';
+					return c.json(
+						{
+							error: {
+								message: `Limit reached for model "${model}" (${limitSource}): ${Math.min(usedTotal, mlCheck.effectiveLimit)}/${mlCheck.effectiveLimit} prompts used. ${formatResetEta(resetMs)}.${globalInfo}${teaseHint}`,
+								type: 'rate_limit_error',
+								code: 'model_prompt_limit_exceeded',
+							},
 						},
-					},
-					429,
-					{
-						'x-model-prompt-limit': String(mlCheck.effectiveLimit),
-						'x-model-prompt-remaining': '0',
-						'x-model-prompt-used': String(mlCheck.used),
-						'x-model-prompt-reset-mins': String(resetMins),
-					},
-				);
+						429,
+						{
+							'x-model-prompt-limit': String(mlCheck.effectiveLimit),
+							'x-model-prompt-remaining': '0',
+							'x-model-prompt-used': String(usedTotal),
+							'x-model-prompt-reset-mins': String(resetMins),
+						},
+					);
+				}
+
+				if (willStartNewTurn) {
+					const newTurnId = `turn_${generateSessionId().slice(0, 16)}`;
+					if (
+						!tryReserveTurn({
+							scopeKey,
+							turnId: newTurnId,
+							limit: mlCheck.effectiveLimit,
+							dbUsed: mlCheck.used,
+							windowMs,
+						})
+					) {
+						return c.json(
+							{
+								error: {
+									message: `Limit reached for model "${model}": ${mlCheck.effectiveLimit}/${mlCheck.effectiveLimit} prompts used. ${formatResetEta(mlCheck.resetMs || windowMs)}.`,
+									type: 'rate_limit_error',
+									code: 'model_prompt_limit_exceeded',
+								},
+							},
+							429,
+							{
+								'x-model-prompt-limit': String(mlCheck.effectiveLimit),
+								'x-model-prompt-remaining': '0',
+								'x-model-prompt-used': String(mlCheck.effectiveLimit),
+							},
+						);
+					}
+					turnIdCache.set(turnKeyForLimit, newTurnId);
+				}
 			}
 		}
 
 		const { limit: effectivePromptLimit, window: effectivePromptLimitWindow } =
 			resolveKeyPromptLimit(keyRecord, config);
 
-		if (willStartNewTurn && effectivePromptLimit > 0) {
+		if (effectivePromptLimit > 0) {
 			const plCheck = await checkPromptLimit(
 				accountKeyIds,
 				effectivePromptLimit,
 				effectivePromptLimitWindow,
 			);
-			if (!plCheck.allowed) {
-				const windowMs = parseRateLimitWindow(effectivePromptLimitWindow);
-				const resetMs = await getWindowResetMs(accountKeyIds, windowMs);
-				const resetMins = Math.ceil(resetMs / 60000);
+			const windowMs = parseRateLimitWindow(effectivePromptLimitWindow);
+			const gScope = globalPromptBucketKey(accountKeyIds);
+			const gReserved = countReserved(gScope, windowMs || 1);
+			const gUsedTotal = plCheck.used + gReserved;
+			const cachedTurnId2 = turnIdCache.get(turnKeyForLimit) || null;
+			const continuingGlobal =
+				!!cachedTurnId2 && hasReservedTurn(gScope, cachedTurnId2);
+			const willStart = isNewPrompt || !cachedTurnId2;
+
+			if (
+				gUsedTotal >= effectivePromptLimit &&
+				(willStart || !continuingGlobal)
+			) {
+				const resetMs =
+					plCheck.resetMs > 0
+						? plCheck.resetMs
+						: await getWindowResetMs(accountKeyIds, windowMs);
+				const resetMins = Math.max(1, Math.ceil(resetMs / 60000));
 				const isKeyOverride = (keyRecord.promptLimit || 0) > 0;
 				const trialTag = keyRecord.isTrial ? ' (trial)' : '';
-				const limitMsg = `Prompt limit reached${isKeyOverride ? ' (key override)' : ''}${trialTag}: ${plCheck.used}/${effectivePromptLimit} prompts (turns) in this ${effectivePromptLimitWindow} window. Resets in ~${resetMins} minute(s).`;
+				const limitMsg = `Prompt limit reached${isKeyOverride ? ' (key override)' : ''}${trialTag}: ${Math.min(gUsedTotal, effectivePromptLimit)}/${effectivePromptLimit} prompts (turns) in this ${effectivePromptLimitWindow} window. ${formatResetEta(resetMs)}.`;
 				await notifyTrialLimitIfNeeded(keyRecord, limitMsg);
 				return c.json(
 					{
@@ -3454,10 +3532,39 @@ proxy.all('/*', async (c) => {
 					{
 						'x-prompt-limit': String(effectivePromptLimit),
 						'x-prompt-remaining': '0',
-						'x-prompt-used': String(plCheck.used),
+						'x-prompt-used': String(gUsedTotal),
 						'x-prompt-reset-mins': String(resetMins),
 					},
 				);
+			}
+
+			if (willStart) {
+				const newTurnId =
+					turnIdCache.get(turnKeyForLimit) ||
+					`turn_${generateSessionId().slice(0, 16)}`;
+				if (
+					!tryReserveTurn({
+						scopeKey: gScope,
+						turnId: newTurnId,
+						limit: effectivePromptLimit,
+						dbUsed: plCheck.used,
+						windowMs: windowMs || 1,
+					})
+				) {
+					const limitMsg = `Prompt limit reached: ${effectivePromptLimit}/${effectivePromptLimit} prompts in this ${effectivePromptLimitWindow} window. ${formatResetEta(windowMs || 3600_000)}.`;
+					await notifyTrialLimitIfNeeded(keyRecord, limitMsg);
+					return c.json(
+						{
+							error: {
+								message: limitMsg,
+								type: 'rate_limit_error',
+								code: 'prompt_limit_exceeded',
+							},
+						},
+						429,
+					);
+				}
+				turnIdCache.set(turnKeyForLimit, newTurnId);
 			}
 		}
 	}
@@ -3471,6 +3578,7 @@ proxy.all('/*', async (c) => {
 
 		const wibOffset = 7 * 60 * 60 * 1000;
 		const wibNow = new Date(Date.now() + wibOffset);
+		const dailyResetEta = formatResetEta(msUntilNextWibMidnight());
 
 		if (keyRecord.monthlyTokenLimit && keyRecord.monthlyTokenLimit > 0) {
 			const monthlyCap =
@@ -3493,7 +3601,7 @@ proxy.all('/*', async (c) => {
 				return c.json(
 					{
 						error: {
-							message: `Monthly token limit reached: ${mu.total.toLocaleString()}/${monthlyCap.toLocaleString()} tokens.`,
+							message: `Monthly token limit reached: ${mu.total.toLocaleString()}/${monthlyCap.toLocaleString()} tokens. Resets next month.`,
 							type: 'rate_limit_error',
 							code: 'monthly_token_limit_exceeded',
 						},
@@ -3541,7 +3649,7 @@ proxy.all('/*', async (c) => {
 				.where(whereClause)
 				.then((r) => r[0]);
 			if (du && du.total >= globalDailyTokenLimit) {
-				const limitMsg = `Daily token limit reached: ${du.total.toLocaleString()}/${globalDailyTokenLimit.toLocaleString()} tokens today. Resets tomorrow.`;
+				const limitMsg = `Daily token limit reached: ${du.total.toLocaleString()}/${globalDailyTokenLimit.toLocaleString()} tokens today. ${dailyResetEta}.`;
 				await notifyTrialLimitIfNeeded(keyRecord, limitMsg);
 				return c.json(
 					{
@@ -3552,6 +3660,13 @@ proxy.all('/*', async (c) => {
 						},
 					},
 					429,
+					{
+						'x-daily-token-limit': String(globalDailyTokenLimit),
+						'x-daily-token-used': String(du.total),
+						'x-daily-token-reset-mins': String(
+							Math.max(1, Math.ceil(msUntilNextWibMidnight() / 60000)),
+						),
+					},
 				);
 			}
 		}
@@ -3577,12 +3692,19 @@ proxy.all('/*', async (c) => {
 				return c.json(
 					{
 						error: {
-							message: `Daily input token limit reached: ${du.total.toLocaleString()}/${dailyInputLimit.toLocaleString()} input tokens today. Resets tomorrow.`,
+							message: `Daily input token limit reached: ${du.total.toLocaleString()}/${dailyInputLimit.toLocaleString()} input tokens today. ${dailyResetEta}.`,
 							type: 'rate_limit_error',
 							code: 'daily_input_token_limit_exceeded',
 						},
 					},
 					429,
+					{
+						'x-daily-input-limit': String(dailyInputLimit),
+						'x-daily-input-used': String(du.total),
+						'x-daily-input-reset-mins': String(
+							Math.max(1, Math.ceil(msUntilNextWibMidnight() / 60000)),
+						),
+					},
 				);
 			}
 		}
@@ -3607,12 +3729,19 @@ proxy.all('/*', async (c) => {
 				return c.json(
 					{
 						error: {
-							message: `Daily output token limit reached: ${du.total.toLocaleString()}/${dailyOutputLimit.toLocaleString()} output tokens today. Resets tomorrow.`,
+							message: `Daily output token limit reached: ${du.total.toLocaleString()}/${dailyOutputLimit.toLocaleString()} output tokens today. ${dailyResetEta}.`,
 							type: 'rate_limit_error',
 							code: 'daily_output_token_limit_exceeded',
 						},
 					},
 					429,
+					{
+						'x-daily-output-limit': String(dailyOutputLimit),
+						'x-daily-output-used': String(du.total),
+						'x-daily-output-reset-mins': String(
+							Math.max(1, Math.ceil(msUntilNextWibMidnight() / 60000)),
+						),
+					},
 				);
 			}
 		}
@@ -3683,7 +3812,7 @@ proxy.all('/*', async (c) => {
 					return c.json(
 						{
 							error: {
-								message: `Daily token limit reached for model "${model}": ${du.total.toLocaleString()}/${overrideDailyToken.toLocaleString()} tokens today. Resets tomorrow.`,
+								message: `Daily token limit reached for model "${model}": ${du.total.toLocaleString()}/${overrideDailyToken.toLocaleString()} tokens today. ${dailyResetEta}.`,
 								type: 'rate_limit_error',
 								code: 'model_daily_token_limit_exceeded',
 							},
@@ -3735,7 +3864,7 @@ proxy.all('/*', async (c) => {
 					return c.json(
 						{
 							error: {
-								message: `Daily input token limit reached for model "${model}": ${du.total.toLocaleString()}/${overrideDailyInputToken.toLocaleString()} input tokens today. Resets tomorrow.`,
+								message: `Daily input token limit reached for model "${model}": ${du.total.toLocaleString()}/${overrideDailyInputToken.toLocaleString()} input tokens today. ${dailyResetEta}.`,
 								type: 'rate_limit_error',
 								code: 'model_daily_input_token_limit_exceeded',
 							},
@@ -3761,7 +3890,7 @@ proxy.all('/*', async (c) => {
 					return c.json(
 						{
 							error: {
-								message: `Daily output token limit reached for model "${model}": ${du.total.toLocaleString()}/${overrideDailyOutputToken.toLocaleString()} output tokens today. Resets tomorrow.`,
+								message: `Daily output token limit reached for model "${model}": ${du.total.toLocaleString()}/${overrideDailyOutputToken.toLocaleString()} output tokens today. ${dailyResetEta}.`,
 								type: 'rate_limit_error',
 								code: 'model_daily_output_token_limit_exceeded',
 							},
@@ -3797,7 +3926,7 @@ proxy.all('/*', async (c) => {
 					return c.json(
 						{
 							error: {
-								message: `Add-on daily token limit reached for model "${model}": ${du.total.toLocaleString()}/${addonModelDaily.toLocaleString()} tokens today. Resets tomorrow. Pack subcap — wait for reset or ask Discord about a higher Vibecode tier (vibecode-5m / vibecode-10m).`,
+								message: `Add-on daily token limit reached for model "${model}": ${du.total.toLocaleString()}/${addonModelDaily.toLocaleString()} tokens today. ${dailyResetEta}. Pack subcap — wait for reset or ask Discord about a higher Vibecode tier (vibecode-5m / vibecode-10m).`,
 								type: 'rate_limit_error',
 								code: 'addon_model_daily_token_limit_exceeded',
 							},
@@ -3957,15 +4086,17 @@ proxy.all('/*', async (c) => {
 			isBillableToken = true;
 		}
 
-		// Assign turn_id: new turn for user prompts, reuse for tool followups
+		// Assign turn_id: prefer early reservation from prompt-limit gate; else new/reuse.
 		const turnKey = `${sessionInfo.sessionId}:${keyRecord.id}`;
-		if (isNewPrompt) {
+		const earlyTurn = turnIdCache.get(turnKey) || null;
+		if (earlyTurn) {
+			logEntry.turnId = earlyTurn;
+		} else if (isNewPrompt) {
 			const newTurnId = `turn_${generateSessionId().slice(0, 16)}`;
 			turnIdCache.set(turnKey, newTurnId);
 			logEntry.turnId = newTurnId;
 		} else {
-			// For tool followups, reuse the current turn ID
-			logEntry.turnId = turnIdCache.get(turnKey) || null;
+			logEntry.turnId = null;
 		}
 
 		// Safety net: guarantee turn_id is never null.
