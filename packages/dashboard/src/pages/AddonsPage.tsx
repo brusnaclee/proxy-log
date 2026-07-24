@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { Package, Plus, Trash2, UserPlus, RefreshCw, Loader2, X } from "lucide-react";
+import { Package, Plus, Trash2, UserPlus, RefreshCw, Loader2, X, Pencil, Save } from "lucide-react";
 import {
   addonsApi,
   globalSettings,
@@ -127,6 +127,7 @@ export default function AddonsPage() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [accessMode, setAccessMode] = useState<AccessMode>("allowlist");
@@ -168,6 +169,7 @@ export default function AddonsPage() {
   }, [load]);
 
   const resetForm = () => {
+    setEditingId(null);
     setName("");
     setDescription("");
     setAccessMode("allowlist");
@@ -181,26 +183,49 @@ export default function AddonsPage() {
     setLimitValue(5_000_000);
   };
 
-  const createAddon = async () => {
+  const startEdit = (addon: AddonEntry) => {
+    setEditingId(addon.id);
+    setName(addon.name || "");
+    setDescription(addon.description || "");
+    setAccessMode(addon.accessMode === "all_except" ? "all_except" : "allowlist");
+    setAllowlist(addon.modelAllowlistParsed || []);
+    setDenylist(addon.modelDenylistParsed || []);
+    setDailyTokenLimit(addon.dailyTokenLimit || 0);
+    setMaxDevices(addon.maxDevices || 0);
+    setDiscordRoleId(addon.discordRoleId || "");
+    setModelDailyLimits({ ...(addon.modelDailyLimitsParsed || {}) });
+    setLimitPattern("");
+    setLimitValue(5_000_000);
+    setError(null);
+    // Scroll form into view on mobile
+    document.getElementById("addon-editor")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const saveAddon = async () => {
     if (!name.trim()) return;
     setSaving(true);
+    setError(null);
+    const payload = {
+      name: name.trim(),
+      description: description.trim(),
+      accessMode,
+      modelAllowlist: allowlist,
+      modelDenylist: denylist,
+      modelDailyLimits,
+      dailyTokenLimit,
+      maxDevices,
+      discordRoleId: discordRoleId.trim() || null,
+    };
     try {
-      await addonsApi.create({
-        name: name.trim(),
-        description: description.trim(),
-        accessMode,
-        modelAllowlist: allowlist,
-        modelDenylist: denylist,
-        modelDailyLimits,
-        dailyTokenLimit,
-        maxDevices,
-        discordRoleId: discordRoleId.trim() || null,
-        isActive: true,
-      });
+      if (editingId != null) {
+        await addonsApi.update(editingId, payload);
+      } else {
+        await addonsApi.create({ ...payload, isActive: true });
+      }
       resetForm();
       await load();
     } catch (e: any) {
-      setError(e?.message || "Failed to create add-on");
+      setError(e?.message || (editingId != null ? "Failed to update add-on" : "Failed to create add-on"));
     } finally {
       setSaving(false);
     }
@@ -219,6 +244,7 @@ export default function AddonsPage() {
     if (!confirm("Delete this add-on and all assignments?")) return;
     try {
       await addonsApi.remove(id);
+      if (editingId === id) resetForm();
       await load();
     } catch (e: any) {
       setError(e?.message || "Failed to delete add-on");
@@ -290,9 +316,16 @@ export default function AddonsPage() {
       )}
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Create add-on</CardTitle>
+        <Card id="addon-editor">
+          <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
+            <CardTitle className="text-base">
+              {editingId != null ? `Edit add-on #${editingId}` : "Create add-on"}
+            </CardTitle>
+            {editingId != null && (
+              <Button type="button" variant="ghost" size="sm" onClick={resetForm}>
+                Cancel edit
+              </Button>
+            )}
           </CardHeader>
           <CardContent className="space-y-3">
             <div>
@@ -427,9 +460,24 @@ export default function AddonsPage() {
               <Label>Discord role ID (optional note)</Label>
               <Input className="mt-1 font-mono text-sm" value={discordRoleId} onChange={(e) => setDiscordRoleId(e.target.value)} placeholder="role snowflake" />
             </div>
-            <Button onClick={() => void createAddon()} disabled={saving || !name.trim()}>
-              <Plus className="h-4 w-4 mr-1" /> Create
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={() => void saveAddon()} disabled={saving || !name.trim()}>
+                {editingId != null ? (
+                  <>
+                    <Save className="h-4 w-4 mr-1" /> Save changes
+                  </>
+                ) : (
+                  <>
+                    <Plus className="h-4 w-4 mr-1" /> Create
+                  </>
+                )}
+              </Button>
+              {editingId != null && (
+                <Button type="button" variant="outline" onClick={resetForm} disabled={saving}>
+                  Cancel
+                </Button>
+              )}
+            </div>
           </CardContent>
         </Card>
 
@@ -484,7 +532,9 @@ export default function AddonsPage() {
             return (
               <div
                 key={a.id}
-                className="flex flex-col gap-2 rounded-lg border border-border/60 p-3 md:flex-row md:items-start md:justify-between"
+                className={`flex flex-col gap-2 rounded-lg border p-3 md:flex-row md:items-start md:justify-between ${
+                  editingId === a.id ? "border-primary/60 bg-primary/5" : "border-border/60"
+                }`}
               >
                 <div className="space-y-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -518,6 +568,15 @@ export default function AddonsPage() {
                   {a.description && <p className="text-xs text-muted-foreground">{a.description}</p>}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
+                  <Button
+                    variant={editingId === a.id ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => startEdit(a)}
+                    title="Edit add-on"
+                  >
+                    <Pencil className="h-3.5 w-3.5 mr-1" />
+                    Edit
+                  </Button>
                   <Switch checked={a.isActive} onCheckedChange={() => void toggleActive(a)} />
                   <Button variant="ghost" size="icon" onClick={() => void removeAddon(a.id)}>
                     <Trash2 className="h-4 w-4 text-destructive" />

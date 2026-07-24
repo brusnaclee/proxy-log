@@ -166,6 +166,25 @@ addonsApi.put("/addons/:id", async (c) => {
   if (body.isActive !== undefined) updates.isActive = Boolean(body.isActive);
 
   const [row] = await db.update(addons).set(updates as any).where(eq(addons.id, id)).returning();
+
+  // If maxDevices changed, re-clamp active assignees' keys
+  if (updates.maxDevices !== undefined) {
+    const cap = Math.max(0, Number(updates.maxDevices) || 0);
+    if (cap > 0) {
+      const activeAsg = await db
+        .select()
+        .from(addonAssignments)
+        .where(and(eq(addonAssignments.addonId, id), eq(addonAssignments.isActive, true)));
+      for (const asg of activeAsg) {
+        await applyMaxDevicesForAssignment({
+          maxDevices: cap,
+          discordUserId: asg.discordUserId,
+          apiKeyId: asg.apiKeyId,
+        });
+      }
+    }
+  }
+
   return c.json({ success: true, addon: enrichAddon(row) });
 });
 
