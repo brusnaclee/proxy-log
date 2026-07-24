@@ -27,6 +27,16 @@ describe("detectIde UA", () => {
   it("detects ZCode UA", () => {
     assert.equal(detectIde("ZCode/unknown"), "ZCode");
   });
+  it("detects LiteLLM / Anthropic Python / Claude Electron", () => {
+    assert.equal(detectIde("litellm/1.93.0"), "LiteLLM");
+    assert.equal(detectIde("Anthropic/Python 0.117.0"), "Anthropic Python SDK");
+    assert.equal(
+      detectIde(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Claude/1.20186.1 Chrome/148.0.7778.271 Electron/42.5.1 Safari/537.36",
+      ),
+      "Claude Desktop",
+    );
+  });
 });
 
 describe("detectIdeFromContent", () => {

@@ -72,6 +72,10 @@ const IDE_PATTERNS: [RegExp, string][] = [
 	[/openclaw/i, "OpenClaw"],
 	[/cli-proxy-openai-compat/i, "OpenClaw"],
 	[/hermes-agent|hermes\//i, "Hermes"],
+	[/litellm/i, "LiteLLM"],
+	[/anthropic\/python|anthropic-python/i, "Anthropic Python SDK"],
+	// Claude Desktop Electron UA embeds Claude/… Electron
+	[/Claude\/[\d.]+.*Electron|Electron\/[\d.]+.*Claude/i, "Claude Desktop"],
 
 	// --- SDK / HTTP clients ---
 	[/asyncopenai|openai\/python|openai-python/i, "OpenAI Python SDK"],
@@ -118,6 +122,8 @@ export const GENERIC_IDE_LABELS = new Set([
 	"postman",
 	"tokito probe",
 	"pi agent",
+	"litellm",
+	"anthropic python sdk",
 ]);
 
 /**
@@ -202,6 +208,8 @@ export function detectIdeFromContent(requestBody: any, transcriptSnapshot?: stri
 	// === OPENCODEMULTI patterns ===
 	if (searchText.includes("you are opencode") || searchText.includes("you are an opencode")) return "OpenCode";
 	if (searchText.includes("interactive cli tool that helps")) return "OpenCode";
+	if (searchText.includes(".opencode/plans") || searchText.includes("/.opencode/")) return "OpenCode";
+	if (searchText.includes("read your plan at") && searchText.includes("opencode")) return "OpenCode";
 
 	// === CLAUDE CODE patterns (specific markers) ===
 	if (searchText.includes("<session>") && searchText.includes("you are fixing pr")) return "Claude Code";
