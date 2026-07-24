@@ -136,7 +136,7 @@ export function LiveUsageCard({
       reset: formatReset(apiCallResetAt),
     });
   }
-  if (limits.dailyInputTokenLimit > 0) {
+  if (limits.dailyInputTokenLimit > 0 && !(dailyTokenBreakdown?.bypassIo)) {
     const inputBd = formatInputBreakdown(
       usageToday.billablePromptTokens,
       usageToday.cachedTokens,
@@ -159,7 +159,7 @@ export function LiveUsageCard({
       reset: formatReset(dailyResetAt),
     });
   }
-  if (limits.dailyOutputTokenLimit > 0) {
+  if (limits.dailyOutputTokenLimit > 0 && !(dailyTokenBreakdown?.bypassIo)) {
     bars.push({
       label: "Output Tokens",
       value: usageToday.completionTokens,
@@ -200,7 +200,10 @@ export function LiveUsageCard({
     });
   }
 
-  const modelLimits = (modelUsageLimits || []).filter((m) => m.limit > 0 || m.used > 0);
+  const modelLimits = (perModelPromptsBypassedByAddon
+    ? []
+    : modelUsageLimits || []
+  ).filter((m) => m.limit > 0 || m.used > 0);
 
   if (compact) {
     const chips: string[] = [];
@@ -318,7 +321,7 @@ export function LiveUsageCard({
           )}
           {perModelPromptsBypassedByAddon && (
             <p className="text-[10px] text-muted-foreground">
-              Per-model prompt caps bypassed while add-on active · global Prompts still apply
+              Per-model prompt caps bypassed · Input/Output unlimited while add-on active · global Prompts still apply · daily pool only
             </p>
           )}
           {(addonModelTokenCaps || []).length > 0 && (

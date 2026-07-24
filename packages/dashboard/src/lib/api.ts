@@ -146,6 +146,7 @@ export interface LiveUsagePayload {
     base: number;
     addonBonus: number;
     effective: number;
+    bypassIo?: boolean;
   };
   activeAddons?: Array<{
     name: string;

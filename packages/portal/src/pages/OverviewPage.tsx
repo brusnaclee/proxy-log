@@ -249,7 +249,7 @@ export default function OverviewPage() {
     };
 
     const bars: Array<{ label: string; value: number; max: number; sublabel?: string; source?: string; reset?: string }> = [];
-    if (limits.dailyInputTokenLimit > 0) {
+    if (limits.dailyInputTokenLimit > 0 && !(user.dailyTokenBreakdown?.bypassIo)) {
       const inputBd = formatInputBreakdown(
         usageToday.billablePromptTokens,
         usageToday.cachedTokens,
@@ -264,7 +264,7 @@ export default function OverviewPage() {
         reset: formatReset(user.dailyResetAt),
       });
     }
-    if (limits.dailyOutputTokenLimit > 0) {
+    if (limits.dailyOutputTokenLimit > 0 && !(user.dailyTokenBreakdown?.bypassIo)) {
       bars.push({
         label: t("Output Tokens"),
         value: usageToday.completionTokens,

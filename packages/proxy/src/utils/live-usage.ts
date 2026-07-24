@@ -33,6 +33,7 @@ import {
 	getActiveAddonsForUser,
 	isAddonTeaseModel,
 	parseModelDailyLimits,
+	resolveAddonQuotaStack,
 	sumAddonDailyTokenBonus,
 } from './addons.js';
 
@@ -110,6 +111,7 @@ export interface LiveUsagePayload {
 		base: number;
 		addonBonus: number;
 		effective: number;
+		bypassIo?: boolean;
 	};
 	activeAddons?: Array<{
 		name: string;
@@ -263,17 +265,29 @@ export async function buildLiveUsageForKey(
 		: [];
 	const addonDailyBonus = sumAddonDailyTokenBonus(activeAddons);
 
-	const dailyInput = pickLimit(limitKey.dailyInputTokenLimit, cfg?.globalDailyInputTokenLimit);
-	const dailyOutput = pickLimit(limitKey.dailyOutputTokenLimit, cfg?.globalDailyOutputTokenLimit);
+	const rawDailyInput = pickLimit(limitKey.dailyInputTokenLimit, cfg?.globalDailyInputTokenLimit);
+	const rawDailyOutput = pickLimit(limitKey.dailyOutputTokenLimit, cfg?.globalDailyOutputTokenLimit);
 	const monthly = pickLimit(limitKey.monthlyTokenLimit, cfg?.globalMonthlyTokenLimit);
 	const baseDailyTokenLimit = resolveKeyDailyTokenLimit(limitKey as any, cfg);
-	const dailyTokenLimit =
-		Math.max(0, baseDailyTokenLimit || 0) + Math.max(0, addonDailyBonus || 0);
+	const stack = resolveAddonQuotaStack({
+		hasActiveAddon: activeAddons.length > 0,
+		keyOrGlobalDaily: baseDailyTokenLimit,
+		dailyInput: rawDailyInput.value,
+		dailyOutput: rawDailyOutput.value,
+		addonDailyBonus,
+	});
+	const dailyInput = stack.bypassIo
+		? { value: 0, source: 'none' as LimitSource }
+		: rawDailyInput;
+	const dailyOutput = stack.bypassIo
+		? { value: 0, source: 'none' as LimitSource }
+		: rawDailyOutput;
+	const dailyTokenLimit = stack.effectiveDaily;
 	const dailyTok =
 		dailyTokenLimit > 0
 			? {
 					value: dailyTokenLimit,
-					source: (addonDailyBonus > 0
+					source: (stack.addonBonus > 0
 						? 'override'
 						: Number(limitKey.dailyTokenLimit) > 0
 							? 'override'
@@ -282,9 +296,11 @@ export async function buildLiveUsageForKey(
 			: { value: 0, source: 'none' as LimitSource };
 
 	const dailyTokenBreakdown = {
-		base: Math.max(0, baseDailyTokenLimit || 0),
-		addonBonus: Math.max(0, addonDailyBonus || 0),
-		effective: dailyTokenLimit,
+		base: stack.baseDaily,
+		addonBonus: stack.addonBonus,
+		effective: stack.effectiveDaily,
+		/** When true, input/output bars are suppressed — pool is daily only */
+		bypassIo: stack.bypassIo,
 	};
 	const activeAddonsSummary = activeAddons.map((a) => ({
 		name: a.name,
@@ -302,7 +318,7 @@ export async function buildLiveUsageForKey(
 			addonModelTokenCaps.push({ pattern, dailyLimit });
 		}
 	}
-	const perModelPromptsBypassedByAddon = activeAddons.length > 0;
+	const perModelPromptsBypassedByAddon = stack.bypassPerModelPrompts;
 
 	const { limit: promptLimit, window: promptLimitWindow } = resolveKeyPromptLimit(
 		limitKey as any,

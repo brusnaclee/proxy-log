@@ -111,6 +111,7 @@ import {
 	getActiveAddonsForUser,
 	isAddonTeaseModel,
 	resolveAddonModelDailyTokenLimit,
+	resolveAddonQuotaStack,
 	sumAddonDailyTokenBonus,
 	sumAddonMonthlyTokenBonus,
 } from '../utils/addons.js';
@@ -2366,11 +2367,25 @@ proxy.all('/*', async (c) => {
 					}
 				}
 
-				// Daily token limit (pack bonus stacks; base 0 + no pack = unlimited)
-				const baseDaily = resolveKeyDailyTokenLimit(keyRecord, config);
-				const addonDaily = sumAddonDailyTokenBonus(autoActiveAddons);
-				const globalDailyTokenLimit =
-					Math.max(0, baseDaily || 0) + Math.max(0, addonDaily || 0);
+				// Daily token limit — with add-on: base = (in+out) or daily, + pack; I/O bypassed below
+				const rawInAuto =
+					!keyRecord.isTrial &&
+					(keyRecord.dailyInputTokenLimit && keyRecord.dailyInputTokenLimit > 0
+						? keyRecord.dailyInputTokenLimit
+						: config.globalDailyInputTokenLimit || 0);
+				const rawOutAuto =
+					!keyRecord.isTrial &&
+					(keyRecord.dailyOutputTokenLimit && keyRecord.dailyOutputTokenLimit > 0
+						? keyRecord.dailyOutputTokenLimit
+						: config.globalDailyOutputTokenLimit || 0);
+				const autoStack = resolveAddonQuotaStack({
+					hasActiveAddon: autoActiveAddons.length > 0,
+					keyOrGlobalDaily: resolveKeyDailyTokenLimit(keyRecord, config),
+					dailyInput: Number(rawInAuto) || 0,
+					dailyOutput: Number(rawOutAuto) || 0,
+					addonDailyBonus: sumAddonDailyTokenBonus(autoActiveAddons),
+				});
+				const globalDailyTokenLimit = autoStack.effectiveDaily;
 				if (globalDailyTokenLimit > 0) {
 					const dw = new Date(wibNow);
 					dw.setUTCHours(0, 0, 0, 0);
@@ -2411,8 +2426,8 @@ proxy.all('/*', async (c) => {
 					}
 				}
 
-				// Daily Input Token Limit (skip for trial)
-				const dailyInputLimit = !keyRecord.isTrial && (keyRecord.dailyInputTokenLimit && keyRecord.dailyInputTokenLimit > 0 ? keyRecord.dailyInputTokenLimit : config.globalDailyInputTokenLimit || 0);
+				// Daily Input/Output — skipped when add-on bypasses I/O
+				const dailyInputLimit = autoStack.dailyInputLimit;
 				if (dailyInputLimit > 0) {
 					const dw = new Date(wibNow);
 					dw.setUTCHours(0, 0, 0, 0);
@@ -2427,8 +2442,7 @@ proxy.all('/*', async (c) => {
 					}
 				}
 
-				// Daily Output Token Limit (skip for trial)
-				const dailyOutputLimit = !keyRecord.isTrial && (keyRecord.dailyOutputTokenLimit && keyRecord.dailyOutputTokenLimit > 0 ? keyRecord.dailyOutputTokenLimit : config.globalDailyOutputTokenLimit || 0);
+				const dailyOutputLimit = autoStack.dailyOutputLimit;
 				if (dailyOutputLimit > 0) {
 					const dw = new Date(wibNow);
 					dw.setUTCHours(0, 0, 0, 0);
@@ -3395,10 +3409,24 @@ proxy.all('/*', async (c) => {
 			}
 		}
 
-		const baseDailyTokenLimit = resolveKeyDailyTokenLimit(keyRecord, config);
-		const addonDailyBonus = sumAddonDailyTokenBonus(activeAddons);
-		// Pack daily bonus applies even when base key/global daily is 0.
-		const globalDailyTokenLimit = Math.max(0, baseDailyTokenLimit || 0) + Math.max(0, addonDailyBonus || 0);
+		const rawIn =
+			!keyRecord.isTrial &&
+			(keyRecord.dailyInputTokenLimit && keyRecord.dailyInputTokenLimit > 0
+				? keyRecord.dailyInputTokenLimit
+				: config.globalDailyInputTokenLimit || 0);
+		const rawOut =
+			!keyRecord.isTrial &&
+			(keyRecord.dailyOutputTokenLimit && keyRecord.dailyOutputTokenLimit > 0
+				? keyRecord.dailyOutputTokenLimit
+				: config.globalDailyOutputTokenLimit || 0);
+		const quotaStack = resolveAddonQuotaStack({
+			hasActiveAddon: activeAddons.length > 0,
+			keyOrGlobalDaily: resolveKeyDailyTokenLimit(keyRecord, config),
+			dailyInput: Number(rawIn) || 0,
+			dailyOutput: Number(rawOut) || 0,
+			addonDailyBonus: sumAddonDailyTokenBonus(activeAddons),
+		});
+		const globalDailyTokenLimit = quotaStack.effectiveDaily;
 		if (globalDailyTokenLimit > 0) {
 			const dw = new Date(wibNow);
 			dw.setUTCHours(0, 0, 0, 0);
@@ -3429,12 +3457,9 @@ proxy.all('/*', async (c) => {
 			}
 		}
 
-		// Daily Input Token Limit (per-key override or global) — skip for trial keys
+		// Daily Input Token Limit — bypassed when add-on active
 		if (!keyRecord.isTrial) {
-		const dailyInputLimit =
-			keyRecord.dailyInputTokenLimit && keyRecord.dailyInputTokenLimit > 0
-				? keyRecord.dailyInputTokenLimit
-				: config.globalDailyInputTokenLimit || 0;
+		const dailyInputLimit = quotaStack.dailyInputLimit;
 		if (dailyInputLimit > 0) {
 			const dw = new Date(wibNow);
 			dw.setUTCHours(0, 0, 0, 0);
@@ -3463,11 +3488,8 @@ proxy.all('/*', async (c) => {
 			}
 		}
 
-		// Daily Output Token Limit (per-key override or global)
-		const dailyOutputLimit =
-			keyRecord.dailyOutputTokenLimit && keyRecord.dailyOutputTokenLimit > 0
-				? keyRecord.dailyOutputTokenLimit
-				: config.globalDailyOutputTokenLimit || 0;
+		// Daily Output Token Limit — bypassed when add-on active
+		const dailyOutputLimit = quotaStack.dailyOutputLimit;
 		if (dailyOutputLimit > 0) {
 			const dw = new Date(wibNow);
 			dw.setUTCHours(0, 0, 0, 0);

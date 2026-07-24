@@ -752,7 +752,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   const [config] = await db.select().from(adminConfig);
 
   const isTrialKey = key.isTrial;
-  const { getActiveAddonsForUser, sumAddonDailyTokenBonus, parseModelDailyLimits } = await import("../../utils/addons.js");
+  const { getActiveAddonsForUser, sumAddonDailyTokenBonus, parseModelDailyLimits, resolveAddonQuotaStack } = await import("../../utils/addons.js");
   const activeAddons = !isTrialKey
     ? await getActiveAddonsForUser({
         discordUserId: key.discordUserId,
@@ -874,8 +874,16 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   }
 
   const baseDailyTokenLimit = resolveKeyDailyTokenLimit(key, config);
-  const effectiveDailyTokenLimit =
-    Math.max(0, baseDailyTokenLimit || 0) + Math.max(0, addonDailyBonus || 0);
+  const rawIn = key.isTrial ? 0 : ((key.dailyInputTokenLimit && key.dailyInputTokenLimit > 0) ? key.dailyInputTokenLimit : (config?.globalDailyInputTokenLimit || 0));
+  const rawOut = key.isTrial ? 0 : ((key.dailyOutputTokenLimit && key.dailyOutputTokenLimit > 0) ? key.dailyOutputTokenLimit : (config?.globalDailyOutputTokenLimit || 0));
+  const quotaStack = resolveAddonQuotaStack({
+    hasActiveAddon: activeAddons.length > 0,
+    keyOrGlobalDaily: baseDailyTokenLimit,
+    dailyInput: rawIn,
+    dailyOutput: rawOut,
+    addonDailyBonus,
+  });
+  const effectiveDailyTokenLimit = quotaStack.effectiveDaily;
 
   const trialLimits = key.isTrial && config ? {
     dailyTokenLimit: effectiveDailyTokenLimit,
@@ -906,13 +914,14 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     apiCallResetMins,
     apiCallResetAt,
     modelUsage,
-    perModelPromptLimit: bypassPerModelPrompts ? 0 : perModelLimitFallback,
+    perModelPromptLimit: quotaStack.bypassPerModelPrompts ? 0 : perModelLimitFallback,
     perModelPromptLimitWindow: perModelWindowFallback,
     dailyTokenLimit: effectiveDailyTokenLimit,
     dailyTokenBreakdown: {
-      base: Math.max(0, baseDailyTokenLimit || 0),
-      addonBonus: Math.max(0, addonDailyBonus || 0),
-      effective: effectiveDailyTokenLimit,
+      base: quotaStack.baseDaily,
+      addonBonus: quotaStack.addonBonus,
+      effective: quotaStack.effectiveDaily,
+      bypassIo: quotaStack.bypassIo,
     },
     activeAddons: activeAddons.map((a) => ({
       name: a.name,
@@ -932,10 +941,10 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
       }
       return out;
     })(),
-    perModelPromptsBypassedByAddon: bypassPerModelPrompts,
+    perModelPromptsBypassedByAddon: quotaStack.bypassPerModelPrompts,
     monthlyTokenLimit: key.isTrial ? 0 : (config?.globalMonthlyTokenLimit || 0),
-    dailyInputTokenLimit: key.isTrial ? 0 : ((key.dailyInputTokenLimit && key.dailyInputTokenLimit > 0) ? key.dailyInputTokenLimit : (config?.globalDailyInputTokenLimit || 0)),
-    dailyOutputTokenLimit: key.isTrial ? 0 : ((key.dailyOutputTokenLimit && key.dailyOutputTokenLimit > 0) ? key.dailyOutputTokenLimit : (config?.globalDailyOutputTokenLimit || 0)),
+    dailyInputTokenLimit: quotaStack.dailyInputLimit,
+    dailyOutputTokenLimit: quotaStack.dailyOutputLimit,
     dailyTokensUsed: todayStats?.tokens || 0,
     monthlyTokensUsed: monthStats?.tokens || 0,
     dailyInputUsed: todayStats?.promptTokens || 0,

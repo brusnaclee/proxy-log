@@ -215,6 +215,58 @@ export function sumAddonMonthlyTokenBonus(active: ActiveAddon[]): number {
 }
 
 /**
+ * When any add-on is active:
+ * - Input / output caps are bypassed (unlimited)
+ * - Daily pool = (input+output if either set, else key/global daily) + pack bonus
+ *   e.g. Phantom daily 2M + vibecode-10m → 12M
+ *   e.g. Input 2M + Output 5M + pack 10M → 17M (I/O bars hidden)
+ */
+export function resolveAddonQuotaStack(opts: {
+  hasActiveAddon: boolean;
+  keyOrGlobalDaily: number;
+  dailyInput: number;
+  dailyOutput: number;
+  addonDailyBonus: number;
+}): {
+  dailyInputLimit: number;
+  dailyOutputLimit: number;
+  baseDaily: number;
+  addonBonus: number;
+  effectiveDaily: number;
+  bypassIo: boolean;
+  bypassPerModelPrompts: boolean;
+} {
+  const keyDaily = Math.max(0, opts.keyOrGlobalDaily || 0);
+  const input = Math.max(0, opts.dailyInput || 0);
+  const output = Math.max(0, opts.dailyOutput || 0);
+  const bonus = Math.max(0, opts.addonDailyBonus || 0);
+
+  if (!opts.hasActiveAddon) {
+    return {
+      dailyInputLimit: input,
+      dailyOutputLimit: output,
+      baseDaily: keyDaily,
+      addonBonus: 0,
+      effectiveDaily: keyDaily,
+      bypassIo: false,
+      bypassPerModelPrompts: false,
+    };
+  }
+
+  const ioSum = input + output;
+  const baseDaily = ioSum > 0 ? ioSum : keyDaily;
+  return {
+    dailyInputLimit: 0,
+    dailyOutputLimit: 0,
+    baseDaily,
+    addonBonus: bonus,
+    effectiveDaily: baseDaily + bonus,
+    bypassIo: true,
+    bypassPerModelPrompts: true,
+  };
+}
+
+/**
  * Per-model daily token cap from active addons' modelDailyLimits map
  * (substring match). Returns the lowest positive matching cap (strictest).
  * Pack-level dailyTokenLimit is account bonus via sumAddonDailyTokenBonus, not here.

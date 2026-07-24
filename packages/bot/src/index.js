@@ -5866,19 +5866,23 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 			: `**${formatTokens(monthlyTokensUsed)} / Unlimited**` +
 				formatResetTime(data.monthlyResetAt);
 	const dailyInputStr =
-		dailyInputTokenLimit > 0
+		(dailyInputTokenLimit || 0) > 0
 			? `**${formatTokens(dailyInputUsed)} / ${formatTokens(dailyInputTokenLimit)}**` +
 				(dailyInputUsed >= dailyInputTokenLimit ? ' 🔴' : '') +
 				formatResetTime(data.dailyResetAt)
-			: `**${formatTokens(dailyInputUsed)} / Unlimited**` +
-				formatResetTime(data.dailyResetAt);
+			: data.dailyTokenBreakdown?.bypassIo
+				? '**Unlimited** _(bypassed by add-on)_'
+				: `**${formatTokens(dailyInputUsed)} / Unlimited**` +
+					formatResetTime(data.dailyResetAt);
 	const dailyOutputStr =
-		dailyOutputTokenLimit > 0
+		(dailyOutputTokenLimit || 0) > 0
 			? `**${formatTokens(dailyOutputUsed)} / ${formatTokens(dailyOutputTokenLimit)}**` +
 				(dailyOutputUsed >= dailyOutputTokenLimit ? ' 🔴' : '') +
 				formatResetTime(data.dailyResetAt)
-			: `**${formatTokens(dailyOutputUsed)} / Unlimited**` +
-				formatResetTime(data.dailyResetAt);
+			: data.dailyTokenBreakdown?.bypassIo
+				? '**Unlimited** _(bypassed by add-on)_'
+				: `**${formatTokens(dailyOutputUsed)} / Unlimited**` +
+					formatResetTime(data.dailyResetAt);
 
 	const isSelf = viewerUserId === discordUserId;
 	const keyDisplay = isSelf ? data.key || `${keyPrefix}...` : '[HIDDEN]';
@@ -5934,7 +5938,7 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 					)
 					.join(', ')}` +
 				(data.perModelPromptsBypassedByAddon
-					? '\n-# Per-model prompt caps bypassed · global Prompts still apply'
+					? '\n-# Per-model prompts + Input/Output bypassed · daily pool only · global Prompts still apply'
 					: '') +
 				(Array.isArray(data.addonModelTokenCaps) && data.addonModelTokenCaps.length
 					? `\n-# Pack token subcaps: ${data.addonModelTokenCaps
@@ -5946,10 +5950,15 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 		? `**🎁 Trial Limits** _(all models + auto)_\nPrompt: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\n` +
 			`-# ℹ️ 1 prompt per turn; setiap hop = 1 API call.\n\n` +
 			`**🔢 Token Limits (Trial)**\nTotal Harian: ${dailyTokenStr}`
-		: `**🎯 Quotas**\nPrompts: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\nPer-Model:\n${modelLimitStr}\n` +
-			`-# ℹ️ 1 prompt per turn; setiap hop = 1 API call.\n\n` +
-			`**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}${stackNote}\nBulanan: ${monthlyTokenStr}` +
-			addonBlock;
+		: data.dailyTokenBreakdown?.bypassIo
+			? `**🎯 Quotas**\nPrompts: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\n` +
+				`-# ℹ️ Per-model prompts + Input/Output bypassed (add-on) · 1 prompt per turn.\n\n` +
+				`**🔢 Token Limits**\nTotal Harian: ${dailyTokenStr}${stackNote}\nBulanan: ${monthlyTokenStr}` +
+				addonBlock
+			: `**🎯 Quotas**\nPrompts: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\nPer-Model:\n${modelLimitStr}\n` +
+				`-# ℹ️ 1 prompt per turn; setiap hop = 1 API call.\n\n` +
+				`**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}${stackNote}\nBulanan: ${monthlyTokenStr}` +
+				addonBlock;
 
 	const tokenSaverHint =
 		`\n\n💡 **Token Saver** — hemat token Cline/Roo (compress tool dump). Tekan tombol **Token Saver** di bawah, atau portal: ${PORTAL_DASHBOARD_URL}`;
