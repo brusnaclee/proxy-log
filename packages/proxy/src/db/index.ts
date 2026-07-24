@@ -128,9 +128,17 @@ export async function initializeDatabase() {
 	const { migrateTokenInputModeColumn } = await import('./migrate-token-input-mode.js');
 	await migrateTokenInputModeColumn();
 	try {
-		const { setTokenInputModeCache } = await import('../utils/counting.js');
-		const modeRow = await pool.query(`SELECT token_input_mode FROM admin_config LIMIT 1`);
+		await pool.query(
+			`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS token_limit_weight_percent integer NOT NULL DEFAULT 10`,
+		);
+	} catch (_) {}
+	try {
+		const { setTokenInputModeCache, setTokenLimitWeightPercentCache } = await import('../utils/counting.js');
+		const modeRow = await pool.query(
+			`SELECT token_input_mode, token_limit_weight_percent FROM admin_config LIMIT 1`,
+		);
 		setTokenInputModeCache(modeRow.rows[0]?.token_input_mode);
+		setTokenLimitWeightPercentCache(modeRow.rows[0]?.token_limit_weight_percent);
 	} catch (_) {}
 
 	// Add-ons (assignable model access + quota packs)

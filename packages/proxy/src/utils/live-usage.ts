@@ -11,11 +11,11 @@ import {
 	turnCountSql,
 	turnPromptTokensSql,
 	turnCompletionTokensSql,
-	turnTotalTokensSql,
 	turnBillablePromptTokensSql,
 	turnCachedTokensSql,
 	hopCountSql,
 	hopFullInputTokensSql,
+	weightedHopTotalTokensSql,
 	wibMonthStartSql,
 	sanitizeRows,
 } from './counting.js';
@@ -28,6 +28,12 @@ import {
 	getWindowResetMs,
 	getApiCallWindowResetMs,
 } from './rate-limit.js';
+import {
+	ADDON_TEASE_DEFAULT_PROMPT_LIMIT,
+	getActiveAddonsForUser,
+	isAddonTeaseModel,
+	sumAddonDailyTokenBonus,
+} from './addons.js';
 
 export type LimitSource = 'override' | 'global' | 'none';
 
@@ -183,15 +189,26 @@ export async function buildLiveUsageForKey(
 		sql`status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL`,
 	)!;
 
-	const [usageToday, usageMonth] = await Promise.all([
+	const whereTodayHops = and(
+		inArray(requestLogs.apiKeyId, keyIds),
+		sql`created_at >= ${todayStart}`,
+		sql`status_code BETWEEN 200 AND 299`,
+	)!;
+	const whereMonthHops = and(
+		inArray(requestLogs.apiKeyId, keyIds),
+		sql`created_at >= ${monthStart}`,
+		sql`status_code BETWEEN 200 AND 299`,
+	)!;
+
+	const [usageToday, usageMonth, limitUsageToday] = await Promise.all([
 		db
 			.select({
 				requests: turnCountSql(whereToday),
-				hopCount: hopCountSql(whereToday),
+				hopCount: hopCountSql(whereTodayHops),
 				promptTokens: turnPromptTokensSql(whereToday, tmOpts),
 				billablePromptTokens: turnBillablePromptTokensSql(whereToday, tmOpts),
 				cachedTokens: turnCachedTokensSql(whereToday, tmOpts),
-				fullInputTokens: hopFullInputTokensSql(whereToday, tmOpts),
+				fullInputTokens: hopFullInputTokensSql(whereTodayHops, tmOpts),
 				completionTokens: turnCompletionTokensSql(whereToday, tmOpts),
 			})
 			.from(requestLogs)
@@ -199,10 +216,17 @@ export async function buildLiveUsageForKey(
 			.then((r) => r[0]),
 		db
 			.select({
-				tokens: turnTotalTokensSql(whereMonth, tmOpts),
+				tokens: weightedHopTotalTokensSql(whereMonthHops, tmOpts),
 			})
 			.from(requestLogs)
-			.where(whereMonth)
+			.where(whereMonthHops)
+			.then((r) => r[0]),
+		db
+			.select({
+				tokens: weightedHopTotalTokensSql(whereTodayHops, tmOpts),
+			})
+			.from(requestLogs)
+			.where(whereTodayHops)
 			.then((r) => r[0]),
 	]);
 
@@ -212,20 +236,33 @@ export async function buildLiveUsageForKey(
 	const fullInputTokens = usageToday?.fullInputTokens || 0;
 	const hopCount = usageToday?.hopCount || 0;
 	const completionTokens = usageToday?.completionTokens || 0;
-	const totalTokens = promptTokens + completionTokens;
+	// Credit / remaining bars use weighted hop-sum (same as proxy daily gate).
+	const totalTokens = limitUsageToday?.tokens || 0;
 	const monthTokens = usageMonth?.tokens || 0;
+
+	const activeAddons = !limitKey.isTrial
+		? await getActiveAddonsForUser({
+				discordUserId: limitKey.discordUserId,
+				apiKeyId: limitKey.id,
+			})
+		: [];
+	const addonDailyBonus = sumAddonDailyTokenBonus(activeAddons);
 
 	const dailyInput = pickLimit(limitKey.dailyInputTokenLimit, cfg?.globalDailyInputTokenLimit);
 	const dailyOutput = pickLimit(limitKey.dailyOutputTokenLimit, cfg?.globalDailyOutputTokenLimit);
 	const monthly = pickLimit(limitKey.monthlyTokenLimit, cfg?.globalMonthlyTokenLimit);
-	const dailyTokenLimit = resolveKeyDailyTokenLimit(limitKey as any, cfg);
+	const baseDailyTokenLimit = resolveKeyDailyTokenLimit(limitKey as any, cfg);
+	const dailyTokenLimit =
+		Math.max(0, baseDailyTokenLimit || 0) + Math.max(0, addonDailyBonus || 0);
 	const dailyTok =
 		dailyTokenLimit > 0
 			? {
 					value: dailyTokenLimit,
-					source: (Number(limitKey.dailyTokenLimit) > 0
+					source: (addonDailyBonus > 0
 						? 'override'
-						: 'global') as LimitSource,
+						: Number(limitKey.dailyTokenLimit) > 0
+							? 'override'
+							: 'global') as LimitSource,
 				}
 			: { value: 0, source: 'none' as LimitSource };
 
@@ -319,6 +356,10 @@ export async function buildLiveUsageForKey(
 
 		for (const tm of todayModels) {
 			if (!tm.model) continue;
+			const teaseDefault =
+				!limitKey.isTrial && isAddonTeaseModel(tm.model) && activeAddons.length === 0
+					? ADDON_TEASE_DEFAULT_PROMPT_LIMIT
+					: 0;
 			const mlCheck = await checkModelPromptLimit(
 				promptScopeIds,
 				tm.model,
@@ -326,6 +367,7 @@ export async function buildLiveUsageForKey(
 				perKeyWindow,
 				globalPerModel,
 				globalPerModelWindow,
+				{ teaseDefaultLimit: teaseDefault },
 			);
 			const windowStr = perKeyWindow || globalPerModelWindow;
 			const windowMs = parseRateLimitWindow(windowStr);
@@ -338,7 +380,12 @@ export async function buildLiveUsageForKey(
 					window: windowStr,
 					remaining: rem(mlCheck.effectiveLimit, mlCheck.used),
 					resetAt: resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null,
-					source: perModelPick.source,
+					source:
+						mlCheck.source === 'tease_default'
+							? 'global'
+							: mlCheck.source === 'override'
+								? 'global'
+								: perModelPick.source,
 				});
 			}
 		}

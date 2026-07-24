@@ -41,7 +41,7 @@ import {
 	BILLABLE_LOG_SQL,
 	turnCompletionTokensSql,
 	turnPromptTokensSql,
-	turnTotalTokensSql,
+	weightedHopTotalTokensSql,
 } from '../utils/counting.js';
 import {
 	generateApiKey,
@@ -1747,8 +1747,9 @@ proxy.all('/*', async (c) => {
 			.then((r) => r[0]),
 	);
 	if (config) {
-		const { setTokenInputModeCache } = await import('../utils/counting.js');
+		const { setTokenInputModeCache, setTokenLimitWeightPercentCache } = await import('../utils/counting.js');
 		setTokenInputModeCache((config as any).tokenInputMode);
+		setTokenLimitWeightPercentCache((config as any).tokenLimitWeightPercent ?? 10);
 	}
 	if (!config) {
 		return c.json(
@@ -2356,7 +2357,7 @@ proxy.all('/*', async (c) => {
 					mw.setUTCDate(1);
 					mw.setUTCHours(0, 0, 0, 0);
 					const ms = new Date(mw.getTime() - wibOffset);
-					const mu = await db.select({ total: turnTotalTokensSql(
+					const mu = await db.select({ total: weightedHopTotalTokensSql(
 						and(accountKeyFilter, sql`created_at >= ${ms}`, BILLABLE_LOG_SQL),
 						tokenCountOpts(keyRecord),
 					) }).from(requestLogs).where(and(accountKeyFilter, sql`created_at >= ${ms}`, BILLABLE_LOG_SQL)).then((r: any[]) => r[0]);
@@ -2375,13 +2376,39 @@ proxy.all('/*', async (c) => {
 					const dw = new Date(wibNow);
 					dw.setUTCHours(0, 0, 0, 0);
 					const ds = new Date(dw.getTime() - wibOffset);
-					const du = await db.select({ total: turnTotalTokensSql(
+					const du = await db.select({ total: weightedHopTotalTokensSql(
 						and(accountKeyFilter, sql`created_at >= ${ds}`, BILLABLE_LOG_SQL),
 						tokenCountOpts(keyRecord),
 					) }).from(requestLogs).where(and(accountKeyFilter, sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).then((r: any[]) => r[0]);
 					if (du && du.total >= globalDailyTokenLimit) {
 						tried.push(`${candidate.provider}/${candidate.modelId} (daily token limit)`);
 						continue;
+					}
+				}
+
+				// Add-on per-model daily (same as non-auto path)
+				if (!keyRecord.isTrial) {
+					const autoNorm = await normalizeModelForLimit(candidate.modelId);
+					const addonModelDaily = resolveAddonModelDailyTokenLimit(autoActiveAddons, autoNorm);
+					if (addonModelDaily > 0) {
+						const dw = new Date(wibNow);
+						dw.setUTCHours(0, 0, 0, 0);
+						const ds = new Date(dw.getTime() - wibOffset);
+						const whereAddon = and(
+							accountKeyFilter,
+							getModelMatchCondition(autoNorm),
+							sql`created_at >= ${ds}`,
+							BILLABLE_LOG_SQL,
+						);
+						const duA = await db
+							.select({ total: weightedHopTotalTokensSql(whereAddon, tokenCountOpts(keyRecord)) })
+							.from(requestLogs)
+							.where(whereAddon)
+							.then((r: any[]) => r[0]);
+						if (duA && duA.total >= addonModelDaily) {
+							tried.push(`${candidate.provider}/${candidate.modelId} (addon model daily)`);
+							continue;
+						}
 					}
 				}
 
@@ -3349,7 +3376,7 @@ proxy.all('/*', async (c) => {
 				BILLABLE_LOG_SQL,
 			);
 			const mu = await db
-				.select({ total: turnTotalTokensSql(whereClause, tokenCountOpts(keyRecord)) })
+				.select({ total: weightedHopTotalTokensSql(whereClause, tokenCountOpts(keyRecord)) })
 				.from(requestLogs)
 				.where(whereClause)
 				.then((r) => r[0]);
@@ -3381,7 +3408,7 @@ proxy.all('/*', async (c) => {
 				BILLABLE_LOG_SQL,
 			);
 			const du = await db
-				.select({ total: turnTotalTokensSql(whereClause, tokenCountOpts(keyRecord)) })
+				.select({ total: weightedHopTotalTokensSql(whereClause, tokenCountOpts(keyRecord)) })
 				.from(requestLogs)
 				.where(whereClause)
 				.then((r) => r[0]);
@@ -3480,7 +3507,7 @@ proxy.all('/*', async (c) => {
 				BILLABLE_LOG_SQL,
 			);
 			const mu2 = await db
-				.select({ total: turnTotalTokensSql(whereClause, tokenCountOpts(keyRecord)) })
+				.select({ total: weightedHopTotalTokensSql(whereClause, tokenCountOpts(keyRecord)) })
 				.from(requestLogs)
 				.where(whereClause)
 				.then((r) => r[0]);
@@ -3526,7 +3553,7 @@ proxy.all('/*', async (c) => {
 					BILLABLE_LOG_SQL,
 				);
 				const du = await db
-					.select({ total: turnTotalTokensSql(whereClause, tokenCountOpts(keyRecord)) })
+					.select({ total: weightedHopTotalTokensSql(whereClause, tokenCountOpts(keyRecord)) })
 					.from(requestLogs)
 					.where(whereClause)
 					.then((r) => r[0]);
@@ -3552,7 +3579,7 @@ proxy.all('/*', async (c) => {
 					BILLABLE_LOG_SQL,
 				);
 				const mu = await db
-					.select({ total: turnTotalTokensSql(whereClause, tokenCountOpts(keyRecord)) })
+					.select({ total: weightedHopTotalTokensSql(whereClause, tokenCountOpts(keyRecord)) })
 					.from(requestLogs)
 					.where(whereClause)
 					.then((r) => r[0]);
@@ -3640,7 +3667,7 @@ proxy.all('/*', async (c) => {
 					BILLABLE_LOG_SQL,
 				);
 				const du = await db
-					.select({ total: turnTotalTokensSql(whereClause, tokenCountOpts(keyRecord)) })
+					.select({ total: weightedHopTotalTokensSql(whereClause, tokenCountOpts(keyRecord)) })
 					.from(requestLogs)
 					.where(whereClause)
 					.then((r) => r[0]);

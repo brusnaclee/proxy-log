@@ -288,7 +288,7 @@ export function LiveUsageCard({
       </div>
       {(usageToday.fullInputTokens || 0) > (usageToday.promptTokens || 0) * 1.5 && (
         <p className="text-[10px] text-muted-foreground leading-relaxed border-t border-border/40 pt-2">
-          Credit uses <span className="text-foreground">per-turn peak</span> input
+          Daily credit bar uses <span className="text-foreground">weighted hop tokens</span> (Settings % of each hop In+Out; default 10%). Logs still store 100%.
           ({formatNumber(usageToday.promptTokens)}), not amanai hop-sum
           ({formatNumber(usageToday.fullInputTokens || 0)}). Logs list every hop (
           {formatNumber(usageToday.hopCount || 0)}), while prompts/turns are{" "}

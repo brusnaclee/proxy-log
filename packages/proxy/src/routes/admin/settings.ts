@@ -6,7 +6,7 @@ import { maskKey } from "../../utils/crypto.js";
 import { refreshModelCatalog, getModelCatalogResponse } from "../../utils/model-catalog.js";
 import { configCache, apiKeyCache, statsCache } from "../../utils/cache.js";
 import { enrichModelLimitsWithCatalog } from "../../utils/model-limits-enrich.js";
-import { normalizeTokenInputMode } from "../../utils/counting.js";
+import { normalizeTokenInputMode, normalizeTokenLimitWeightPercent } from "../../utils/counting.js";
 
 const settings = new Hono();
 
@@ -27,6 +27,7 @@ settings.get("/settings/global", async (c) => {
     globalDailyInputTokenLimit: config.globalDailyInputTokenLimit || 0,
     globalDailyOutputTokenLimit: config.globalDailyOutputTokenLimit || 0,
     tokenInputMode: normalizeTokenInputMode((config as any).tokenInputMode),
+    tokenLimitWeightPercent: normalizeTokenLimitWeightPercent((config as any).tokenLimitWeightPercent ?? 10),
     tokenSaverRtkEnabled: config.tokenSaverRtkEnabled ?? true,
     tokenSaverRtkMaxChars: config.tokenSaverRtkMaxChars ?? 2000,
     tokenSaverHeadroomEnabled: config.tokenSaverHeadroomEnabled ?? false,
@@ -59,6 +60,9 @@ settings.put("/settings/global", async (c) => {
   if (body.tokenInputMode !== undefined) {
     updates.tokenInputMode = normalizeTokenInputMode(body.tokenInputMode);
   }
+  if (body.tokenLimitWeightPercent !== undefined) {
+    updates.tokenLimitWeightPercent = normalizeTokenLimitWeightPercent(body.tokenLimitWeightPercent);
+  }
   if (body.tokenSaverRtkEnabled !== undefined) updates.tokenSaverRtkEnabled = !!body.tokenSaverRtkEnabled;
   if (body.tokenSaverRtkMaxChars !== undefined) updates.tokenSaverRtkMaxChars = Math.max(200, Number(body.tokenSaverRtkMaxChars) || 2000);
   if (body.tokenSaverHeadroomEnabled !== undefined) updates.tokenSaverHeadroomEnabled = !!body.tokenSaverHeadroomEnabled;
@@ -75,10 +79,13 @@ settings.put("/settings/global", async (c) => {
 
   await db.update(adminConfig).set(updates).where(eq(adminConfig.id, config.id));
   configCache.invalidate("admin_config"); // invalidate cached config
-  if (updates.tokenInputMode !== undefined) {
-    const { setTokenInputModeCache } = await import("../../utils/counting.js");
-    setTokenInputModeCache(updates.tokenInputMode);
-    statsCache.clear(); // aggregates depend on input mode
+  if (updates.tokenInputMode !== undefined || updates.tokenLimitWeightPercent !== undefined) {
+    const { setTokenInputModeCache, setTokenLimitWeightPercentCache } = await import("../../utils/counting.js");
+    if (updates.tokenInputMode !== undefined) setTokenInputModeCache(updates.tokenInputMode);
+    if (updates.tokenLimitWeightPercent !== undefined) {
+      setTokenLimitWeightPercentCache(updates.tokenLimitWeightPercent);
+    }
+    statsCache.clear(); // aggregates depend on input mode / weight
   }
   return c.json({ success: true, message: "Global settings updated" });
 });

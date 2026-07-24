@@ -557,6 +557,8 @@ export interface GlobalSettings {
   globalDailyOutputTokenLimit: number;
   /** per_turn_peak | full | billable */
   tokenInputMode?: "per_turn_peak" | "full" | "billable";
+  /** 1–100: percent of each hop In+Out charged to daily/monthly token limits */
+  tokenLimitWeightPercent?: number;
   tokenSaverRtkEnabled?: boolean;
   tokenSaverRtkMaxChars?: number;
   tokenSaverHeadroomEnabled?: boolean;

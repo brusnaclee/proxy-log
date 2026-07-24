@@ -20,8 +20,9 @@ export default function SettingsPage() {
   const [globalMaxDevices, setGlobalMaxDevices] = useState(0);
   const [globalPromptLimit, setGlobalPromptLimit] = useState(50);
   const [globalPromptLimitWindow, setGlobalPromptLimitWindow] = useState("5h");
-  const [globalRateLimit, setGlobalRateLimit] = useState(500);
+  const [globalRateLimit, setGlobalRateLimit] = useState(1000);
   const [globalRateLimitWindow, setGlobalRateLimitWindow] = useState("5h");
+  const [tokenLimitWeightPercent, setTokenLimitWeightPercent] = useState(10);
   const [globalPerModelPromptLimit, setGlobalPerModelPromptLimit] = useState(10);
   const [globalPerModelPromptLimitWindow, setGlobalPerModelPromptLimitWindow] = useState("5h");
   const [globalDailyTokenLimit, setGlobalDailyTokenLimit] = useState(0);
@@ -111,6 +112,9 @@ export default function SettingsPage() {
       setGlobalPromptLimitWindow(g.globalPromptLimitWindow || "5h");
       setGlobalRateLimit(g.globalRateLimit || 0);
       setGlobalRateLimitWindow(g.globalRateLimitWindow || "5h");
+      setTokenLimitWeightPercent(
+        typeof g.tokenLimitWeightPercent === "number" ? g.tokenLimitWeightPercent : 10,
+      );
       setGlobalPerModelPromptLimit(g.globalPerModelPromptLimit || 0);
       setGlobalPerModelPromptLimitWindow(g.globalPerModelPromptLimitWindow || "5h");
       setGlobalDailyTokenLimit(g.globalDailyTokenLimit || 0);
@@ -161,6 +165,7 @@ export default function SettingsPage() {
         globalDailyTokenLimit, globalMonthlyTokenLimit,
         globalDailyInputTokenLimit, globalDailyOutputTokenLimit,
         tokenInputMode,
+        tokenLimitWeightPercent,
         tokenSaverRtkEnabled, tokenSaverRtkMaxChars,
         tokenSaverHeadroomEnabled, tokenSaverHeadroomUrl,
         tokenSaverCavemanEnabled, tokenSaverCavemanLevel,
@@ -431,11 +436,11 @@ export default function SettingsPage() {
                     type="number"
                     value={globalRateLimit}
                     onChange={(e) => setGlobalRateLimit(parseInt(e.target.value) || 0)}
-                    placeholder="500"
+                    placeholder="1000"
                     className="mt-1"
                   />
                   <p className="text-[10px] text-muted-foreground mt-1">
-                    Every successful upstream hop. 0 = unlimited. Default 500/5h.
+                    Every successful upstream hop (tools/subagent). 0 = unlimited. Default 1000/5h.
                   </p>
                 </div>
                 <div>
@@ -448,6 +453,28 @@ export default function SettingsPage() {
                   />
                   <p className="text-[10px] text-muted-foreground mt-1">
                     e.g. 5h, 1d
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label>Token limit weight %</Label>
+                  <Input
+                    type="number"
+                    value={tokenLimitWeightPercent}
+                    onChange={(e) => setTokenLimitWeightPercent(parseInt(e.target.value) || 10)}
+                    placeholder="10"
+                    className="mt-1"
+                    min={1}
+                    max={100}
+                  />
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    Each hop&apos;s In+Out counts this % toward daily/monthly token limits (logs stay 100%). Default 10.
+                  </p>
+                </div>
+                <div className="flex items-end pb-1">
+                  <p className="text-[10px] text-muted-foreground">
+                    Example: 100 hops × 10k In → limit uses ~100k at 10% (not 1M). Visible on Key Detail / portal / Discord usage bars.
                   </p>
                 </div>
               </div>

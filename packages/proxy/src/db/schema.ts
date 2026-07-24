@@ -9,10 +9,12 @@ export const adminConfig = pgTable('admin_config', {
 	upstreamApiKey: text('upstream_api_key').notNull().default(''),
 	globalMaxDevices: integer('global_max_devices').default(0),
 	realtimeEnabled: boolean('realtime_enabled').default(false),
-	globalRateLimit: integer('global_rate_limit').default(500),
+	globalRateLimit: integer('global_rate_limit').default(1000),
 	globalRateLimitWindow: text('global_rate_limit_window').default('5h'),
 	globalPromptLimit: integer('global_prompt_limit').default(50),
 	globalPromptLimitWindow: text('global_prompt_limit_window').default('5h'),
+	/** Percent of each hop In+Out applied to daily/monthly token limits (1–100). Logs stay 100%. */
+	tokenLimitWeightPercent: integer('token_limit_weight_percent').notNull().default(10),
 	globalPerModelPromptLimit: integer('global_per_model_prompt_limit').default(0),
 	globalPerModelPromptLimitWindow: text('global_per_model_prompt_limit_window').default('1d'),
 	globalDailyTokenLimit: integer('global_daily_token_limit').default(0),
