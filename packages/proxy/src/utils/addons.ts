@@ -254,7 +254,8 @@ export function resolveAddonQuotaStack(opts: {
   }
 
   const ioSum = input + output;
-  const baseDaily = ioSum > 0 ? ioSum : keyDaily;
+  // Prefer explicit daily when set; otherwise fold input+output into the daily pool.
+  const baseDaily = keyDaily > 0 ? keyDaily : ioSum;
   return {
     dailyInputLimit: 0,
     dailyOutputLimit: 0,
