@@ -5865,11 +5865,18 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 				formatResetTime(data.monthlyResetAt)
 			: `**${formatTokens(monthlyTokensUsed)} / Unlimited**` +
 				formatResetTime(data.monthlyResetAt);
+	const softExceedNote = (used, softCap) => {
+		if (!data.dailyTokenBreakdown?.bypassIo || !(softCap > 0)) return '';
+		if (used > softCap) {
+			return ` _(soft · +${formatTokens(used - softCap)} exceed until daily)_`;
+		}
+		return ' _(soft · exceed OK until daily)_';
+	};
 	const dailyInputStr =
 		(dailyInputTokenLimit || 0) > 0
 			? `**${formatTokens(dailyInputUsed)} / ${formatTokens(dailyInputTokenLimit)}**` +
 				(data.dailyTokenBreakdown?.bypassIo
-					? ' _(soft · pooled)_'
+					? softExceedNote(dailyInputUsed, dailyInputTokenLimit)
 					: dailyInputUsed >= dailyInputTokenLimit
 						? ' 🔴'
 						: '') +
@@ -5880,7 +5887,7 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 		(dailyOutputTokenLimit || 0) > 0
 			? `**${formatTokens(dailyOutputUsed)} / ${formatTokens(dailyOutputTokenLimit)}**` +
 				(data.dailyTokenBreakdown?.bypassIo
-					? ' _(soft · pooled)_'
+					? softExceedNote(dailyOutputUsed, dailyOutputTokenLimit)
 					: dailyOutputUsed >= dailyOutputTokenLimit
 						? ' 🔴'
 						: '') +
@@ -5944,7 +5951,7 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 					)
 					.join(', ')}` +
 				(data.perModelPromptsBypassedByAddon
-					? '\n-# Per-model prompts bypassed · Input/Output soft (pooled into daily)'
+					? '\n-# Per-model prompts bypassed · Input/Output soft can exceed via add-on until Daily Total'
 					: '') +
 				(Array.isArray(data.addonModelTokenCaps) && data.addonModelTokenCaps.length
 					? `\n-# Pack token subcaps: ${data.addonModelTokenCaps
@@ -5958,7 +5965,7 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 			`**🔢 Token Limits (Trial)**\nTotal Harian: ${dailyTokenStr}`
 		: data.dailyTokenBreakdown?.bypassIo
 			? `**🎯 Quotas**\nPrompts: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\n` +
-				`-# ℹ️ Per-model prompts bypassed · Input/Output soft (no separate hard cap).\n\n` +
+				`-# ℹ️ Per-model prompts bypassed · Input/Output soft base; exceed via add-on until Daily Total.\n\n` +
 				`**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}${stackNote}\nBulanan: ${monthlyTokenStr}` +
 				addonBlock
 			: `**🎯 Quotas**\nPrompts: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\nPer-Model:\n${modelLimitStr}\n` +

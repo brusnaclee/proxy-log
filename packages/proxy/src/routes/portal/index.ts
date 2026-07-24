@@ -232,7 +232,7 @@ portal.get("/me", async (c) => {
   const primaryKey = userKeys.find(k => !k.isTrial && k.isActive) || userKeys.find(k => k.isActive) || userKeys[0];
   const config = (await db.select().from(adminConfig).limit(1))[0] ?? null;
 
-  const { getActiveAddonsForUser, sumAddonDailyTokenBonus, parseModelDailyLimits, resolveAddonQuotaStack } = await import("../../utils/addons.js");
+  const { getActiveAddonsForUser, sumAddonDailyTokenBonus, parseModelDailyLimits, resolveAddonQuotaStack, stackBaseDailyForKey } = await import("../../utils/addons.js");
   const activeAddons = !isTrial && primaryKey
     ? await getActiveAddonsForUser({
         discordUserId,
@@ -379,7 +379,12 @@ portal.get("/me", async (c) => {
   const rawDailyOutput = pickLimit(primaryKey?.dailyOutputTokenLimit, config?.globalDailyOutputTokenLimit);
   const quotaStack = resolveAddonQuotaStack({
     hasActiveAddon: activeAddons.length > 0,
-    keyOrGlobalDaily: baseDailyTokenLimit,
+    keyOrGlobalDaily: stackBaseDailyForKey({
+      hasActiveAddon: activeAddons.length > 0,
+      isTrial: !!isTrial || !!primaryKey?.isTrial,
+      keyDailyTokenLimit: primaryKey?.dailyTokenLimit,
+      resolvedKeyOrGlobalDaily: baseDailyTokenLimit,
+    }),
     dailyInput: rawDailyInput.value,
     dailyOutput: rawDailyOutput.value,
     addonDailyBonus,
@@ -408,10 +413,12 @@ portal.get("/me", async (c) => {
     ? {
         value: dailyTokenLimit,
         source: (quotaStack.addonBonus > 0
-          ? "override"
+          ? "addon"
           : Number(primaryKey?.dailyTokenLimit) > 0
             ? "override"
-            : "global") as "override" | "global" | "none",
+            : primaryKey?.isTrial || isTrial
+              ? "global"
+              : "none") as "override" | "global" | "none" | "addon",
       }
     : { value: 0, source: "none" as const };
   const prompt = promptLimit > 0

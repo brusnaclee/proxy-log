@@ -752,7 +752,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   const [config] = await db.select().from(adminConfig);
 
   const isTrialKey = key.isTrial;
-  const { getActiveAddonsForUser, sumAddonDailyTokenBonus, parseModelDailyLimits, resolveAddonQuotaStack } = await import("../../utils/addons.js");
+  const { getActiveAddonsForUser, sumAddonDailyTokenBonus, parseModelDailyLimits, resolveAddonQuotaStack, stackBaseDailyForKey } = await import("../../utils/addons.js");
   const activeAddons = !isTrialKey
     ? await getActiveAddonsForUser({
         discordUserId: key.discordUserId,
@@ -766,11 +766,21 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   let globalResetMins = 0;
   let promptResetAt: string | null = null;
 
+  // Account-scoped prompt/API counts (same as portal / live-usage)
+  const accountKeys = key.discordUserId
+    ? await db.select({ id: apiKeys.id }).from(apiKeys).where(eq(apiKeys.discordUserId, key.discordUserId))
+    : [{ id: key.id }];
+  const accountKeyIds = accountKeys.map((k) => k.id);
+  const promptScopeIds =
+    accountKeyIds.length > 0
+      ? [key.id, ...accountKeyIds.filter((id) => id !== key.id)]
+      : [key.id];
+
   if (globalLimit > 0) {
-    const plCheck = await checkPromptLimit(key.id, globalLimit, globalWindow);
+    const plCheck = await checkPromptLimit(promptScopeIds, globalLimit, globalWindow);
     globalUsed = plCheck.used;
     const windowMs = parseRateLimitWindow(globalWindow);
-    const resetMs = await getWindowResetMs(key.id, windowMs);
+    const resetMs = await getWindowResetMs(promptScopeIds, windowMs);
     globalResetMins = Math.ceil(resetMs / 60000);
     promptResetAt = resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null;
   }
@@ -780,10 +790,10 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   let apiCallResetMins = 0;
   let apiCallResetAt: string | null = null;
   if (apiCallLimit > 0) {
-    const acCheck = await checkApiCallLimit(key.id, apiCallLimit, apiCallLimitWindow);
+    const acCheck = await checkApiCallLimit(promptScopeIds, apiCallLimit, apiCallLimitWindow);
     apiCallUsed = acCheck.used;
     const windowMs = parseRateLimitWindow(apiCallLimitWindow);
-    const resetMs = await getApiCallWindowResetMs(key.id, windowMs);
+    const resetMs = await getApiCallWindowResetMs(promptScopeIds, windowMs);
     apiCallResetMins = Math.ceil(resetMs / 60000);
     apiCallResetAt = resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null;
   }
@@ -803,7 +813,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   for (const tm of todayModels) {
     if (!tm.model) continue;
     const mlCheck = await checkModelPromptLimit(
-      key.id,
+      promptScopeIds,
       tm.model,
       isTrialKey ? 0 : (key.perModelPromptLimit || 0),
       isTrialKey ? null : (key.perModelPromptLimitWindow || null),
@@ -814,7 +824,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
       ? globalWindow
       : (key.perModelPromptLimitWindow || config?.globalPerModelPromptLimitWindow || "30m");
     const windowMs = parseRateLimitWindow(windowStr);
-    const resetMs = await getWindowResetMs(key.id, windowMs, tm.model);
+    const resetMs = await getWindowResetMs(promptScopeIds, windowMs, tm.model);
     modelUsage.push({
       model: tm.model,
       used: mlCheck.used,
@@ -876,9 +886,15 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   const baseDailyTokenLimit = resolveKeyDailyTokenLimit(key, config);
   const rawIn = key.isTrial ? 0 : ((key.dailyInputTokenLimit && key.dailyInputTokenLimit > 0) ? key.dailyInputTokenLimit : (config?.globalDailyInputTokenLimit || 0));
   const rawOut = key.isTrial ? 0 : ((key.dailyOutputTokenLimit && key.dailyOutputTokenLimit > 0) ? key.dailyOutputTokenLimit : (config?.globalDailyOutputTokenLimit || 0));
+  const hasActiveAddon = activeAddons.length > 0;
   const quotaStack = resolveAddonQuotaStack({
-    hasActiveAddon: activeAddons.length > 0,
-    keyOrGlobalDaily: baseDailyTokenLimit,
+    hasActiveAddon,
+    keyOrGlobalDaily: stackBaseDailyForKey({
+      hasActiveAddon,
+      isTrial: !!key.isTrial,
+      keyDailyTokenLimit: key.dailyTokenLimit,
+      resolvedKeyOrGlobalDaily: baseDailyTokenLimit,
+    }),
     dailyInput: rawIn,
     dailyOutput: rawOut,
     addonDailyBonus,

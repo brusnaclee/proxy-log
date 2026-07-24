@@ -34,10 +34,11 @@ import {
 	isAddonTeaseModel,
 	parseModelDailyLimits,
 	resolveAddonQuotaStack,
+	stackBaseDailyForKey,
 	sumAddonDailyTokenBonus,
 } from './addons.js';
 
-export type LimitSource = 'override' | 'global' | 'none';
+export type LimitSource = 'override' | 'global' | 'none' | 'addon';
 
 export interface ModelPromptUsage {
 	model: string;
@@ -271,9 +272,15 @@ export async function buildLiveUsageForKey(
 	const rawDailyOutput = pickLimit(limitKey.dailyOutputTokenLimit, cfg?.globalDailyOutputTokenLimit);
 	const monthly = pickLimit(limitKey.monthlyTokenLimit, cfg?.globalMonthlyTokenLimit);
 	const baseDailyTokenLimit = resolveKeyDailyTokenLimit(limitKey as any, cfg);
+	const hasActiveAddon = activeAddons.length > 0;
 	const stack = resolveAddonQuotaStack({
-		hasActiveAddon: activeAddons.length > 0,
-		keyOrGlobalDaily: baseDailyTokenLimit,
+		hasActiveAddon,
+		keyOrGlobalDaily: stackBaseDailyForKey({
+			hasActiveAddon,
+			isTrial: !!limitKey.isTrial,
+			keyDailyTokenLimit: limitKey.dailyTokenLimit,
+			resolvedKeyOrGlobalDaily: baseDailyTokenLimit,
+		}),
 		dailyInput: rawDailyInput.value,
 		dailyOutput: rawDailyOutput.value,
 		addonDailyBonus,
@@ -300,10 +307,12 @@ export async function buildLiveUsageForKey(
 			? {
 					value: dailyTokenLimit,
 					source: (stack.addonBonus > 0
-						? 'override'
+						? 'addon'
 						: Number(limitKey.dailyTokenLimit) > 0
 							? 'override'
-							: 'global') as LimitSource,
+							: limitKey.isTrial
+								? 'global'
+								: 'none') as LimitSource,
 				}
 			: { value: 0, source: 'none' as LimitSource };
 

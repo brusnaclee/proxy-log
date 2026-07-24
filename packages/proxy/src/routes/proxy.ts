@@ -112,6 +112,7 @@ import {
 	isAddonTeaseModel,
 	resolveAddonModelDailyTokenLimit,
 	resolveAddonQuotaStack,
+	stackBaseDailyForKey,
 	sumAddonDailyTokenBonus,
 	sumAddonMonthlyTokenBonus,
 } from '../utils/addons.js';
@@ -2380,7 +2381,12 @@ proxy.all('/*', async (c) => {
 						: config.globalDailyOutputTokenLimit || 0);
 				const autoStack = resolveAddonQuotaStack({
 					hasActiveAddon: autoActiveAddons.length > 0,
-					keyOrGlobalDaily: resolveKeyDailyTokenLimit(keyRecord, config),
+					keyOrGlobalDaily: stackBaseDailyForKey({
+						hasActiveAddon: autoActiveAddons.length > 0,
+						isTrial: !!keyRecord.isTrial,
+						keyDailyTokenLimit: keyRecord.dailyTokenLimit,
+						resolvedKeyOrGlobalDaily: resolveKeyDailyTokenLimit(keyRecord, config),
+					}),
 					dailyInput: Number(rawInAuto) || 0,
 					dailyOutput: Number(rawOutAuto) || 0,
 					addonDailyBonus: sumAddonDailyTokenBonus(autoActiveAddons),
@@ -3421,7 +3427,12 @@ proxy.all('/*', async (c) => {
 				: config.globalDailyOutputTokenLimit || 0);
 		const quotaStack = resolveAddonQuotaStack({
 			hasActiveAddon: activeAddons.length > 0,
-			keyOrGlobalDaily: resolveKeyDailyTokenLimit(keyRecord, config),
+			keyOrGlobalDaily: stackBaseDailyForKey({
+				hasActiveAddon: activeAddons.length > 0,
+				isTrial: !!keyRecord.isTrial,
+				keyDailyTokenLimit: keyRecord.dailyTokenLimit,
+				resolvedKeyOrGlobalDaily: resolveKeyDailyTokenLimit(keyRecord, config),
+			}),
 			dailyInput: Number(rawIn) || 0,
 			dailyOutput: Number(rawOut) || 0,
 			addonDailyBonus: sumAddonDailyTokenBonus(activeAddons),

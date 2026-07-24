@@ -28,6 +28,8 @@ function ProgressBar({
   sublabel,
   source,
   reset,
+  footerLeft,
+  softMode,
 }: {
   label: string;
   value: number;
@@ -36,30 +38,43 @@ function ProgressBar({
   sublabel?: string;
   source?: string;
   reset?: string;
+  /** Override the default Remaining / No limit line */
+  footerLeft?: string;
+  /** Soft base + exceed-until-daily mode (add-on) */
+  softMode?: boolean;
 }) {
+  const overSoft = softMode && max > 0 && value > max;
   const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
-  const danger = pct > 85;
-  const warn = pct > 65;
+  const danger = !softMode && pct > 85;
+  const warn = softMode ? overSoft || pct > 85 : pct > 65;
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between text-xs gap-2">
         <span className="text-muted-foreground">{label}</span>
-        <span className={danger ? "text-red-400" : warn ? "text-yellow-400" : "text-foreground"}>
+        <span className={danger ? "text-red-400" : warn ? "text-amber-400" : "text-foreground"}>
           {formatNumber(value)} / {formatNumber(max)}
+          {softMode && <span className="text-muted-foreground ml-1">soft</span>}
+          {overSoft && (
+            <span className="text-amber-400 ml-1">
+              · +{formatNumber(value - max)} exceed
+            </span>
+          )}
           {sublabel && <span className="text-muted-foreground ml-1">{sublabel}</span>}
         </span>
       </div>
       <div className="h-1.5 rounded-full bg-muted overflow-hidden">
         <div
           className={`h-full rounded-full transition-all ${
-            danger ? "bg-red-400" : warn ? "bg-yellow-400" : "bg-primary"
+            danger ? "bg-red-400" : warn ? "bg-amber-400" : "bg-primary"
           }`}
           style={{ width: `${pct}%` }}
         />
       </div>
       <div className="flex items-center justify-between text-[10px] text-muted-foreground">
         <span>
-          {remaining != null ? (
+          {footerLeft != null ? (
+            footerLeft
+          ) : remaining != null ? (
             <>
               Remaining: <span className="text-foreground font-medium">{formatNumber(remaining)}</span>
             </>
@@ -109,7 +124,12 @@ export function LiveUsageCard({
     sublabel?: string;
     source?: string;
     reset?: string;
+    softMode?: boolean;
+    footerLeft?: string;
   }> = [];
+
+  const dailyCap = limits.dailyTokenLimit || 0;
+  const dailyLeft = remaining.daily;
 
   if (limits.promptLimit > 0) {
     bars.push({
@@ -117,7 +137,7 @@ export function LiveUsageCard({
       value: usageToday.promptCount ?? 0,
       max: limits.promptLimit,
       remaining: remaining.prompt,
-      sublabel: "1 per user prompt",
+      sublabel: "1 per user prompt · last window",
       source: sourceLabel(limits.promptLimitSource),
       reset: formatReset(promptResetAt),
     });
@@ -130,16 +150,19 @@ export function LiveUsageCard({
       remaining: remaining.apiCalls ?? null,
       sublabel:
         (usageToday.hopCount || 0) > 0
-          ? `${formatNumber(usageToday.hopCount || 0)} hops today`
-          : "every upstream hop",
+          ? `${formatNumber(usageToday.apiCallCount ?? 0)} in window · ${formatNumber(usageToday.hopCount || 0)} hops today`
+          : "every upstream hop · last window",
       source: sourceLabel(limits.apiCallLimitSource),
       reset: formatReset(apiCallResetAt),
     });
   }
   if (limits.dailyInputTokenLimit > 0 || (dailyTokenBreakdown?.bypassIo && (dailyTokenBreakdown.inputBase || 0) > 0)) {
-    const inputMax = dailyTokenBreakdown?.bypassIo
+    const softMax = dailyTokenBreakdown?.bypassIo
       ? dailyTokenBreakdown.inputBase || limits.dailyInputTokenLimit
       : limits.dailyInputTokenLimit;
+    const used = usageToday.promptTokens;
+    const overSoft = !!(dailyTokenBreakdown?.bypassIo && softMax > 0 && used > softMax);
+    const softLeft = Math.max(0, softMax - used);
     const inputBd = formatInputBreakdown(
       usageToday.billablePromptTokens,
       usageToday.cachedTokens,
@@ -153,32 +176,51 @@ export function LiveUsageCard({
         : "";
     bars.push({
       label: "Input Tokens (peak)",
-      value: usageToday.promptTokens,
-      max: inputMax,
+      value: used,
+      max: softMax,
       remaining: dailyTokenBreakdown?.bypassIo ? null : remaining.input,
+      softMode: !!dailyTokenBreakdown?.bypassIo,
       sublabel:
-        (dailyTokenBreakdown?.bypassIo ? "soft · pooled into daily · " : "") +
+        (dailyTokenBreakdown?.bypassIo
+          ? `exceed OK until daily ${formatNumber(dailyCap)} · `
+          : "") +
         (inputBd.label !== inputBd.total ? inputBd.label : "tokens") +
         fullNote,
       source: dailyTokenBreakdown?.bypassIo
-        ? "no separate hard cap"
+        ? "add-on extends past soft"
         : sourceLabel(limits.dailyInputTokenLimitSource),
+      footerLeft: dailyTokenBreakdown?.bypassIo
+        ? overSoft
+          ? `Exceeding soft · Daily remaining: ${dailyLeft != null ? formatNumber(dailyLeft) : "—"} / ${formatNumber(dailyCap)}`
+          : `Soft left: ${formatNumber(softLeft)} · then exceed until daily ${formatNumber(dailyCap)}`
+        : undefined,
       reset: formatReset(dailyResetAt),
     });
   }
   if (limits.dailyOutputTokenLimit > 0 || (dailyTokenBreakdown?.bypassIo && (dailyTokenBreakdown.outputBase || 0) > 0)) {
-    const outputMax = dailyTokenBreakdown?.bypassIo
+    const softMax = dailyTokenBreakdown?.bypassIo
       ? dailyTokenBreakdown.outputBase || limits.dailyOutputTokenLimit
       : limits.dailyOutputTokenLimit;
+    const used = usageToday.completionTokens;
+    const overSoft = !!(dailyTokenBreakdown?.bypassIo && softMax > 0 && used > softMax);
+    const softLeft = Math.max(0, softMax - used);
     bars.push({
       label: "Output Tokens",
-      value: usageToday.completionTokens,
-      max: outputMax,
+      value: used,
+      max: softMax,
       remaining: dailyTokenBreakdown?.bypassIo ? null : remaining.output,
-      sublabel: dailyTokenBreakdown?.bypassIo ? "soft · pooled into daily" : "tokens",
+      softMode: !!dailyTokenBreakdown?.bypassIo,
+      sublabel: dailyTokenBreakdown?.bypassIo
+        ? `exceed OK until daily ${formatNumber(dailyCap)}`
+        : "tokens",
       source: dailyTokenBreakdown?.bypassIo
-        ? "no separate hard cap"
+        ? "add-on extends past soft"
         : sourceLabel(limits.dailyOutputTokenLimitSource),
+      footerLeft: dailyTokenBreakdown?.bypassIo
+        ? overSoft
+          ? `Exceeding soft · Daily remaining: ${dailyLeft != null ? formatNumber(dailyLeft) : "—"} / ${formatNumber(dailyCap)}`
+          : `Soft left: ${formatNumber(softLeft)} · then exceed until daily ${formatNumber(dailyCap)}`
+        : undefined,
       reset: formatReset(dailyResetAt),
     });
   }
@@ -315,6 +357,8 @@ export function LiveUsageCard({
             sublabel={b.sublabel}
             source={b.source}
             reset={b.reset}
+            softMode={b.softMode}
+            footerLeft={b.footerLeft}
           />
         ))}
       </div>
@@ -349,7 +393,7 @@ export function LiveUsageCard({
           )}
           {perModelPromptsBypassedByAddon && (
             <p className="text-[10px] text-muted-foreground">
-              Per-model prompt caps bypassed · Input/Output soft (pooled into daily, no separate hard cap) · global Prompts still apply
+              Per-model prompt caps bypassed · Input/Output soft base can exceed via add-on until Daily Total · global Prompts still apply
             </p>
           )}
           {(addonModelTokenCaps || []).length > 0 && (
@@ -369,8 +413,9 @@ export function LiveUsageCard({
         <p className="text-[10px] text-muted-foreground leading-relaxed border-t border-border/40 pt-2">
           Daily token limit: first hop of each prompt at 100% In+Out (cache included); later tool hops at Settings weight % (default 10%). Logs still store 100%.
           Peak display {formatNumber(usageToday.promptTokens)}; amanai-style full In{" "}
-          {formatNumber(usageToday.fullInputTokens || 0)}. API calls{" "}
-          {formatNumber(usageToday.hopCount || 0)}; prompts {formatNumber(usageToday.requests)}.
+          {formatNumber(usageToday.fullInputTokens || 0)}. Prompts/API bars = sliding last{" "}
+          {limits.promptLimitWindow || "5h"} (not calendar day). Today:{" "}
+          {formatNumber(usageToday.requests)} prompts · {formatNumber(usageToday.hopCount || 0)} API hops.
         </p>
       )}
       {modelLimits.length > 0 && (

@@ -101,22 +101,22 @@ export interface LiveUsagePayload {
   };
   limits: {
     dailyTokenLimit: number;
-    dailyTokenLimitSource: "override" | "global" | "none";
+    dailyTokenLimitSource: "override" | "global" | "none" | "addon";
     dailyInputTokenLimit: number;
-    dailyInputTokenLimitSource: "override" | "global" | "none";
+    dailyInputTokenLimitSource: "override" | "global" | "none" | "addon";
     dailyOutputTokenLimit: number;
-    dailyOutputTokenLimitSource: "override" | "global" | "none";
+    dailyOutputTokenLimitSource: "override" | "global" | "none" | "addon";
     monthlyTokenLimit: number;
-    monthlyTokenLimitSource: "override" | "global" | "none";
+    monthlyTokenLimitSource: "override" | "global" | "none" | "addon";
     promptLimit: number;
     promptLimitWindow: string;
-    promptLimitSource: "override" | "global" | "none";
+    promptLimitSource: "override" | "global" | "none" | "addon";
     apiCallLimit?: number;
     apiCallLimitWindow?: string;
-    apiCallLimitSource?: "override" | "global" | "none";
+    apiCallLimitSource?: "override" | "global" | "none" | "addon";
     perModelPromptLimit: number;
     perModelPromptLimitWindow: string;
-    perModelPromptLimitSource: "override" | "global" | "none";
+    perModelPromptLimitSource: "override" | "global" | "none" | "addon";
   };
   remaining: {
     input: number | null;

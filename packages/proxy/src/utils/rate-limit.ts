@@ -1,5 +1,5 @@
 import { db } from "../db/index.js";
-import { requestLogs, modelLimits, apiKeys } from "../db/schema.js";
+import { requestLogs, modelLimits } from "../db/schema.js";
 import { sql, and, eq, gte, inArray, type SQL } from "drizzle-orm";
 import { stripProviderPrefix } from "./model-catalog.js";
 
@@ -188,8 +188,8 @@ export async function findActiveOverrideInTx(
 }
 
 /**
- * Count prompts as distinct turns (1 turn = 1 prompt) within a fixed window.
- * Window start is read from the first key ID (pass primary/window owner first).
+ * Count prompts as distinct turns (1 turn = 1 prompt) in a sliding window
+ * (last N hours from now). Tool hops sharing the same turn_id do not add extra.
  */
 export async function checkPromptLimit(
   apiKeyId: number | number[],
@@ -201,27 +201,13 @@ export async function checkPromptLimit(
   if (windowMs <= 0) return { allowed: true, remaining: -1, resetMs: 0, used: 0 };
 
   const apiKeyIds = normalizeKeyIds(apiKeyId);
-  const windowKeyId = apiKeyIds[0];
-
-  const keyRecord = (await db.select({ promptWindowStart: apiKeys.promptWindowStart }).from(apiKeys).where(eq(apiKeys.id, windowKeyId)))[0];
-  
-  let windowStartMs = 0;
-  if (keyRecord?.promptWindowStart) {
-    windowStartMs = Date.parse(keyRecord.promptWindowStart.replace(" ", "T") + "Z");
-  }
-
   const nowMs = Date.now();
-
-  // If window has expired or doesn't exist, this request will start a new window
-  if (!windowStartMs || nowMs >= windowStartMs + windowMs) {
-    return { allowed: true, remaining: promptLimit, resetMs: windowMs, used: 0 };
-  }
-
-  const windowStartDate = new Date(windowStartMs);
+  const windowStartDate = new Date(nowMs - windowMs);
 
   // 1 turn_id = 1 prompt (tool hops in the same turn do not add extra)
   const usage = await db.select({
     count: sql<number>`COUNT(DISTINCT ${requestLogs.turnId})`,
+    oldest: sql<string | null>`MIN(${requestLogs.createdAt})`,
   })
     .from(requestLogs)
     .where(and(
@@ -232,14 +218,20 @@ export async function checkPromptLimit(
     ));
 
   const used = Number(usage[0]?.count) || 0;
-  const resetMs = Math.max(0, windowStartMs + windowMs - nowMs);
-  
+  const oldestRaw = usage[0]?.oldest;
+  let resetMs = windowMs;
+  if (oldestRaw) {
+    const oldestMs = Date.parse(String(oldestRaw).replace(" ", "T") + (String(oldestRaw).includes("Z") || String(oldestRaw).includes("+") ? "" : "Z"));
+    if (Number.isFinite(oldestMs)) {
+      resetMs = Math.max(0, oldestMs + windowMs - nowMs);
+    }
+  }
+
   return { allowed: used < promptLimit, remaining: Math.max(0, promptLimit - used), resetMs, used };
 }
 
 /**
- * Count API calls (every successful upstream hop) within a fixed window.
- * Uses rate_window_start on the window-owner key (first id).
+ * Count API calls (every successful upstream hop) in a sliding window (last N hours).
  */
 export async function checkApiCallLimit(
   apiKeyId: number | number[],
@@ -251,22 +243,13 @@ export async function checkApiCallLimit(
   if (windowMs <= 0) return { allowed: true, remaining: -1, resetMs: 0, used: 0 };
 
   const apiKeyIds = normalizeKeyIds(apiKeyId);
-  const windowKeyId = apiKeyIds[0];
-
-  const keyRecord = (await db.select({ rateWindowStart: apiKeys.rateWindowStart }).from(apiKeys).where(eq(apiKeys.id, windowKeyId)))[0];
-
-  let windowStartMs = 0;
-  if (keyRecord?.rateWindowStart) {
-    windowStartMs = Date.parse(String(keyRecord.rateWindowStart).replace(" ", "T") + "Z");
-  }
-
   const nowMs = Date.now();
-  if (!windowStartMs || nowMs >= windowStartMs + windowMs) {
-    return { allowed: true, remaining: apiCallLimit, resetMs: windowMs, used: 0 };
-  }
+  const windowStartDate = new Date(nowMs - windowMs);
 
-  const windowStartDate = new Date(windowStartMs);
-  const usage = await db.select({ count: sql<number>`count(*)` })
+  const usage = await db.select({
+    count: sql<number>`count(*)`,
+    oldest: sql<string | null>`MIN(${requestLogs.createdAt})`,
+  })
     .from(requestLogs)
     .where(and(
       keyIdMatch(apiKeyIds),
@@ -275,23 +258,36 @@ export async function checkApiCallLimit(
     ));
 
   const used = Number(usage[0]?.count) || 0;
-  const resetMs = Math.max(0, windowStartMs + windowMs - nowMs);
+  const oldestRaw = usage[0]?.oldest;
+  let resetMs = windowMs;
+  if (oldestRaw) {
+    const oldestMs = Date.parse(String(oldestRaw).replace(" ", "T") + (String(oldestRaw).includes("Z") || String(oldestRaw).includes("+") ? "" : "Z"));
+    if (Number.isFinite(oldestMs)) {
+      resetMs = Math.max(0, oldestMs + windowMs - nowMs);
+    }
+  }
   return { allowed: used < apiCallLimit, remaining: Math.max(0, apiCallLimit - used), resetMs, used };
 }
 
 export async function getApiCallWindowResetMs(apiKeyId: number | number[], windowMs: number): Promise<number> {
   if (windowMs <= 0) return 0;
   const apiKeyIds = normalizeKeyIds(apiKeyId);
-  const windowKeyId = apiKeyIds[0];
-  const keyRecord = (await db.select({ rateWindowStart: apiKeys.rateWindowStart }).from(apiKeys).where(eq(apiKeys.id, windowKeyId)))[0];
   const nowMs = Date.now();
-  if (keyRecord?.rateWindowStart) {
-    const windowStartMs = Date.parse(String(keyRecord.rateWindowStart).replace(" ", "T") + "Z");
-    if (nowMs < windowStartMs + windowMs) {
-      return Math.max(0, windowStartMs + windowMs - nowMs);
-    }
-  }
-  return windowMs;
+  const windowStartDate = new Date(nowMs - windowMs);
+  const row = await db.select({
+    oldest: sql<string | null>`MIN(${requestLogs.createdAt})`,
+  })
+    .from(requestLogs)
+    .where(and(
+      keyIdMatch(apiKeyIds),
+      gte(requestLogs.createdAt, windowStartDate),
+      sql`status_code BETWEEN 200 AND 299`,
+    ));
+  const oldestRaw = row[0]?.oldest;
+  if (!oldestRaw) return windowMs;
+  const oldestMs = Date.parse(String(oldestRaw).replace(" ", "T") + (String(oldestRaw).includes("Z") || String(oldestRaw).includes("+") ? "" : "Z"));
+  if (!Number.isFinite(oldestMs)) return windowMs;
+  return Math.max(0, oldestMs + windowMs - nowMs);
 }
 
 export type CheckModelPromptLimitOpts = {
@@ -358,33 +354,7 @@ export async function checkModelPromptLimit(
   }
 
   const nowMs = Date.now();
-  let windowStartMs = 0;
-
-  // For model limits, we store the window start on the active override if it exists.
-  // If there's no override (using default limit), we can't easily track the window start per model.
-  // In that case, we fall back to a clock-aligned fixed window.
-  if (activeOverride && activeOverride.promptWindowStart) {
-    windowStartMs = Date.parse(activeOverride.promptWindowStart.replace(" ", "T") + "Z");
-
-    if (nowMs >= windowStartMs + windowMs) {
-      return {
-        allowed: true,
-        remaining: effectiveLimit,
-        resetMs: windowMs,
-        used: 0,
-        effectiveLimit,
-        source,
-        overrideModel: activeOverride.model,
-        overrideIsPattern: !!activeOverride.isPattern,
-      };
-    }
-  } else {
-    // No override at all (using default limit) OR override exists but no window start yet.
-    // Use clock-aligned fixed window fallback.
-    windowStartMs = Math.floor(nowMs / windowMs) * windowMs;
-  }
-
-  const windowStartDate = new Date(windowStartMs);
+  const windowStartDate = new Date(nowMs - windowMs);
   const modelMatch =
     activeOverride?.isPattern && activeOverride.model
       ? getPatternModelMatchCondition(activeOverride.model)
@@ -392,6 +362,7 @@ export async function checkModelPromptLimit(
 
   const usage = await db.select({
     count: sql<number>`COUNT(DISTINCT ${requestLogs.turnId})`,
+    oldest: sql<string | null>`MIN(${requestLogs.createdAt})`,
   })
     .from(requestLogs)
     .where(and(
@@ -403,7 +374,14 @@ export async function checkModelPromptLimit(
     ));
 
   const used = Number(usage[0]?.count) || 0;
-  const resetMs = Math.max(0, windowStartMs + windowMs - nowMs);
+  const oldestRaw = usage[0]?.oldest;
+  let resetMs = windowMs;
+  if (oldestRaw) {
+    const oldestMs = Date.parse(String(oldestRaw).replace(" ", "T") + (String(oldestRaw).includes("Z") || String(oldestRaw).includes("+") ? "" : "Z"));
+    if (Number.isFinite(oldestMs)) {
+      resetMs = Math.max(0, oldestMs + windowMs - nowMs);
+    }
+  }
 
   return {
     allowed: used < effectiveLimit,
@@ -418,47 +396,54 @@ export async function checkModelPromptLimit(
 }
 
 /**
- * Find how many ms until the window resets (sliding window).
- * The window resets when the OLDEST counted request in the window expires.
+ * Ms until the oldest prompt in the sliding window ages out.
  */
 export async function getWindowResetMs(apiKeyId: number | number[], windowMs: number, model?: string): Promise<number> {
   if (windowMs <= 0) return 0;
-  
+
   const nowMs = Date.now();
   const apiKeyIds = normalizeKeyIds(apiKeyId);
-  const windowKeyId = apiKeyIds[0];
-  
+  const windowStartDate = new Date(nowMs - windowMs);
+
   if (model) {
     const normalizedModel = await normalizeModelForLimit(model);
+    const activeOverride = await findActiveOverride(apiKeyIds[0], normalizedModel);
+    const modelMatch =
+      activeOverride?.isPattern && activeOverride.model
+        ? getPatternModelMatchCondition(activeOverride.model)
+        : getModelMatchCondition(normalizedModel);
 
-    // Model specific limit — match any variant that normalizes to the same base,
-    // including pattern matches (substring, case-insensitive).
-    const activeOverride = await findActiveOverride(windowKeyId, normalizedModel);
-    
-    if (activeOverride && activeOverride.promptWindowStart) {
-      const windowStartMs = Date.parse(activeOverride.promptWindowStart.replace(" ", "T") + "Z");
-      if (nowMs < windowStartMs + windowMs) {
-        return Math.max(0, windowStartMs + windowMs - nowMs);
-      }
-    } else {
-      // No override (using default limit) OR override exists but no window start yet.
-      // Use clock-aligned fixed window fallback.
-      const windowStartMs = Math.floor(nowMs / windowMs) * windowMs;
-      return Math.max(0, windowStartMs + windowMs - nowMs);
-    }
-    
-    return windowMs;
+    const row = await db.select({
+      oldest: sql<string | null>`MIN(${requestLogs.createdAt})`,
+    })
+      .from(requestLogs)
+      .where(and(
+        keyIdMatch(apiKeyIds),
+        modelMatch,
+        gte(requestLogs.createdAt, windowStartDate),
+        sql`status_code BETWEEN 200 AND 299`,
+        sql`turn_id IS NOT NULL`,
+      ));
+    const oldestRaw = row[0]?.oldest;
+    if (!oldestRaw) return windowMs;
+    const oldestMs = Date.parse(String(oldestRaw).replace(" ", "T") + (String(oldestRaw).includes("Z") || String(oldestRaw).includes("+") ? "" : "Z"));
+    if (!Number.isFinite(oldestMs)) return windowMs;
+    return Math.max(0, oldestMs + windowMs - nowMs);
   }
-  
-  // Global prompt limit
-  const keyRecord = (await db.select({ promptWindowStart: apiKeys.promptWindowStart }).from(apiKeys).where(eq(apiKeys.id, windowKeyId)))[0];
-  
-  if (keyRecord?.promptWindowStart) {
-    const windowStartMs = Date.parse(keyRecord.promptWindowStart.replace(" ", "T") + "Z");
-    if (nowMs < windowStartMs + windowMs) {
-      return Math.max(0, windowStartMs + windowMs - nowMs);
-    }
-  }
-  
-  return windowMs;
+
+  const row = await db.select({
+    oldest: sql<string | null>`MIN(${requestLogs.createdAt})`,
+  })
+    .from(requestLogs)
+    .where(and(
+      keyIdMatch(apiKeyIds),
+      gte(requestLogs.createdAt, windowStartDate),
+      sql`status_code BETWEEN 200 AND 299`,
+      sql`turn_id IS NOT NULL`,
+    ));
+  const oldestRaw = row[0]?.oldest;
+  if (!oldestRaw) return windowMs;
+  const oldestMs = Date.parse(String(oldestRaw).replace(" ", "T") + (String(oldestRaw).includes("Z") || String(oldestRaw).includes("+") ? "" : "Z"));
+  if (!Number.isFinite(oldestMs)) return windowMs;
+  return Math.max(0, oldestMs + windowMs - nowMs);
 }

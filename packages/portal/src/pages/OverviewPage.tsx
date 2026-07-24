@@ -31,16 +31,35 @@ const TOOLTIP_STYLE = {
   labelStyle: { color: "hsl(210, 14%, 94%)" },
 };
 
-function ProgressBar({ value, max, label, sublabel }: { value: number; max: number; label: string; sublabel?: string }) {
+function ProgressBar({
+  value,
+  max,
+  label,
+  sublabel,
+  softMode,
+}: {
+  value: number;
+  max: number;
+  label: string;
+  sublabel?: string;
+  softMode?: boolean;
+}) {
+  const overSoft = !!(softMode && max > 0 && value > max);
   const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
-  const danger = pct > 85;
-  const warn = pct > 65;
+  const danger = !softMode && pct > 85;
+  const warn = softMode ? overSoft || pct > 85 : pct > 65;
   return (
     <div className="space-y-1">
-      <div className="flex items-center justify-between text-xs">
+      <div className="flex items-center justify-between text-xs gap-2">
         <span className="text-muted-foreground">{label}</span>
         <span className={danger ? "text-red-400" : warn ? "text-yellow-400" : "text-foreground"}>
           {formatNumber(value)} / {formatNumber(max)}
+          {softMode && <span className="text-muted-foreground ml-1">soft</span>}
+          {overSoft && (
+            <span className="text-yellow-400 ml-1">
+              · +{formatNumber(value - max)} exceed
+            </span>
+          )}
           {sublabel && <span className="text-muted-foreground ml-1">{sublabel}</span>}
         </span>
       </div>
@@ -236,6 +255,7 @@ export default function OverviewPage() {
     const sourceLabel = (src?: string) => {
       if (src === "override") return t("override");
       if (src === "global") return t("global");
+      if (src === "addon") return "base + add-on";
       return "";
     };
     const formatReset = (iso?: string | null) => {
@@ -248,7 +268,20 @@ export default function OverviewPage() {
       } catch { return ""; }
     };
 
-    const bars: Array<{ label: string; value: number; max: number; sublabel?: string; source?: string; reset?: string }> = [];
+    const dailyCap = limits.dailyTokenLimit || 0;
+    const dailyUsed =
+      usageToday.totalTokens ?? usageToday.promptTokens + usageToday.completionTokens;
+    const dailyLeft = dailyCap > 0 ? Math.max(0, dailyCap - dailyUsed) : null;
+    const bars: Array<{
+      label: string;
+      value: number;
+      max: number;
+      sublabel?: string;
+      source?: string;
+      reset?: string;
+      softMode?: boolean;
+      footer?: string;
+    }> = [];
     if (
       limits.dailyInputTokenLimit > 0 ||
       (user.dailyTokenBreakdown?.bypassIo && (user.dailyTokenBreakdown.inputBase || 0) > 0)
@@ -256,6 +289,9 @@ export default function OverviewPage() {
       const inputMax = user.dailyTokenBreakdown?.bypassIo
         ? user.dailyTokenBreakdown.inputBase || limits.dailyInputTokenLimit
         : limits.dailyInputTokenLimit;
+      const used = usageToday.promptTokens;
+      const overSoft = !!(user.dailyTokenBreakdown?.bypassIo && inputMax > 0 && used > inputMax);
+      const softLeft = Math.max(0, inputMax - used);
       const inputBd = formatInputBreakdown(
         usageToday.billablePromptTokens,
         usageToday.cachedTokens,
@@ -263,16 +299,22 @@ export default function OverviewPage() {
       );
       bars.push({
         label: t("Input Tokens"),
-        value: usageToday.promptTokens,
+        value: used,
         max: inputMax,
+        softMode: !!user.dailyTokenBreakdown?.bypassIo,
         sublabel: user.dailyTokenBreakdown?.bypassIo
-          ? `soft · pooled · ${inputBd.label !== inputBd.total ? inputBd.label : "tokens"}`
+          ? `until daily ${formatNumber(dailyCap)} · ${inputBd.label !== inputBd.total ? inputBd.label : "tokens"}`
           : inputBd.label !== inputBd.total
             ? inputBd.label
             : "tokens",
         source: user.dailyTokenBreakdown?.bypassIo
-          ? "no separate hard cap"
+          ? "add-on extends past soft"
           : sourceLabel(limits.dailyInputTokenLimitSource),
+        footer: user.dailyTokenBreakdown?.bypassIo
+          ? overSoft
+            ? `Exceeding soft · Daily remaining: ${dailyLeft != null ? formatNumber(dailyLeft) : "—"} / ${formatNumber(dailyCap)}`
+            : `Soft left: ${formatNumber(softLeft)} · then exceed until daily ${formatNumber(dailyCap)}`
+          : undefined,
         reset: formatReset(user.dailyResetAt),
       });
     }
@@ -283,14 +325,25 @@ export default function OverviewPage() {
       const outputMax = user.dailyTokenBreakdown?.bypassIo
         ? user.dailyTokenBreakdown.outputBase || limits.dailyOutputTokenLimit
         : limits.dailyOutputTokenLimit;
+      const used = usageToday.completionTokens;
+      const overSoft = !!(user.dailyTokenBreakdown?.bypassIo && outputMax > 0 && used > outputMax);
+      const softLeft = Math.max(0, outputMax - used);
       bars.push({
         label: t("Output Tokens"),
-        value: usageToday.completionTokens,
+        value: used,
         max: outputMax,
-        sublabel: user.dailyTokenBreakdown?.bypassIo ? "soft · pooled into daily" : "tokens",
+        softMode: !!user.dailyTokenBreakdown?.bypassIo,
+        sublabel: user.dailyTokenBreakdown?.bypassIo
+          ? `until daily ${formatNumber(dailyCap)}`
+          : "tokens",
         source: user.dailyTokenBreakdown?.bypassIo
-          ? "no separate hard cap"
+          ? "add-on extends past soft"
           : sourceLabel(limits.dailyOutputTokenLimitSource),
+        footer: user.dailyTokenBreakdown?.bypassIo
+          ? overSoft
+            ? `Exceeding soft · Daily remaining: ${dailyLeft != null ? formatNumber(dailyLeft) : "—"} / ${formatNumber(dailyCap)}`
+            : `Soft left: ${formatNumber(softLeft)} · then exceed until daily ${formatNumber(dailyCap)}`
+          : undefined,
         reset: formatReset(user.dailyResetAt),
       });
     }
@@ -304,7 +357,7 @@ export default function OverviewPage() {
           : "tokens";
       bars.push({
         label: t("Daily Limit"),
-        value: (usageToday.totalTokens ?? usageToday.promptTokens + usageToday.completionTokens),
+        value: dailyUsed,
         max: limits.dailyTokenLimit,
         sublabel: stack,
         source: bd && bd.addonBonus > 0 ? "base + add-on" : sourceLabel(limits.dailyTokenLimitSource),
@@ -326,7 +379,7 @@ export default function OverviewPage() {
         label: `${t("Prompt Limit")} (${limits.promptLimitWindow})`,
         value: usageToday.promptCount ?? 0,
         max: limits.promptLimit,
-        sublabel: t("Prompts"),
+        sublabel: `${t("Prompts")} · last window`,
         source: sourceLabel(limits.promptLimitSource),
         reset: formatReset(user.promptResetAt),
       });
@@ -336,7 +389,7 @@ export default function OverviewPage() {
         label: `${t("API Call Limit")} (${limits.rateLimitWindow})`,
         value: usageToday.apiCallCount ?? 0,
         max: limits.rateLimit,
-        sublabel: t("API calls"),
+        sublabel: `${t("API calls")} · last window`,
         source: sourceLabel(limits.rateLimitSource),
         reset: formatReset(user.apiCallResetAt),
       });
@@ -359,7 +412,7 @@ export default function OverviewPage() {
             ))}
             {user.perModelPromptsBypassedByAddon && (
               <p className="text-[10px] text-muted-foreground">
-                Per-model prompt caps bypassed · global Prompts still apply
+                Per-model prompt caps bypassed · Input/Output soft can exceed via add-on until Daily Total · global Prompts still apply
               </p>
             )}
             {(user.addonModelTokenCaps || []).length > 0 && (
@@ -377,9 +430,19 @@ export default function OverviewPage() {
         <div className="space-y-2">
           {bars.map((b) => (
             <div key={b.label}>
-              <ProgressBar label={b.label} value={b.value} max={b.max} sublabel={b.sublabel} />
-              <div className="flex items-center gap-2 text-[10px] text-muted-foreground mt-0.5 pl-0.5">
-                {b.source && <span>{t("Source")}: {b.source}</span>}
+              <ProgressBar
+                label={b.label}
+                value={b.value}
+                max={b.max}
+                sublabel={b.sublabel}
+                softMode={b.softMode}
+              />
+              <div className="flex items-center gap-2 text-[10px] text-muted-foreground mt-0.5 pl-0.5 flex-wrap">
+                {b.footer ? (
+                  <span>{b.footer}{b.source ? ` · ${b.source}` : ""}</span>
+                ) : (
+                  b.source && <span>{t("Source")}: {b.source}</span>
+                )}
                 {b.reset && <span>· {b.reset}</span>}
               </div>
             </div>

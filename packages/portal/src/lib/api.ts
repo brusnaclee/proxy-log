@@ -31,7 +31,7 @@ async function request<T>(
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type LimitSource = "override" | "global" | "none";
+export type LimitSource = "override" | "global" | "none" | "addon";
 
 export interface MeResponse {
   discordUserId: string;

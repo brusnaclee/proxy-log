@@ -215,12 +215,39 @@ export function sumAddonMonthlyTokenBonus(active: ActiveAddon[]): number {
 }
 
 /**
- * When any add-on is active:
- * - Separate input/output hard caps are NOT enforced (pooled into daily)
- * - Daily pool = (input + output if either set, else key/global daily) + pack
+ * Daily base passed into resolveAddonQuotaStack.
+ * Without add-on: only explicit key daily (or trial resolved limit) — never global Phantom daily.
+ * With add-on: full resolveKeyDailyTokenLimit (global OK as Phantom fallback when I/O unset).
+ */
+export function stackBaseDailyForKey(opts: {
+  hasActiveAddon: boolean;
+  isTrial?: boolean;
+  keyDailyTokenLimit?: number | null;
+  resolvedKeyOrGlobalDaily: number;
+}): number {
+  if (opts.hasActiveAddon || opts.isTrial) {
+    return Math.max(0, opts.resolvedKeyOrGlobalDaily || 0);
+  }
+  return Math.max(0, Number(opts.keyDailyTokenLimit) || 0);
+}
+
+/**
+ * Quota stacking rules:
+ *
+ * Without add-on (Phantom / Premium / Pro):
+ * - Hard caps = Input + Output only (or trial / explicit key daily)
+ * - Do NOT apply global daily — Daily Total is unlimited unless key/trial sets one
+ *
+ * With any add-on active:
+ * - Separate input/output hard caps are NOT enforced (soft / pooled into daily)
+ * - Daily hard cap = (input + output if either set, else key/global daily) + pack
  *   e.g. In 2M + Out 5M + pack 10M → 17M
  *   e.g. only daily 2M + pack 10M → 12M
- * - UI still shows Input/Output indicators (soft / informational)
+ * - UI still shows Input/Output as soft bases that can exceed until Daily Total
+ *
+ * Callers must pass keyOrGlobalDaily carefully:
+ * - With add-on / trial → resolveKeyDailyTokenLimit (may include global)
+ * - Without add-on → key.dailyTokenLimit only (never global)
  */
 export function resolveAddonQuotaStack(opts: {
   hasActiveAddon: boolean;
