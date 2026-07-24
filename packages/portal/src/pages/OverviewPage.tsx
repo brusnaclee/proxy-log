@@ -6,10 +6,10 @@ import {
 import {
   Activity, MessageSquare, Download, DollarSign, Users, Wrench, Zap,
   Copy, Check, ChevronDown, ChevronUp, Bell, AlertTriangle, TrendingUp,
-  ExternalLink, Info,
+  Info,
 } from "lucide-react";
 import { PeriodSelector, type PeriodKey } from "@/components/PeriodSelector";
-import { api, type MeResponse, type TopError, type RecapStatus } from "@/lib/api";
+import { api, type MeResponse, type TopError } from "@/lib/api";
 import { formatNumber, formatCost, formatInputBreakdown } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n";
 
@@ -105,7 +105,6 @@ export default function OverviewPage() {
   const [compare, setCompare] = useState<{ today: any; yesterday: any } | null>(null);
   const [forecast, setForecast] = useState<any>(null);
   const [user, setUser] = useState<MeResponse | null>(null);
-  const [recap, setRecap] = useState<RecapStatus | null>(null);
   const [expandedError, setExpandedError] = useState<number | null>(null);
 
   const [loading, setLoading] = useState(true);
@@ -132,9 +131,8 @@ export default function OverviewPage() {
       api.stats.topErrors(period).catch(() => []),
       api.stats.compare().catch(() => null),
       api.stats.forecast().catch(() => null),
-      api.recap.status().catch(() => null),
     ])
-      .then(([periodData, userData, errorsData, compareData, forecastData, recapData]) => {
+      .then(([periodData, userData, errorsData, compareData, forecastData]) => {
         const [statsRes, tsRes, modelRes, ideRes] = periodData as [any, any[], any[], any[]];
         setStats(statsRes);
         setTimeseries(tsRes);
@@ -144,7 +142,6 @@ export default function OverviewPage() {
         setTopErrors(errorsData as TopError[]);
         setCompare(compareData as any);
         setForecast(forecastData as any);
-        setRecap(recapData as RecapStatus | null);
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load data"))
       .finally(() => setLoading(false));
@@ -222,31 +219,6 @@ export default function OverviewPage() {
         </span>
       </div>
     );
-  };
-
-  const renderRecapCTA = () => {
-    if (!recap) return null;
-    if (recap.isOpen && recap.recapUrl) {
-      return (
-        <a
-          href={recap.recapUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 px-4 py-2 bg-primary/10 border border-primary/30 text-primary text-sm font-medium rounded-lg hover:bg-primary/20 transition-colors animate-fade-in"
-        >
-          <ExternalLink className="w-3.5 h-3.5" />
-          {t("View Recap")}
-        </a>
-      );
-    }
-    if (!recap.isOpen && recap.openDate) {
-      return (
-        <span className="text-xs text-muted-foreground">
-          {t("Recap opens on")} {new Date(recap.openDate).toLocaleDateString()}
-        </span>
-      );
-    }
-    return null;
   };
 
   const renderLimitsCard = () => {
@@ -821,7 +793,6 @@ export default function OverviewPage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {renderRecapCTA()}
           <PeriodSelector value={period} onChange={setPeriod} />
         </div>
       </div>

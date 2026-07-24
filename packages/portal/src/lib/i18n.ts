@@ -104,6 +104,32 @@ const dict: Record<string, Record<Lang, string>> = {
   hours: { id: "jam", en: "hours" },
   "View Recap": { id: "Lihat Rekap", en: "View Recap" },
   "Recap opens on": { id: "Rekap dibuka pada", en: "Recap opens on" },
+  "Recap is almost ready": { id: "Rekap hampir siap", en: "Recap is almost ready" },
+  "Recap ready in days": {
+    id: "Rekap kamu siap dalam {n} hari lagi.",
+    en: "Your recap will be ready in {n} days.",
+  },
+  "Recap opens soon": {
+    id: "Rekap sebentar lagi dibuka.",
+    en: "Recap opens soon.",
+  },
+  "Opens on": { id: "Dibuka", en: "Opens on" },
+  until: { id: "sampai", en: "until" },
+  "Got it": { id: "Mengerti", en: "Got it" },
+  "Your monthly recap is ready": {
+    id: "Recap bulanan kamu sudah siap",
+    en: "Your monthly recap is ready",
+  },
+  "Open your Wrapped-style coding story for this month.": {
+    id: "Buka cerita ngoding bergaya Wrapped untuk bulan ini.",
+    en: "Open your Wrapped-style coding story for this month.",
+  },
+  Close: { id: "Tutup", en: "Close" },
+  "Show now": { id: "Tampilkan sekarang", en: "Show now" },
+  "Failed to open recap": {
+    id: "Gagal membuka rekap",
+    en: "Failed to open recap",
+  },
   Notifications: { id: "Notifikasi", en: "Notifications" },
   "No notifications": { id: "Tidak ada notifikasi", en: "No notifications" },
   Online: { id: "Online", en: "Online" },

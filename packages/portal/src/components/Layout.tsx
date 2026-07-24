@@ -4,6 +4,7 @@ import { LayoutDashboard, Key, Activity, Settings, LogOut, Menu, X, Zap, Boxes }
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
+import RecapGate from "./RecapGate";
 
 export default function Layout() {
   const navigate = useNavigate();
@@ -197,6 +198,8 @@ export default function Layout() {
           ))}
         </div>
       </nav>
+
+      <RecapGate />
     </div>
   );
 }

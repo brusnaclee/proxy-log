@@ -1346,9 +1346,83 @@ portal.get("/recap/status", async (c) => {
   const primaryKey = userKeys.find(k => !k.isTrial && k.isActive) || userKeys.find(k => k.isActive) || userKeys[0];
   const primaryKeyName = primaryKey?.name ?? null;
 
+  // Days until open (countdown phase) or days left open (inclusive-ish).
+  let daysUntilOpen: number | null = null;
+  let daysUntilClose: number | null = null;
+  const day = window.todayDay;
+  if (!window.isOpen) {
+    daysUntilOpen = Math.max(0, window.openDay - day);
+  } else if (day <= 5) {
+    daysUntilClose = Math.max(0, 5 - day);
+  } else {
+    // Open in end-of-month segment: remaining days in month + 5 of next month.
+    const [y, m] = window.yearMonth.split("-").map(Number);
+    const dim = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    daysUntilClose = Math.max(0, (dim - day) + 5);
+  }
+
+  // phase: hidden | countdown (panel visible, not open) | open
+  let phase: "hidden" | "countdown" | "open" = "hidden";
+  if (window.isOpen) phase = "open";
+  else if (window.panelVisible) phase = "countdown";
+
   return c.json({
     ...window,
+    phase,
+    daysUntilOpen,
+    daysUntilClose,
     recapUrl: primaryKeyName ? `/recap/${encodeURIComponent(primaryKeyName)}` : null,
+    openDate: !window.isOpen
+      ? `${window.yearMonth}-${String(window.openDay).padStart(2, "0")}`
+      : null,
+    closeHint: `5 ${window.closeMonthLabel}`,
+  });
+});
+
+/** Prepare (generate/cache) current user's recap and return URL + day token. */
+portal.post("/recap/open", async (c) => {
+  const discordUserId = getPortalDiscordUserId(c)!;
+  const window = getRecapWindow();
+  if (!window.isOpen) {
+    return c.json({ error: "Recap window is closed", message: window.message, ...window }, 403);
+  }
+
+  const port = process.env.PORT || "3000";
+  const secret = process.env.INTERNAL_API_SECRET || "";
+  let data: any = null;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/admin/internal/recap/${discordUserId}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-internal-secret": secret,
+      },
+      body: JSON.stringify({ interactive: true, yearMonth: window.yearMonth }),
+      signal: AbortSignal.timeout(120_000),
+    });
+    data = await res.json().catch(() => null);
+    if (!res.ok) {
+      return c.json(
+        { error: data?.error || `Generate failed (${res.status})`, details: data },
+        res.status as 400,
+      );
+    }
+  } catch (err: any) {
+    return c.json({ error: err?.message || "Generate failed" }, 502);
+  }
+
+  const name = data?.apiKeyName;
+  if (!name) {
+    return c.json({ error: "No API key / recap for this account" }, 404);
+  }
+  const token = data?.shareToken ? String(data.shareToken) : "";
+  const qs = token ? `?t=${encodeURIComponent(token)}&from=portal` : "?from=portal";
+  return c.json({
+    success: true,
+    yearMonth: window.yearMonth,
+    monthLabel: window.monthLabel,
+    degraded: !!data?.degraded,
+    recapUrl: `/recap/${encodeURIComponent(name)}${qs}`,
   });
 });
 

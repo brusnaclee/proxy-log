@@ -272,9 +272,29 @@ export interface ModelEntry {
 
 export interface RecapStatus {
   isOpen: boolean;
+  panelVisible?: boolean;
+  yearMonth?: string;
+  monthLabel?: string;
+  openDay?: number;
+  openMonthLabel?: string;
+  closeMonthLabel?: string;
+  message?: string;
+  todayDay?: number;
+  phase?: "hidden" | "countdown" | "open";
+  daysUntilOpen?: number | null;
+  daysUntilClose?: number | null;
   openDate?: string | null;
-  closeDate?: string | null;
+  closeHint?: string | null;
   recapUrl: string | null;
+}
+
+export interface RecapOpenResponse {
+  success: boolean;
+  recapUrl: string;
+  yearMonth?: string;
+  monthLabel?: string;
+  degraded?: boolean;
+  error?: string;
 }
 
 export interface NotificationsResponse {
@@ -375,6 +395,7 @@ export const models = {
 
 export const recap = {
   status: () => request<RecapStatus>("/recap/status", "GET"),
+  open: () => request<RecapOpenResponse>("/recap/open", "POST"),
 };
 
 // ─── Notifications ────────────────────────────────────────────────────────────

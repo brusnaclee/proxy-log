@@ -19,7 +19,9 @@ Dual surface: Discord teaser + animated web story at `/recap/:apiKeyName`.
 Aggregates from `request_logs` / `chat_sessions` only (privacy: no previews/transcripts).
 Additive `stats.story` enricher adds addon/burn/providers/schedule/token-saver/eggs without replacing core fields.
 
-## Ops
+## Portal dashboard
 
-- Narrative model: `RECAP_MODEL` env.
-- Disable AI → template narrative still works (`degraded: true`).
+- From the **25th** (panel visible) until open: one-time popup “ready in N days”; dismiss stored in `localStorage` until the open window.
+- While **open** (H-2 → day 5 next month): popup “Show now / Close”; dedicated floating **Lihat Rekap** button always available.
+- Show now / button → loading stages → `POST /portal/api/recap/open` (generate for that Discord user) → fade into `/recap/:apiKeyName`.
+- After window closes, button + popups hide (same as Discord).
