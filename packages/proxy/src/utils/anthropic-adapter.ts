@@ -282,9 +282,9 @@ export function convertResponseToOpenAI(anthropic: AnthropicResponse): OpenAIRes
     ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
   };
 
-  if (!message.content && reasoningContent) {
-    message.content = reasoningContent;
-  }
+  // Do NOT copy reasoning into content here — proxy applies per-IDE profile
+  // (backfill vs keep_separate). Copying caused doubled "TheThe user user…"
+  // in Continue when both fields were shown.
 
   return {
     id: anthropic.id,

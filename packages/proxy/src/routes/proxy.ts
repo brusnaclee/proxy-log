@@ -154,6 +154,16 @@ import {
 	looksLikeGeminiContentsBody,
 	convertGeminiContentsToOpenAI,
 } from '../utils/gemini-contents-adapter.js';
+import {
+	GROK_TRANSIENT_MAX_ATTEMPTS,
+	grokTransientBackoffMs,
+	isGrokCliModel,
+	isGrokTransientErrorBody,
+} from '../utils/grok-resilience.js';
+import {
+	resolveReasoningProfile,
+	type ReasoningProfile,
+} from '../utils/reasoning-profile.js';
 
 const proxy = new Hono();
 
@@ -202,39 +212,44 @@ function providerSupportsNativeAnthropic(provider: {
 
 function backfillOpenAIMessageContent<T extends { content?: unknown; reasoning_content?: unknown; reasoning?: unknown } | null | undefined>(
 	message: T,
-	opts?: { stripReasoning?: boolean },
+	opts?: { stripReasoning?: boolean; reasoningProfile?: ReasoningProfile },
 ) {
 	if (!message || typeof message !== 'object') return message;
 	const msg = message as any;
+	const profile: ReasoningProfile =
+		opts?.reasoningProfile ||
+		(opts?.stripReasoning ? 'strip' : 'backfill');
 	const rcStr: string | undefined =
 		typeof msg?.reasoning_content === 'string' ? msg.reasoning_content : undefined;
 	const rStr: string | undefined =
 		typeof msg?.reasoning === 'string' ? msg.reasoning : undefined;
 	const contentStr: string | undefined = typeof msg?.content === 'string' ? msg.content : undefined;
 
-	// FIX: Only backfill content if it's missing OR empty whitespace.
-	// Never null-out content when it would leave the message empty — that caused
-	// Hermes/Claude Code empty bubbles and false 502s when reasoning == content.
-	const contentEmpty = typeof msg?.content !== 'string' || !String(msg.content).trim();
-	if (contentEmpty && rcStr?.trim()) {
-		msg.content = rcStr;
-	} else if (contentStr && rcStr && contentStr === rcStr) {
-		// Duplicate reasoning — drop reasoning, keep content
+	// Never concatenate reasoning + content into one blob.
+	// Duplicate identical fields → drop reasoning, keep content.
+	if (contentStr && rcStr && contentStr === rcStr) {
 		delete msg.reasoning_content;
-	} else if (contentEmpty && rStr?.trim()) {
-		msg.content = rStr;
 	} else if (contentStr && rStr && contentStr === rStr) {
 		delete msg.reasoning;
 	}
-	// OpenCode/Kilo render each reasoning_content delta as its own "Reasoning"
-	// / "Thought" block (spammy UI). Strip for those IDEs only; Cursor/Claude Code keep fields.
-	if (opts?.stripReasoning) {
+
+	const contentEmpty = typeof msg?.content !== 'string' || !String(msg.content).trim();
+	if (profile === 'backfill') {
+		// Hermes / default: fill empty content from reasoning so IDEs don't show blank bubbles.
+		if (contentEmpty && rcStr?.trim()) {
+			msg.content = rcStr;
+		} else if (contentEmpty && rStr?.trim()) {
+			msg.content = rStr;
+		}
+	}
+	// keep_separate: leave content/reasoning as upstream sent (no copy either way).
+
+	if (profile === 'strip') {
 		delete msg.reasoning_content;
 		delete msg.reasoning;
 	}
 
-	// OpenAI-compatible IDEs (OpenCode/Cline/…) treat tool-only turns with
-	// content:"" as an empty text bubble ("Empty message"). Prefer null.
+	// OpenAI-compatible IDEs treat tool-only turns with content:"" as empty bubble.
 	if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
 		if (msg.content === '') msg.content = null;
 		normalizeToolCallArray(msg.tool_calls);
@@ -264,11 +279,14 @@ function normalizeToolCallArray(toolCalls: any[]): void {
 
 function backfillOpenAIResponseContent(
 	payload: any,
-	opts?: { stripReasoning?: boolean },
+	opts?: { stripReasoning?: boolean; reasoningProfile?: ReasoningProfile },
 ) {
+	const profile: ReasoningProfile =
+		opts?.reasoningProfile ||
+		(opts?.stripReasoning ? 'strip' : 'backfill');
 	const choice = payload?.choices?.[0];
 	if (choice?.message) {
-		backfillOpenAIMessageContent(choice.message, opts);
+		backfillOpenAIMessageContent(choice.message, { ...opts, reasoningProfile: profile });
 	}
 	const delta = choice?.delta;
 	if (!delta) return payload;
@@ -280,25 +298,27 @@ function backfillOpenAIResponseContent(
 		typeof d?.reasoning === 'string' ? d.reasoning : undefined;
 	const contentStr: string | undefined = typeof d?.content === 'string' ? d.content : undefined;
 
-	// FIX: Only backfill content if it's missing or empty. Never null-out to empty.
-	const contentEmpty = typeof d?.content !== 'string' || !String(d.content).trim();
-	if (contentEmpty && rcStr?.trim()) {
-		d.content = rcStr;
-	} else if (contentStr && rcStr && contentStr === rcStr) {
+	if (contentStr && rcStr && contentStr === rcStr) {
 		delete d.reasoning_content;
-	} else if (contentEmpty && rStr?.trim()) {
-		d.content = rStr;
 	} else if (contentStr && rStr && contentStr === rStr) {
 		delete d.reasoning;
 	}
-	if (opts?.stripReasoning) {
+
+	const contentEmpty = typeof d?.content !== 'string' || !String(d.content).trim();
+	if (profile === 'backfill') {
+		if (contentEmpty && rcStr?.trim()) {
+			d.content = rcStr;
+		} else if (contentEmpty && rStr?.trim()) {
+			d.content = rStr;
+		}
+	}
+	if (profile === 'strip') {
 		delete d.reasoning_content;
 		delete d.reasoning;
 	}
 
 	if (Array.isArray(d.tool_calls) && d.tool_calls.length > 0) {
 		normalizeToolCallArray(d.tool_calls);
-		// Don't emit empty content alongside tool deltas — some IDEs create a blank text part.
 		if (d.content === '') delete d.content;
 	}
 	return payload;
@@ -484,19 +504,8 @@ const TRANSIENT_NON_STREAMING_ATTEMPT_MS = 45_000;
 // Allow multiple 502 retries plus one slow success within the wall clock.
 const TRANSIENT_MAX_WALL_MS = 120_000;
 
-/**
- * IDEs that open a new Reasoning/Thought UI section per streaming
- * reasoning_content delta (instead of appending into one block).
- * Safe for other clients: Cursor / Claude Code / Cline keep reasoning fields.
- */
-function shouldStripReasoningForIde(ide: string): boolean {
-	const n = String(ide || '').toLowerCase().trim();
-	return (
-		n === 'opencode' ||
-		n === 'opencode (vs code)' ||
-		n === 'kilo' ||
-		n.startsWith('kilo ')
-	);
+function reasoningOptsForIde(ide: string): { reasoningProfile: ReasoningProfile } {
+	return { reasoningProfile: resolveReasoningProfile(ide) };
 }
 
 function isTransientStreamingRetryable(code: number): boolean {
@@ -650,14 +659,19 @@ async function fetchUpstreamWithRetry(
 	isStreaming: boolean,
 	providerName?: string,
 	clientSignal?: AbortSignal,
+	upstreamModel?: string,
 ): Promise<Response> {
 	let lastError: any = null;
 	let lastResponse: Response | null = null;
 	const isTransientProvider = isTransientUpstreamProvider(providerName);
+	const isGrok = isGrokCliModel(upstreamModel);
 	const maxAttempts = isTransientProvider
 		? TRANSIENT_MAX_ATTEMPTS
-		: UPSTREAM_MAX_ATTEMPTS;
+		: isGrok
+			? Math.max(UPSTREAM_MAX_ATTEMPTS, GROK_TRANSIENT_MAX_ATTEMPTS)
+			: UPSTREAM_MAX_ATTEMPTS;
 	const wallStart = Date.now();
+	let grokTransientTries = 0;
 
 	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 		if (
@@ -670,10 +684,7 @@ async function fetchUpstreamWithRetry(
 		}
 
 		try {
-			// Combine client abort signal with timeout
 			const controller = new AbortController();
-			// Streaming gets full hour; conduit non-streaming needs longer per-attempt
-			// timeout because models like gpt-5 routinely take 25–30s.
 			const timeoutMs = isStreaming
 				? STREAMING_TIMEOUT_MS
 				: isTransientProvider
@@ -709,12 +720,45 @@ async function fetchUpstreamWithRetry(
 
 			lastResponse = response;
 
+			// Grok/gcli flaky 400 (grep_search / reset after) — retest same upstream.
+			if (
+				isGrok &&
+				response.status === 400 &&
+				grokTransientTries < GROK_TRANSIENT_MAX_ATTEMPTS
+			) {
+				let bodyText = '';
+				try {
+					bodyText = await response.text();
+				} catch {
+					bodyText = '';
+				}
+				lastResponse = new Response(bodyText, {
+					status: 400,
+					statusText: response.statusText,
+					headers: response.headers,
+				});
+				if (isGrokTransientErrorBody(bodyText)) {
+					grokTransientTries += 1;
+					const delay = grokTransientBackoffMs(grokTransientTries, bodyText);
+					console.warn(
+						`[grok-retry] ${upstreamModel} 400 transient (try ${grokTransientTries}/${GROK_TRANSIENT_MAX_ATTEMPTS}), wait ${delay}ms`,
+					);
+					if (grokTransientTries < GROK_TRANSIENT_MAX_ATTEMPTS) {
+						await sleep(delay);
+						continue;
+					}
+					return lastResponse;
+				}
+				return lastResponse;
+			}
+
 			const canRetryStatus =
 				attempt < maxAttempts &&
 				isRetryableStatus(response.status) &&
 				(!isStreaming ||
 					(isTransientProvider &&
-						isTransientStreamingRetryable(response.status)));
+						isTransientStreamingRetryable(response.status)) ||
+					(isGrok && isTransientStreamingRetryable(response.status)));
 
 			if (canRetryStatus) {
 				const nextBackoff = UPSTREAM_RETRY_BACKOFF_MS * attempt;
@@ -765,9 +809,11 @@ async function fetchWithKeyRotation(
 	initFn: (apiKey: string) => RequestInit,
 	isStreaming: boolean,
 	clientSignal?: AbortSignal,
+	upstreamModel?: string,
 ): Promise<{ response: Response; keyId: number; apiKey: string }> {
 	const MAX_KEY_ATTEMPTS = 10; // don't loop forever
 	const triedKeyIds = new Set<number>();
+	const isGrok = isGrokCliModel(upstreamModel);
 
 	const markOffline = async (reason: string) => {
 		try {
@@ -810,10 +856,10 @@ async function fetchWithKeyRotation(
 			isStreaming,
 			providerName,
 			clientSignal,
+			upstreamModel,
 		);
 
 		if (response.status === 401) {
-			// Invalid key — rotate without permanently disabling the key.
 			console.warn(
 				`[key-rotation] Key ${keyResult.keyId} for provider ${providerId} returned 401, trying next key`,
 			);
@@ -824,8 +870,6 @@ async function fetchWithKeyRotation(
 		}
 
 		if (response.status === 429) {
-			// Rate limited — try next key if available, but do not permanently
-			// disable the key (quota may reset shortly).
 			console.warn(
 				`[key-rotation] Key ${keyResult.keyId} for provider ${providerId} returned 429, trying next key`,
 			);
@@ -833,6 +877,42 @@ async function fetchWithKeyRotation(
 				await response.body?.cancel();
 			} catch {}
 			continue;
+		}
+
+		// Grok farmed-account contention: after same-key retests exhausted, try next key.
+		if (isGrok && response.status === 400) {
+			let bodyText = '';
+			try {
+				bodyText = await response.clone().text();
+			} catch {
+				try {
+					bodyText = await response.text();
+				} catch {
+					bodyText = '';
+				}
+			}
+			if (isGrokTransientErrorBody(bodyText)) {
+				console.warn(
+					`[key-rotation] Key ${keyResult.keyId} grok transient 400 for ${upstreamModel}, trying next key`,
+				);
+				try {
+					await response.body?.cancel();
+				} catch {}
+				continue;
+			}
+			// Non-transient 400 — return rebuilt body if clone failed
+			if (!response.bodyUsed) {
+				return { response, keyId: keyResult.keyId, apiKey: keyResult.apiKey };
+			}
+			return {
+				response: new Response(bodyText, {
+					status: 400,
+					statusText: response.statusText,
+					headers: response.headers,
+				}),
+				keyId: keyResult.keyId,
+				apiKey: keyResult.apiKey,
+			};
 		}
 
 		return { response, keyId: keyResult.keyId, apiKey: keyResult.apiKey };
@@ -2511,6 +2591,7 @@ proxy.all('/*', async (c) => {
 					wantedStream,
 					candidate.provider,
 					c.req.raw.signal,
+					candidate.modelId,
 				);
 
 				if (trialResponse.status === 429 || trialResponse.status === 401) {
@@ -2545,7 +2626,7 @@ proxy.all('/*', async (c) => {
 						const acc = makeAccumulator();
 						const decoder = new TextDecoder();
 						const logModel = `auto (${candidate.modelId}) [stream]`;
-						const stripReasoning = shouldStripReasoningForIde(ide);
+						const reasoningOpts = reasoningOptsForIde(ide);
 						let openaiPassthroughBuffer = '';
 						let anthropicBuffer = '';
 						let autoHasActualToolCalls = false;
@@ -2605,7 +2686,7 @@ proxy.all('/*', async (c) => {
 											try {
 												const data = backfillOpenAIResponseContent(
 													JSON.parse(payloadText),
-													{ stripReasoning },
+													reasoningOpts,
 												);
 												consumeStreamPayload(acc, data);
 												controller.enqueue(
@@ -3157,6 +3238,7 @@ proxy.all('/*', async (c) => {
 				},
 				requestBody?.stream === true,
 				c.req.raw.signal,
+				String(requestBody?.model || ''),
 			);
 			if (isAnthropicTitleGen && !requestBody?.stream && resp.ok) {
 				const raw = await resp.text();
@@ -4370,6 +4452,7 @@ proxy.all('/*', async (c) => {
 					},
 					attemptIsYoucom ? false : attemptUsesStream,
 					attemptSignal,
+					attemptUpstreamModel,
 				);
 
 				upstreamResponse = result.response;
@@ -4575,7 +4658,7 @@ proxy.all('/*', async (c) => {
 			const acc = makeAccumulator();
 			let hasActualToolCalls = false;
 			const decoder = new TextDecoder();
-			const stripReasoning = shouldStripReasoningForIde(ide);
+			const reasoningOpts = reasoningOptsForIde(ide);
 			const anthropicPassthrough = isAnthropicProvider && isAnthropicRequest;
 			const anthropicStreamState =
 				isAnthropicProvider && !anthropicPassthrough
@@ -4727,7 +4810,7 @@ proxy.all('/*', async (c) => {
 							try {
 								const data = backfillOpenAIResponseContent(
 									JSON.parse(payloadText),
-									{ stripReasoning },
+									reasoningOpts,
 								);
 								appendToolsFromPayload(data);
 								if (detectToolCallsInResponse(data)) hasActualToolCalls = true;
@@ -4766,7 +4849,7 @@ proxy.all('/*', async (c) => {
 									try {
 										const data = backfillOpenAIResponseContent(
 											JSON.parse(payloadText),
-											{ stripReasoning },
+											reasoningOpts,
 										);
 										appendToolsFromPayload(data);
 										if (detectToolCallsInResponse(data))
@@ -4811,7 +4894,7 @@ proxy.all('/*', async (c) => {
 									if (payloadText) {
 										const data = backfillOpenAIResponseContent(
 											JSON.parse(payloadText),
-											{ stripReasoning },
+											reasoningOpts,
 										);
 										controller.enqueue(
 											new TextEncoder().encode(
@@ -5041,9 +5124,7 @@ proxy.all('/*', async (c) => {
 		if (isResponsesApi && statusCode >= 200 && statusCode < 300) {
 			try {
 				const chatParsed = JSON.parse(responseBody);
-				backfillOpenAIResponseContent(chatParsed, {
-					stripReasoning: shouldStripReasoningForIde(ide),
-				});
+				backfillOpenAIResponseContent(chatParsed, reasoningOptsForIde(ide));
 				const responsesOutput: any[] = [];
 
 				if (chatParsed.choices && chatParsed.choices.length > 0) {
@@ -5110,9 +5191,7 @@ proxy.all('/*', async (c) => {
 		if (isAnthropicRequest && statusCode >= 200 && statusCode < 300 && !isAnthropicProvider) {
 			try {
 				const openaiParsed = JSON.parse(responseBody);
-				backfillOpenAIResponseContent(openaiParsed, {
-					stripReasoning: shouldStripReasoningForIde(ide),
-				});
+				backfillOpenAIResponseContent(openaiParsed, reasoningOptsForIde(ide));
 				const anthropicResp = convertOpenAIToAnthropicResponse(openaiParsed);
 				responseBody = JSON.stringify(anthropicResp);
 			} catch (convErr) {
@@ -5125,8 +5204,8 @@ proxy.all('/*', async (c) => {
 
 		try {
 			const parsed = JSON.parse(responseBody);
-			const stripReasoning = shouldStripReasoningForIde(ide);
-			backfillOpenAIResponseContent(parsed, { stripReasoning });
+			const reasoningOpts = reasoningOptsForIde(ide);
+			backfillOpenAIResponseContent(parsed, reasoningOpts);
 			responseBody = JSON.stringify(parsed);
 			appendToolsFromPayload(parsed);
 
