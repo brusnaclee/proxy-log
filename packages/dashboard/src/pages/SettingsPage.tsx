@@ -469,12 +469,12 @@ export default function SettingsPage() {
                     max={100}
                   />
                   <p className="text-[10px] text-muted-foreground mt-1">
-                    Each hop&apos;s In+Out counts this % toward daily/monthly token limits (logs stay 100%). Default 10.
+                    Later hops in the same prompt (tools/subagent) count this % of In+Out toward daily/monthly token limits. First hop of each prompt = 100%. Logs stay full 100%. Default 10.
                   </p>
                 </div>
                 <div className="flex items-end pb-1">
                   <p className="text-[10px] text-muted-foreground">
-                    Example: 100 hops × 10k In → limit uses ~100k at 10% (not 1M). Visible on Key Detail / portal / Discord usage bars.
+                    Example: prompt In 500k (cache included) + 9 tool hops × 50k → limit ≈ 500k + 9×5k = 545k at 10%. Visible on Key Detail / portal / Discord.
                   </p>
                 </div>
               </div>

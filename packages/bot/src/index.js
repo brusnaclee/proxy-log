@@ -699,11 +699,11 @@ async function handleAdminCommand(message) {
 				`**Status ${data.discordUsername || data.discordUserId}**\n` +
 					`Key: ${data.keyPrefix}...\n` +
 					`Active: ${data.isActive ? 'Yes 🟢' : 'No 🔴'}\n` +
-					`Usage Today: ${data.today?.requests || 0} turns / ${formatTokens(data.today?.tokens || 0)} tokens\n` +
+					`Usage Today: ${data.today?.requests || 0} prompts / ${formatTokens(data.today?.tokens || 0)} tokens\n` +
 					`Prompt Limit: ${globalLimitStr}\n` +
 					`API Call Limit: ${apiCallLimitStr}\n` +
 					(modelLimitStr ? `Model Limits:\n${modelLimitStr}\n` : '') +
-					`ℹ️ *Tool follow-ups dihitung 1 prompt per turn; setiap hop menghitung 1 API call.*\n` +
+					`ℹ️ *1 prompt = 1 user turn. Tool hops = API calls. Token limit: hop pertama 100%, hop berikutnya % weight (default 10%).*\n` +
 					`Daily Token Limits:\n` +
 					`  • Total: ${data.dailyTokenLimit > 0 ? `${formatTokens(data.dailyTokensUsed)} / ${formatTokens(data.dailyTokenLimit)}` : `${formatTokens(data.dailyTokensUsed)} / ∞`}${formatResetTime(data.dailyResetAt)}\n` +
 					`  • Input: ${data.dailyInputTokenLimit > 0 ? `${formatTokens(data.dailyInputUsed)} / ${formatTokens(data.dailyInputTokenLimit)}` : `${formatTokens(data.dailyInputUsed)} / ∞`}\n` +
@@ -5330,11 +5330,11 @@ async function refreshRankingEmbeds() {
 			.catch(() => null);
 		if (msg) {
 			const embed = buildRankingEmbed(
-				'🏆 Top Models — By Requests',
+				'🏆 Top Models — By Prompts',
 				0x5865f2,
 				today.topModelsByRequests,
 				month.topModelsByRequests,
-				(item) => `\`${item.model}\` — **${item.count.toLocaleString()}** req`,
+				(item) => `\`${item.model}\` — **${item.count.toLocaleString()}** prompts`,
 			);
 			await msg.edit({ embeds: [embed] });
 		}
@@ -5368,7 +5368,7 @@ async function refreshRankingEmbeds() {
 			.catch(() => null);
 		if (msg) {
 			const embed = buildRankingEmbed(
-				'👤 Top Users — By Requests',
+				'👤 Top Users — By Prompts',
 				0x22d3ee,
 				today.topUsersByRequests,
 				month.topUsersByRequests,
@@ -5381,7 +5381,7 @@ async function refreshRankingEmbeds() {
 						name = `<@${item.discordUserId}>`;
 					}
 					const suffix = item.isTrial ? ' 🎁' : '';
-					return `**${name}**${suffix} — **${item.requests.toLocaleString()}** req`;
+					return `**${name}**${suffix} — **${item.requests.toLocaleString()}** prompts`;
 				},
 			);
 			await msg.edit({ embeds: [embed] });
@@ -5897,7 +5897,7 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 			p.promptTokens,
 		);
 		const lines = [
-			`📨 Turns: **${p.requests.toLocaleString()}**`,
+			`📨 Prompts: **${p.requests.toLocaleString()}**`,
 			`🔢 Total Tokens: **${formatTokens(p.tokens)}**`,
 			`📥 Input: **${input.label}**`,
 			`📤 Output: **${formatTokens(p.completionTokens)}**`,

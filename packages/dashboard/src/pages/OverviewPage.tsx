@@ -201,14 +201,14 @@ export default function OverviewPage() {
         note: "Aggregated stats across all API keys and devices",
         headers: ["Metric", "Today", "Last 7 Days", "Last 30 Days", "All Time"],
         rows: [
-          ["Turns",             overview.today.requests,                                 overview.week?.requests ?? "",              overview.month?.requests ?? "",              overview.allTime.requests],
+          ["Prompts",           overview.today.requests,                                 overview.week?.requests ?? "",              overview.month?.requests ?? "",              overview.allTime.requests],
           ["Total Tokens",      overview.today.tokens,                                   overview.week?.tokens ?? "",                overview.month?.tokens ?? "",                overview.allTime.tokens],
           ["Input Tokens",      overview.today.promptTokens ?? "",                       overview.week?.promptTokens ?? "",          overview.month?.promptTokens ?? "",          overview.allTime.promptTokens ?? ""],
           ["Output Tokens",     overview.today.completionTokens ?? "",                   overview.week?.completionTokens ?? "",      overview.month?.completionTokens ?? "",      overview.allTime.completionTokens ?? ""],
           ["Unique Devices",    overview.today.uniqueDevices ?? "",                      "",                                        "",                                          overview.totalDevices],
           ["Active Keys",       overview.activeKeys,                                     "",                                        "",                                          overview.totalKeys],
           ["Total Sessions",    "",                                                      "",                                        "",                                          overview.allTime.totalSessions ?? ""],
-          ["Avg Turns/Session", "",                                                      "",                                        "",                                          (overview.allTime.avgRequestsPerSession || 0).toFixed(2)],
+          ["Avg Prompts/Session", "",                                                    "",                                        "",                                          (overview.allTime.avgRequestsPerSession || 0).toFixed(2)],
           ["Est. Cost",         fmtCost(overview.today.totalCost ?? overview.today.estimatedCost), fmtCost(overview.week?.totalCost ?? overview.week?.estimatedCost), fmtCost(overview.month?.totalCost ?? overview.month?.estimatedCost), fmtCost(overview.allTime.totalCost ?? overview.allTime.estimatedCost)],
         ],
       });
@@ -219,7 +219,7 @@ export default function OverviewPage() {
       sheets.push({
         name: "Timeseries",
         note: "Daily/hourly data  -  select columns and Insert Chart in Excel to visualize",
-        headers: ["Period", "Turns", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost", "Unique Devices"],
+        headers: ["Period", "Prompts", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost", "Unique Devices"],
         rows: timeseries.map(t => [
           t.period,
           Number(t.requests) || 0,
@@ -253,7 +253,7 @@ export default function OverviewPage() {
   const dynamicCards = periodData
     ? [
         {
-          label: `Turns (${periodLabelMap[period]})`,
+          label: `Prompts (${periodLabelMap[period]})`,
           value: formatNumber(periodData.requests),
           icon: Activity,
           sub: period === "allTime"
@@ -316,7 +316,7 @@ export default function OverviewPage() {
           label: "Total Sessions",
           value: formatNumber(overview.allTime.totalSessions || 0),
           icon: TrendingUp,
-          sub: `Avg ${(overview.allTime.avgRequestsPerSession || 0).toFixed(2)} turns/session`,
+          sub: `Avg ${(overview.allTime.avgRequestsPerSession || 0).toFixed(2)} prompts/session`,
           color: "text-pink-400",
         },
       ]
@@ -414,7 +414,7 @@ export default function OverviewPage() {
         <Card className="border-border/50">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-base font-medium">Turns Over Time</CardTitle>
+              <CardTitle className="text-base font-medium">Prompts Over Time</CardTitle>
               <PeriodSelector value={chartPeriod} onChange={setChartPeriod} />
             </div>
           </CardHeader>

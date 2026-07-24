@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+﻿import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { keys, logs, stats, trialSettings, type ApiKeyDetail, type KeyPeriodStats, type LogEntry, type SessionDetailResponse, type ModelLimitEntry, type TrialUserRow, globalSettings } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -397,7 +397,7 @@ export default function KeyDetailPage() {
         note: "Usage stats across all time periods",
         headers: ["Metric", "Today", "Last 7 Days", "Last 30 Days", "All Time"],
         rows: [
-          ["Turns",           s.today.requests,         s.week.requests,         s.month.requests,         s.allTime.requests],
+          ["Prompts",         s.today.requests,         s.week.requests,         s.month.requests,         s.allTime.requests],
           ["Total Tokens",    s.today.tokens,           s.week.tokens,           s.month.tokens,           s.allTime.tokens],
           ["Input Tokens",    formatInputBreakdown(s.today.billablePromptTokens, s.today.cachedTokens, s.today.promptTokens).label,
                               formatInputBreakdown(s.week.billablePromptTokens, s.week.cachedTokens, s.week.promptTokens).label,
@@ -434,7 +434,7 @@ export default function KeyDetailPage() {
         note: "Usage stats for this API key across all time periods",
         headers: ["Metric", "Today", "Last 7 Days", "Last 30 Days", "All Time"],
         rows: [
-          ["Turns",      s.today.requests,  s.week.requests,  s.month.requests,  s.allTime.requests],
+          ["Prompts",    s.today.requests,  s.week.requests,  s.month.requests,  s.allTime.requests],
           ["Tokens",     s.today.tokens,    s.week.tokens,    s.month.tokens,    s.allTime.tokens],
           ["Input",
             formatInputBreakdown(s.today.billablePromptTokens, s.today.cachedTokens, s.today.promptTokens).label,
@@ -696,7 +696,7 @@ export API_TIMEOUT_MS=500000`}
           return (
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
               {[
-                { label: "Turns", value: formatNumber(s.requests), sub: (s.hopCount || 0) > s.requests ? `${formatNumber(s.hopCount || 0)} API calls (hops)` : undefined },
+                { label: "Prompts", value: formatNumber(s.requests), sub: (s.hopCount || 0) > s.requests ? `${formatNumber(s.hopCount || 0)} API calls` : undefined },
                 { label: "Total Tokens",  value: formatNumber(s.tokens) },
                 { label: "Input (peak)",  value: formatInputBreakdown(s.billablePromptTokens, s.cachedTokens, s.promptTokens).label, sub: (s.fullInputTokens || 0) > (s.promptTokens || 0) * 1.5 ? `full ${formatNumber(s.fullInputTokens || 0)} (amanai)` : undefined },
                 { label: "Output Tokens", value: formatNumber(s.completionTokens) },
@@ -1555,7 +1555,7 @@ export API_TIMEOUT_MS=500000`}
                     <th className="text-left py-3 px-4 text-muted-foreground font-medium">IP</th>
                     <th className="text-left py-3 px-4 text-muted-foreground font-medium">IDE / OS</th>
                     <th className="text-right py-3 px-4 text-muted-foreground font-medium">Sessions</th>
-                    <th className="text-right py-3 px-4 text-muted-foreground font-medium">Turns</th>
+                    <th className="text-right py-3 px-4 text-muted-foreground font-medium">Prompts</th>
                     <th className="text-right py-3 px-4 text-muted-foreground font-medium">Tokens</th>
                     <th className="text-left py-3 px-4 text-muted-foreground font-medium">Last Seen</th>
                   </tr>
@@ -1738,7 +1738,7 @@ export API_TIMEOUT_MS=500000`}
               {(["tokens", "requests"] as const).map(s => (
                 <button key={s} onClick={() => setModelTabSort(s)}
                   className={`px-2 py-1 text-xs rounded transition-colors ${modelTabSort === s ? "bg-primary text-primary-foreground font-medium" : "text-muted-foreground hover:text-foreground"}`}>
-                  By {s === "tokens" ? "Tokens" : "Turns"}
+                  By {s === "tokens" ? "Tokens" : "Prompts"}
                 </button>
               ))}
             </div>
@@ -1748,7 +1748,7 @@ export API_TIMEOUT_MS=500000`}
           <Card className="border-border/50 mb-4">
             <CardHeader className="pb-2">
               <CardTitle className="text-base font-medium">
-                Model Usage Chart — {modelTabSort === "tokens" ? "By Tokens" : "By Turns"}
+                Model Usage Chart — {modelTabSort === "tokens" ? "By Tokens" : "By Prompts"}
               </CardTitle>
             </CardHeader>
             <CardContent>

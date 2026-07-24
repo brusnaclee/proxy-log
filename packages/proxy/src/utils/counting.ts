@@ -42,7 +42,7 @@ export type TokenInputMode = "per_turn_peak" | "full" | "billable";
 
 let tokenInputModeCache: TokenInputMode = "per_turn_peak";
 
-/** Percent of each hop's In+Out counted toward daily/monthly token LIMITS (logs stay 100%). */
+/** Percent of *later* hops' In+Out toward daily/monthly token LIMITS (first hop of turn = 100%; logs stay full). */
 let tokenLimitWeightPercentCache = 10;
 
 export function normalizeTokenLimitWeightPercent(raw: unknown): number {
@@ -176,8 +176,10 @@ export function hopFullInputTokensSql(whereCondition: SQL | undefined, opts?: To
 }
 
 /**
- * Token LIMIT usage: every hop counts, but only weight% of (In+Out) is charged to the quota.
- * Example weight=10 → 100 hops × 10k In ≈ 100k toward daily limit (not 1M full, not peak-only).
+ * Token LIMIT usage (fair agent billing):
+ * - First hop of each turn_id: 100% of (In+cache + Out)
+ * - Later tool/subagent hops in the same turn: weight% only (default 10%)
+ * Orphan rows (no turn_id) each count as their own first hop at 100%.
  * request_logs still store full tokens; this is gate / limit-bar only.
  */
 export function weightedHopTotalTokensSql(
@@ -186,12 +188,23 @@ export function weightedHopTotalTokensSql(
 ): SQL<number> {
   const { input, output } = getTokenMultipliers(opts);
   const w = tokenLimitWeightPercentCache / 100;
-  return sql<number>`COALESCE((SELECT SUM(
-    (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) * ${input} * ${w}
-    + COALESCE(completion_tokens, 0) * ${output} * ${w}
-  ) FROM request_logs WHERE ${whereCondition!}), 0)`;
+  return sql<number>`COALESCE((
+    SELECT SUM(
+      hop_tokens * CASE WHEN rn = 1 THEN 1.0 ELSE ${w} END
+    )
+    FROM (
+      SELECT
+        (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) * ${input}
+          + COALESCE(completion_tokens, 0) * ${output} AS hop_tokens,
+        ROW_NUMBER() OVER (
+          PARTITION BY COALESCE(turn_id, 'orphan-' || id::text)
+          ORDER BY created_at ASC, id ASC
+        ) AS rn
+      FROM request_logs
+      WHERE ${whereCondition!}
+    ) hops
+  ), 0)`;
 }
-
 /** Raw API hop count (every upstream call), not turn/prompt count. */
 export function hopCountSql(whereCondition: SQL | undefined): SQL<number> {
   return sql<number>`(SELECT COUNT(*) FROM request_logs WHERE ${whereCondition!})`;

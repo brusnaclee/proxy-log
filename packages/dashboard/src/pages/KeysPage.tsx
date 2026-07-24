@@ -149,7 +149,7 @@ export default function KeysPage() {
   const handleExport = () => {
     const headers = [
       "Discord Username", "Discord User ID", "Name", "Key Prefix", "Provisioned By",
-      "Status", "Devices", "Requests Today", "Tokens Today", "Est. Cost Today",
+      "Status", "Devices", "Prompts Today", "Tokens Today", "Est. Cost Today",
       "Max Devices", "Device Policy", "IP Policy", "IDE Policy", "Created At",
     ];
     const rows = allKeys.map((k) => [
@@ -241,7 +241,7 @@ export default function KeysPage() {
                           <th className="text-left py-2 px-4 text-muted-foreground font-medium text-xs hide-mobile">Prefix</th>
                           <th className="text-left py-2 px-4 text-muted-foreground font-medium text-xs">Source</th>
                           <th className="text-center py-2 px-4 text-muted-foreground font-medium text-xs">Status</th>
-                          <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs">Turns</th>
+                          <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs">Prompts</th>
                           <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs hide-mobile">Tokens</th>
                           <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs hide-mobile">In left</th>
                           <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs hide-mobile">Out left</th>

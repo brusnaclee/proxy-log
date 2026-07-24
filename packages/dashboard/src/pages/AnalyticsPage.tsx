@@ -91,9 +91,9 @@ export default function AnalyticsPage() {
 
     if (topUsersData.byRequests.length) {
       sheets.push({
-        name: "Top Users (Requests)",
+        name: "Top Users (Prompts)",
         note: `Period: ${pl}`,
-        headers: ["Display Name", "Key Name", "Discord ID", "Requests", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost"],
+        headers: ["Display Name", "Key Name", "Discord ID", "Prompts", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost"],
         rows: topUsersData.byRequests.map(u => [
           u.displayName, u.keyName, u.discordUserId || "",
           Number(u.requests)||0, Number(u.tokens)||0, Number(u.promptTokens)||0, Number(u.completionTokens)||0,
@@ -106,7 +106,7 @@ export default function AnalyticsPage() {
       sheets.push({
         name: "Top Users (Tokens)",
         note: `Period: ${pl}`,
-        headers: ["Display Name", "Key Name", "Discord ID", "Total Tokens", "Input Tokens", "Output Tokens", "Requests", "Est. Cost"],
+        headers: ["Display Name", "Key Name", "Discord ID", "Total Tokens", "Input Tokens", "Output Tokens", "Prompts", "Est. Cost"],
         rows: topUsersData.byTokens.map(u => [
           u.displayName, u.keyName, u.discordUserId || "",
           Number(u.tokens)||0, Number(u.promptTokens)||0, Number(u.completionTokens)||0, Number(u.requests)||0,
@@ -119,7 +119,7 @@ export default function AnalyticsPage() {
       sheets.push({
         name: "API Keys",
         note: `Period: ${pl}`,
-        headers: ["Key Name", "Requests", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost", "Unique Devices", "Top Model"],
+        headers: ["Key Name", "Prompts", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost", "Unique Devices", "Top Model"],
         rows: keyData.map(k => [
           k.name, Number(k.requests)||0, Number(k.tokens)||0, Number(k.promptTokens)||0, Number(k.completionTokens)||0,
           fmtCost(k.estimatedCost), Number(k.uniqueDevices)||0, k.topModel,
@@ -131,7 +131,7 @@ export default function AnalyticsPage() {
       sheets.push({
         name: "Devices",
         note: `Period: ${pl}`,
-        headers: ["Fingerprint", "IP Address", "IDE", "Requests", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost", "Last Seen"],
+        headers: ["Fingerprint", "IP Address", "IDE", "Prompts", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost", "Last Seen"],
         rows: deviceData.map(d => [
           d.fingerprint, d.ipAddress, d.ide,
           Number(d.requests)||0, Number(d.tokens)||0, Number(d.promptTokens)||0, Number(d.completionTokens)||0,
@@ -144,7 +144,7 @@ export default function AnalyticsPage() {
       sheets.push({
         name: "Daily Timeseries",
         note: "Each row = one day  -  select columns and Insert â†’ Chart to visualize",
-        headers: ["Date", "Requests", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost", "Unique Devices"],
+        headers: ["Date", "Prompts", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost", "Unique Devices"],
         rows: timeseriesData.map(t => [
           t.period, Number(t.requests)||0, Number(t.tokens)||0, Number(t.promptTokens)||0, Number(t.completionTokens)||0,
           fmtCost(t.estimatedCost), Number(t.uniqueDevices)||0,
@@ -156,7 +156,7 @@ export default function AnalyticsPage() {
       sheets.push({
         name: "Hourly Timeseries",
         note: "Each row = one hour",
-        headers: ["Hour", "Requests", "Total Tokens"],
+        headers: ["Hour", "Prompts", "Total Tokens"],
         rows: hourlyData.map(t => [t.period, Number(t.requests)||0, Number(t.tokens)||0]),
       });
     }
@@ -209,7 +209,7 @@ export default function AnalyticsPage() {
                       modelChartMode === m ? "bg-accent text-accent-foreground font-medium" : "text-muted-foreground hover:text-foreground"
                     }`}
                   >
-                    By {m === "tokens" ? "Tokens" : "Requests"}
+                    By {m === "tokens" ? "Tokens" : "Prompts"}
                   </button>
                 ))}
               </div>
@@ -269,7 +269,7 @@ export default function AnalyticsPage() {
                     <XAxis type="number" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
                     <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} width={90} />
                     <Tooltip contentStyle={TOOLTIP_STYLE} itemStyle={ITEM_STYLE} labelStyle={LABEL_STYLE} />
-                    <Bar dataKey="value" fill="#34d399" radius={[0, 4, 4, 0]} name="Requests" />
+                    <Bar dataKey="value" fill="#34d399" radius={[0, 4, 4, 0]} name="Prompts" />
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
@@ -295,7 +295,7 @@ export default function AnalyticsPage() {
                   <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
                   <Tooltip contentStyle={TOOLTIP_STYLE} itemStyle={ITEM_STYLE} labelStyle={LABEL_STYLE} formatter={(value: number) => formatNumber(value)} />
                   <Bar dataKey="tokens"   fill="#a78bfa" radius={[4, 4, 0, 0]} name="Tokens" />
-                  <Bar dataKey="requests" fill="#818cf8" radius={[4, 4, 0, 0]} name="Requests" />
+                  <Bar dataKey="requests" fill="#818cf8" radius={[4, 4, 0, 0]} name="Prompts" />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
@@ -309,7 +309,7 @@ export default function AnalyticsPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card className="border-border/50">
           <CardHeader className="pb-2">
-            <CardTitle className="text-base font-medium">Top Users by Requests</CardTitle>
+            <CardTitle className="text-base font-medium">Top Users by Prompts</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             <table className="w-full text-sm">
@@ -317,7 +317,7 @@ export default function AnalyticsPage() {
                 <tr className="border-b border-border/50">
                   <th className="text-left py-2 px-4 text-muted-foreground font-medium text-xs">#</th>
                   <th className="text-left py-2 px-4 text-muted-foreground font-medium text-xs">User</th>
-                  <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs">Requests</th>
+                  <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs">Prompts</th>
                   <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs">Tokens</th>
                   <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs">Cost</th>
                 </tr>
@@ -359,7 +359,7 @@ export default function AnalyticsPage() {
                   <th className="text-left py-2 px-4 text-muted-foreground font-medium text-xs">#</th>
                   <th className="text-left py-2 px-4 text-muted-foreground font-medium text-xs">User</th>
                   <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs">Tokens</th>
-                  <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs">Requests</th>
+                  <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs">Prompts</th>
                   <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs">Cost</th>
                 </tr>
               </thead>
@@ -395,7 +395,7 @@ export default function AnalyticsPage() {
         <Card className="border-border/50">
           <CardHeader className="pb-2">
             <CardTitle className="text-base font-medium">
-              Requests by Hour ({periodKey === "today" ? "Last 24h" : "Last 48h"})
+              Prompts by Hour ({periodKey === "today" ? "Last 24h" : "Last 48h"})
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -454,7 +454,7 @@ export default function AnalyticsPage() {
                   <th className="text-left py-3 px-4 text-muted-foreground font-medium">Fingerprint</th>
                   <th className="text-left py-3 px-4 text-muted-foreground font-medium hide-mobile">IP</th>
                   <th className="text-left py-3 px-4 text-muted-foreground font-medium">IDE</th>
-                  <th className="text-right py-3 px-4 text-muted-foreground font-medium">Requests</th>
+                  <th className="text-right py-3 px-4 text-muted-foreground font-medium">Prompts</th>
                   <th className="text-right py-3 px-4 text-muted-foreground font-medium">Tokens</th>
                   <th className="text-right py-3 px-4 text-muted-foreground font-medium hide-mobile">Cost</th>
                   <th className="text-left py-3 px-4 text-muted-foreground font-medium hide-mobile">Last Seen</th>

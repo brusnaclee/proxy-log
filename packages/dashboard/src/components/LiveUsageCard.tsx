@@ -112,7 +112,7 @@ export function LiveUsageCard({
       value: usageToday.promptCount ?? 0,
       max: limits.promptLimit,
       remaining: remaining.prompt,
-      sublabel: "1 per turn",
+      sublabel: "1 per user prompt",
       source: sourceLabel(limits.promptLimitSource),
       reset: formatReset(promptResetAt),
     });
@@ -248,9 +248,9 @@ export function LiveUsageCard({
             ).label}{" "}
             in / {formatNumber(usageToday.completionTokens)} out
           </span>{" "}
-          ({formatNumber(usageToday.requests)} turns
+          ({formatNumber(usageToday.requests)} prompts
           {(usageToday.hopCount || 0) > 0
-            ? ` · ${formatNumber(usageToday.hopCount || 0)} hops`
+            ? ` · ${formatNumber(usageToday.hopCount || 0)} API calls`
             : ""}
           {(usageToday.fullInputTokens || 0) > (usageToday.promptTokens || 0) * 1.5
             ? ` · full In ${formatNumber(usageToday.fullInputTokens || 0)}`
@@ -288,11 +288,10 @@ export function LiveUsageCard({
       </div>
       {(usageToday.fullInputTokens || 0) > (usageToday.promptTokens || 0) * 1.5 && (
         <p className="text-[10px] text-muted-foreground leading-relaxed border-t border-border/40 pt-2">
-          Daily credit bar uses <span className="text-foreground">weighted hop tokens</span> (Settings % of each hop In+Out; default 10%). Logs still store 100%.
-          ({formatNumber(usageToday.promptTokens)}), not amanai hop-sum
-          ({formatNumber(usageToday.fullInputTokens || 0)}). Logs list every hop (
-          {formatNumber(usageToday.hopCount || 0)}), while prompts/turns are{" "}
-          {formatNumber(usageToday.requests)}.
+          Daily token limit: first hop of each prompt at 100% In+Out (cache included); later tool hops at Settings weight % (default 10%). Logs still store 100%.
+          Peak display {formatNumber(usageToday.promptTokens)}; amanai-style full In{" "}
+          {formatNumber(usageToday.fullInputTokens || 0)}. API calls{" "}
+          {formatNumber(usageToday.hopCount || 0)}; prompts {formatNumber(usageToday.requests)}.
         </p>
       )}
       {modelLimits.length > 0 && (

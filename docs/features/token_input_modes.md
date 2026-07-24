@@ -55,16 +55,17 @@ Spaces are required between the number and `p`/`c` so Discord does not render `6
 | Metric | Meaning | Storage / count | Window |
 |--------|---------|-----------------|--------|
 | **Prompts** | 1 per user turn (`turn_id`) | `prompt_limit`; gate on new turn only; display `COUNT(DISTINCT turn_id)` in window | e.g. 50 / 5h |
-| **API calls** | Every successful upstream hop | `rate_limit` / `global_rate_limit`; count all 2xx rows | e.g. 500 / 5h |
-| **Turns** (stats field `requests`) | Distinct turns in a period | `COUNT(DISTINCT turn_id)` | Today / week / … |
-| **Hops** (Logs table) | Every upstream API row | One `request_logs` row per hop | Same period |
-| **Input tokens (credit)** | Mode-aware sum (default: peak) | See modes above | Daily input limit (WIB day) |
+| **API calls** | Every successful upstream hop | `rate_limit` / `global_rate_limit`; count all 2xx rows | e.g. 1000 / 5h |
+| **Prompts** (stats field `requests`) | Distinct turns in a period (UI label: Prompts) | `COUNT(DISTINCT turn_id)` | Today / week / … |
+| **API calls / hops** (Logs table) | Every upstream API row | One `request_logs` row per hop | Same period |
+| **Input tokens (display)** | Mode-aware sum (default: peak) | See modes above | Cards / Discord |
+| **Daily/monthly token limit** | First hop of each turn **100%** In+Out; later hops in that turn at `token_limit_weight_percent` (default **10%**) | `weightedHopTotalTokensSql` | WIB day / month |
 | **Full input (amanai)** | `SUM(prompt+cache)` every hop | Informational on Key Detail | — |
 | **Output tokens** | `SUM(completion)` | Per turn aggregation | Daily output limit |
 
-Defaults (global): **50 prompts / 5h** and **500 API calls / 5h**.
+Defaults (global): **50 prompts / 5h** and **1000 API calls / 5h**.
 
-Tool follow-ups do **not** burn prompt quota (same `turn_id`) but **do** burn API-call quota and tokens.
+Tool follow-ups do **not** burn prompt quota (same `turn_id`) but **do** burn API-call quota. Token **limit** charges the first hop at 100% and later hops at the weight %; logs still store full 100%.
 
 ### Real example (ZCode agent, imam77, one WIB day)
 
