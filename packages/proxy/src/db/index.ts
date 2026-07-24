@@ -133,6 +133,11 @@ export async function initializeDatabase() {
 		);
 	} catch (_) {}
 	try {
+		await pool.query(
+			`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS addon_required_models text NOT NULL DEFAULT '[]'`,
+		);
+	} catch (_) {}
+	try {
 		const { setTokenInputModeCache, setTokenLimitWeightPercentCache } = await import('../utils/counting.js');
 		const modeRow = await pool.query(
 			`SELECT token_input_mode, token_limit_weight_percent FROM admin_config LIMIT 1`,

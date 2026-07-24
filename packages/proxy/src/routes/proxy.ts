@@ -2259,18 +2259,14 @@ proxy.all('/*', async (c) => {
 		for (const candidate of onlineModels) {
 			const candidateModel = `${candidate.provider}/${candidate.modelId}`;
 
-			// Add-on gate (same rules as non-auto): locked models need pack; tease models allowed with prompt cap.
+			// Add-on gate: only models on global addon_required_models need a pack.
 			if (!keyRecord.isTrial) {
 				const addonAccess = await checkAddonModelAccess({
 					model: candidateModel,
 					discordUserId: keyRecord.discordUserId,
 					apiKeyId: keyRecord.id,
 				});
-				if (
-					!addonAccess.allowed &&
-					!isAddonTeaseModel(candidate.modelId) &&
-					!isAddonTeaseModel(candidateModel)
-				) {
+				if (!addonAccess.allowed) {
 					tried.push(
 						`${candidate.provider}/${candidate.modelId} (addon required: ${addonAccess.requiredAddon || 'pack'})`,
 					);
@@ -3032,8 +3028,9 @@ proxy.all('/*', async (c) => {
 		}
 	}
 
-	// Add-on model access gate (non-trial): models listed on any active add-on require assignment.
-	// Claude / ChatGPT 5.6+ get a small non-addon tease (enforced later via model_limits).
+	// Add-on model access gate (non-trial): only models on Settings → addon_required_models
+	// need a pack. Catalog allowlists grant benefits; they do not lock Phantom.
+	// Claude / ChatGPT 5.6+ still get a small non-addon tease (enforced later via model_limits).
 	const activeAddons = !keyRecord.isTrial
 		? await getActiveAddonsForUser({
 				discordUserId: keyRecord.discordUserId,
@@ -3046,15 +3043,13 @@ proxy.all('/*', async (c) => {
 			discordUserId: keyRecord.discordUserId,
 			apiKeyId: keyRecord.id,
 		});
-		if (
-			!addonAccess.allowed &&
-			!isAddonTeaseModel(model) &&
-			!isAddonTeaseModel(upstreamModel)
-		) {
+		if (!addonAccess.allowed) {
 			return c.json(
 				{
 					error: {
-						message: addonAccess.reason || 'Add-on required for this model.',
+						message:
+							addonAccess.reason ||
+							'This model requires an active add-on (e.g. vibecodeaddon). Ask in Discord to upgrade.',
 						type: 'access_error',
 						code: 'addon_required',
 						param: addonAccess.requiredAddon || null,
@@ -3285,7 +3280,7 @@ proxy.all('/*', async (c) => {
 							? `pattern "${mlCheck.overrideModel}"`
 							: `override "${mlCheck.overrideModel}"`
 						: mlCheck.source === 'tease_default'
-							? 'non-addon tease'
+							? 'non-addon Claude/GPT-5.6 tease (5 prompts)'
 							: mlCheck.source === 'key_default'
 								? "your key's per-model default"
 								: 'global per-model default';
@@ -3295,7 +3290,7 @@ proxy.all('/*', async (c) => {
 						: '';
 				const teaseHint =
 					isAddonTeaseModel(model) || isAddonTeaseModel(upstreamModel)
-						? ' Upgrade with an add-on (e.g. vibecodeaddon) for full access.'
+						? ' Limit reached — upgrade to vibecodeaddon for full Claude / ChatGPT 5.6+ access (ask in Discord for payment).'
 						: '';
 				return c.json(
 					{
@@ -3675,7 +3670,7 @@ proxy.all('/*', async (c) => {
 					return c.json(
 						{
 							error: {
-								message: `Add-on daily token limit reached for model "${model}": ${du.total.toLocaleString()}/${addonModelDaily.toLocaleString()} tokens today. Resets tomorrow.`,
+								message: `Add-on daily token limit reached for model "${model}": ${du.total.toLocaleString()}/${addonModelDaily.toLocaleString()} tokens today. Resets tomorrow. Pack subcap — wait for reset or ask Discord about a higher vibecodeaddon tier.`,
 								type: 'rate_limit_error',
 								code: 'addon_model_daily_token_limit_exceeded',
 							},

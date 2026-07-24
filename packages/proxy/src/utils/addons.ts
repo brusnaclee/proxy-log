@@ -1,6 +1,6 @@
 import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { addonAssignments, addons, type Addon } from "../db/schema.js";
+import { addonAssignments, addons, adminConfig, type Addon } from "../db/schema.js";
 import { normalizeModelForLimit } from "./rate-limit.js";
 
 export type ActiveAddon = Addon & {
@@ -110,24 +110,27 @@ export async function getActiveAddonsForUser(opts: {
   return Array.from(byId.values());
 }
 
-/** All model patterns locked behind any active allowlist add-on catalog entry. */
+/** Global Settings → models that hard-require an add-on (empty = nothing locked). */
+export async function getAddonRequiredPatterns(): Promise<string[]> {
+  const [row] = await db
+    .select({ raw: adminConfig.addonRequiredModels })
+    .from(adminConfig)
+    .limit(1);
+  return parseAllowlist(row?.raw);
+}
+
+/** @deprecated Prefer getAddonRequiredPatterns — catalog allowlists no longer lock globally. */
 export async function getLockedModelPatterns(): Promise<string[]> {
-  const rows = await db.select().from(addons).where(eq(addons.isActive, true));
-  const patterns: string[] = [];
-  for (const a of rows) {
-    if (getAccessMode(a) === "allowlist") {
-      patterns.push(...parseAllowlist(a.modelAllowlist));
-    }
-  }
-  return Array.from(new Set(patterns.map((p) => p.toLowerCase())));
+  return getAddonRequiredPatterns();
 }
 
 /**
  * Access rules:
  * - If user has an active all_except add-on → allow all models except that addon's denylist
  *   (union of denylists if multiple).
- * - Else if model matches any catalog allowlist add-on → require assignment to one of those.
- * - Else → open (base access).
+ * - Else if model matches global admin_config.addon_required_models → require a pack that
+ *   grants the model (allowlist match or all_except). Empty required list = open.
+ * - Addon catalog allowlists do NOT lock non-holders; they only define pack benefits.
  */
 export async function checkAddonModelAccess(opts: {
   model: string;
@@ -135,7 +138,6 @@ export async function checkAddonModelAccess(opts: {
   apiKeyId?: number | null;
 }): Promise<{ allowed: boolean; reason?: string; requiredAddon?: string }> {
   const normalized = await normalizeModelForLimit(opts.model);
-  const allAddons = await db.select().from(addons).where(eq(addons.isActive, true));
   const active = await getActiveAddonsForUser({
     discordUserId: opts.discordUserId,
     apiKeyId: opts.apiKeyId,
@@ -159,26 +161,47 @@ export async function checkAddonModelAccess(opts: {
     return { allowed: true };
   }
 
-  // Models listed on any allowlist-mode addon require that addon (or another matching one).
-  const locking = allAddons.filter((a) => {
-    if (getAccessMode(a) !== "allowlist") return false;
+  const required = await getAddonRequiredPatterns();
+  if (!required.length) {
+    return { allowed: true };
+  }
+
+  const needsPack =
+    modelMatchesAllowlist(normalized, required) ||
+    modelMatchesAllowlist(opts.model, required);
+  if (!needsPack) {
+    return { allowed: true };
+  }
+
+  if (
+    addonGrantsModelAccess(active, opts.model) ||
+    addonGrantsModelAccess(active, normalized)
+  ) {
+    return { allowed: true };
+  }
+
+  const catalog = await db.select().from(addons).where(eq(addons.isActive, true));
+  const suggesting = catalog.filter((a) => {
+    if (getAccessMode(a) === "all_except") {
+      const deny = parsePatternList(a.modelDenylist);
+      return (
+        !modelMatchesAllowlist(normalized, deny) &&
+        !modelMatchesAllowlist(opts.model, deny)
+      );
+    }
     const list = parseAllowlist(a.modelAllowlist);
     return (
       modelMatchesAllowlist(normalized, list) ||
       modelMatchesAllowlist(opts.model, list)
     );
   });
-  if (locking.length === 0) {
-    return { allowed: true };
-  }
-
-  const hasMatch = locking.some((lock) => active.some((a) => a.id === lock.id));
-  if (hasMatch) return { allowed: true };
+  const names = suggesting.map((a) => a.name);
+  const hint = names.length ? names.join(", ") : "vibecodeaddon";
 
   return {
     allowed: false,
-    reason: `Model "${opts.model}" requires an active add-on (${locking.map((a) => a.name).join(", ")}).`,
-    requiredAddon: locking[0]?.name,
+    reason: `Model "${opts.model}" requires an active add-on (${hint}). Upgrade to vibecodeaddon (or another pack) for access — ask in Discord for payment.`,
+    requiredAddon: names[0] || "vibecodeaddon",
   };
 }
 

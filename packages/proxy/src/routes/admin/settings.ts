@@ -28,6 +28,14 @@ settings.get("/settings/global", async (c) => {
     globalDailyOutputTokenLimit: config.globalDailyOutputTokenLimit || 0,
     tokenInputMode: normalizeTokenInputMode((config as any).tokenInputMode),
     tokenLimitWeightPercent: normalizeTokenLimitWeightPercent((config as any).tokenLimitWeightPercent ?? 10),
+    addonRequiredModels: (() => {
+      try {
+        const parsed = JSON.parse((config as any).addonRequiredModels || "[]");
+        return Array.isArray(parsed) ? parsed.map((x) => String(x || "").trim()).filter(Boolean) : [];
+      } catch {
+        return [];
+      }
+    })(),
     tokenSaverRtkEnabled: config.tokenSaverRtkEnabled ?? true,
     tokenSaverRtkMaxChars: config.tokenSaverRtkMaxChars ?? 2000,
     tokenSaverHeadroomEnabled: config.tokenSaverHeadroomEnabled ?? false,
@@ -62,6 +70,25 @@ settings.put("/settings/global", async (c) => {
   }
   if (body.tokenLimitWeightPercent !== undefined) {
     updates.tokenLimitWeightPercent = normalizeTokenLimitWeightPercent(body.tokenLimitWeightPercent);
+  }
+  if (body.addonRequiredModels !== undefined) {
+    const raw = body.addonRequiredModels;
+    const list = Array.isArray(raw)
+      ? raw.map((x: unknown) => String(x || "").trim()).filter(Boolean)
+      : typeof raw === "string"
+        ? (() => {
+            try {
+              const p = JSON.parse(raw);
+              return Array.isArray(p) ? p.map((x) => String(x || "").trim()).filter(Boolean) : [];
+            } catch {
+              return String(raw)
+                .split(/[,;\n]/)
+                .map((s) => s.trim())
+                .filter(Boolean);
+            }
+          })()
+        : [];
+    updates.addonRequiredModels = JSON.stringify(list);
   }
   if (body.tokenSaverRtkEnabled !== undefined) updates.tokenSaverRtkEnabled = !!body.tokenSaverRtkEnabled;
   if (body.tokenSaverRtkMaxChars !== undefined) updates.tokenSaverRtkMaxChars = Math.max(200, Number(body.tokenSaverRtkMaxChars) || 2000);

@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Eye, EyeOff, Save, Trash2, AlertTriangle } from "lucide-react";
+import { Eye, EyeOff, Save, Trash2, AlertTriangle, X } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
   DialogDescription, DialogFooter, DialogTrigger
@@ -23,6 +23,8 @@ export default function SettingsPage() {
   const [globalRateLimit, setGlobalRateLimit] = useState(1000);
   const [globalRateLimitWindow, setGlobalRateLimitWindow] = useState("5h");
   const [tokenLimitWeightPercent, setTokenLimitWeightPercent] = useState(10);
+  const [addonRequiredModels, setAddonRequiredModels] = useState<string[]>([]);
+  const [addonRequiredDraft, setAddonRequiredDraft] = useState("");
   const [globalPerModelPromptLimit, setGlobalPerModelPromptLimit] = useState(10);
   const [globalPerModelPromptLimitWindow, setGlobalPerModelPromptLimitWindow] = useState("5h");
   const [globalDailyTokenLimit, setGlobalDailyTokenLimit] = useState(0);
@@ -115,6 +117,7 @@ export default function SettingsPage() {
       setTokenLimitWeightPercent(
         typeof g.tokenLimitWeightPercent === "number" ? g.tokenLimitWeightPercent : 10,
       );
+      setAddonRequiredModels(Array.isArray(g.addonRequiredModels) ? g.addonRequiredModels : []);
       setGlobalPerModelPromptLimit(g.globalPerModelPromptLimit || 0);
       setGlobalPerModelPromptLimitWindow(g.globalPerModelPromptLimitWindow || "5h");
       setGlobalDailyTokenLimit(g.globalDailyTokenLimit || 0);
@@ -166,6 +169,7 @@ export default function SettingsPage() {
         globalDailyInputTokenLimit, globalDailyOutputTokenLimit,
         tokenInputMode,
         tokenLimitWeightPercent,
+        addonRequiredModels,
         tokenSaverRtkEnabled, tokenSaverRtkMaxChars,
         tokenSaverHeadroomEnabled, tokenSaverHeadroomUrl,
         tokenSaverCavemanEnabled, tokenSaverCavemanLevel,
@@ -476,6 +480,74 @@ export default function SettingsPage() {
                   <p className="text-[10px] text-muted-foreground">
                     Example: prompt In 500k (cache included) + 9 tool hops × 50k → limit ≈ 500k + 9×5k = 545k at 10%. Visible on Key Detail / portal / Discord.
                   </p>
+                </div>
+              </div>
+              <div className="space-y-2 border border-border/50 rounded-lg p-3">
+                <Label>Models requiring add-on</Label>
+                <p className="text-[10px] text-muted-foreground">
+                  Substring patterns that hard-lock without a pack. Empty = Phantom can use catalog models without add-on.
+                  Claude / GPT-5.6+ still get a 5-prompt tease for non-addon users (see model overrides / tease).
+                </p>
+                {addonRequiredModels.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {addonRequiredModels.map((pat) => (
+                      <span
+                        key={pat}
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-primary/15 text-primary font-mono text-[10px]"
+                      >
+                        {pat}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setAddonRequiredModels((prev) => prev.filter((x) => x !== pat))
+                          }
+                          aria-label={`Remove ${pat}`}
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <Input
+                    className="font-mono text-sm"
+                    list="addon-required-suggestions"
+                    placeholder="pattern (e.g. codex)"
+                    value={addonRequiredDraft}
+                    onChange={(e) => setAddonRequiredDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        const p = addonRequiredDraft.trim();
+                        if (!p) return;
+                        setAddonRequiredModels((prev) =>
+                          prev.includes(p) ? prev : [...prev, p],
+                        );
+                        setAddonRequiredDraft("");
+                      }
+                    }}
+                  />
+                  <datalist id="addon-required-suggestions">
+                    {modelCatalog.slice(0, 80).map((id) => (
+                      <option key={id} value={id} />
+                    ))}
+                  </datalist>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const p = addonRequiredDraft.trim();
+                      if (!p) return;
+                      setAddonRequiredModels((prev) =>
+                        prev.includes(p) ? prev : [...prev, p],
+                      );
+                      setAddonRequiredDraft("");
+                    }}
+                  >
+                    Add
+                  </Button>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-2">

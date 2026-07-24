@@ -559,6 +559,8 @@ export interface GlobalSettings {
   tokenInputMode?: "per_turn_peak" | "full" | "billable";
   /** 1–100: percent of each hop In+Out charged to daily/monthly token limits */
   tokenLimitWeightPercent?: number;
+  /** Substring patterns that hard-require an add-on. Empty = Phantom open access. */
+  addonRequiredModels?: string[];
   tokenSaverRtkEnabled?: boolean;
   tokenSaverRtkMaxChars?: number;
   tokenSaverHeadroomEnabled?: boolean;

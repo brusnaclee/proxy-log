@@ -120,7 +120,7 @@ async function main() {
 
   // Dual quotas: 50 prompts/5h + 500 API calls/5h; rate_window_start column
   const quotaUpdate = await ssh.execCommand(
-    "sudo -u postgres psql -d monit_api -c \"ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS rate_window_start text; ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS token_limit_weight_percent integer NOT NULL DEFAULT 10;\" 2>&1"
+    "sudo -u postgres psql -d monit_api -c \"ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS rate_window_start text; ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS token_limit_weight_percent integer NOT NULL DEFAULT 10; ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS addon_required_models text NOT NULL DEFAULT '[]';\" 2>&1"
   );
   console.log(quotaUpdate.stdout || quotaUpdate.stderr || '');
 

@@ -57,6 +57,8 @@ export const adminConfig = pgTable('admin_config', {
 	monitorAutoMode: text('monitor_auto_mode').notNull().default('notif_only'),
 	/** full = prompt_tokens+cached_tokens (match upstream In); billable = net context_delta */
 	tokenInputMode: text('token_input_mode').notNull().default('per_turn_peak'),
+	/** JSON string array of model patterns that require an active add-on. Empty = nothing hard-locked. */
+	addonRequiredModels: text('addon_required_models').notNull().default('[]'),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
 	updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });

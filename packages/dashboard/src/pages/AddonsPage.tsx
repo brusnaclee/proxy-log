@@ -299,9 +299,9 @@ export default function AddonsPage() {
             <Package className="h-6 w-6" /> Add-ons
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Packs that unlock models (allowlist) or open all except denylist, with optional per-model daily caps.
-            Assign to Discord users. Example Vibecode: mode <span className="font-mono">all_except</span> + denylist{" "}
-            <span className="font-mono">codex</span> + 5M/day on chatgpt-5.6 / kimi.
+            Packs grant benefits (skip Claude/GPT-5.6 tease, token bonuses, per-model caps, device clamp).
+            Allowlist = models this pack unlocks benefits for — it does <span className="font-medium text-foreground">not</span> lock
+            those models for Phantom. Hard locks live in Settings → Models requiring add-on (empty by default).
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
@@ -360,8 +360,8 @@ export default function AddonsPage() {
               </div>
               <p className="text-[10px] text-muted-foreground mt-1">
                 {accessMode === "all_except"
-                  ? "User with this pack can use all models except denylist (e.g. exclude codex)."
-                  : "Only selected allowlist models require/get this pack."}
+                  ? "Holder can use all models except denylist (e.g. exclude codex)."
+                  : "Models this pack grants benefits for (skip tease / apply pack caps). Does not lock non-holders."}
               </p>
             </div>
 
