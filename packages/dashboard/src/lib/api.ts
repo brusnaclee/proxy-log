@@ -194,7 +194,9 @@ export interface KeyPeriodStats {
   requests: number;
   hopCount?: number;
   tokens: number;
+  /** Limit-schedule input (same as Live Usage bar / gates) */
   promptTokens: number;
+  peakPromptTokens?: number;
   billablePromptTokens?: number;
   cachedTokens?: number;
   fullInputTokens?: number;

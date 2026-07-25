@@ -399,10 +399,7 @@ export default function KeyDetailPage() {
         rows: [
           ["Prompts",         s.today.requests,         s.week.requests,         s.month.requests,         s.allTime.requests],
           ["Total Tokens",    s.today.tokens,           s.week.tokens,           s.month.tokens,           s.allTime.tokens],
-          ["Input Tokens",    formatInputBreakdown(s.today.billablePromptTokens, s.today.cachedTokens, s.today.promptTokens).label,
-                              formatInputBreakdown(s.week.billablePromptTokens, s.week.cachedTokens, s.week.promptTokens).label,
-                              formatInputBreakdown(s.month.billablePromptTokens, s.month.cachedTokens, s.month.promptTokens).label,
-                              formatInputBreakdown(s.allTime.billablePromptTokens, s.allTime.cachedTokens, s.allTime.promptTokens).label],
+          ["Input Tokens",    s.today.promptTokens,     s.week.promptTokens,     s.month.promptTokens,     s.allTime.promptTokens],
           ["Output Tokens",   s.today.completionTokens, s.week.completionTokens, s.month.completionTokens, s.allTime.completionTokens],
           ["Context Tokens",  s.today.contextTokens,    s.week.contextTokens,    s.month.contextTokens,    s.allTime.contextTokens],
           ["Est. Cost",       fmtCost(s.today.estimatedCost), fmtCost(s.week.estimatedCost), fmtCost(s.month.estimatedCost), fmtCost(s.allTime.estimatedCost)],
@@ -436,11 +433,7 @@ export default function KeyDetailPage() {
         rows: [
           ["Prompts",    s.today.requests,  s.week.requests,  s.month.requests,  s.allTime.requests],
           ["Tokens",     s.today.tokens,    s.week.tokens,    s.month.tokens,    s.allTime.tokens],
-          ["Input",
-            formatInputBreakdown(s.today.billablePromptTokens, s.today.cachedTokens, s.today.promptTokens).label,
-            formatInputBreakdown(s.week.billablePromptTokens, s.week.cachedTokens, s.week.promptTokens).label,
-            formatInputBreakdown(s.month.billablePromptTokens, s.month.cachedTokens, s.month.promptTokens).label,
-            formatInputBreakdown(s.allTime.billablePromptTokens, s.allTime.cachedTokens, s.allTime.promptTokens).label],
+          ["Input",      s.today.promptTokens, s.week.promptTokens, s.month.promptTokens, s.allTime.promptTokens],
           ["Output",     s.today.completionTokens, s.week.completionTokens, s.month.completionTokens, s.allTime.completionTokens],
           ["Est. Cost",  fmtCost(s.today.estimatedCost), fmtCost(s.week.estimatedCost), fmtCost(s.month.estimatedCost), fmtCost(s.allTime.estimatedCost)],
         ],
@@ -697,8 +690,21 @@ export API_TIMEOUT_MS=500000`}
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
               {[
                 { label: "Prompts", value: formatNumber(s.requests), sub: (s.hopCount || 0) > s.requests ? `${formatNumber(s.hopCount || 0)} API calls` : undefined },
-                { label: "Total Tokens",  value: formatNumber(s.tokens) },
-                { label: "Input (peak)",  value: formatInputBreakdown(s.billablePromptTokens, s.cachedTokens, s.promptTokens).label, sub: (s.fullInputTokens || 0) > (s.promptTokens || 0) * 1.5 ? `full ${formatNumber(s.fullInputTokens || 0)} (amanai)` : undefined },
+                { label: "Total Tokens",  value: formatNumber(s.tokens), sub: "limit in+out" },
+                {
+                  label: "Input (limit)",
+                  value: formatNumber(s.promptTokens),
+                  sub: [
+                    (s as any).peakPromptTokens
+                      ? `peak ${formatNumber((s as any).peakPromptTokens)}`
+                      : null,
+                    (s.fullInputTokens || 0) > (s.promptTokens || 0) * 1.2
+                      ? `full ${formatNumber(s.fullInputTokens || 0)} (amanai)`
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ") || undefined,
+                },
                 { label: "Output Tokens", value: formatNumber(s.completionTokens) },
                 { label: "Context Tokens",value: formatNumber(s.contextTokens) },
                 { label: "Est. Cost",     value: `$${(s.estimatedCost/1e6).toFixed(4)}` },

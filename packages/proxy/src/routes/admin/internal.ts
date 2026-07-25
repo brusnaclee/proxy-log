@@ -59,8 +59,8 @@ async function getUserStats(apiKeyId: number) {
   const whereClause = and(eq(requestLogs.apiKeyId, apiKeyId), VALID_LOG_SQL);
   const [usage] = await db.select({
     requests: turnCountSql(whereClause),
-    tokens: turnTotalTokensSql(whereClause),
-    promptTokens: turnPromptTokensSql(whereClause),
+    tokens: weightedHopTotalTokensSql(whereClause),
+    promptTokens: weightedHopInputTokensSql(whereClause),
     completionTokens: turnCompletionTokensSql(whereClause),
   }).from(requestLogs).where(whereClause);
 
@@ -442,7 +442,7 @@ internal.get("/internal/stats/overview", async (c) => {
   const todayWhere = and(sql`created_at >= ${todayDate}`, VALID_LOG_SQL);
   const [today] = await db.select({
     requests: turnCountSql(todayWhere),
-    tokens: turnTotalTokensSql(todayWhere),
+    tokens: weightedHopTotalTokensSql(todayWhere),
   }).from(requestLogs).where(todayWhere);
 
   const [activeDiscordKeys] = await db.select({ count: sql<number>`count(*)` })

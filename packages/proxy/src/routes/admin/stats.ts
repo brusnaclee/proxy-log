@@ -3,7 +3,7 @@ import { db } from "../../db/index.js";
 import { requestLogs, apiKeys, devices, chatSessions, monthlyStats } from "../../db/schema.js";
 import { eq, sql, and } from "drizzle-orm";
 import { getModelRates } from "../../utils/cost-calculator.js";
-import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, wibTodayStartSql, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, resolvePeriodRange, chartDaysForPeriod, groupedInputSumSql, getTokenInputModeSync, type PeriodKey } from "../../utils/counting.js";
+import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, wibTodayStartSql, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, sanitizeRows, resolvePeriodRange, chartDaysForPeriod, groupedInputSumSql, getTokenInputModeSync, type PeriodKey } from "../../utils/counting.js";
 import { applyTokenMultiplierRows, getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { statsCache } from "../../utils/cache.js";
 
@@ -63,8 +63,8 @@ stats.get("/stats/overview", async (c) => {
   const todayWhere = and(sql`created_at >= ${todayStr}`, VALID_LOG_SQL);
   const todayStats = (await db.select({
     requests: turnCountSql(todayWhere),
-    tokens: turnTotalTokensSql(todayWhere),
-    promptTokens: turnPromptTokensSql(todayWhere),
+    tokens: weightedHopTotalTokensSql(todayWhere),
+    promptTokens: weightedHopInputTokensSql(todayWhere),
     billablePromptTokens: turnBillablePromptTokensSql(todayWhere),
     cachedTokens: turnCachedTokensSql(todayWhere),
     completionTokens: turnCompletionTokensSql(todayWhere),
@@ -95,8 +95,8 @@ stats.get("/stats/overview", async (c) => {
   const weekWhere = and(sql`created_at >= ${weekStr}`, VALID_LOG_SQL);
   const weekStats = (await db.select({
     requests: turnCountSql(weekWhere),
-    tokens: turnTotalTokensSql(weekWhere),
-    promptTokens: turnPromptTokensSql(weekWhere),
+    tokens: weightedHopTotalTokensSql(weekWhere),
+    promptTokens: weightedHopInputTokensSql(weekWhere),
     billablePromptTokens: turnBillablePromptTokensSql(weekWhere),
     cachedTokens: turnCachedTokensSql(weekWhere),
     completionTokens: turnCompletionTokensSql(weekWhere),
@@ -126,8 +126,8 @@ stats.get("/stats/overview", async (c) => {
   const monthWhere = and(sql`created_at >= ${monthStr}`, VALID_LOG_SQL);
   const monthStats = (await db.select({
     requests: turnCountSql(monthWhere),
-    tokens: turnTotalTokensSql(monthWhere),
-    promptTokens: turnPromptTokensSql(monthWhere),
+    tokens: weightedHopTotalTokensSql(monthWhere),
+    promptTokens: weightedHopInputTokensSql(monthWhere),
     billablePromptTokens: turnBillablePromptTokensSql(monthWhere),
     cachedTokens: turnCachedTokensSql(monthWhere),
     completionTokens: turnCompletionTokensSql(monthWhere),
@@ -157,8 +157,8 @@ stats.get("/stats/overview", async (c) => {
   const allTimeWhere = VALID_LOG_SQL;
   const allTimeLive = (await db.select({
     requests: turnCountSql(allTimeWhere),
-    tokens: turnTotalTokensSql(allTimeWhere),
-    promptTokens: turnPromptTokensSql(allTimeWhere),
+    tokens: weightedHopTotalTokensSql(allTimeWhere),
+    promptTokens: weightedHopInputTokensSql(allTimeWhere),
     billablePromptTokens: turnBillablePromptTokensSql(allTimeWhere),
     cachedTokens: turnCachedTokensSql(allTimeWhere),
     completionTokens: turnCompletionTokensSql(allTimeWhere),
@@ -322,8 +322,8 @@ stats.get("/stats/by-key", async (c) => {
 
     const keyStats = (await db.select({
       requests: turnCountSql(whereClause),
-      tokens: turnTotalTokensSql(whereClause),
-      promptTokens: turnPromptTokensSql(whereClause),
+      tokens: weightedHopTotalTokensSql(whereClause),
+      promptTokens: weightedHopInputTokensSql(whereClause),
       completionTokens: turnCompletionTokensSql(whereClause),
       uniqueDevices: sql<number>`COUNT(DISTINCT device_fingerprint)`
     }).from(requestLogs).where(whereClause))[0];

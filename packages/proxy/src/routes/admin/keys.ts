@@ -5,7 +5,7 @@ import { eq, sql, and, desc } from "drizzle-orm";
 import { generateApiKey, getKeyPrefix, sha256, maskKey } from "../../utils/crypto.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
-import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, hopCountSql, hopFullInputTokensSql, sanitizeRows, groupedInputSumSql } from "../../utils/counting.js";
+import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, turnCountSql, turnPromptTokensSql, peakPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, hopCountSql, hopFullInputTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, sanitizeRows, groupedInputSumSql } from "../../utils/counting.js";
 import { applyTokenMultiplierRows, getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { apiKeyCache, statsCache } from "../../utils/cache.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
@@ -48,7 +48,7 @@ keys.get("/keys", async (c) => {
       const todayWhere = and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${todayUtcDate}`, VALID_LOG_SQL)!;
       const todayStats = (await db.select({
         count: turnCountSql(todayWhere),
-        tokens: turnTotalTokensSql(todayWhere, tmOpts),
+        tokens: weightedHopTotalTokensSql(todayWhere, tmOpts),
         cost: sql<number>`COALESCE(SUM(estimated_cost), 0)`,
       })
         .from(requestLogs).where(todayWhere))[0];
@@ -64,7 +64,7 @@ keys.get("/keys", async (c) => {
       const totalWhere = and(eq(requestLogs.apiKeyId, key.id), VALID_LOG_SQL)!;
       const totalStats = (await db.select({
         count: turnCountSql(totalWhere),
-        tokens: turnTotalTokensSql(totalWhere, tmOpts),
+        tokens: weightedHopTotalTokensSql(totalWhere, tmOpts),
       })
         .from(requestLogs).where(totalWhere))[0];
 
@@ -236,15 +236,19 @@ keys.get("/keys/:id", async (c) => {
     const whereClause = since
       ? and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${since}`, VALID_LOG_SQL)!
       : and(eq(requestLogs.apiKeyId, key.id), VALID_LOG_SQL)!;
+    const whereHops = since
+      ? and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${since}`, BILLABLE_LOG_SQL)!
+      : and(eq(requestLogs.apiKeyId, key.id), BILLABLE_LOG_SQL)!;
 
     const s = (await db.select({
       turns:            turnCountSql(whereClause),
       hops:             hopCountSql(whereClause),
-      tokens:           turnTotalTokensSql(whereClause, tmOpts),
-      promptTokens:     turnPromptTokensSql(whereClause, tmOpts),
+      tokens:           weightedHopTotalTokensSql(whereHops, tmOpts),
+      promptTokens:     weightedHopInputTokensSql(whereHops, tmOpts),
+      peakPromptTokens: peakPromptTokensSql(whereClause, tmOpts),
       billablePromptTokens: turnBillablePromptTokensSql(whereClause, tmOpts),
       cachedTokens:     turnCachedTokensSql(whereClause, tmOpts),
-      fullInputTokens:  hopFullInputTokensSql(whereClause, tmOpts),
+      fullInputTokens:  hopFullInputTokensSql(whereHops, tmOpts),
       completionTokens: turnCompletionTokensSql(whereClause, tmOpts),
       contextTokens:    sql<number>`0`,
       estimatedCost:    sql<number>`COALESCE(SUM(estimated_cost), 0)`,
@@ -271,6 +275,7 @@ keys.get("/keys/:id", async (c) => {
       hopCount:         s?.hops            || 0,
       tokens:           s?.tokens          || 0,
       promptTokens:     s?.promptTokens    || 0,
+      peakPromptTokens: s?.peakPromptTokens || 0,
       billablePromptTokens: s?.billablePromptTokens || 0,
       cachedTokens:     s?.cachedTokens    || 0,
       fullInputTokens:  s?.fullInputTokens || 0,
