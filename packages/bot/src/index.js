@@ -4175,7 +4175,11 @@ function buildRankingEmbed(title, color, todayItems, monthItems, formatItem) {
 			{ name: '📆 Bulan Ini', value: monthLines.slice(0, 1000), inline: true },
 		)
 		.setFooter({
-			text: `🔄 Auto-refresh setiap 1 menit  •  ${discordTime(new Date(), 'F')}`,
+			text: `🔄 Auto-refresh setiap 1 menit  •  ${new Date().toLocaleString('id-ID', {
+				timeZone: 'Asia/Jakarta',
+				dateStyle: 'medium',
+				timeStyle: 'medium',
+			})} WIB`,
 		});
 }
 
@@ -5653,7 +5657,7 @@ async function refreshRankingEmbeds() {
 						name = `<@${item.discordUserId}>`;
 					}
 					const suffix = item.isTrial ? ' 🎁' : '';
-					return `**${name}**${suffix} — ${formatTokens(item.tokens)} tok (📥 ${formatInputBreakdown(item.billablePromptTokens, item.cachedTokens, item.promptTokens).compact} / 📤 ${formatTokens(item.completionTokens || 0)})`;
+					return `**${name}**${suffix} — ${formatTokens(item.tokens)} tok (📥 ${formatTokens(item.promptTokens || 0)} / 📤 ${formatTokens(item.completionTokens || 0)})`;
 				},
 			);
 			await msg.edit({ embeds: [embed] });

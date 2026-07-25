@@ -13,8 +13,12 @@ export const adminConfig = pgTable('admin_config', {
 	globalRateLimitWindow: text('global_rate_limit_window').default('5h'),
 	globalPromptLimit: integer('global_prompt_limit').default(50),
 	globalPromptLimitWindow: text('global_prompt_limit_window').default('5h'),
-	/** Percent of each hop In+Out applied to daily/monthly token limits (1–100). Logs stay 100%. */
+	/** Percent used by first_rest_flat / flat_all limit modes (0–100). */
 	tokenLimitWeightPercent: integer('token_limit_weight_percent').notNull().default(10),
+	/** first_rest_flat | flat_all | peak | full | custom */
+	tokenLimitWeightMode: text('token_limit_weight_mode').notNull().default('first_rest_flat'),
+	/** JSON array of {fromHop,toHop,percent} when mode=custom */
+	tokenLimitWeightCustom: text('token_limit_weight_custom').notNull().default('[]'),
 	globalPerModelPromptLimit: integer('global_per_model_prompt_limit').default(0),
 	globalPerModelPromptLimitWindow: text('global_per_model_prompt_limit_window').default('1d'),
 	globalDailyTokenLimit: integer('global_daily_token_limit').default(0),

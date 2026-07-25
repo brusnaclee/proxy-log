@@ -40,6 +40,12 @@ export default function SettingsPage() {
   const [globalRateLimit, setGlobalRateLimit] = useState(1000);
   const [globalRateLimitWindow, setGlobalRateLimitWindow] = useState("5h");
   const [tokenLimitWeightPercent, setTokenLimitWeightPercent] = useState(10);
+  const [tokenLimitWeightMode, setTokenLimitWeightMode] = useState<
+    "first_rest_flat" | "flat_all" | "peak" | "full" | "custom"
+  >("first_rest_flat");
+  const [tokenLimitWeightCustom, setTokenLimitWeightCustom] = useState<
+    { fromHop: number; toHop: number; percent: number }[]
+  >([]);
   const [addonRequiredModels, setAddonRequiredModels] = useState<string[]>([]);
   const [addonRequiredDraft, setAddonRequiredDraft] = useState("");
   const [globalPerModelPromptLimit, setGlobalPerModelPromptLimit] = useState(10);
@@ -140,6 +146,21 @@ export default function SettingsPage() {
       setGlobalRateLimitWindow(g.globalRateLimitWindow || "5h");
       setTokenLimitWeightPercent(
         typeof g.tokenLimitWeightPercent === "number" ? g.tokenLimitWeightPercent : 10,
+      );
+      const wm = String(g.tokenLimitWeightMode || "first_rest_flat");
+      setTokenLimitWeightMode(
+        wm === "flat_all" || wm === "peak" || wm === "full" || wm === "custom"
+          ? wm
+          : "first_rest_flat",
+      );
+      setTokenLimitWeightCustom(
+        Array.isArray(g.tokenLimitWeightCustom)
+          ? g.tokenLimitWeightCustom.map((r: any) => ({
+              fromHop: Number(r.fromHop) || 1,
+              toHop: Number(r.toHop) || 1,
+              percent: Number(r.percent) || 0,
+            }))
+          : [],
       );
       setAddonRequiredModels(Array.isArray(g.addonRequiredModels) ? g.addonRequiredModels : []);
       setGlobalPerModelPromptLimit(g.globalPerModelPromptLimit || 0);
@@ -259,6 +280,8 @@ export default function SettingsPage() {
         globalDailyInputTokenLimit, globalDailyOutputTokenLimit,
         tokenInputMode,
         tokenLimitWeightPercent,
+        tokenLimitWeightMode,
+        tokenLimitWeightCustom,
         addonRequiredModels,
         tokenSaverRtkEnabled, tokenSaverRtkMaxChars,
         tokenSaverHeadroomEnabled, tokenSaverHeadroomUrl,
@@ -552,31 +575,138 @@ export default function SettingsPage() {
                   </p>
                 </div>
               </div>
-              <div className="grid grid-cols-1 gap-2">
-                <div className="rounded-lg border border-border/50 p-3 space-y-1">
-                  <Label>Token limit hop schedule (input)</Label>
-                  <p className="text-[10px] text-muted-foreground leading-relaxed">
-                    Daily/monthly <strong>input</strong> credit by hop in a turn: hop&nbsp;1 = 100%;
-                    hops&nbsp;2–5 = 0%; then 10% → +10% every 5 hops; hop&nbsp;≥50 = 100%.
-                    <strong> Output always 100%.</strong> Logs still store full tokens.
-                    The flat “weight %” field below is unused for this schedule (kept for compatibility).
-                  </p>
-                </div>
-                <div>
-                  <Label>Token limit weight % (legacy)</Label>
-                  <Input
-                    type="number"
-                    value={tokenLimitWeightPercent}
-                    onChange={(e) => setTokenLimitWeightPercent(parseInt(e.target.value) || 10)}
-                    placeholder="10"
-                    className="mt-1"
-                    min={1}
-                    max={100}
-                    disabled
-                  />
-                  <p className="text-[10px] text-muted-foreground mt-1">
-                    Deprecated — hop math uses the fixed schedule above.
-                  </p>
+              <div className="grid grid-cols-1 gap-3">
+                <div className="rounded-lg border border-border/50 p-3 space-y-3">
+                  <div>
+                    <Label>Token limit hop schedule (input)</Label>
+                    <p className="text-[10px] text-muted-foreground leading-relaxed mt-1">
+                      Controls daily/monthly <strong>input</strong> credit (gates + admin/client/Discord bars).
+                      Output always 100%. Logs still store full tokens. Amanai-style full In stays admin-only.
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="text-xs">Mode</Label>
+                    <select
+                      className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                      value={tokenLimitWeightMode}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setTokenLimitWeightMode(
+                          v === "flat_all" || v === "peak" || v === "full" || v === "custom"
+                            ? v
+                            : "first_rest_flat",
+                        );
+                      }}
+                    >
+                      <option value="first_rest_flat">Hop 1 = 100%, later hops = flat % (recommended)</option>
+                      <option value="flat_all">All hops = flat %</option>
+                      <option value="peak">Peak only — MAX context once per prompt</option>
+                      <option value="full">Full hop — 100% every hop (amanai-style limits)</option>
+                      <option value="custom">Custom ranges (from–to hop → %)</option>
+                    </select>
+                  </div>
+                  {(tokenLimitWeightMode === "first_rest_flat" || tokenLimitWeightMode === "flat_all") && (
+                    <div>
+                      <Label className="text-xs">Flat weight %</Label>
+                      <Input
+                        type="number"
+                        value={tokenLimitWeightPercent}
+                        onChange={(e) => setTokenLimitWeightPercent(parseInt(e.target.value) || 0)}
+                        placeholder="10"
+                        className="mt-1"
+                        min={0}
+                        max={100}
+                      />
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        {tokenLimitWeightMode === "first_rest_flat"
+                          ? "Hops 2+ use this % (default 10)."
+                          : "Every hop (including hop 1) uses this %."}
+                      </p>
+                    </div>
+                  )}
+                  {tokenLimitWeightMode === "custom" && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs">Custom hop ranges</Label>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setTokenLimitWeightCustom((prev) => [
+                              ...prev,
+                              { fromHop: 1, toHop: 5, percent: 10 },
+                            ])
+                          }
+                        >
+                          Add range
+                        </Button>
+                      </div>
+                      {tokenLimitWeightCustom.length === 0 && (
+                        <p className="text-[10px] text-muted-foreground">No ranges — hops count as 0%.</p>
+                      )}
+                      {tokenLimitWeightCustom.map((row, idx) => (
+                        <div key={idx} className="flex flex-wrap items-end gap-2">
+                          <div>
+                            <Label className="text-[10px]">From hop</Label>
+                            <Input
+                              type="number"
+                              className="w-20 mt-0.5"
+                              min={1}
+                              value={row.fromHop}
+                              onChange={(e) => {
+                                const v = parseInt(e.target.value) || 1;
+                                setTokenLimitWeightCustom((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, fromHop: v } : r)),
+                                );
+                              }}
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-[10px]">To hop</Label>
+                            <Input
+                              type="number"
+                              className="w-20 mt-0.5"
+                              min={1}
+                              value={row.toHop}
+                              onChange={(e) => {
+                                const v = parseInt(e.target.value) || 1;
+                                setTokenLimitWeightCustom((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, toHop: v } : r)),
+                                );
+                              }}
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-[10px]">%</Label>
+                            <Input
+                              type="number"
+                              className="w-20 mt-0.5"
+                              min={0}
+                              max={100}
+                              value={row.percent}
+                              onChange={(e) => {
+                                const v = parseInt(e.target.value) || 0;
+                                setTokenLimitWeightCustom((prev) =>
+                                  prev.map((r, i) => (i === idx ? { ...r, percent: v } : r)),
+                                );
+                              }}
+                            />
+                          </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              setTokenLimitWeightCustom((prev) => prev.filter((_, i) => i !== idx))
+                            }
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="space-y-2 border border-border/50 rounded-lg p-3">

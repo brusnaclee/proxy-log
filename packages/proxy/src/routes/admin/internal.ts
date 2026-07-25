@@ -8,7 +8,7 @@ import { normalizeIdeName } from "../../utils/detect-ide.js";
 import { checkPromptLimit, checkModelPromptLimit, checkApiCallLimit, parseRateLimitWindow, getWindowResetMs, getApiCallWindowResetMs } from "../../utils/rate-limit.js";
 import { isInternalRequest } from "../../middleware/session.js";
 import { configCache } from "../../utils/cache.js";
-import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, getTokenInputModeSync, weightedHopInputTokensSql, weightedHopTotalTokensSql } from "../../utils/counting.js";
+import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, peakPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, inputHopWeightSqlExpr, getTokenLimitWeightModeSync, weightedHopInputTokensSql, weightedHopTotalTokensSql } from "../../utils/counting.js";
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
 import { resolveKeyDailyTokenLimit, resolveKeyPromptLimit, resolveKeyApiCallLimit } from "../../utils/trial-config.js";
@@ -541,49 +541,66 @@ internal.get("/internal/stats/ranking", async (c) => {
   }
 
     async function getTopUsersByTokens(since: Date) {
-    const peakMode = getTokenInputModeSync() === "per_turn_peak";
-    const rows = (await db.execute(peakMode ? sql`
-      SELECT api_key_id as "apiKeyId", COUNT(*) as requests,
-        COALESCE(SUM(sum_delta * ${tmInput} + sum_c * ${tmOutput}), 0) as tokens,
-        COALESCE(SUM(sum_delta) * ${tmInput}, 0) as "promptTokens",
-        COALESCE(SUM(sum_bill) * ${tmInput}, 0) as "billablePromptTokens",
-        COALESCE(SUM(sum_cache) * ${tmInput}, 0) as "cachedTokens",
-        COALESCE(SUM(sum_c) * ${tmOutput}, 0) as "completionTokens"
-      FROM (
-        SELECT p.api_key_id, p.turn_id, p.sum_delta, p.sum_bill, p.sum_cache, COALESCE(c.sum_c, 0) as sum_c
+    const mode = getTokenLimitWeightModeSync();
+    let rows: any[];
+    if (mode === "peak") {
+      rows = (await db.execute(sql`
+        SELECT api_key_id as "apiKeyId", COUNT(*) as requests,
+          COALESCE(SUM(sum_delta * ${tmInput} + sum_c * ${tmOutput}), 0) as tokens,
+          COALESCE(SUM(sum_delta) * ${tmInput}, 0) as "promptTokens",
+          0::float8 as "billablePromptTokens",
+          0::float8 as "cachedTokens",
+          COALESCE(SUM(sum_c) * ${tmOutput}, 0) as "completionTokens"
         FROM (
-          SELECT DISTINCT ON (api_key_id, turn_id)
-            api_key_id, turn_id,
-            COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0) as sum_delta,
-            COALESCE(prompt_tokens, 0) as sum_bill,
-            COALESCE(cached_tokens, 0) as sum_cache
+          SELECT p.api_key_id, p.turn_id, p.sum_delta, COALESCE(c.sum_c, 0) as sum_c
+          FROM (
+            SELECT DISTINCT ON (api_key_id, turn_id)
+              api_key_id, turn_id,
+              COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0) as sum_delta
+            FROM request_logs
+            WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 AND is_billable_token = true
+            ORDER BY api_key_id, turn_id, (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) DESC
+          ) p
+          LEFT JOIN (
+            SELECT api_key_id, turn_id, SUM(completion_tokens) as sum_c
+            FROM request_logs
+            WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 AND is_billable_token = true
+            GROUP BY api_key_id, turn_id
+          ) c ON c.api_key_id = p.api_key_id AND c.turn_id = p.turn_id
+        ) turns
+        GROUP BY api_key_id ORDER BY tokens DESC LIMIT 20
+      `)).rows as any[];
+    } else {
+      const wExpr = inputHopWeightSqlExpr();
+      rows = (await db.execute(sql`
+        SELECT api_key_id as "apiKeyId",
+          COUNT(DISTINCT CASE WHEN is_counted_request THEN turn_id END) as requests,
+          COALESCE(SUM(inn * (${sql.raw(wExpr)}) * ${tmInput} + outt * ${tmOutput}), 0) as tokens,
+          COALESCE(SUM(inn * (${sql.raw(wExpr)}) * ${tmInput}), 0) as "promptTokens",
+          0::float8 as "billablePromptTokens",
+          0::float8 as "cachedTokens",
+          COALESCE(SUM(outt * ${tmOutput}), 0) as "completionTokens"
+        FROM (
+          SELECT
+            api_key_id,
+            turn_id,
+            is_counted_request,
+            (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
+            COALESCE(completion_tokens, 0)::float8 AS outt,
+            ROW_NUMBER() OVER (
+              PARTITION BY api_key_id, COALESCE(turn_id, 'orphan-' || id::text)
+              ORDER BY created_at ASC, id ASC
+            ) AS rn
           FROM request_logs
-          WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 AND is_billable_token = true
-          ORDER BY api_key_id, turn_id, (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) DESC
-        ) p
-        LEFT JOIN (
-          SELECT api_key_id, turn_id, SUM(completion_tokens) as sum_c
-          FROM request_logs
-          WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 AND is_billable_token = true
-          GROUP BY api_key_id, turn_id
-        ) c ON c.api_key_id = p.api_key_id AND c.turn_id = p.turn_id
-      ) turns
-      GROUP BY api_key_id ORDER BY tokens DESC LIMIT 20
-    ` : sql`
-      SELECT api_key_id as "apiKeyId", COUNT(*) as requests,
-        COALESCE(SUM(sum_delta * ${tmInput} + sum_c * ${tmOutput}), 0) as tokens,
-        COALESCE(SUM(sum_delta) * ${tmInput}, 0) as "promptTokens",
-        COALESCE(SUM(sum_bill) * ${tmInput}, 0) as "billablePromptTokens",
-        COALESCE(SUM(sum_cache) * ${tmInput}, 0) as "cachedTokens",
-        COALESCE(SUM(sum_c) * ${tmOutput}, 0) as "completionTokens"
-      FROM (SELECT api_key_id, turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta,
-        SUM(COALESCE(prompt_tokens, 0)) as sum_bill,
-        SUM(COALESCE(cached_tokens, 0)) as sum_cache,
-        SUM(completion_tokens) as sum_c
-        FROM request_logs WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 AND is_billable_token = true
-        GROUP BY api_key_id, turn_id)
-      GROUP BY api_key_id ORDER BY tokens DESC LIMIT 20
-    `)).rows;
+          WHERE created_at >= ${since}
+            AND status_code BETWEEN 200 AND 299
+            AND is_billable_token = true
+        ) hops
+        GROUP BY api_key_id
+        ORDER BY tokens DESC
+        LIMIT 20
+      `)).rows as any[];
+    }
 
     const result = [];
     for (const row of rows as any[]) {
@@ -593,22 +610,23 @@ internal.get("/internal/stats/ranking", async (c) => {
       if (!key) continue;
 
       if (key.isTrial) {
-        const whereClause = and(eq(requestLogs.apiKeyId, row.apiKeyId), sql`created_at >= ${since}`, BILLABLE_LOG_SQL);
+        const whereHops = and(eq(requestLogs.apiKeyId, row.apiKeyId), sql`created_at >= ${since}`, BILLABLE_LOG_SQL);
+        const whereCounted = and(eq(requestLogs.apiKeyId, row.apiKeyId), sql`created_at >= ${since}`, COUNTED_LOG_SQL);
         const [raw] = await db.select({
-          tokens: turnTotalTokensSql(whereClause, { isTrial: true }),
-          promptTokens: turnPromptTokensSql(whereClause, { isTrial: true }),
-          billablePromptTokens: turnBillablePromptTokensSql(whereClause, { isTrial: true }),
-          cachedTokens: turnCachedTokensSql(whereClause, { isTrial: true }),
-          completionTokens: turnCompletionTokensSql(whereClause, { isTrial: true }),
-        }).from(requestLogs).where(whereClause);
+          tokens: weightedHopTotalTokensSql(whereHops, { isTrial: true }),
+          promptTokens: weightedHopInputTokensSql(whereHops, { isTrial: true }),
+          completionTokens: turnCompletionTokensSql(whereHops, { isTrial: true }),
+          requests: turnCountSql(whereCounted),
+        }).from(requestLogs).where(whereHops);
         row.tokens = raw?.tokens ?? row.tokens;
         row.promptTokens = raw?.promptTokens ?? row.promptTokens;
-        row.billablePromptTokens = raw?.billablePromptTokens ?? row.billablePromptTokens;
-        row.cachedTokens = raw?.cachedTokens ?? row.cachedTokens;
         row.completionTokens = raw?.completionTokens ?? row.completionTokens;
+        row.requests = raw?.requests ?? row.requests;
+        row.billablePromptTokens = 0;
+        row.cachedTokens = 0;
       }
 
-        const estimatedCost = Math.round((row.promptTokens || 0) * 1.5 + (row.completionTokens || 0) * 6.0);
+      const estimatedCost = Math.round((row.promptTokens || 0) * 1.5 + (row.completionTokens || 0) * 6.0);
 
       result.push({
         discordUserId: key.discordUserId,
@@ -709,7 +727,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
       requests: turnCountSql(whereClause),
       tokens: weightedHopTotalTokensSql(whereHops, tmOpts),
       promptTokens: weightedHopInputTokensSql(whereHops, tmOpts),
-      peakPromptTokens: turnPromptTokensSql(whereClause, tmOpts),
+      peakPromptTokens: peakPromptTokensSql(whereClause, tmOpts),
       billablePromptTokens: turnBillablePromptTokensSql(whereClause, tmOpts),
       cachedTokens: turnCachedTokensSql(whereClause, tmOpts),
       completionTokens: turnCompletionTokensSql(whereClause, tmOpts),

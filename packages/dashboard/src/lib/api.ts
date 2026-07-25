@@ -570,10 +570,13 @@ export interface GlobalSettings {
   globalMonthlyTokenLimit: number;
   globalDailyInputTokenLimit: number;
   globalDailyOutputTokenLimit: number;
-  /** per_turn_peak | full | billable */
+  /** per_turn_peak | full | billable — stats tables only */
   tokenInputMode?: "per_turn_peak" | "full" | "billable";
-  /** 1–100: percent of each hop In+Out charged to daily/monthly token limits */
+  /** first_rest_flat | flat_all | peak | full | custom — daily limit credit */
+  tokenLimitWeightMode?: "first_rest_flat" | "flat_all" | "peak" | "full" | "custom";
+  /** Flat % for first_rest_flat / flat_all (0–100) */
   tokenLimitWeightPercent?: number;
+  tokenLimitWeightCustom?: { fromHop: number; toHop: number; percent: number }[];
   /** Substring patterns that hard-require an add-on. Empty = Phantom open access. */
   addonRequiredModels?: string[];
   tokenSaverRtkEnabled?: boolean;

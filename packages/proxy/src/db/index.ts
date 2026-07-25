@@ -137,6 +137,12 @@ export async function initializeDatabase() {
 		await pool.query(
 			`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS token_limit_weight_percent integer NOT NULL DEFAULT 10`,
 		);
+		await pool.query(
+			`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS token_limit_weight_mode text NOT NULL DEFAULT 'first_rest_flat'`,
+		);
+		await pool.query(
+			`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS token_limit_weight_custom text NOT NULL DEFAULT '[]'`,
+		);
 	} catch (_) {}
 	try {
 		await pool.query(
@@ -144,12 +150,16 @@ export async function initializeDatabase() {
 		);
 	} catch (_) {}
 	try {
-		const { setTokenInputModeCache, setTokenLimitWeightPercentCache } = await import('../utils/counting.js');
+		const { setTokenInputModeCache, setTokenLimitWeightConfigCache } = await import('../utils/counting.js');
 		const modeRow = await pool.query(
-			`SELECT token_input_mode, token_limit_weight_percent FROM admin_config LIMIT 1`,
+			`SELECT token_input_mode, token_limit_weight_percent, token_limit_weight_mode, token_limit_weight_custom FROM admin_config LIMIT 1`,
 		);
 		setTokenInputModeCache(modeRow.rows[0]?.token_input_mode);
-		setTokenLimitWeightPercentCache(modeRow.rows[0]?.token_limit_weight_percent);
+		setTokenLimitWeightConfigCache({
+			mode: modeRow.rows[0]?.token_limit_weight_mode,
+			percent: modeRow.rows[0]?.token_limit_weight_percent,
+			custom: modeRow.rows[0]?.token_limit_weight_custom,
+		});
 	} catch (_) {}
 
 	// Add-ons (assignable model access + quota packs)

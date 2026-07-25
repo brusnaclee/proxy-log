@@ -6,7 +6,7 @@ import { maskKey } from "../../utils/crypto.js";
 import { refreshModelCatalog, getModelCatalogResponse } from "../../utils/model-catalog.js";
 import { configCache, apiKeyCache, statsCache } from "../../utils/cache.js";
 import { enrichModelLimitsWithCatalog } from "../../utils/model-limits-enrich.js";
-import { normalizeTokenInputMode, normalizeTokenLimitWeightPercent } from "../../utils/counting.js";
+import { normalizeTokenInputMode, normalizeTokenLimitWeightPercent, normalizeTokenLimitWeightMode, normalizeHopWeightRanges, serializeHopWeightRanges } from "../../utils/counting.js";
 import { destroyAllAuthSessions } from "../../utils/auth-sessions.js";
 import { destroySession } from "../../middleware/session.js";
 import { authSessions } from "../../db/schema.js";
@@ -31,6 +31,8 @@ settings.get("/settings/global", async (c) => {
     globalDailyOutputTokenLimit: config.globalDailyOutputTokenLimit || 0,
     tokenInputMode: normalizeTokenInputMode((config as any).tokenInputMode),
     tokenLimitWeightPercent: normalizeTokenLimitWeightPercent((config as any).tokenLimitWeightPercent ?? 10),
+    tokenLimitWeightMode: normalizeTokenLimitWeightMode((config as any).tokenLimitWeightMode),
+    tokenLimitWeightCustom: normalizeHopWeightRanges((config as any).tokenLimitWeightCustom),
     addonRequiredModels: (() => {
       try {
         const parsed = JSON.parse((config as any).addonRequiredModels || "[]");
@@ -74,6 +76,12 @@ settings.put("/settings/global", async (c) => {
   if (body.tokenLimitWeightPercent !== undefined) {
     updates.tokenLimitWeightPercent = normalizeTokenLimitWeightPercent(body.tokenLimitWeightPercent);
   }
+  if (body.tokenLimitWeightMode !== undefined) {
+    updates.tokenLimitWeightMode = normalizeTokenLimitWeightMode(body.tokenLimitWeightMode);
+  }
+  if (body.tokenLimitWeightCustom !== undefined) {
+    updates.tokenLimitWeightCustom = serializeHopWeightRanges(body.tokenLimitWeightCustom);
+  }
   if (body.addonRequiredModels !== undefined) {
     const raw = body.addonRequiredModels;
     const list = Array.isArray(raw)
@@ -109,12 +117,19 @@ settings.put("/settings/global", async (c) => {
 
   await db.update(adminConfig).set(updates).where(eq(adminConfig.id, config.id));
   configCache.invalidate("admin_config"); // invalidate cached config
-  if (updates.tokenInputMode !== undefined || updates.tokenLimitWeightPercent !== undefined) {
-    const { setTokenInputModeCache, setTokenLimitWeightPercentCache } = await import("../../utils/counting.js");
+  if (
+    updates.tokenInputMode !== undefined ||
+    updates.tokenLimitWeightPercent !== undefined ||
+    updates.tokenLimitWeightMode !== undefined ||
+    updates.tokenLimitWeightCustom !== undefined
+  ) {
+    const { setTokenInputModeCache, setTokenLimitWeightConfigCache } = await import("../../utils/counting.js");
     if (updates.tokenInputMode !== undefined) setTokenInputModeCache(updates.tokenInputMode);
-    if (updates.tokenLimitWeightPercent !== undefined) {
-      setTokenLimitWeightPercentCache(updates.tokenLimitWeightPercent);
-    }
+    setTokenLimitWeightConfigCache({
+      mode: updates.tokenLimitWeightMode,
+      percent: updates.tokenLimitWeightPercent,
+      custom: updates.tokenLimitWeightCustom,
+    });
     statsCache.clear(); // aggregates depend on input mode / weight
   }
   return c.json({ success: true, message: "Global settings updated" });

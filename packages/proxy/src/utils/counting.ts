@@ -1,5 +1,22 @@
 import { sql, type SQL } from "drizzle-orm";
 import { getTokenMultipliers, type TokenMultiplierOpts } from "./token-multiplier.js";
+import {
+  type TokenLimitWeightMode,
+  type HopWeightRange,
+  normalizeTokenLimitWeightMode,
+  normalizeTokenLimitWeightPercent,
+  normalizeHopWeightRanges,
+  serializeHopWeightRanges,
+  inputLimitWeightPercentForHop as hopWeightPercent,
+} from "./hop-weight.js";
+
+export type { TokenLimitWeightMode, HopWeightRange };
+export {
+  normalizeTokenLimitWeightMode,
+  normalizeTokenLimitWeightPercent,
+  normalizeHopWeightRanges,
+  serializeHopWeightRanges,
+};
 
 /**
  * PostgreSQL returns bigint/numeric columns as strings.
@@ -30,26 +47,15 @@ export const BILLABLE_LOG_SQL = sql`status_code BETWEEN 200 AND 299`;
 export const VALID_LOG_SQL = sql`status_code BETWEEN 200 AND 299`;
 
 /**
- * Input accounting mode (admin_config.token_input_mode):
- * - per_turn_peak: MAX(prompt+cache) once per turn_id — fair for agents (default)
- * - full: SUM(prompt+cached) every hop — matches upstream In / amanai
- * - billable: net context_delta per turn (legacy)
- *
- * Multipliers (INPUT_TOKEN_MULTIPLIER / OUTPUT_TOKEN_MULTIPLIER) still apply
- * at read time on top of these raw sums.
+ * Input accounting mode (admin_config.token_input_mode) — stats tables / Discord peak-view note.
+ * Daily LIMIT credit uses token_limit_weight_* (see weightedHop*Sql), not this mode.
  */
 export type TokenInputMode = "per_turn_peak" | "full" | "billable";
 
 let tokenInputModeCache: TokenInputMode = "per_turn_peak";
-
-/** Percent of *later* hops — DEPRECATED for hop math; graduated schedule is fixed in weightedHopTotalTokensSql. Kept for admin UI compat. */
+let tokenLimitWeightModeCache: TokenLimitWeightMode = "first_rest_flat";
 let tokenLimitWeightPercentCache = 10;
-
-export function normalizeTokenLimitWeightPercent(raw: unknown): number {
-  const n = Math.round(Number(raw));
-  if (!Number.isFinite(n)) return 10;
-  return Math.max(1, Math.min(100, n));
-}
+let tokenLimitWeightCustomCache: HopWeightRange[] = [];
 
 export function setTokenLimitWeightPercentCache(percent: unknown): void {
   tokenLimitWeightPercentCache = normalizeTokenLimitWeightPercent(percent);
@@ -57,6 +63,33 @@ export function setTokenLimitWeightPercentCache(percent: unknown): void {
 
 export function getTokenLimitWeightPercentSync(): number {
   return tokenLimitWeightPercentCache;
+}
+
+export function setTokenLimitWeightModeCache(mode: unknown): void {
+  tokenLimitWeightModeCache = normalizeTokenLimitWeightMode(mode);
+}
+
+export function getTokenLimitWeightModeSync(): TokenLimitWeightMode {
+  return tokenLimitWeightModeCache;
+}
+
+export function setTokenLimitWeightCustomCache(raw: unknown): void {
+  tokenLimitWeightCustomCache = normalizeHopWeightRanges(raw);
+}
+
+export function getTokenLimitWeightCustomSync(): HopWeightRange[] {
+  return tokenLimitWeightCustomCache;
+}
+
+/** Apply mode + flat% + custom ranges into caches (settings / boot). */
+export function setTokenLimitWeightConfigCache(opts: {
+  mode?: unknown;
+  percent?: unknown;
+  custom?: unknown;
+}): void {
+  if (opts.mode !== undefined) setTokenLimitWeightModeCache(opts.mode);
+  if (opts.percent !== undefined) setTokenLimitWeightPercentCache(opts.percent);
+  if (opts.custom !== undefined) setTokenLimitWeightCustomCache(opts.custom);
 }
 
 export function normalizeTokenInputMode(raw: unknown): TokenInputMode {
@@ -75,7 +108,7 @@ export function getTokenInputModeSync(): TokenInputMode {
 }
 
 /**
- * SQL expr for input inside GROUP BY turn_id — mode-aware.
+ * SQL expr for input inside GROUP BY turn_id — mode-aware (stats display).
  * Outer queries SUM() these per-turn values.
  */
 export function groupedInputSumSql(): string {
@@ -107,7 +140,7 @@ export function turnCountSql(whereCondition: SQL | undefined): SQL<number> {
 }
 
 /**
- * Input tokens for limits/stats (× INPUT_TOKEN_MULTIPLIER).
+ * Input tokens for stats display (× INPUT_TOKEN_MULTIPLIER) — respects token_input_mode.
  */
 export function turnPromptTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
   const { input } = getTokenMultipliers(opts);
@@ -118,6 +151,12 @@ export function turnPromptTokensSql(whereCondition: SQL | undefined, opts?: Toke
     return sql<number>`COALESCE((SELECT SUM(sum_delta) * ${input} FROM (SELECT GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
   }
   // per_turn_peak
+  return sql<number>`COALESCE((SELECT SUM(peak) * ${input} FROM (SELECT MAX(COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) as peak FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
+}
+
+/** Always peak input (for admin notes), ignoring token_input_mode. */
+export function peakPromptTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
+  const { input } = getTokenMultipliers(opts);
   return sql<number>`COALESCE((SELECT SUM(peak) * ${input} FROM (SELECT MAX(COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) as peak FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
 }
 
@@ -177,42 +216,59 @@ export function hopFullInputTokensSql(whereCondition: SQL | undefined, opts?: To
 
 /**
  * Input % toward daily/monthly token LIMITS by hop index within a turn (1-based).
- * Output is always 100% (handled separately in SQL).
- *
- * rn=1: 100%; rn=2..5: 0%; rn=6..10: 10%; then +10% every 5 hops; rn>=50: 100%.
+ * Uses current token_limit_weight_* cache.
  */
 export function inputLimitWeightPercentForHop(rn: number): number {
-  const n = Math.floor(Number(rn));
-  if (!Number.isFinite(n) || n <= 0) return 100;
-  if (n === 1) return 100;
-  if (n <= 5) return 0;
-  if (n <= 10) return 10;
-  if (n >= 50) return 100;
-  return Math.min(90, 10 * Math.ceil((n - 5) / 5));
+  return hopWeightPercent(
+    rn,
+    tokenLimitWeightModeCache,
+    tokenLimitWeightPercentCache,
+    tokenLimitWeightCustomCache,
+  );
 }
 
-/** SQL CASE expr for input weight fraction (0..1) given hop rn. */
-const INPUT_HOP_WEIGHT_SQL = sql`
-  CASE
-    WHEN rn = 1 THEN 1.0
-    WHEN rn <= 5 THEN 0.0
-    WHEN rn <= 10 THEN 0.10
-    WHEN rn >= 50 THEN 1.0
-    ELSE LEAST(0.90, 0.10 * CEIL((rn - 5)::numeric / 5))
-  END
-`;
+/** SQL CASE expr for input weight fraction (0..1) given hop rn — rebuilt from cache. */
+function inputHopWeightFractionSql(): SQL {
+  return sql.raw(inputHopWeightSqlExpr());
+}
+
+/** Raw SQL fragment (no params) for hop weight fraction — safe: values are normalized numbers. */
+export function inputHopWeightSqlExpr(): string {
+  const mode = tokenLimitWeightModeCache;
+  const flat = tokenLimitWeightPercentCache / 100;
+
+  if (mode === "full") return "1.0";
+  if (mode === "flat_all") return String(flat);
+  if (mode === "peak") return "(CASE WHEN rn = 1 THEN 1.0 ELSE 0.0 END)";
+  if (mode === "custom") {
+    const ranges = tokenLimitWeightCustomCache;
+    if (!ranges.length) return "0.0";
+    const whens = ranges
+      .map((r) => `WHEN rn BETWEEN ${r.fromHop} AND ${r.toHop} THEN ${r.percent / 100}`)
+      .join(" ");
+    return `(CASE ${whens} ELSE 0.0 END)`;
+  }
+  return `(CASE WHEN rn = 1 THEN 1.0 ELSE ${flat} END)`;
+}
 
 /**
- * Graduated INPUT-only credit toward daily input limit (× INPUT_TOKEN_MULTIPLIER).
- * Same hop schedule as weightedHopTotalTokensSql input half.
+ * INPUT credit toward daily input limit (× INPUT_TOKEN_MULTIPLIER).
+ * Mode: first_rest_flat / flat_all / full / custom / peak.
  */
 export function weightedHopInputTokensSql(
   whereCondition: SQL | undefined,
   opts?: TokenMultiplierOpts,
 ): SQL<number> {
+  if (tokenLimitWeightModeCache === "peak") {
+    return peakPromptTokensSql(whereCondition, opts);
+  }
+  if (tokenLimitWeightModeCache === "full") {
+    return hopFullInputTokensSql(whereCondition, opts);
+  }
   const { input } = getTokenMultipliers(opts);
+  const w = inputHopWeightFractionSql();
   return sql<number>`COALESCE((
-    SELECT SUM(inn * (${INPUT_HOP_WEIGHT_SQL}) * ${input})
+    SELECT SUM(inn * (${w}) * ${input})
     FROM (
       SELECT
         (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
@@ -228,18 +284,33 @@ export function weightedHopInputTokensSql(
 
 /**
  * Token LIMIT usage (fair agent billing) — logs stay full 100%.
- * - Input (+cache): graduated by hop index within turn_id (see inputLimitWeightPercentForHop)
+ * - Input (+cache): hop schedule from token_limit_weight_*
  * - Output: always 100%
- * Orphan rows (no turn_id) each count as rn=1.
  */
 export function weightedHopTotalTokensSql(
   whereCondition: SQL | undefined,
   opts?: TokenMultiplierOpts,
 ): SQL<number> {
   const { input, output } = getTokenMultipliers(opts);
+  if (tokenLimitWeightModeCache === "peak") {
+    return sql<number>`(
+      ${peakPromptTokensSql(whereCondition, opts)}
+      + ${turnCompletionTokensSql(whereCondition, opts)}
+    )`;
+  }
+  if (tokenLimitWeightModeCache === "full") {
+    return sql<number>`COALESCE((
+      SELECT SUM(
+        (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) * ${input}
+        + COALESCE(completion_tokens, 0) * ${output}
+      )
+      FROM request_logs WHERE ${whereCondition!}
+    ), 0)`;
+  }
+  const w = inputHopWeightFractionSql();
   return sql<number>`COALESCE((
     SELECT SUM(
-      (inn * (${INPUT_HOP_WEIGHT_SQL})) * ${input}
+      (inn * (${w})) * ${input}
       + outt * ${output}
     )
     FROM (
@@ -255,6 +326,7 @@ export function weightedHopTotalTokensSql(
     ) hops
   ), 0)`;
 }
+
 /** Raw API hop count (every upstream call), not turn/prompt count. */
 export function hopCountSql(whereCondition: SQL | undefined): SQL<number> {
   return sql<number>`(SELECT COUNT(*) FROM request_logs WHERE ${whereCondition!})`;
@@ -279,15 +351,6 @@ export function wibMonthStartSql(): string {
   return new Date(wibNow.getTime() - wibOffset).toISOString().replace("T", " ").substring(0, 19);
 }
 
-/**
- * Model name normalization for auto-model routing.
- *
- * When a user sends model="auto", the proxy resolves it to a specific model
- * (e.g., "auto (qwen-flash) [stream]"). For leaderboard display:
- * - "auto" entries should show as "auto" in the leaderboard
- * - The underlying model (e.g., qwen-flash) should also be counted separately
- */
-
 /** SQL expression: normalize "auto (model) [stream]" to "auto" */
 export const NORMALIZE_MODEL_SQL = sql`CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END`;
 
@@ -307,7 +370,6 @@ export function resolvePeriodRange(period: PeriodKey): { start: Date; end: Date 
   const wibOffset = 7 * 60 * 60 * 1000;
   const wibNow = new Date(now.getTime() + wibOffset);
 
-  // WIB today midnight in UTC
   const wibMidnight = new Date(wibNow);
   wibMidnight.setUTCHours(0, 0, 0, 0);
   const todayUtcMidnight = new Date(wibMidnight.getTime() - wibOffset);

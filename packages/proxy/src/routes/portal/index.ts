@@ -8,7 +8,7 @@ import { eq, sql, and, desc } from "drizzle-orm";
 import { generateApiKey, getKeyPrefix, sha256, maskKey } from "../../utils/crypto.js";
 import { createPortalSession, destroyPortalSession, getPortalDiscordUserId, resolvePortalDiscordUserId } from "../../middleware/portal-session.js";
 import { destroyAllAuthSessions } from "../../utils/auth-sessions.js";
-import { resolvePeriodRange, chartDaysForPeriod, type PeriodKey, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, hopFullInputTokensSql, weightedHopInputTokensSql } from "../../utils/counting.js";
+import { resolvePeriodRange, chartDaysForPeriod, type PeriodKey, turnCountSql, turnPromptTokensSql, peakPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, hopFullInputTokensSql, weightedHopInputTokensSql } from "../../utils/counting.js";
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { getRecapWindow } from "../../utils/recap-window.js";
@@ -265,7 +265,7 @@ portal.get("/me", async (c) => {
   const usageToday = (await db.select({
     requests: turnCountSql(todayPw!),
     promptTokens: weightedHopInputTokensSql(todayHops!, { isTrial }),
-    peakPromptTokens: turnPromptTokensSql(todayPw!, { isTrial }),
+    peakPromptTokens: peakPromptTokensSql(todayPw!, { isTrial }),
     billablePromptTokens: turnBillablePromptTokensSql(todayPw!, { isTrial }),
     cachedTokens: turnCachedTokensSql(todayPw!, { isTrial }),
     fullInputTokens: hopFullInputTokensSql(todayHops!, { isTrial }),

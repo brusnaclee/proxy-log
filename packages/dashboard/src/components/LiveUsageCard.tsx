@@ -182,7 +182,7 @@ export function LiveUsageCard({
       sublabel:
         (dailyTokenBreakdown?.bypassIo
           ? `exceed OK until daily ${formatNumber(dailyCap)} · `
-          : "hop-weighted limit · ") +
+          : "limit schedule · ") +
         "tokens" +
         peakNote +
         fullNote,
@@ -411,13 +411,12 @@ export function LiveUsageCard({
       )}
       {(usageToday.fullInputTokens || 0) > (usageToday.promptTokens || 0) * 1.5 && (
         <p className="text-[10px] text-muted-foreground leading-relaxed border-t border-border/40 pt-2">
-          Daily token limit: input bar = hop-weighted credit (1=100%, 2–5=0%, then 10%… ≥50=100%); output always 100%. Logs still store 100%.
-          Settings “Input token mode” (peak/full) does not change this bar.
+          Daily token limit: input bar = hop schedule from Settings (default hop1=100%, later=flat %). Output always 100%.
           Limit In {formatNumber(usageToday.promptTokens)}
           {(usageToday as any).peakPromptTokens
             ? `; peak-view ${formatNumber((usageToday as any).peakPromptTokens)}`
             : ""}
-          ; amanai-style full In {formatNumber(usageToday.fullInputTokens || 0)}. Prompts/API bars = sliding last{" "}
+          ; amanai-style full In {formatNumber(usageToday.fullInputTokens || 0)} (admin only). Prompts/API bars = sliding last{" "}
           {limits.promptLimitWindow || "5h"} (not calendar day). Today:{" "}
           {formatNumber(usageToday.requests)} prompts · {formatNumber(usageToday.hopCount || 0)} API hops.
         </p>

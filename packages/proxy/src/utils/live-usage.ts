@@ -9,7 +9,7 @@ import { db } from '../db/index.js';
 import { apiKeys, adminConfig, requestLogs, modelLimits } from '../db/schema.js';
 import {
 	turnCountSql,
-	turnPromptTokensSql,
+	peakPromptTokensSql,
 	turnCompletionTokensSql,
 	turnBillablePromptTokensSql,
 	turnCachedTokensSql,
@@ -230,8 +230,8 @@ export async function buildLiveUsageForKey(
 				requests: turnCountSql(whereToday),
 				hopCount: hopCountSql(whereTodayHops),
 				/** Peak In (display note) — not used for the input limit bar. */
-				peakPromptTokens: turnPromptTokensSql(whereToday, tmOpts),
-				/** Graduated hop input — same as daily input gate. */
+				peakPromptTokens: peakPromptTokensSql(whereToday, tmOpts),
+				/** Hop-weighted input — same as daily input gate. */
 				promptTokens: weightedHopInputTokensSql(whereTodayHops, tmOpts),
 				billablePromptTokens: turnBillablePromptTokensSql(whereToday, tmOpts),
 				cachedTokens: turnCachedTokensSql(whereToday, tmOpts),

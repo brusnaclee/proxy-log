@@ -265,18 +265,15 @@ export default function OverviewPage() {
       const overSoft = !!(user.dailyTokenBreakdown?.bypassIo && inputMax > 0 && used > inputMax);
       const softLeft = Math.max(0, inputMax - used);
       const peak = Number((usageToday as any).peakPromptTokens) || 0;
-      const full = Number((usageToday as any).fullInputTokens) || 0;
-      const extra =
-        (peak > 0 ? ` · peak ${formatNumber(peak)}` : "") +
-        (full > used * 1.2 ? ` · full ${formatNumber(full)}` : "");
+      const extra = peak > 0 && Math.abs(peak - used) > used * 0.05 ? ` · peak-view ${formatNumber(peak)}` : "";
       bars.push({
         label: t("Input Tokens"),
         value: used,
         max: inputMax,
         softMode: !!user.dailyTokenBreakdown?.bypassIo,
         sublabel: user.dailyTokenBreakdown?.bypassIo
-          ? `until daily ${formatNumber(dailyCap)} · hop-weighted${extra}`
-          : `hop-weighted${extra}`,
+          ? `until daily ${formatNumber(dailyCap)} · limit${extra}`
+          : `limit credit${extra}`,
         source: user.dailyTokenBreakdown?.bypassIo
           ? "add-on extends past soft"
           : sourceLabel(limits.dailyInputTokenLimitSource),

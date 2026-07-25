@@ -1896,9 +1896,13 @@ proxy.all('/*', async (c) => {
 			.then((r) => r[0]),
 	);
 	if (config) {
-		const { setTokenInputModeCache, setTokenLimitWeightPercentCache } = await import('../utils/counting.js');
+		const { setTokenInputModeCache, setTokenLimitWeightConfigCache } = await import('../utils/counting.js');
 		setTokenInputModeCache((config as any).tokenInputMode);
-		setTokenLimitWeightPercentCache((config as any).tokenLimitWeightPercent ?? 10);
+		setTokenLimitWeightConfigCache({
+			mode: (config as any).tokenLimitWeightMode,
+			percent: (config as any).tokenLimitWeightPercent ?? 10,
+			custom: (config as any).tokenLimitWeightCustom,
+		});
 	}
 	if (!config) {
 		return c.json(
