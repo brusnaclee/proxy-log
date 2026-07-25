@@ -333,9 +333,15 @@ export function hopCountSql(whereCondition: SQL | undefined): SQL<number> {
 }
 
 /**
+ * Display label for Top Models: `auto (gcli/grok-4.5) [stream]` → `auto → gcli/grok-4.5`.
+ * Keeps non-auto ids unchanged.
+ */
+export const DISPLAY_MODEL_SQL_EXPR = `CASE WHEN model LIKE 'auto (%)%' THEN 'auto → ' || TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) ELSE model END`;
+
+/**
  * Per-model limit-credit breakdown — same hop weights as {@link weightedHopTotalTokensSql}.
  * Summing `tokens` across models ≈ period Total (limit credit); summing `promptTokens` ≈ Input credit.
- * Does NOT double-list auto underlying models (normalizes `auto (...)` → `auto`).
+ * Auto routes are shown as `auto → {resolved}` so Discord/portal Top Models show what auto used.
  */
 export function modelLimitCreditBreakdownSql(
   extraWhere: SQL,
@@ -344,6 +350,7 @@ export function modelLimitCreditBreakdownSql(
   const { input, output } = getTokenMultipliers(opts);
   const lim =
     opts?.limit && opts.limit > 0 ? sql`LIMIT ${opts.limit}` : sql``;
+  const displayModel = sql.raw(DISPLAY_MODEL_SQL_EXPR);
 
   if (tokenLimitWeightModeCache === "full") {
     return sql`
@@ -355,7 +362,7 @@ export function modelLimitCreditBreakdownSql(
         COALESCE(SUM(inn * ${input} + outt * ${output}), 0) as tokens
       FROM (
         SELECT
-          CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
+          ${displayModel} as model,
           COALESCE(turn_id, 'orphan-' || id::text) as turn_key,
           (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
           COALESCE(completion_tokens, 0)::float8 AS outt
@@ -379,7 +386,7 @@ export function modelLimitCreditBreakdownSql(
       COALESCE(SUM(inn * (${sql.raw(w)}) * ${input} + outt * ${output}), 0) as tokens
     FROM (
       SELECT
-        CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
+        ${displayModel} as model,
         COALESCE(turn_id, 'orphan-' || id::text) as turn_key,
         (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
         COALESCE(completion_tokens, 0)::float8 AS outt,
@@ -420,6 +427,7 @@ export const NORMALIZE_MODEL_SQL = sql`CASE WHEN model LIKE 'auto (%)%' THEN 'au
 
 /** SQL expression: extract underlying model from "auto (model) [stream]" */
 export const RESOLVE_AUTO_MODEL_SQL = sql`CASE WHEN model LIKE 'auto (%)%' THEN TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) ELSE model END`;
+
 
 // ─── Period Range Helper (WIB-based) ──────────────────────────────────────────
 
