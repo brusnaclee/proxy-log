@@ -122,7 +122,7 @@ import {
 	tryReserveTurn,
 } from '../utils/quota-reservation.js';
 import {
-	ADDON_TEASE_DEFAULT_PROMPT_LIMIT,
+	getAddonTeaseDefaultLimit,
 	checkAddonModelAccess,
 	getActiveAddonsForUser,
 	isAddonTeaseModel,
@@ -2481,7 +2481,7 @@ proxy.all('/*', async (c) => {
 			if (!keyRecord.isTrial && !autoSkipModelPrompt) {
 				const teaseDefault =
 					isAddonTeaseModel(candidate.modelId) || isAddonTeaseModel(candidateModel)
-						? ADDON_TEASE_DEFAULT_PROMPT_LIMIT
+						? getAddonTeaseDefaultLimit(candidate.modelId || candidateModel)
 						: 0;
 				const mlCheck = await checkModelPromptLimit(
 					accountKeyIds,
@@ -3458,7 +3458,7 @@ proxy.all('/*', async (c) => {
 		if (!keyRecord.isTrial && !skipModelPromptTease) {
 			const teaseDefault =
 				isAddonTeaseModel(model) || isAddonTeaseModel(upstreamModel)
-					? ADDON_TEASE_DEFAULT_PROMPT_LIMIT
+					? Math.max(getAddonTeaseDefaultLimit(model), getAddonTeaseDefaultLimit(upstreamModel))
 					: 0;
 			const mlCheck = await checkModelPromptLimit(
 				accountKeyIds,

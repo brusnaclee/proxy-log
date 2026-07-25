@@ -37,7 +37,7 @@ import {
 	getApiCallWindowResetMs,
 } from './rate-limit.js';
 import {
-	ADDON_TEASE_DEFAULT_PROMPT_LIMIT,
+	getAddonTeaseDefaultLimit,
 	getActiveAddonsForUser,
 	isAddonTeaseModel,
 	parseModelDailyLimits,
@@ -462,7 +462,7 @@ export async function buildLiveUsageForKey(
 			if (!tm.model) continue;
 			const teaseDefault =
 				!limitKey.isTrial && isAddonTeaseModel(tm.model) && activeAddons.length === 0
-					? ADDON_TEASE_DEFAULT_PROMPT_LIMIT
+					? getAddonTeaseDefaultLimit(tm.model)
 					: 0;
 			const mlCheck = await checkModelPromptLimit(
 				promptScopeIds,

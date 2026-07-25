@@ -330,15 +330,33 @@ export function resolveAddonModelDailyTokenLimit(
   return best;
 }
 
-/** Premium tease models: non-addon users may use a small prompt allowance instead of hard lock. */
-const ADDON_TEASE_PATTERNS = ["claude", "gpt-5.6", "chatgpt-5.6"];
+/**
+ * Premium tease models: non-addon users get a small prompt allowance instead of hard lock.
+ * Longer patterns win (e.g. chatgpt-5.5 over gpt-5.5). GPT 5.5 = 10; Claude / GPT 5.6 = 5.
+ */
+const ADDON_TEASE_RULES: Array<{ pattern: string; limit: number }> = [
+	{ pattern: "chatgpt-5.5", limit: 10 },
+	{ pattern: "gpt-5.5", limit: 10 },
+	{ pattern: "chatgpt-5.6", limit: 5 },
+	{ pattern: "gpt-5.6", limit: 5 },
+	{ pattern: "claude", limit: 5 },
+];
 
-/** Default prompts/day for non-addon tease when no model_limits row applies. */
+/** Fallback when no model_limits row matches (legacy callers). Prefer getAddonTeaseDefaultLimit. */
 export const ADDON_TEASE_DEFAULT_PROMPT_LIMIT = 5;
 
+export function getAddonTeaseDefaultLimit(model: string): number {
+	const lower = (model || "").toLowerCase();
+	if (!lower) return 0;
+	const sorted = [...ADDON_TEASE_RULES].sort((a, b) => b.pattern.length - a.pattern.length);
+	for (const rule of sorted) {
+		if (lower.includes(rule.pattern)) return rule.limit;
+	}
+	return 0;
+}
+
 export function isAddonTeaseModel(model: string): boolean {
-  const lower = (model || "").toLowerCase();
-  return ADDON_TEASE_PATTERNS.some((p) => lower.includes(p));
+	return getAddonTeaseDefaultLimit(model) > 0;
 }
 
 /** True if any active add-on grants access to this model (allowlist match or all_except). */
