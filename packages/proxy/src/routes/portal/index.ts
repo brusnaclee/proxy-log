@@ -8,7 +8,7 @@ import { eq, sql, and, desc } from "drizzle-orm";
 import { generateApiKey, getKeyPrefix, sha256, maskKey } from "../../utils/crypto.js";
 import { createPortalSession, destroyPortalSession, getPortalDiscordUserId, resolvePortalDiscordUserId } from "../../middleware/portal-session.js";
 import { destroyAllAuthSessions } from "../../utils/auth-sessions.js";
-import { resolvePeriodRange, chartDaysForPeriod, type PeriodKey, turnCountSql, turnPromptTokensSql, peakPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, hopFullInputTokensSql, weightedHopInputTokensSql } from "../../utils/counting.js";
+import { resolvePeriodRange, chartDaysForPeriod, type PeriodKey, turnCountSql, hopCountSql, turnPromptTokensSql, peakPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, hopFullInputTokensSql, weightedHopInputTokensSql } from "../../utils/counting.js";
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { getRecapWindow } from "../../utils/recap-window.js";
@@ -596,6 +596,7 @@ portal.get("/stats/overview", async (c) => {
 
   const stats = (await db.select({
     requests: turnCountSql(pw),
+    apiCalls: hopCountSql(pw),
     tokens: turnTotalTokensSql(pw, { isTrial }),
     promptTokens: turnPromptTokensSql(pw, { isTrial }),
     billablePromptTokens: turnBillablePromptTokensSql(pw, { isTrial }),
@@ -638,6 +639,7 @@ portal.get("/stats/overview", async (c) => {
 
   return c.json({
     requests: stats?.requests || 0,
+    apiCalls: stats?.apiCalls || 0,
     tokens: stats?.tokens || 0,
     promptTokens: stats?.promptTokens || 0,
     billablePromptTokens: stats?.billablePromptTokens || 0,
@@ -664,11 +666,13 @@ portal.get("/stats/timeseries", async (c) => {
   const rows = sanitizeRows((await db.execute(sql`
     SELECT period_group as period,
       COUNT(*) as requests,
+      COALESCE(SUM(hop_count), 0) as "apiCalls",
       COALESCE(SUM(sum_delta + sum_c), 0) as tokens,
       COALESCE(SUM(sum_delta), 0) as "promptTokens",
       COALESCE(SUM(sum_c), 0) as "completionTokens"
     FROM (
       SELECT ${groupExpr} as period_group, turn_id,
+        COUNT(*)::int as hop_count,
         ${sql.raw(groupedInputSumSql())} as sum_delta,
         SUM(completion_tokens) as sum_c
       FROM request_logs
@@ -680,7 +684,7 @@ portal.get("/stats/timeseries", async (c) => {
     ) sub
     GROUP BY period_group
     ORDER BY period_group
-  `)).rows as any[], ["requests", "tokens", "promptTokens", "completionTokens"]);
+  `)).rows as any[], ["requests", "apiCalls", "tokens", "promptTokens", "completionTokens"]);
 
   return c.json(rows.map((r: any) => ({
     ...r,
@@ -817,6 +821,7 @@ portal.get("/stats/compare", async (c) => {
     );
     const stats = (await db.select({
       requests: turnCountSql(pw),
+      apiCalls: hopCountSql(pw),
       tokens: turnTotalTokensSql(pw, { isTrial }),
       promptTokens: turnPromptTokensSql(pw, { isTrial }),
       billablePromptTokens: turnBillablePromptTokensSql(pw, { isTrial }),
@@ -852,6 +857,7 @@ portal.get("/stats/compare", async (c) => {
 
     return {
       requests: stats?.requests || 0,
+      apiCalls: stats?.apiCalls || 0,
       tokens: stats?.tokens || 0,
       promptTokens: stats?.promptTokens || 0,
       billablePromptTokens: stats?.billablePromptTokens || 0,

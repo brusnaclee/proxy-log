@@ -3,7 +3,7 @@ import { db } from "../../db/index.js";
 import { requestLogs, apiKeys, devices, chatSessions, monthlyStats } from "../../db/schema.js";
 import { eq, sql, and } from "drizzle-orm";
 import { getModelRates } from "../../utils/cost-calculator.js";
-import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, wibTodayStartSql, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, sanitizeRows, resolvePeriodRange, chartDaysForPeriod, groupedInputSumSql, getTokenInputModeSync, type PeriodKey } from "../../utils/counting.js";
+import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, wibTodayStartSql, turnCountSql, hopCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, sanitizeRows, resolvePeriodRange, chartDaysForPeriod, groupedInputSumSql, getTokenInputModeSync, type PeriodKey } from "../../utils/counting.js";
 import { applyTokenMultiplierRows, getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { statsCache } from "../../utils/cache.js";
 
@@ -49,7 +49,7 @@ function calculateBreakdownCosts(modelBreakdown: Array<{ model: string | null, p
 }
 
 stats.get("/stats/overview", async (c) => {
-  return c.json(await statsCache.getOrFetch("overview", async () => {
+  return c.json(await statsCache.getOrFetch("overview:v2", async () => {
   const todayStart  = localTodayStart();
   const weekStart   = new Date(todayStart.getTime() - 7  * 86400000);
   // month: 1st of current month at local midnight
@@ -63,6 +63,7 @@ stats.get("/stats/overview", async (c) => {
   const todayWhere = and(sql`created_at >= ${todayStr}`, VALID_LOG_SQL);
   const todayStats = (await db.select({
     requests: turnCountSql(todayWhere),
+    apiCalls: hopCountSql(todayWhere),
     tokens: weightedHopTotalTokensSql(todayWhere),
     promptTokens: weightedHopInputTokensSql(todayWhere),
     billablePromptTokens: turnBillablePromptTokensSql(todayWhere),
@@ -95,6 +96,7 @@ stats.get("/stats/overview", async (c) => {
   const weekWhere = and(sql`created_at >= ${weekStr}`, VALID_LOG_SQL);
   const weekStats = (await db.select({
     requests: turnCountSql(weekWhere),
+    apiCalls: hopCountSql(weekWhere),
     tokens: weightedHopTotalTokensSql(weekWhere),
     promptTokens: weightedHopInputTokensSql(weekWhere),
     billablePromptTokens: turnBillablePromptTokensSql(weekWhere),
@@ -126,6 +128,7 @@ stats.get("/stats/overview", async (c) => {
   const monthWhere = and(sql`created_at >= ${monthStr}`, VALID_LOG_SQL);
   const monthStats = (await db.select({
     requests: turnCountSql(monthWhere),
+    apiCalls: hopCountSql(monthWhere),
     tokens: weightedHopTotalTokensSql(monthWhere),
     promptTokens: weightedHopInputTokensSql(monthWhere),
     billablePromptTokens: turnBillablePromptTokensSql(monthWhere),
@@ -157,6 +160,7 @@ stats.get("/stats/overview", async (c) => {
   const allTimeWhere = VALID_LOG_SQL;
   const allTimeLive = (await db.select({
     requests: turnCountSql(allTimeWhere),
+    apiCalls: hopCountSql(allTimeWhere),
     tokens: weightedHopTotalTokensSql(allTimeWhere),
     promptTokens: weightedHopInputTokensSql(allTimeWhere),
     billablePromptTokens: turnBillablePromptTokensSql(allTimeWhere),
@@ -181,6 +185,8 @@ stats.get("/stats/overview", async (c) => {
   // Combine live + archived
   const allTimeStats = {
     requests: (allTimeLive?.requests || 0) + (allTimeArchived?.requests || 0),
+    // monthly_stats has no hop archive — live hop count only
+    apiCalls: allTimeLive?.apiCalls || 0,
     tokens: (allTimeLive?.tokens || 0) + (allTimeArchived?.tokens || 0),
     promptTokens: (allTimeLive?.promptTokens || 0) + (allTimeArchived?.promptTokens || 0),
     // Archived monthly_stats has no cache split — attribute archived input to billable
@@ -245,7 +251,8 @@ stats.get("/stats/overview", async (c) => {
 
   return {
     today: { 
-      requests: todayStats?.requests || 0, 
+      requests: todayStats?.requests || 0,
+      apiCalls: todayStats?.apiCalls || 0,
       tokens: todayStats?.tokens || 0,
       promptTokens: todayStats?.promptTokens || 0,
       billablePromptTokens: todayStats?.billablePromptTokens || 0,
@@ -258,7 +265,8 @@ stats.get("/stats/overview", async (c) => {
       uniqueDevices: todayStats?.uniqueDevices || 0 
     },
     week: { 
-      requests: weekStats?.requests || 0, 
+      requests: weekStats?.requests || 0,
+      apiCalls: weekStats?.apiCalls || 0,
       tokens: weekStats?.tokens || 0,
       promptTokens: weekStats?.promptTokens || 0,
       billablePromptTokens: weekStats?.billablePromptTokens || 0,
@@ -270,7 +278,8 @@ stats.get("/stats/overview", async (c) => {
       totalCost: weekCosts.totalCost
     },
     month: { 
-      requests: monthStats?.requests || 0, 
+      requests: monthStats?.requests || 0,
+      apiCalls: monthStats?.apiCalls || 0,
       tokens: monthStats?.tokens || 0,
       promptTokens: monthStats?.promptTokens || 0,
       billablePromptTokens: monthStats?.billablePromptTokens || 0,
@@ -282,7 +291,8 @@ stats.get("/stats/overview", async (c) => {
       totalCost: monthCosts.totalCost
     },
     allTime: { 
-      requests: allTimeStats?.requests || 0, 
+      requests: allTimeStats?.requests || 0,
+      apiCalls: allTimeStats?.apiCalls || 0,
       tokens: allTimeStats?.tokens || 0,
       promptTokens: allTimeStats?.promptTokens || 0,
       billablePromptTokens: allTimeStats?.billablePromptTokens || 0,
@@ -475,7 +485,7 @@ stats.get("/stats/timeseries", async (c) => {
   const newPeriod = c.req.query("period") as PeriodKey | undefined;
   const legacyPeriod = c.req.query("period") as string | undefined; // daily|hourly
   const days = parseInt(c.req.query("days") || "7");
-  const cacheKey = `timeseries:${newPeriod || legacyPeriod || "daily"}:${days}`;
+  const cacheKey = `timeseries:v2:${newPeriod || legacyPeriod || "daily"}:${days}`;
   return c.json(await statsCache.getOrFetch(cacheKey, async () => {
   let startDate: Date;
   let groupPeriod: "hourly" | "daily";
@@ -500,6 +510,7 @@ stats.get("/stats/timeseries", async (c) => {
     SELECT
       period_group as period,
       COUNT(*) as requests,
+      COALESCE(SUM(hop_count), 0) as "apiCalls",
       COALESCE(SUM(sum_delta + sum_c), 0) as tokens,
       COALESCE(SUM(sum_delta), 0) as "promptTokens",
       COALESCE(SUM(sum_c), 0) as "completionTokens",
@@ -510,6 +521,7 @@ stats.get("/stats/timeseries", async (c) => {
         ${groupExpr} as period_group,
         device_fingerprint,
         turn_id,
+        COUNT(*)::int as hop_count,
         ${sql.raw(groupedInputSumSql())} as sum_delta,
         SUM(completion_tokens) as sum_c
       FROM request_logs
@@ -518,7 +530,7 @@ stats.get("/stats/timeseries", async (c) => {
     ) sub
     GROUP BY period_group
     ORDER BY period_group
-  `)).rows as any[], ['requests', 'tokens', 'promptTokens', 'completionTokens', 'estimatedCost', 'uniqueDevices']));
+  `)).rows as any[], ['requests', 'apiCalls', 'tokens', 'promptTokens', 'completionTokens', 'estimatedCost', 'uniqueDevices']));
 
   return result;
   })); // end statsCache

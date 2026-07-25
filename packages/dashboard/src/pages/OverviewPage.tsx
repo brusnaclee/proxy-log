@@ -65,6 +65,7 @@ export default function OverviewPage() {
   const [period, setPeriod]             = useState<LocalPeriodKey>("today");
   const [chartPeriod, setChartPeriod]   = useState<LocalPeriodKey>("7d"); // for charts only
   const [modelChartDays, setModelChartDays] = useState(7);
+  const [chartMetric, setChartMetric]   = useState<"prompts" | "apiCalls">("prompts");
 
   // Search User State
   const [searchUserResult, setSearchUserResult] = useState<any>(null);
@@ -269,6 +270,15 @@ export default function OverviewPage() {
           color: "text-blue-400",
         },
         {
+          label: `API Calls (${periodLabelMap[period]})`,
+          value: formatNumber(periodData.apiCalls || 0),
+          icon: TrendingUp,
+          sub: period === "allTime"
+            ? "Live hops (tool retries included)"
+            : `${formatNumber(overview?.allTime.apiCalls || 0)} all time`,
+          color: "text-indigo-400",
+        },
+        {
           label: `Total Tokens (${periodLabelMap[period]})`,
           value: formatNumber(periodData.tokens),
           icon: Coins,
@@ -400,15 +410,15 @@ export default function OverviewPage() {
       </Card>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 gap-3 sm:gap-4">
         {allCards.map((card) => (
-          <Card key={card.label} className="border-border/50">
+          <Card key={card.label} className="border-border/50 transition-all duration-200 hover:border-border hover:bg-accent/10">
             <CardContent className="stat-card">
               <div className="flex items-center justify-between">
                 <p className="text-xs sm:text-sm text-muted-foreground leading-tight">{card.label}</p>
                 <card.icon className={`h-4 w-4 shrink-0 ${card.color}`} />
               </div>
-              <p className="text-xl sm:text-2xl font-bold mt-2 truncate">{card.value}</p>
+              <p className="text-xl sm:text-2xl font-bold mt-2 truncate tabular-nums">{card.value}</p>
               <p className="text-[10px] sm:text-xs text-muted-foreground mt-1 truncate">{card.sub}</p>
             </CardContent>
           </Card>
@@ -419,10 +429,31 @@ export default function OverviewPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Requests Over Time */}
         <Card className="border-border/50">
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base font-medium">Prompts Over Time</CardTitle>
+          <CardHeader className="pb-2 space-y-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <CardTitle className="text-base font-medium">
+                {chartMetric === "prompts" ? "Prompts Over Time" : "API Calls Over Time"}
+              </CardTitle>
               <PeriodSelector value={chartPeriod} onChange={setChartPeriod} />
+            </div>
+            <div className="inline-flex rounded-lg border border-border/60 p-0.5 bg-accent/20">
+              {([
+                { key: "prompts" as const, label: "Prompts" },
+                { key: "apiCalls" as const, label: "API Calls" },
+              ]).map((opt) => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => setChartMetric(opt.key)}
+                  className={`px-3 py-1 text-xs rounded-md transition-all duration-200 ${
+                    chartMetric === opt.key
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
             </div>
           </CardHeader>
           <CardContent>
@@ -436,7 +467,16 @@ export default function OverviewPage() {
                   />
                   <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
                   <Tooltip contentStyle={TOOLTIP_STYLE} itemStyle={ITEM_STYLE} labelStyle={LABEL_STYLE} />
-                  <Line type="monotone" dataKey="requests" stroke="#818cf8" strokeWidth={2} dot={false} />
+                  <Line
+                    type="monotone"
+                    dataKey={chartMetric === "prompts" ? "requests" : "apiCalls"}
+                    name={chartMetric === "prompts" ? "Prompts" : "API Calls"}
+                    stroke={chartMetric === "prompts" ? "#818cf8" : "#34d399"}
+                    strokeWidth={2}
+                    dot={false}
+                    isAnimationActive
+                    animationDuration={450}
+                  />
                 </LineChart>
             </ChartBox>
           </CardContent>

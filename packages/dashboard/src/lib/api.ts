@@ -686,6 +686,8 @@ export const globalSettings = {
 // ─── Stats ─────────────────────────────────────────────────────────────────────
 export interface OverviewPeriodStats {
   requests: number;
+  /** Successful upstream hops (API calls), not turn/prompt count. */
+  apiCalls?: number;
   tokens: number;
   promptTokens?: number;
   billablePromptTokens?: number;

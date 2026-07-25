@@ -113,6 +113,7 @@ export default function OverviewPage() {
   const [error, setError] = useState("");
   const [cheatSheetOpen, setCheatSheetOpen] = useState(false);
   const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
+  const [chartMetric, setChartMetric] = useState<"prompts" | "apiCalls">("prompts");
   const hasLoadedRef = useRef(false);
 
   const fetchPeriodData = useCallback((p: string) => {
@@ -453,7 +454,8 @@ export default function OverviewPage() {
     );
 
     const cells = [
-      { label: t("Requests"), today: formatNumber(today.requests), yesterday: formatNumber(yesterday.requests), diff: pct(today.requests, yesterday.requests) },
+      { label: t("Prompts"), today: formatNumber(today.requests), yesterday: formatNumber(yesterday.requests), diff: pct(today.requests, yesterday.requests) },
+      { label: t("API Calls"), today: formatNumber(today.apiCalls || 0), yesterday: formatNumber(yesterday.apiCalls || 0), diff: pct(today.apiCalls || 0, yesterday.apiCalls || 0) },
       {
         label: t("Input Tokens"),
         today: formatInputBreakdown(today.billablePromptTokens, today.cachedTokens, today.promptTokens).label,
@@ -467,12 +469,12 @@ export default function OverviewPage() {
     return (
       <div className="bg-card border border-border rounded-xl p-4">
         <h3 className="text-sm font-medium text-foreground mb-3">{t("Today vs Yesterday")}</h3>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
           {cells.map((c) => (
-            <div key={c.label}>
+            <div key={c.label} className="transition-transform duration-200 hover:translate-y-[-1px]">
               <p className="text-xs text-muted-foreground mb-0.5">{c.label}</p>
               <div className="flex items-baseline gap-1.5">
-                <span className="text-lg font-semibold">{c.today}</span>
+                <span className="text-lg font-semibold tabular-nums">{c.today}</span>
                 <DiffBadge val={c.diff} />
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">{c.yesterday} yesterday</p>
@@ -665,7 +667,8 @@ export default function OverviewPage() {
   const renderStatCards = () => {
     if (!stats) return null;
     const cards = [
-      { key: "requests", label: t("Requests"), icon: Activity, value: stats.requests, format: formatNumber },
+      { key: "requests", label: t("Prompts"), icon: Activity, value: stats.requests, format: formatNumber },
+      { key: "apiCalls", label: t("API Calls"), icon: Zap, value: stats.apiCalls || 0, format: formatNumber },
       { key: "promptTokens", label: t("Input Tokens"), icon: MessageSquare, value: stats.promptTokens, format: (n: number) => formatInputBreakdown(stats.billablePromptTokens, stats.cachedTokens, n).label },
       { key: "completionTokens", label: t("Output Tokens"), icon: Download, value: stats.completionTokens, format: formatNumber },
       { key: "cost", label: t("Est. Cost"), icon: DollarSign, value: stats.cost.total, format: formatCost },
@@ -673,14 +676,17 @@ export default function OverviewPage() {
       { key: "toolCalls", label: t("Tool Calls"), icon: Wrench, value: stats.toolCalls, format: formatNumber },
     ];
     return (
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
         {cards.map(({ key, label, icon: Icon, value, format }) => (
-          <div key={key} className="bg-card border border-border rounded-xl p-4">
+          <div
+            key={key}
+            className="bg-card border border-border rounded-xl p-4 transition-all duration-200 hover:border-primary/30 hover:bg-accent/20"
+          >
             <div className="flex items-center gap-2 mb-2">
               <Icon className="w-4 h-4 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">{label}</span>
             </div>
-            <p className="text-xl font-semibold text-foreground">{format(value)}</p>
+            <p className="text-xl font-semibold text-foreground tabular-nums">{format(value)}</p>
           </div>
         ))}
       </div>
@@ -690,9 +696,33 @@ export default function OverviewPage() {
   const renderTimeseriesChart = () => {
     if (!timeseries.length) return null;
     const data = timeseries.map((item) => ({ ...item, date: item.period.slice(5) }));
+    const metricKey = chartMetric === "prompts" ? "requests" : "apiCalls";
+    const title = chartMetric === "prompts" ? t("Prompts Over Time") : t("API Calls Over Time");
+    const stroke = chartMetric === "prompts" ? CHART_COLORS.primary : "#818cf8";
     return (
       <div className="bg-card border border-border rounded-xl p-4">
-        <h3 className="text-sm font-medium text-foreground mb-4">{t("Requests Over Time")}</h3>
+        <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
+          <h3 className="text-sm font-medium text-foreground">{title}</h3>
+          <div className="inline-flex rounded-lg border border-border/60 p-0.5 bg-accent/20">
+            {([
+              { key: "prompts" as const, label: t("Prompts") },
+              { key: "apiCalls" as const, label: t("API Calls") },
+            ]).map((opt) => (
+              <button
+                key={opt.key}
+                type="button"
+                onClick={() => setChartMetric(opt.key)}
+                className={`px-3 py-1 text-xs rounded-md transition-all duration-200 ${
+                  chartMetric === opt.key
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
         <ChartBox>
             <LineChart data={data}>
               <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} />
@@ -700,9 +730,15 @@ export default function OverviewPage() {
               <YAxis stroke={CHART_COLORS.text} fontSize={11} tickLine={false} axisLine={false} tickFormatter={formatNumber} />
               <Tooltip {...TOOLTIP_STYLE} />
               <Line
-                type="monotone" dataKey="requests"
-                stroke={CHART_COLORS.primary} strokeWidth={2}
-                dot={false} activeDot={{ r: 4, fill: CHART_COLORS.primary }}
+                type="monotone"
+                dataKey={metricKey}
+                name={chartMetric === "prompts" ? t("Prompts") : t("API Calls")}
+                stroke={stroke}
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 4, fill: stroke }}
+                isAnimationActive
+                animationDuration={450}
               />
             </LineChart>
         </ChartBox>

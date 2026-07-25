@@ -718,7 +718,8 @@ export API_TIMEOUT_MS=500000`}
           return (
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
               {[
-                { label: "Prompts", value: formatNumber(s.requests), sub: (s.hopCount || 0) > s.requests ? `${formatNumber(s.hopCount || 0)} API calls` : undefined },
+                { label: "Prompts", value: formatNumber(s.requests), sub: "User turns" },
+                { label: "API Calls", value: formatNumber(s.hopCount || 0), sub: "Upstream hops" },
                 { label: "Total Tokens",  value: formatNumber(s.tokens), sub: "limit in+out" },
                 {
                   label: "Input (limit)",
