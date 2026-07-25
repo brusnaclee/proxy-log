@@ -109,6 +109,7 @@ import {
 	getPatternModelMatchCondition,
 	getWindowResetMs,
 	listDedicatedQuotaRules,
+	findDedicatedRuleForModel,
 	parseRateLimitWindow,
 	normalizeModelForLimit,
 	sqlExcludeDedicatedModels,
@@ -2434,6 +2435,118 @@ proxy.all('/*', async (c) => {
 					apiKeyId: keyRecord.id,
 				})
 			: [];
+
+		// When account shared daily/input/output is exhausted, auto must ONLY try
+		// dedicated-pool models (not burn hops on models that will always 429).
+		const autoDedicatedRulesEarly = await listDedicatedQuotaRules(keyRecord.id);
+		if (!keyRecord.isTrial && autoDedicatedRulesEarly.length > 0) {
+			const wibOffset = 7 * 60 * 60 * 1000;
+			const wibNow = new Date(Date.now() + wibOffset);
+			const dw = new Date(wibNow);
+			dw.setUTCHours(0, 0, 0, 0);
+			const ds = new Date(dw.getTime() - wibOffset);
+			const excludeDedicated = sqlExcludeDedicatedModels(autoDedicatedRulesEarly);
+			const rawInAuto =
+				keyRecord.dailyInputTokenLimit && keyRecord.dailyInputTokenLimit > 0
+					? keyRecord.dailyInputTokenLimit
+					: config.globalDailyInputTokenLimit || 0;
+			const rawOutAuto =
+				keyRecord.dailyOutputTokenLimit && keyRecord.dailyOutputTokenLimit > 0
+					? keyRecord.dailyOutputTokenLimit
+					: config.globalDailyOutputTokenLimit || 0;
+			const autoStackEarly = applyDayOverrideToQuotaStack(
+				resolveAddonQuotaStack({
+					hasActiveAddon: autoActiveAddons.length > 0,
+					keyOrGlobalDaily: stackBaseDailyForKey({
+						hasActiveAddon: autoActiveAddons.length > 0,
+						isTrial: !!keyRecord.isTrial,
+						keyDailyTokenLimit: keyRecord.dailyTokenLimit,
+						resolvedKeyOrGlobalDaily: resolveKeyDailyTokenLimit(keyRecord, config),
+					}),
+					dailyInput: Number(rawInAuto) || 0,
+					dailyOutput: Number(rawOutAuto) || 0,
+					addonDailyBonus: sumAddonDailyTokenBonus(autoActiveAddons),
+				}),
+				dayBonuses,
+			);
+			const whereShared = and(
+				accountKeyFilter,
+				sql`created_at >= ${ds}`,
+				BILLABLE_LOG_SQL,
+				excludeDedicated,
+			);
+			let sharedExhausted = false;
+			let sharedReason = '';
+			if (autoStackEarly.effectiveDaily > 0) {
+				const du = await db
+					.select({
+						total: weightedHopTotalTokensSql(whereShared, tokenCountOpts(keyRecord)),
+					})
+					.from(requestLogs)
+					.where(whereShared)
+					.then((r: any[]) => r[0]);
+				if (du && du.total >= autoStackEarly.effectiveDaily) {
+					sharedExhausted = true;
+					sharedReason = 'daily token limit';
+				}
+			}
+			if (!sharedExhausted && autoStackEarly.dailyInputLimit > 0) {
+				const di = await db
+					.select({
+						total: weightedHopInputTokensSql(whereShared, tokenCountOpts(keyRecord)),
+					})
+					.from(requestLogs)
+					.where(whereShared)
+					.then((r: any[]) => r[0]);
+				if (di && di.total >= autoStackEarly.dailyInputLimit) {
+					sharedExhausted = true;
+					sharedReason = 'daily input token limit';
+				}
+			}
+			if (!sharedExhausted && autoStackEarly.dailyOutputLimit > 0) {
+				const dout = await db
+					.select({
+						total: turnCompletionTokensSql(whereShared, tokenCountOpts(keyRecord)),
+					})
+					.from(requestLogs)
+					.where(whereShared)
+					.then((r: any[]) => r[0]);
+				if (dout && dout.total >= autoStackEarly.dailyOutputLimit) {
+					sharedExhausted = true;
+					sharedReason = 'daily output token limit';
+				}
+			}
+
+			if (sharedExhausted) {
+				const dedicatedOnly: typeof onlineModels = [];
+				for (const m of onlineModels) {
+					const norm = await normalizeModelForLimit(m.modelId);
+					const rule = findDedicatedRuleForModel(autoDedicatedRulesEarly, norm, [
+						m.modelId,
+						`${m.provider}/${m.modelId}`,
+					]);
+					if (rule) dedicatedOnly.push(m);
+				}
+				if (dedicatedOnly.length === 0) {
+					const resetEta = formatResetEta(msUntilNextWibMidnight());
+					return c.json(
+						{
+							error: {
+								message: `Account ${sharedReason} reached. No dedicated-pool models left for auto. Resets ${resetEta}.`,
+								type: 'rate_limit_error',
+								code: 'daily_token_limit_exceeded',
+							},
+						},
+						429,
+					);
+				}
+				console.log(
+					`[proxy] auto: account ${sharedReason} exhausted — restricting to ${dedicatedOnly.length} dedicated model(s): ` +
+						dedicatedOnly.map((m) => `${m.provider}/${m.modelId}`).join(', '),
+				);
+				onlineModels = dedicatedOnly;
+			}
+		}
 
 		// Build blocked headers set once
 		const blockedHeaders = new Set([
