@@ -335,8 +335,8 @@ export default function QuotaGuardPage() {
     <div className="space-y-4 sm:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold flex items-center gap-2">
-            <Shield className="h-6 w-6 sm:h-8 sm:w-8" />
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight flex items-center gap-2">
+            <Shield className="h-6 w-6" />
             Quota Guard
           </h1>
           <p className="text-muted-foreground text-sm mt-1">

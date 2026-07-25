@@ -12,6 +12,7 @@ import {
   type AddonAssignmentEntry,
   type AddonEntry,
 } from "@/lib/api";
+import { useNotify } from "@/components/Notify";
 
 type AccessMode = "allowlist" | "all_except";
 
@@ -120,6 +121,7 @@ function CatalogPicker({
 }
 
 export default function AddonsPage() {
+  const notify = useNotify();
   const [addons, setAddons] = useState<AddonEntry[]>([]);
   const [assignments, setAssignments] = useState<AddonAssignmentEntry[]>([]);
   const [catalog, setCatalog] = useState<string[]>([]);
@@ -272,7 +274,13 @@ export default function AddonsPage() {
   };
 
   const removeAddon = async (id: number) => {
-    if (!confirm("Delete this add-on and all assignments?")) return;
+    const ok = await notify.confirm({
+      title: "Delete add-on?",
+      message: "Delete this add-on and all assignments?",
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await addonsApi.remove(id);
       if (editingId === id) resetForm();
@@ -324,10 +332,10 @@ export default function AddonsPage() {
   }, [allowlist, denylist, modelDailyLimits]);
 
   return (
-    <div className="space-y-6 p-4 md:p-6">
+    <div className="space-y-6">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold flex items-center gap-2">
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight flex items-center gap-2">
             <Package className="h-6 w-6" /> Add-ons
           </h1>
           <p className="text-sm text-muted-foreground mt-1">

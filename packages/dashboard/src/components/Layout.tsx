@@ -76,10 +76,10 @@ export default function Layout() {
       {/* Sidebar */}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 border-r border-border bg-gradient-to-b from-card to-background flex flex-col transition-all duration-300 ease-in-out",
+          "fixed inset-y-0 left-0 z-[45] border-r border-border bg-gradient-to-b from-card to-background flex flex-col transition-[width,transform] duration-300 ease-in-out",
           sidebarWidth,
           // Mobile: slide in/out
-          "lg:relative lg:translate-x-0",
+          "lg:relative lg:translate-x-0 lg:h-full lg:shrink-0",
           sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         )}
       >
@@ -139,7 +139,7 @@ export default function Layout() {
                     title={sidebarCollapsed ? item.label : undefined}
                     className={({ isActive }) =>
                       cn(
-                        "flex items-center gap-3 rounded-lg text-sm font-medium transition-all duration-200",
+                        "flex items-center gap-3 rounded-lg text-sm font-medium transition-colors duration-200",
                         sidebarCollapsed ? "p-2.5 justify-center w-11 h-11" : "px-3 py-2.5",
                         isActive
                           ? "bg-primary/10 text-primary"
@@ -168,7 +168,7 @@ export default function Layout() {
                     title={sidebarCollapsed ? item.label : undefined}
                     className={({ isActive }) =>
                       cn(
-                        "flex items-center gap-3 rounded-lg text-sm font-medium transition-all duration-200",
+                        "flex items-center gap-3 rounded-lg text-sm font-medium transition-colors duration-200",
                         sidebarCollapsed ? "p-2.5 justify-center w-11 h-11" : "px-3 py-2.5",
                         isActive
                           ? "bg-primary/10 text-primary"
@@ -193,7 +193,7 @@ export default function Layout() {
           {/* Collapse toggle - desktop only */}
           <button
             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-            className="hidden lg:flex items-center justify-center w-full p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-all duration-200 mb-2"
+            className="hidden lg:flex items-center justify-center w-full p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors duration-200 mb-2"
             title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
             <ChevronLeft className={cn("h-4 w-4 transition-transform duration-300", sidebarCollapsed && "rotate-180")} />
@@ -201,7 +201,7 @@ export default function Layout() {
           <button
             onClick={handleLogout}
             className={cn(
-              "flex items-center gap-3 rounded-lg text-sm font-medium text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-all duration-200 w-full",
+              "flex items-center gap-3 rounded-lg text-sm font-medium text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors duration-200 w-full",
               sidebarCollapsed ? "p-2.5 justify-center" : "px-3 py-2.5"
             )}
             title="Logout"
@@ -218,7 +218,7 @@ export default function Layout() {
         <div className="lg:hidden sticky top-0 z-30 flex items-center gap-3 px-4 h-14 border-b border-border/50 bg-card/80 backdrop-blur-md">
           <button
             onClick={() => setSidebarOpen(true)}
-            className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+            className="touch-target p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
           >
             <Menu className="h-5 w-5" />
           </button>
@@ -236,7 +236,7 @@ export default function Layout() {
           )}
         </div>
 
-        <div className="p-4 sm:p-6 lg:p-8 max-w-[1600px] mx-auto animate-fade-in">
+        <div className="p-4 sm:p-6 lg:p-8 max-w-[1600px] mx-auto">
           <Outlet />
         </div>
       </main>

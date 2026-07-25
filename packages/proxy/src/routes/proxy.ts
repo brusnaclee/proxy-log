@@ -155,6 +155,14 @@ import {
 	isRetryableUpstreamStatus,
 } from '../utils/trial-routing.js';
 import { resolveKeyApiCallLimit, resolveKeyDailyTokenLimit, resolveKeyPromptLimit } from '../utils/trial-config.js';
+import {
+	applyDayOverrideToPromptLimit,
+	applyDayOverrideToQuotaStack,
+	applyDayOverrideToRateLimit,
+	getKeyDayOverride,
+	normalizeDayBonuses,
+	type DayOverrideBonuses,
+} from '../utils/day-override.js';
 import { queueTrialNotification } from '../utils/trial-notify.js';
 import {
 	sseTextToOpenAICompletion,
@@ -1520,6 +1528,12 @@ proxy.all('/*', async (c) => {
 	}
 	const accountKeyFilter = accountApiKeyCondition(accountKeyIds);
 
+	// Calendar-day additive bonuses (WIB) — expires automatically at next midnight.
+	const dayOverrideRow = await getKeyDayOverride(keyRecord.id);
+	const dayBonuses: DayOverrideBonuses | null = dayOverrideRow
+		? normalizeDayBonuses(dayOverrideRow)
+		: null;
+
 	const userAgent = c.req.header('User-Agent') || '';
 	const platformHintRaw = c.req.header('sec-ch-ua-platform') || '';
 	const deviceName =
@@ -2230,10 +2244,9 @@ proxy.all('/*', async (c) => {
 
 	// ─── 9-pre. API call (hop) limit — every upstream hop ─────────────────────
 	{
-		const { limit: apiCallLimit, window: apiCallWindow } = resolveKeyApiCallLimit(
-			keyRecord,
-			config,
-		);
+		const resolved = resolveKeyApiCallLimit(keyRecord, config);
+		const apiCallLimit = applyDayOverrideToRateLimit(resolved.limit, dayBonuses);
+		const apiCallWindow = resolved.window;
 		if (apiCallLimit > 0) {
 			const acCheck = await checkApiCallLimit(
 				accountKeyIds,
@@ -2244,7 +2257,7 @@ proxy.all('/*', async (c) => {
 				const windowMs = parseRateLimitWindow(apiCallWindow);
 				const resetMs = await getApiCallWindowResetMs(accountKeyIds, windowMs);
 				const resetMins = Math.ceil(resetMs / 60000);
-				const isKeyOverride = (keyRecord.rateLimit || 0) > 0;
+				const isKeyOverride = (keyRecord.rateLimit || 0) > 0 || !!(dayBonuses?.extraRateLimit);
 				const limitMsg = `API call limit reached${isKeyOverride ? ' (key override)' : ''}: ${acCheck.used}/${apiCallLimit} API calls in this ${apiCallWindow} window. Resets in ~${resetMins} minute(s).`;
 				await notifyTrialLimitIfNeeded(keyRecord, limitMsg);
 				return c.json(
@@ -2339,8 +2352,9 @@ proxy.all('/*', async (c) => {
 
 		// Prompt quota: only when starting a new turn (1 turn = 1 prompt)
 		if (autoWillStartNewTurn) {
-			const { limit: effectivePromptLimit, window: effectivePromptLimitWindow } =
-				resolveKeyPromptLimit(keyRecord, config);
+			const resolvedPrompt = resolveKeyPromptLimit(keyRecord, config);
+			const effectivePromptLimit = applyDayOverrideToPromptLimit(resolvedPrompt.limit, dayBonuses);
+			const effectivePromptLimitWindow = resolvedPrompt.window;
 			if (effectivePromptLimit > 0) {
 				const plCheck = await checkPromptLimit(
 					accountKeyIds,
@@ -2351,7 +2365,7 @@ proxy.all('/*', async (c) => {
 					const windowMs = parseRateLimitWindow(effectivePromptLimitWindow);
 					const resetMs = await getWindowResetMs(accountKeyIds, windowMs);
 					const resetMins = Math.ceil(resetMs / 60000);
-					const isKeyOverride = (keyRecord.promptLimit || 0) > 0;
+					const isKeyOverride = (keyRecord.promptLimit || 0) > 0 || !!(dayBonuses?.extraPromptLimit);
 					const trialTag = keyRecord.isTrial ? ' (trial)' : '';
 					const limitMsg = `Prompt limit reached${isKeyOverride ? ' (key override)' : ''}${trialTag}: ${plCheck.used}/${effectivePromptLimit} prompts (turns) in this ${effectivePromptLimitWindow} window. Resets in ~${resetMins} minute(s).`;
 					await notifyTrialLimitIfNeeded(keyRecord, limitMsg);
@@ -2521,7 +2535,8 @@ proxy.all('/*', async (c) => {
 					(keyRecord.dailyOutputTokenLimit && keyRecord.dailyOutputTokenLimit > 0
 						? keyRecord.dailyOutputTokenLimit
 						: config.globalDailyOutputTokenLimit || 0);
-				const autoStack = resolveAddonQuotaStack({
+				const autoStack = applyDayOverrideToQuotaStack(
+					resolveAddonQuotaStack({
 					hasActiveAddon: autoActiveAddons.length > 0,
 					keyOrGlobalDaily: stackBaseDailyForKey({
 						hasActiveAddon: autoActiveAddons.length > 0,
@@ -2532,7 +2547,9 @@ proxy.all('/*', async (c) => {
 					dailyInput: Number(rawInAuto) || 0,
 					dailyOutput: Number(rawOutAuto) || 0,
 					addonDailyBonus: sumAddonDailyTokenBonus(autoActiveAddons),
-				});
+				}),
+					dayBonuses,
+				);
 				const globalDailyTokenLimit = autoStack.effectiveDaily;
 				if (globalDailyTokenLimit > 0) {
 					const dw = new Date(wibNow);
@@ -3561,8 +3578,9 @@ proxy.all('/*', async (c) => {
 			}
 		}
 
-		const { limit: effectivePromptLimit, window: effectivePromptLimitWindow } =
-			resolveKeyPromptLimit(keyRecord, config);
+		const resolvedPrompt = resolveKeyPromptLimit(keyRecord, config);
+		const effectivePromptLimit = applyDayOverrideToPromptLimit(resolvedPrompt.limit, dayBonuses);
+		const effectivePromptLimitWindow = resolvedPrompt.window;
 
 		if (effectivePromptLimit > 0) {
 			const plCheck = await checkPromptLimit(
@@ -3588,7 +3606,7 @@ proxy.all('/*', async (c) => {
 						? plCheck.resetMs
 						: await getWindowResetMs(accountKeyIds, windowMs);
 				const resetMins = Math.max(1, Math.ceil(resetMs / 60000));
-				const isKeyOverride = (keyRecord.promptLimit || 0) > 0;
+				const isKeyOverride = (keyRecord.promptLimit || 0) > 0 || !!(dayBonuses?.extraPromptLimit);
 				const trialTag = keyRecord.isTrial ? ' (trial)' : '';
 				const limitMsg = `Prompt limit reached${isKeyOverride ? ' (key override)' : ''}${trialTag}: ${Math.min(gUsedTotal, effectivePromptLimit)}/${effectivePromptLimit} prompts (turns) in this ${effectivePromptLimitWindow} window. ${formatResetEta(resetMs)}.`;
 				await notifyTrialLimitIfNeeded(keyRecord, limitMsg);
@@ -3693,7 +3711,8 @@ proxy.all('/*', async (c) => {
 			(keyRecord.dailyOutputTokenLimit && keyRecord.dailyOutputTokenLimit > 0
 				? keyRecord.dailyOutputTokenLimit
 				: config.globalDailyOutputTokenLimit || 0);
-		const quotaStack = resolveAddonQuotaStack({
+		const quotaStack = applyDayOverrideToQuotaStack(
+			resolveAddonQuotaStack({
 			hasActiveAddon: activeAddons.length > 0,
 			keyOrGlobalDaily: stackBaseDailyForKey({
 				hasActiveAddon: activeAddons.length > 0,
@@ -3704,7 +3723,9 @@ proxy.all('/*', async (c) => {
 			dailyInput: Number(rawIn) || 0,
 			dailyOutput: Number(rawOut) || 0,
 			addonDailyBonus: sumAddonDailyTokenBonus(activeAddons),
-		});
+		}),
+			dayBonuses,
+		);
 		const globalDailyTokenLimit = quotaStack.effectiveDaily;
 		if (globalDailyTokenLimit > 0) {
 			const dw = new Date(wibNow);

@@ -190,7 +190,7 @@ export default function KeysPage() {
       ? "bg-yellow-400/10 border-yellow-400/20 text-yellow-400"
       : "bg-orange-400/10 border-orange-400/20 text-orange-400";
     return (
-      <div className={`border rounded-xl p-4 ${colorCls} animate-fade-in`}>
+      <div className={`border rounded-xl p-4 ${colorCls}`}>
         <div className="flex items-start gap-3">
           <div className="flex-1">
             <p className="text-sm font-medium mb-1">{title}</p>
@@ -302,7 +302,7 @@ export default function KeysPage() {
       ) : (
         <div className="space-y-3">
           {keys.map((key) => (
-            <div key={key.id} className="bg-card border border-border rounded-xl overflow-hidden animate-fade-in">
+            <div key={key.id} className="bg-card border border-border rounded-xl overflow-hidden">
               <div className="p-4">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
@@ -381,7 +381,7 @@ export default function KeysPage() {
 
               {/* Devices list */}
               {expandedKey === key.id && (
-                <div className="border-t border-border bg-accent/30 animate-fade-in">
+                <div className="border-t border-border bg-accent/30">
                   {loadingDevices[key.id] ? (
                     <div className="p-4 text-sm text-muted-foreground">Loading...</div>
                   ) : !devices[key.id]?.length ? (
@@ -443,8 +443,14 @@ export default function KeysPage() {
 
       {/* Create key modal */}
       {showCreateModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-card border border-border rounded-xl p-6 w-full max-w-md animate-fade-in">
+        <div
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4"
+          onClick={() => { setShowCreateModal(false); setNewKeyName(""); }}
+        >
+          <div
+            className="bg-card border border-border rounded-xl p-6 w-full max-w-md"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-foreground">{t("Create Key")}</h2>
               <button onClick={() => { setShowCreateModal(false); setNewKeyName(""); }} className="p-1 hover:bg-accent rounded-lg transition-colors">
@@ -490,8 +496,14 @@ export default function KeysPage() {
 
       {/* Confirm modal */}
       {confirmModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-card border border-border rounded-xl p-6 w-full max-w-sm animate-fade-in">
+        <div
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4"
+          onClick={() => setConfirmModal(null)}
+        >
+          <div
+            className="bg-card border border-border rounded-xl p-6 w-full max-w-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-start gap-3 mb-4">
               <AlertTriangle className="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5" />
               <div>

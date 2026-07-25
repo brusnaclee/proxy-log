@@ -6,11 +6,13 @@ import {
 import { api } from "@/lib/api";
 import { useI18n, type Lang } from "@/lib/i18n";
 import { formatRelativeTime } from "@/lib/utils";
+import { useNotify } from "@/components/Notify";
 
 const REALTIME_KEY = "portal_realtime_enabled";
 
 export default function SettingsPage() {
   const { t, lang, setLang } = useI18n();
+  const notify = useNotify();
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
@@ -108,7 +110,13 @@ export default function SettingsPage() {
   };
 
   const handleRemovePassword = async () => {
-    if (!window.confirm("Are you sure you want to remove your password?")) return;
+    const ok = await notify.confirm({
+      title: "Remove password?",
+      message: "Are you sure you want to remove your password?",
+      confirmLabel: "Remove",
+      danger: true,
+    });
+    if (!ok) return;
     setSaving(true); setError(""); setSuccess("");
     try {
       await api.settings.removePassword();
@@ -226,7 +234,7 @@ export default function SettingsPage() {
         </div>
         <div className="space-y-4">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="bg-card border border-border rounded-xl p-6 animate-pulse">
+            <div key={i} className="bg-card border border-border rounded-xl p-4 animate-pulse">
               <div className="h-5 w-32 bg-muted rounded mb-4" />
               <div className="h-4 w-48 bg-muted rounded" />
             </div>
@@ -246,20 +254,20 @@ export default function SettingsPage() {
 
       {/* Global messages */}
       {success && (
-        <div className="flex items-center gap-2 p-3 bg-green-400/10 border border-green-400/20 rounded-lg text-green-400 text-sm animate-fade-in">
+        <div className="flex items-center gap-2 p-3 bg-green-400/10 border border-green-400/20 rounded-lg text-green-400 text-sm">
           <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
           {success}
         </div>
       )}
       {error && (
-        <div className="flex items-center gap-2 p-3 bg-red-400/10 border border-red-400/20 rounded-lg text-red-400 text-sm animate-fade-in">
+        <div className="flex items-center gap-2 p-3 bg-red-400/10 border border-red-400/20 rounded-lg text-red-400 text-sm">
           <AlertCircle className="w-4 h-4 flex-shrink-0" />
           {error}
         </div>
       )}
 
       {/* Account Info */}
-      <div className="bg-card border border-border rounded-xl p-6 animate-fade-in">
+      <div className="bg-card border border-border rounded-xl p-4">
         <h2 className="text-sm font-medium text-foreground mb-4">{t("Account")}</h2>
         <div className="space-y-3">
           <div className="flex items-center justify-between py-2 border-b border-border/40">
@@ -300,7 +308,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Token Saver — placed right under Account so it's visible without scrolling */}
-      <div className="bg-card border border-border rounded-xl p-6 animate-fade-in border-primary/20">
+      <div className="bg-card border border-border rounded-xl p-4 border-primary/20">
         <div className="flex items-center justify-between gap-2 mb-1">
           <h2 className="text-sm font-medium text-foreground">{t("Token Saver")}</h2>
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
@@ -363,7 +371,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Language toggle */}
-      <div className="bg-card border border-border rounded-xl p-6 animate-fade-in">
+      <div className="bg-card border border-border rounded-xl p-4">
         <h2 className="text-sm font-medium text-foreground mb-4">{t("Language")}</h2>
         <div className="flex items-center gap-2">
           {(["id", "en"] as Lang[]).map((l) => (
@@ -384,7 +392,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Webhook URL */}
-      <div className="bg-card border border-border rounded-xl p-6 animate-fade-in">
+      <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center gap-2 mb-2">
           <Webhook className="w-4 h-4 text-muted-foreground" />
           <h2 className="text-sm font-medium text-foreground">{t("Webhook URL")}</h2>
@@ -394,13 +402,13 @@ export default function SettingsPage() {
         </p>
 
         {webhookSuccess && (
-          <div className="flex items-center gap-2 p-3 bg-green-400/10 border border-green-400/20 rounded-lg text-green-400 text-sm mb-3 animate-fade-in">
+          <div className="flex items-center gap-2 p-3 bg-green-400/10 border border-green-400/20 rounded-lg text-green-400 text-sm mb-3">
             <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
             {webhookSuccess}
           </div>
         )}
         {webhookError && (
-          <div className="flex items-center gap-2 p-3 bg-red-400/10 border border-red-400/20 rounded-lg text-red-400 text-sm mb-3 animate-fade-in">
+          <div className="flex items-center gap-2 p-3 bg-red-400/10 border border-red-400/20 rounded-lg text-red-400 text-sm mb-3">
             <AlertCircle className="w-4 h-4 flex-shrink-0" />
             {webhookError}
           </div>
@@ -438,7 +446,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Live SSE toggle */}
-      <div className="bg-card border border-border rounded-xl p-6 animate-fade-in">
+      <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between">
           <div className="flex items-start gap-3">
             <Radio className="w-4 h-4 text-muted-foreground mt-0.5" />
@@ -465,7 +473,7 @@ export default function SettingsPage() {
           </button>
         </div>
         {realtimeEnabled && (
-          <div className="mt-3 flex items-center gap-1.5 text-xs text-primary animate-fade-in">
+          <div className="mt-3 flex items-center gap-1.5 text-xs text-primary">
             <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
             Live updates active
           </div>
@@ -473,7 +481,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Password Management */}
-      <div className="bg-card border border-border rounded-xl p-6 animate-fade-in">
+      <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-medium text-foreground">{t("Portal Password")}</h2>
           {passwordState === "set" && (

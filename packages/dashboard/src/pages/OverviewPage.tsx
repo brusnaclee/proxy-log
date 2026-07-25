@@ -13,6 +13,7 @@ import { useRealtimeSSE } from "@/lib/use-realtime-sse";
 import { exportXlsx, buildModelsSection, fmtCost } from "@/lib/export-xlsx";
 import { formatCost } from "@/lib/utils";
 import { PeriodSelector, type PeriodKey } from "@/components/PeriodSelector";
+import { useNotify } from "@/components/Notify";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type LocalPeriodKey = "today" | "3d" | "7d" | "30d" | "thisMonth" | "lastMonth" | "allTime";
@@ -50,6 +51,7 @@ const RECENT_MAX_PAGES = 25;
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function OverviewPage() {
+  const notify = useNotify();
   const [overview, setOverview]         = useState<OverviewStats | null>(null);
   const [timeseries, setTimeseries]     = useState<any[]>([]);
   const [modelStats, setModelStats]     = useState<any[]>([]);
@@ -68,21 +70,26 @@ export default function OverviewPage() {
   const [searchUserResult, setSearchUserResult] = useState<any>(null);
 
   const handleSearchUser = async () => {
-    const discordId = window.prompt("Masukkan Discord User ID saat diminta:");
-    if (!discordId) return;
+    const discordId = await notify.prompt({
+      title: "Search Discord user",
+      message: "Masukkan Discord User ID:",
+      placeholder: "e.g. 123456789012345678",
+      confirmLabel: "Search",
+    });
+    if (!discordId?.trim()) return;
     try {
       const res = await stats.userDetail(discordId.trim());
       if (res.error) {
-        alert("Error: " + res.error);
+        notify.error("Error: " + res.error);
         return;
       }
       if (res.found === false || !res.discordUserId) {
-        alert("User tidak ditemukan.");
+        notify.error("User tidak ditemukan.");
         return;
       }
       setSearchUserResult(res);
     } catch (err: any) {
-      alert("Gagal mencari user: " + err.message);
+      notify.error("Gagal mencari user: " + err.message);
     }
   };
 

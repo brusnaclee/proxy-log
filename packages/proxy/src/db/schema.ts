@@ -596,3 +596,25 @@ export const authSessions = pgTable('auth_sessions', {
 
 export type AuthSession = typeof authSessions.$inferSelect;
 export type NewAuthSession = typeof authSessions.$inferInsert;
+
+// ─── Per-key calendar-day overrides (WIB date; additive bonuses until midnight) ─
+export const keyDayOverrides = pgTable('key_day_overrides', {
+	id: serial('id').primaryKey(),
+	apiKeyId: integer('api_key_id').notNull().references(() => apiKeys.id, { onDelete: 'cascade' }),
+	/** Asia/Jakarta calendar day as YYYY-MM-DD */
+	dayWib: text('day_wib').notNull(),
+	extraDailyInput: integer('extra_daily_input').notNull().default(0),
+	extraDailyOutput: integer('extra_daily_output').notNull().default(0),
+	extraDailyTotal: integer('extra_daily_total').notNull().default(0),
+	extraPromptLimit: integer('extra_prompt_limit').notNull().default(0),
+	extraRateLimit: integer('extra_rate_limit').notNull().default(0),
+	note: text('note'),
+	createdAt: timestamp('created_at').notNull().defaultNow(),
+	updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => ({
+	keyDayUniq: uniqueIndex('idx_key_day_overrides_key_day').on(table.apiKeyId, table.dayWib),
+	dayIdx: index('idx_key_day_overrides_day').on(table.dayWib),
+}));
+
+export type KeyDayOverride = typeof keyDayOverrides.$inferSelect;
+export type NewKeyDayOverride = typeof keyDayOverrides.$inferInsert;

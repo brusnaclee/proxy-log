@@ -447,7 +447,7 @@ export default function AnalyticsPage() {
           <CardTitle className="text-base font-medium">Top Devices by Usage</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          <div className="overflow-x-auto -mx-4 sm:mx-0">
+          <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[700px]">
               <thead>
                 <tr className="border-b border-border/50">

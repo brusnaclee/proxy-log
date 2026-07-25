@@ -22,6 +22,13 @@ import {
 } from './counting.js';
 import { resolveKeyApiCallLimit, resolveKeyDailyTokenLimit, resolveKeyPromptLimit } from './trial-config.js';
 import {
+	applyDayOverrideToPromptLimit,
+	applyDayOverrideToQuotaStack,
+	applyDayOverrideToRateLimit,
+	getKeyDayOverride,
+	normalizeDayBonuses,
+} from './day-override.js';
+import {
 	checkApiCallLimit,
 	checkPromptLimit,
 	checkModelPromptLimit,
@@ -281,7 +288,9 @@ export async function buildLiveUsageForKey(
 	const monthly = pickLimit(limitKey.monthlyTokenLimit, cfg?.globalMonthlyTokenLimit);
 	const baseDailyTokenLimit = resolveKeyDailyTokenLimit(limitKey as any, cfg);
 	const hasActiveAddon = activeAddons.length > 0;
-	const stack = resolveAddonQuotaStack({
+	const dayBonuses = normalizeDayBonuses(await getKeyDayOverride(limitKey.id));
+	const stack = applyDayOverrideToQuotaStack(
+		resolveAddonQuotaStack({
 		hasActiveAddon,
 		keyOrGlobalDaily: stackBaseDailyForKey({
 			hasActiveAddon,
@@ -292,14 +301,21 @@ export async function buildLiveUsageForKey(
 		dailyInput: rawDailyInput.value,
 		dailyOutput: rawDailyOutput.value,
 		addonDailyBonus,
-	});
+	}),
+		dayBonuses,
+	);
 	// Display: keep soft I/O bases visible when add-on (enforcement is daily-only).
 	const dailyInput = stack.bypassIo
 		? {
 				value: stack.inputBase > 0 ? stack.inputBase : rawDailyInput.value,
 				source: rawDailyInput.source === 'none' && stack.inputBase > 0 ? 'global' : rawDailyInput.source,
 			}
-		: rawDailyInput;
+		: {
+				value: rawDailyInput.value > 0
+					? rawDailyInput.value + dayBonuses.extraDailyInput
+					: rawDailyInput.value,
+				source: dayBonuses.extraDailyInput > 0 && rawDailyInput.value > 0 ? 'override' : rawDailyInput.source,
+			};
 	const dailyOutput = stack.bypassIo
 		? {
 				value: stack.outputBase > 0 ? stack.outputBase : rawDailyOutput.value,
@@ -308,7 +324,12 @@ export async function buildLiveUsageForKey(
 						? 'global'
 						: rawDailyOutput.source,
 			}
-		: rawDailyOutput;
+		: {
+				value: rawDailyOutput.value > 0
+					? rawDailyOutput.value + dayBonuses.extraDailyOutput
+					: rawDailyOutput.value,
+				source: dayBonuses.extraDailyOutput > 0 && rawDailyOutput.value > 0 ? 'override' : rawDailyOutput.source,
+			};
 	const dailyTokenLimit = stack.effectiveDaily;
 	const dailyTok =
 		dailyTokenLimit > 0
@@ -350,24 +371,22 @@ export async function buildLiveUsageForKey(
 	}
 	const perModelPromptsBypassedByAddon = stack.bypassPerModelPrompts;
 
-	const { limit: promptLimit, window: promptLimitWindow } = resolveKeyPromptLimit(
-		limitKey as any,
-		cfg,
-	);
+	const resolvedPrompt = resolveKeyPromptLimit(limitKey as any, cfg);
+	const promptLimit = applyDayOverrideToPromptLimit(resolvedPrompt.limit, dayBonuses);
+	const promptLimitWindow = resolvedPrompt.window;
 	const promptLimitSource: LimitSource =
 		promptLimit > 0
-			? Number(limitKey.promptLimit) > 0
+			? Number(limitKey.promptLimit) > 0 || dayBonuses.extraPromptLimit > 0
 				? 'override'
 				: 'global'
 			: 'none';
 
-	const { limit: apiCallLimit, window: apiCallLimitWindow } = resolveKeyApiCallLimit(
-		limitKey as any,
-		cfg,
-	);
+	const resolvedApi = resolveKeyApiCallLimit(limitKey as any, cfg);
+	const apiCallLimit = applyDayOverrideToRateLimit(resolvedApi.limit, dayBonuses);
+	const apiCallLimitWindow = resolvedApi.window;
 	const apiCallLimitSource: LimitSource =
 		apiCallLimit > 0
-			? Number(limitKey.rateLimit) > 0
+			? Number(limitKey.rateLimit) > 0 || dayBonuses.extraRateLimit > 0
 				? 'override'
 				: 'global'
 			: 'none';

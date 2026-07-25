@@ -375,6 +375,61 @@ export const keys = {
       }`,
       { method: "DELETE" },
     ),
+  getDayOverride: (keyId: number, day?: string) =>
+    request<{
+      dayWib: string;
+      todayWib: string;
+      override: {
+        extraDailyInput: number;
+        extraDailyOutput: number;
+        extraDailyTotal: number;
+        extraPromptLimit: number;
+        extraRateLimit: number;
+        note: string;
+        updatedAt?: string;
+      } | null;
+    }>(`/keys/${keyId}/day-override${day ? `?day=${encodeURIComponent(day)}` : ""}`),
+  setDayOverride: (
+    keyId: number,
+    data: {
+      dayWib?: string;
+      extraDailyInput?: number;
+      extraDailyOutput?: number;
+      extraDailyTotal?: number;
+      extraPromptLimit?: number;
+      extraRateLimit?: number;
+      note?: string;
+    },
+  ) =>
+    request<{
+      success: boolean;
+      cleared?: boolean;
+      dayWib: string;
+      override: {
+        extraDailyInput: number;
+        extraDailyOutput: number;
+        extraDailyTotal: number;
+        extraPromptLimit: number;
+        extraRateLimit: number;
+        note: string;
+      } | null;
+    }>(`/keys/${keyId}/day-override`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  clearDayOverride: (keyId: number, day?: string) =>
+    request<{ success: boolean; dayWib: string }>(
+      `/keys/${keyId}/day-override${day ? `?day=${encodeURIComponent(day)}` : ""}`,
+      { method: "DELETE" },
+    ),
+  resetTodayUsage: (keyId: number) =>
+    request<{
+      success: boolean;
+      dayWib: string;
+      deletedRows: number;
+      keyIds: number[];
+      message: string;
+    }>(`/keys/${keyId}/reset-today-usage`, { method: "POST" }),
 };
 
 // ─── Logs ──────────────────────────────────────────────────────────────────────

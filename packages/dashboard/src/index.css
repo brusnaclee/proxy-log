@@ -135,9 +135,9 @@
   @apply p-4 sm:p-6;
 }
 
-/* Better touch targets for mobile */
+/* Better touch targets for mobile — scoped */
 @media (max-width: 640px) {
-  button, a, [role="button"] {
+  .touch-target {
     min-height: 44px;
   }
 }

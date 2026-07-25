@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Gift, Loader2, RefreshCw, Save, ExternalLink, Plus, Pause, StopCircle, RotateCcw, Eraser } from "lucide-react";
+import { useNotify } from "@/components/Notify";
 
 function keyDetailPath(u: TrialUserRow) {
   const slug = (u.keyName || "trial").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").substring(0, 40);
@@ -69,6 +70,7 @@ const DM_TEMPLATE_FIELDS: { key: keyof TrialDmTemplates; label: string; placehol
 
 export default function TrialSettingsPage() {
   const navigate = useNavigate();
+  const notify = useNotify();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -158,7 +160,15 @@ export default function TrialSettingsPage() {
   const filterByUpstream = selectedUpstreams.length > 0;
 
   const runAction = async (discordUserId: string, action: string, extra: Record<string, unknown> = {}, confirmMsg?: string) => {
-    if (confirmMsg && !window.confirm(confirmMsg)) return;
+    if (confirmMsg) {
+      const ok = await notify.confirm({
+        title: "Confirm action",
+        message: confirmMsg,
+        confirmLabel: "Continue",
+        danger: true,
+      });
+      if (!ok) return;
+    }
     try {
       await trialSettings.userAction({ action, discordUserId, ...extra });
       await load();

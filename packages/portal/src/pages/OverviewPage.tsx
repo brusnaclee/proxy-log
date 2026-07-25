@@ -178,7 +178,7 @@ export default function OverviewPage() {
     );
     if (!user.trialExpiresAt) {
       return (
-        <div className="p-3 bg-yellow-400/10 border border-yellow-400/20 rounded-lg text-sm text-yellow-400 animate-fade-in">
+        <div className="p-3 bg-yellow-400/10 border border-yellow-400/20 rounded-lg text-sm text-yellow-400">
           <div className="flex items-center gap-2">
             <Info className="w-4 h-4 flex-shrink-0" />
             Trial account
@@ -189,7 +189,7 @@ export default function OverviewPage() {
     }
     const diff = new Date(user.trialExpiresAt).getTime() - Date.now();
     if (diff <= 0) return (
-      <div className="p-3 bg-red-400/10 border border-red-400/20 rounded-lg text-sm text-red-400 flex items-center gap-2 animate-fade-in">
+      <div className="p-3 bg-red-400/10 border border-red-400/20 rounded-lg text-sm text-red-400 flex items-center gap-2">
         <AlertTriangle className="w-4 h-4 flex-shrink-0" />
         Trial expired
       </div>
@@ -197,7 +197,7 @@ export default function OverviewPage() {
     const days = Math.floor(diff / (1000 * 60 * 60 * 24));
     const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
     return (
-      <div className="p-3 bg-yellow-400/10 border border-yellow-400/20 rounded-lg text-sm text-yellow-400 animate-fade-in">
+      <div className="p-3 bg-yellow-400/10 border border-yellow-400/20 rounded-lg text-sm text-yellow-400">
         <div className="flex items-center gap-2">
           <Info className="w-4 h-4 flex-shrink-0" />
           {t("Trial expires in")}: {days > 0 ? `${days} ${t("days")}` : `${hours} ${t("hours")}`}
@@ -210,7 +210,7 @@ export default function OverviewPage() {
   const renderNotificationBanner = () => {
     if (!user?.pendingNotifications?.length) return null;
     return (
-      <div className="p-3 bg-primary/10 border border-primary/20 rounded-lg text-sm flex items-center gap-2 animate-fade-in">
+      <div className="p-3 bg-primary/10 border border-primary/20 rounded-lg text-sm flex items-center gap-2">
         <Bell className="w-4 h-4 text-primary flex-shrink-0" />
         <span className="text-foreground">
           {user.pendingNotifications.length} {t("Notifications")}:{" "}
@@ -367,7 +367,7 @@ export default function OverviewPage() {
     if (!bars.length && !modelLimits.length && !hasAddon) return null;
 
     return (
-      <div className="bg-card border border-border rounded-xl p-4 space-y-3 animate-fade-in">
+      <div className="bg-card border border-border rounded-xl p-4 space-y-3">
         <h3 className="text-sm font-medium text-foreground">{t("Usage Today")}</h3>
         {hasAddon && (
           <div className="rounded-lg border border-border/60 bg-muted/20 p-2.5 space-y-1 text-xs">
@@ -457,7 +457,7 @@ export default function OverviewPage() {
     ];
 
     return (
-      <div className="bg-card border border-border rounded-xl p-4 animate-fade-in">
+      <div className="bg-card border border-border rounded-xl p-4">
         <h3 className="text-sm font-medium text-foreground mb-3">{t("Today vs Yesterday")}</h3>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           {cells.map((c) => (
@@ -485,7 +485,7 @@ export default function OverviewPage() {
     if (!items.length) return null;
 
     return (
-      <div className="bg-card border border-border rounded-xl p-4 animate-fade-in">
+      <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center gap-2 mb-3">
           <TrendingUp className="w-4 h-4 text-primary" />
           <h3 className="text-sm font-medium text-foreground">{t("Forecast ETA")}</h3>
@@ -533,7 +533,7 @@ export default function OverviewPage() {
     };
 
     return (
-      <div className="bg-card border border-border rounded-xl p-4 animate-fade-in">
+      <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center gap-2 mb-3">
           <AlertTriangle className="w-4 h-4 text-yellow-400" />
           <h3 className="text-sm font-medium text-foreground">{t("Top Errors")}</h3>
@@ -600,7 +600,7 @@ export default function OverviewPage() {
     const anthropicSnippet = `import anthropic\nclient = anthropic.Anthropic(\n  base_url="${baseUrl}",\n  api_key="YOUR_KEY"\n)\nresp = client.messages.create(\n  model="tokito/claude-sonnet",\n  max_tokens=1024,\n  messages=[{"role":"user","content":"Hello"}]\n)`;
 
     return (
-      <div className="bg-card border border-border rounded-xl overflow-hidden animate-fade-in">
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
         <button
           onClick={() => setCheatSheetOpen(!cheatSheetOpen)}
           className="w-full flex items-center justify-between p-4 text-sm font-medium text-foreground hover:bg-accent/30 transition-colors"
@@ -612,7 +612,7 @@ export default function OverviewPage() {
           {cheatSheetOpen ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
         </button>
         {cheatSheetOpen && (
-          <div className="border-t border-border p-4 space-y-4 animate-fade-in">
+          <div className="border-t border-border p-4 space-y-4">
             <div>
               <p className="text-xs text-muted-foreground mb-1">{t("Base URL")}</p>
               <div className="flex items-center gap-2">
@@ -665,7 +665,7 @@ export default function OverviewPage() {
       { key: "toolCalls", label: t("Tool Calls"), icon: Wrench, value: stats.toolCalls, format: formatNumber },
     ];
     return (
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 animate-fade-in">
+      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
         {cards.map(({ key, label, icon: Icon, value, format }) => (
           <div key={key} className="bg-card border border-border rounded-xl p-4">
             <div className="flex items-center gap-2 mb-2">
@@ -683,7 +683,7 @@ export default function OverviewPage() {
     if (!timeseries.length) return null;
     const data = timeseries.map((item) => ({ ...item, date: item.period.slice(5) }));
     return (
-      <div className="bg-card border border-border rounded-xl p-4 animate-fade-in">
+      <div className="bg-card border border-border rounded-xl p-4">
         <h3 className="text-sm font-medium text-foreground mb-4">{t("Requests Over Time")}</h3>
         <div className="chart-container">
           <ResponsiveContainer width="100%" height="100%">
@@ -712,7 +712,7 @@ export default function OverviewPage() {
       tokens: item.tokens,
     }));
     return (
-      <div className="bg-card border border-border rounded-xl p-4 animate-fade-in">
+      <div className="bg-card border border-border rounded-xl p-4">
         <h3 className="text-sm font-medium text-foreground mb-4">{t("Token Usage by Model")}</h3>
         <div className="chart-container">
           <ResponsiveContainer width="100%" height="100%">
@@ -738,7 +738,7 @@ export default function OverviewPage() {
     if (!ideUsage.length) return null;
     const total = ideUsage.reduce((sum, item) => sum + item.requests, 0);
     return (
-      <div className="bg-card border border-border rounded-xl p-4 animate-fade-in">
+      <div className="bg-card border border-border rounded-xl p-4">
         <h3 className="text-sm font-medium text-foreground mb-4">{t("IDE Breakdown")}</h3>
         <div className="space-y-3">
           {ideUsage.map((item) => (

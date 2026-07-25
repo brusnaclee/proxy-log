@@ -17,6 +17,15 @@ export default function Layout() {
     api.me().then((data: any) => setUser(data)).catch(() => navigate("/login"));
   }, [navigate]);
 
+  // Close mobile account menu on resize to desktop
+  useEffect(() => {
+    const onResize = () => {
+      if (window.innerWidth >= 1024) setMobileMenuOpen(false);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
   const handleLogout = async () => {
     setLoggingOut(true);
     try { await api.auth.logout(); } catch { /* ignore */ }
@@ -46,22 +55,47 @@ export default function Layout() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col lg:flex-row">
-      {/* Desktop Sidebar */}
-      <aside className="hidden lg:flex flex-col w-64 bg-card border-r border-border min-h-screen">
-        {/* Brand */}
-        <div className="flex items-center gap-3 p-6 border-b border-border">
+    <div className="min-h-screen bg-background">
+      {/* Desktop sidebar — fixed so it never scrolls with content */}
+      <aside className="hidden lg:flex flex-col w-64 fixed inset-y-0 left-0 z-30 bg-card border-r border-border">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-border shrink-0">
           <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
             <Zap className="w-4 h-4 text-primary" />
           </div>
           <div>
-            <h1 className="font-semibold text-foreground">Tokito</h1>
+            <h1 className="font-semibold text-foreground leading-tight">Tokito</h1>
             <p className="text-xs text-muted-foreground">Your Dashboard</p>
           </div>
         </div>
 
-        {/* Navigation */}
-        <nav className="flex-1 p-4 space-y-1">
+        {/* User + logout near top (not stuck only at bottom) */}
+        <div className="px-4 py-3 border-b border-border shrink-0 space-y-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+              <span className="text-xs font-semibold text-primary">
+                {user?.discordUsername?.charAt(0).toUpperCase() || "U"}
+              </span>
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm text-foreground truncate">
+                  {user?.discordUsername || "..."}
+                </span>
+                <AccountBadge />
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={handleLogout}
+            disabled={loggingOut}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-muted-foreground hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors border border-border/60"
+          >
+            <LogOut className="w-4 h-4" />
+            {t("Logout")}
+          </button>
+        </div>
+
+        <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
           {navItems.map(({ to, icon: Icon, label, end }) => (
             <NavLink
               key={to}
@@ -69,9 +103,9 @@ export default function Layout() {
               end={end}
               className={({ isActive }) =>
                 cn(
-                  "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150",
+                  "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors duration-150",
                   isActive
-                    ? "bg-primary/10 text-primary shadow-sm"
+                    ? "bg-primary/10 text-primary"
                     : "text-muted-foreground hover:text-foreground hover:bg-accent"
                 )
               }
@@ -81,41 +115,11 @@ export default function Layout() {
             </NavLink>
           ))}
         </nav>
-
-        {/* User section */}
-        <div className="p-4 border-t border-border">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
-                <span className="text-xs font-semibold text-primary">
-                  {user?.discordUsername?.charAt(0).toUpperCase() || "U"}
-                </span>
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-sm text-foreground truncate max-w-[90px]">
-                    {user?.discordUsername || "..."}
-                  </span>
-                  <AccountBadge />
-                </div>
-              </div>
-            </div>
-            <button
-              onClick={handleLogout}
-              disabled={loggingOut}
-              className="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
-              title={t("Logout")}
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
       </aside>
 
-      {/* Main content area */}
-      <main className="flex-1 flex flex-col min-h-screen pb-20 lg:pb-0">
-        {/* Mobile header */}
-        <header className="lg:hidden flex items-center justify-between p-4 border-b border-border bg-card">
+      {/* Main — offset by sidebar width on desktop; alone scrolls */}
+      <main className="lg:ml-64 min-h-screen flex flex-col pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-0">
+        <header className="lg:hidden sticky top-0 z-[45] flex items-center justify-between p-4 border-b border-border bg-card">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-md bg-primary/20 flex items-center justify-center">
               <Zap className="w-3.5 h-3.5 text-primary" />
@@ -129,56 +133,55 @@ export default function Layout() {
             </span>
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="p-2 text-muted-foreground hover:text-foreground transition-colors"
+              className="touch-target p-2 text-muted-foreground hover:text-foreground transition-colors"
+              aria-expanded={mobileMenuOpen}
+              aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
             >
               {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
             </button>
           </div>
         </header>
 
-        {/* Mobile dropdown menu */}
+        {/* Mobile account sheet — portal (not covering sidebar chrome incorrectly) */}
         {mobileMenuOpen && (
-          <div className="lg:hidden absolute top-[57px] left-0 right-0 bg-card border-b border-border z-50 animate-slide-up">
-            <nav className="p-4 space-y-1">
-              {navItems.map(({ to, icon: Icon, label, end }) => (
-                <NavLink
-                  key={to}
-                  to={to}
-                  end={end}
+          <div className="lg:hidden fixed inset-0 z-[60]">
+            <div
+              className="absolute inset-0 bg-black/50"
+              onClick={() => setMobileMenuOpen(false)}
+            />
+            <div className="absolute top-0 left-0 right-0 bg-card border-b border-border shadow-lg p-4 space-y-2 animate-slide-up">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-sm text-foreground truncate">{user?.discordUsername || "..."}</span>
+                  <AccountBadge />
+                </div>
+                <button
+                  type="button"
                   onClick={() => setMobileMenuOpen(false)}
-                  className={({ isActive }) =>
-                    cn(
-                      "flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-colors",
-                      isActive
-                        ? "bg-primary/10 text-primary"
-                        : "text-muted-foreground hover:text-foreground hover:bg-accent"
-                    )
-                  }
+                  className="p-2 text-muted-foreground hover:text-foreground"
+                  aria-label="Close"
                 >
-                  <Icon className="w-4 h-4" />
-                  {label}
-                </NavLink>
-              ))}
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
               <button
                 onClick={handleLogout}
                 disabled={loggingOut}
-                className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium text-red-400 hover:bg-red-400/10 transition-colors"
+                className="touch-target w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium text-red-400 hover:bg-red-400/10 transition-colors"
               >
                 <LogOut className="w-4 h-4" />
                 {t("Logout")}
               </button>
-            </nav>
+            </div>
           </div>
         )}
 
-        {/* Page content */}
-        <div className="flex-1 page-content animate-fade-in">
+        <div className="flex-1 page-content">
           <Outlet />
         </div>
       </main>
 
-      {/* Mobile bottom tab bar */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-card border-t border-border z-40">
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-card border-t border-border z-40 pb-[env(safe-area-inset-bottom)]">
         <div className="flex items-center justify-around">
           {navItems.map(({ to, icon: Icon, label, end }) => (
             <NavLink
@@ -187,7 +190,7 @@ export default function Layout() {
               end={end}
               className={({ isActive }) =>
                 cn(
-                  "flex flex-col items-center gap-1 py-3 px-4 flex-1 transition-colors",
+                  "touch-target flex flex-col items-center justify-center gap-1 py-2 px-2 flex-1 transition-colors",
                   isActive ? "text-primary" : "text-muted-foreground"
                 )
               }

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { db } from "../../db/index.js";
-import { apiKeys, requestLogs, devices, allowedDevices, allowedIdes, chatSessions, adminConfig, modelLimits } from "../../db/schema.js";
-import { eq, sql, and, desc } from "drizzle-orm";
+import { apiKeys, requestLogs, devices, allowedDevices, allowedIdes, chatSessions, adminConfig, modelLimits, keyDayOverrides } from "../../db/schema.js";
+import { eq, sql, and, desc, inArray } from "drizzle-orm";
 import { generateApiKey, getKeyPrefix, sha256, maskKey } from "../../utils/crypto.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
@@ -13,6 +13,15 @@ import { enrichModelLimitsWithCatalog } from "../../utils/model-limits-enrich.js
 import { isAuthenticated } from "../../middleware/session.js";
 import { isProtectedPrimaryApiKey } from "../../utils/api-key-primary.js";
 import { buildLiveUsageForKey } from "../../utils/live-usage.js";
+import { resolveAccountKeyScope } from "../../utils/api-key-account.js";
+import {
+  dayOverrideHasAny,
+  getKeyDayOverride,
+  isValidDayWib,
+  normalizeDayBonuses,
+  wibDayStartUtc,
+  wibTodayDateString,
+} from "../../utils/day-override.js";
 
 const keys = new Hono();
 
@@ -752,6 +761,132 @@ keys.delete("/keys/:id/model-limits/:model", async (c) => {
     ));
   }
   return c.json({ success: true, message: `Model limit for "${model}" removed` });
+});
+
+// ─── Calendar-day override (WIB) + reset today's usage ─────────────────────────
+
+keys.get("/keys/:id/day-override", async (c) => {
+  const keyId = parseInt(c.req.param("id"));
+  if (!Number.isFinite(keyId)) return c.json({ error: "Invalid key id" }, 400);
+  const [key] = await db.select({ id: apiKeys.id }).from(apiKeys).where(eq(apiKeys.id, keyId));
+  if (!key) return c.json({ error: "Key not found" }, 404);
+
+  const dayParam = c.req.query("day") || wibTodayDateString();
+  if (!isValidDayWib(dayParam)) return c.json({ error: "Invalid day (use YYYY-MM-DD)" }, 400);
+
+  const row = await getKeyDayOverride(keyId, dayParam);
+  return c.json({
+    dayWib: dayParam,
+    todayWib: wibTodayDateString(),
+    override: row
+      ? {
+          extraDailyInput: row.extraDailyInput || 0,
+          extraDailyOutput: row.extraDailyOutput || 0,
+          extraDailyTotal: row.extraDailyTotal || 0,
+          extraPromptLimit: row.extraPromptLimit || 0,
+          extraRateLimit: row.extraRateLimit || 0,
+          note: row.note || "",
+          updatedAt: row.updatedAt,
+        }
+      : null,
+  });
+});
+
+keys.put("/keys/:id/day-override", async (c) => {
+  const keyId = parseInt(c.req.param("id"));
+  if (!Number.isFinite(keyId)) return c.json({ error: "Invalid key id" }, 400);
+  const [key] = await db.select({ id: apiKeys.id }).from(apiKeys).where(eq(apiKeys.id, keyId));
+  if (!key) return c.json({ error: "Key not found" }, 404);
+
+  const body = await c.req.json().catch(() => ({}));
+  const dayWib = typeof body.dayWib === "string" && body.dayWib ? body.dayWib : wibTodayDateString();
+  if (!isValidDayWib(dayWib)) return c.json({ error: "Invalid dayWib (use YYYY-MM-DD)" }, 400);
+
+  const bonuses = normalizeDayBonuses(body);
+  const note = typeof body.note === "string" ? body.note.slice(0, 500) : null;
+  const now = new Date();
+
+  if (!dayOverrideHasAny(bonuses) && !note) {
+    await db
+      .delete(keyDayOverrides)
+      .where(and(eq(keyDayOverrides.apiKeyId, keyId), eq(keyDayOverrides.dayWib, dayWib)));
+    statsCache.invalidate("keys-list");
+    return c.json({ success: true, cleared: true, dayWib, override: null });
+  }
+
+  const existing = await getKeyDayOverride(keyId, dayWib);
+  if (existing) {
+    await db
+      .update(keyDayOverrides)
+      .set({ ...bonuses, note, updatedAt: now })
+      .where(eq(keyDayOverrides.id, existing.id));
+  } else {
+    await db.insert(keyDayOverrides).values({
+      apiKeyId: keyId,
+      dayWib,
+      ...bonuses,
+      note,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  const saved = await getKeyDayOverride(keyId, dayWib);
+  statsCache.invalidate("keys-list");
+  return c.json({
+    success: true,
+    dayWib,
+    override: saved
+      ? {
+          extraDailyInput: saved.extraDailyInput || 0,
+          extraDailyOutput: saved.extraDailyOutput || 0,
+          extraDailyTotal: saved.extraDailyTotal || 0,
+          extraPromptLimit: saved.extraPromptLimit || 0,
+          extraRateLimit: saved.extraRateLimit || 0,
+          note: saved.note || "",
+          updatedAt: saved.updatedAt,
+        }
+      : null,
+  });
+});
+
+keys.delete("/keys/:id/day-override", async (c) => {
+  const keyId = parseInt(c.req.param("id"));
+  if (!Number.isFinite(keyId)) return c.json({ error: "Invalid key id" }, 400);
+  const dayParam = c.req.query("day") || wibTodayDateString();
+  if (!isValidDayWib(dayParam)) return c.json({ error: "Invalid day" }, 400);
+
+  await db
+    .delete(keyDayOverrides)
+    .where(and(eq(keyDayOverrides.apiKeyId, keyId), eq(keyDayOverrides.dayWib, dayParam)));
+  statsCache.invalidate("keys-list");
+  return c.json({ success: true, dayWib: dayParam });
+});
+
+keys.post("/keys/:id/reset-today-usage", async (c) => {
+  const keyId = parseInt(c.req.param("id"));
+  if (!Number.isFinite(keyId)) return c.json({ error: "Invalid key id" }, 400);
+  const [key] = await db.select().from(apiKeys).where(eq(apiKeys.id, keyId));
+  if (!key) return c.json({ error: "Key not found" }, 404);
+
+  const dayWib = wibTodayDateString();
+  const dayStart = wibDayStartUtc(dayWib);
+  const { keyIds } = await resolveAccountKeyScope(key);
+
+  const deleted = await db
+    .delete(requestLogs)
+    .where(and(inArray(requestLogs.apiKeyId, keyIds), sql`created_at >= ${dayStart}`))
+    .returning({ id: requestLogs.id });
+
+  statsCache.invalidate("keys-list");
+  return c.json({
+    success: true,
+    dayWib,
+    dayStart: dayStart.toISOString(),
+    keyIds,
+    deletedRows: deleted.length,
+    message: `Reset ${deleted.length} log row(s) for ${dayWib} WIB across ${keyIds.length} key(s)`,
+  });
 });
 
 export default keys;

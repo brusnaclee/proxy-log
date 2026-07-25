@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatDate, formatNumber, formatRelativeTime, copyToClipboard, formatCost, formatInputBreakdown } from "@/lib/utils";
-import { ArrowLeft, Copy, Check, RotateCw, Trash2, Shield, ShieldOff, X, Download, DollarSign, Gift, Info, ExternalLink } from "lucide-react";
+import { ArrowLeft, Copy, Check, RotateCw, Trash2, Shield, ShieldOff, X, Download, DollarSign, Gift, Info, ExternalLink, CalendarClock } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
   DialogDescription, DialogFooter, DialogTrigger
@@ -18,6 +18,8 @@ import {
 import { useRealtimeSSE } from "@/lib/use-realtime-sse";
 import { exportXlsx, buildLogsSection, buildSessionsSection, fmtCost } from "@/lib/export-xlsx";
 import { LiveUsageCard } from "@/components/LiveUsageCard";
+import { DayOverrideDialog } from "@/components/DayOverrideDialog";
+import { useNotify } from "@/components/Notify";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
@@ -49,6 +51,8 @@ export default function KeyDetailPage() {
   const [editDailyOutputTokenLimit, setEditDailyOutputTokenLimit] = useState(0);
   const [showDelete, setShowDelete] = useState(false);
   const [showRotate, setShowRotate] = useState(false);
+  const [showDayOverride, setShowDayOverride] = useState(false);
+  const notify = useNotify();
   const [rotatedKey, setRotatedKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [statusText, setStatusText] = useState<string>("");
@@ -672,7 +676,30 @@ export API_TIMEOUT_MS=500000`}
       )}
 
       {/* Live usage — same semantics as client portal */}
-      <LiveUsageCard live={keyData.liveUsage} />
+      <div className="flex flex-col sm:flex-row sm:items-start gap-3">
+        <div className="flex-1 min-w-0">
+          <LiveUsageCard live={keyData.liveUsage} />
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="shrink-0 self-start"
+          onClick={() => setShowDayOverride(true)}
+        >
+          <CalendarClock className="h-4 w-4 mr-1.5" />
+          Today override
+        </Button>
+      </div>
+      <DayOverrideDialog
+        keyId={keyData.id}
+        open={showDayOverride}
+        onOpenChange={setShowDayOverride}
+        onChanged={() => {
+          // refresh key detail after override / reset
+          void keys.get(keyData.id).then(setKeyData).catch(() => undefined);
+        }}
+      />
 
       {/* Stats Cards with period filter */}
       <div className="space-y-3">
@@ -1103,7 +1130,11 @@ export API_TIMEOUT_MS=500000`}
                     variant="outline"
                     onClick={async () => {
                       if (!id || !newKeyModelOverride) return;
-                      if (!confirm(`Buat ${keyModelMatchPreview.total} entry exact untuk semua model yang cocok?`)) return;
+                      if (!(await notify.confirm({
+                        title: "Buat exact entries?",
+                        message: `Buat ${keyModelMatchPreview.total} entry exact untuk semua model yang cocok?`,
+                        confirmLabel: "Buat",
+                      }))) return;
                       const limits = {
                         promptLimit: newKeyModelOverrideLimit,
                         dailyTokenLimit: newKeyModelOverrideDailyTokenLimit,

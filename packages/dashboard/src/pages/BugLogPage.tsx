@@ -6,8 +6,10 @@ import { Card } from "@/components/ui/card";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { RefreshCw, Trash2, AlertTriangle, Clock, Filter, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useNotify } from "@/components/Notify";
 
 export default function BugLogPage() {
+  const notify = useNotify();
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(7);
@@ -29,7 +31,13 @@ export default function BugLogPage() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const handleDelete = async (entry: any) => {
-    if (!confirm("Delete " + entry.count + " occurrences?")) return;
+    const ok = await notify.confirm({
+      title: "Delete error group?",
+      message: `Delete ${entry.count} occurrences?`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
     setDeletingId(entry.id);
     try {
       await buglog.deleteSignature({ statusCode: entry.statusCode, errorMessage: entry.errorMessage, model: entry.model, endpointPath: entry.endpointPath });
@@ -39,13 +47,25 @@ export default function BugLogPage() {
   };
 
   const handleClearOld = async () => {
-    const d = parseInt(prompt("Delete errors older than days?", "30") || "");
+    const raw = await notify.prompt({
+      title: "Clear old errors",
+      message: "Delete errors older than how many days?",
+      defaultValue: "30",
+      confirmLabel: "Clear",
+    });
+    const d = parseInt(raw || "");
     if (isNaN(d) || d <= 0) return;
     try { await buglog.clearOld(d); await fetchData(); } catch (err) { console.error(err); }
   };
 
   const handleClearAll = async () => {
-    if (!confirm("Delete ALL error logs?")) return;
+    const ok = await notify.confirm({
+      title: "Clear ALL error logs?",
+      message: "This deletes every bug-log entry. Cannot be undone.",
+      confirmLabel: "Delete all",
+      danger: true,
+    });
+    if (!ok) return;
     try { await buglog.clearAll(); await fetchData(); } catch (err) { console.error(err); }
   };
 

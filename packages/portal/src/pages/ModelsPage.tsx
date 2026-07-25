@@ -162,7 +162,7 @@ export default function ModelsPage() {
       ) : (
         <>
           {/* Available models */}
-          <div className="bg-card border border-border rounded-xl p-4 animate-fade-in">
+          <div className="bg-card border border-border rounded-xl p-4">
             <div className="flex flex-col gap-3 mb-4">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div>
@@ -278,7 +278,7 @@ export default function ModelsPage() {
           </div>
 
           {/* Models you've used (period-aware) */}
-          <div className="bg-card border border-border rounded-xl p-4 animate-fade-in">
+          <div className="bg-card border border-border rounded-xl p-4">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
               <div>
                 <h3 className="text-sm font-medium text-foreground">{t("Models You've Used")}</h3>

@@ -98,7 +98,7 @@ export default function RecapGate() {
   return (
     <>
       {showButton && (
-        <div className="fixed top-3 right-3 lg:top-4 lg:right-4 z-[70]">
+        <div className="fixed top-16 right-3 lg:top-4 lg:right-4 z-[70]">
           <button
             type="button"
             onClick={() => void runOpen()}

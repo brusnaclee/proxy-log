@@ -128,7 +128,7 @@ export default function ActivityPage() {
       </div>
 
       {topErrors.length > 0 && (
-        <div className="bg-card border border-border rounded-xl p-4 animate-fade-in">
+        <div className="bg-card border border-border rounded-xl p-4">
           <div className="flex items-center gap-2 mb-3">
             <AlertTriangle className="w-4 h-4 text-yellow-400" />
             <h3 className="text-sm font-medium text-foreground">{t("Top Errors")}</h3>

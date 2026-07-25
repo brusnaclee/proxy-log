@@ -460,6 +460,30 @@ export async function initializeDatabase() {
 		console.warn('⚠️  Could not ensure Vibecode catalog:', err);
 	}
 
+	// Per-key calendar-day overrides (WIB)
+	try {
+		await pool.query(`
+			CREATE TABLE IF NOT EXISTS key_day_overrides (
+				id SERIAL PRIMARY KEY,
+				api_key_id INTEGER NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+				day_wib TEXT NOT NULL,
+				extra_daily_input INTEGER NOT NULL DEFAULT 0,
+				extra_daily_output INTEGER NOT NULL DEFAULT 0,
+				extra_daily_total INTEGER NOT NULL DEFAULT 0,
+				extra_prompt_limit INTEGER NOT NULL DEFAULT 0,
+				extra_rate_limit INTEGER NOT NULL DEFAULT 0,
+				note TEXT,
+				created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+				updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+			);
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_key_day_overrides_key_day ON key_day_overrides (api_key_id, day_wib);
+			CREATE INDEX IF NOT EXISTS idx_key_day_overrides_day ON key_day_overrides (day_wib);
+		`);
+		console.log('✅ key_day_overrides table ensured');
+	} catch (err) {
+		console.warn('⚠️  Could not ensure key_day_overrides table:', err);
+	}
+
 	console.log('✅ Database initialized successfully');
 }
 

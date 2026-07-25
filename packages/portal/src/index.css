@@ -81,10 +81,10 @@
   background: hsl(var(--muted-foreground) / 0.4);
 }
 
-/* Custom animations */
+/* Custom animations — opacity-only fades (no layout shift) */
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 @keyframes slideIn {
   from { opacity: 0; transform: translateX(-8px); }
@@ -99,7 +99,7 @@
   50% { opacity: 0.4; }
 }
 .animate-fade-in {
-  animation: fadeIn 0.25s ease-out;
+  animation: fadeIn 0.2s ease-out;
 }
 .animate-slide-in {
   animation: slideIn 0.2s ease-out;
@@ -136,9 +136,9 @@
   @apply p-4 sm:p-6;
 }
 
-/* Mobile-friendly touch targets */
+/* Mobile-friendly touch targets — scoped (not every chip/link) */
 @media (max-width: 640px) {
-  button, a, [role="button"] {
+  .touch-target {
     min-height: 44px;
   }
   .hide-mobile {

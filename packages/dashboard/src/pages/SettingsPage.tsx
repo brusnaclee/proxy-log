@@ -12,6 +12,7 @@ import {
 
 import { useRealtime } from "@/lib/realtime-context";
 import { ProvidersManager } from "@/components/ProvidersManager";
+import { useNotify } from "@/components/Notify";
 import { globalSettings, request, type ModelLimitEntry } from "@/lib/api";
 import { Switch } from "@/components/ui/switch";
 
@@ -33,6 +34,7 @@ function isLockedByPatterns(modelId: string, patterns: string[]): boolean {
 }
 
 export default function SettingsPage() {
+  const notify = useNotify();
   const { realtimeEnabled, setRealtimeEnabled } = useRealtime();
   const [globalMaxDevices, setGlobalMaxDevices] = useState(0);
   const [globalPromptLimit, setGlobalPromptLimit] = useState(50);
@@ -349,27 +351,28 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="space-y-8 max-w-2xl">
+    <div className="space-y-8">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
+      <div className="max-w-2xl">
+        <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Settings</h1>
         <p className="text-muted-foreground mt-1">Configure your proxy gateway</p>
       </div>
 
       {/* Status Messages */}
       {message && (
-        <div className="text-sm text-emerald-400 bg-emerald-400/10 rounded-md px-4 py-3">
+        <div className="max-w-2xl text-sm text-emerald-400 bg-emerald-400/10 rounded-md px-4 py-3">
           {message}
         </div>
       )}
       {error && (
-        <div className="text-sm text-red-400 bg-red-400/10 rounded-md px-4 py-3">
+        <div className="max-w-2xl text-sm text-red-400 bg-red-400/10 rounded-md px-4 py-3">
           {error}
         </div>
       )}
 
       <ProvidersManager />
 
+      <div className="space-y-8 max-w-2xl">
       {/* Token Saver (9router-style) */}
       <Card className="border-border/50">
         <CardHeader>
@@ -1104,7 +1107,11 @@ export default function SettingsPage() {
                               disabled={loading}
                               onClick={async () => {
                                 if (!newModelOverride) return;
-                                if (!confirm(`Buat ${globalModelMatchPreview.total} entry exact untuk semua model yang cocok?`)) return;
+                                if (!(await notify.confirm({
+                                  title: "Buat exact entries?",
+                                  message: `Buat ${globalModelMatchPreview.total} entry exact untuk semua model yang cocok?`,
+                                  confirmLabel: "Buat",
+                                }))) return;
                                 setLoading(true);
                                 try {
                                   const limits = {
@@ -1534,6 +1541,7 @@ export default function SettingsPage() {
       </Card>
 
       {/* Clear Logs Dialog */}
+      </div>
       <Dialog open={showClear} onOpenChange={setShowClear}>
         <DialogContent>
           <DialogHeader>

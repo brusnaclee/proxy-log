@@ -7,12 +7,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { formatRelativeTime, formatDate } from "@/lib/utils";
 import { Download, RefreshCw, Activity, ServerCrash, CheckCircle2, Clock, Zap, Power, PowerOff } from "lucide-react";
 import { exportXlsx } from "@/lib/export-xlsx";
+import { useNotify } from "@/components/Notify";
 
 function modelVendorOf(modelId: string) {
   return modelId.includes("/") ? modelId.split("/")[0] : "unknown";
 }
 
 export default function ModelMonitorPage() {
+  const notify = useNotify();
   const [activeTab, setActiveTab] = useState<"monitor" | "catalog">("monitor");
   const [data, setData] = useState<ModelMonitorEntry[]>([]);
   const [activeProviders, setActiveProviders] = useState<string[]>([]);
@@ -77,24 +79,35 @@ export default function ModelMonitorPage() {
   const [bulkLoading, setBulkLoading] = useState(false);
 
   const handleActivate = async (d: ModelMonitorEntry) => {
-    if (!confirm(`Publish ON for "${d.modelId}"? This shows in Discord & client catalogs until you turn it OFF.`)) return;
+    const ok = await notify.confirm({
+      title: "Publish ON?",
+      message: `Publish ON for "${d.modelId}"? This shows in Discord & client catalogs until you turn it OFF.`,
+      confirmLabel: "Publish ON",
+    });
+    if (!ok) return;
     try {
       await monitor.activate(d.modelId, d.provider || "");
       await loadData();
     } catch (err) {
       console.error("Activate failed:", err);
-      alert(`Activate failed: ${(err as any)?.message || err}`);
+      notify.error(`Activate failed: ${(err as any)?.message || err}`);
     }
   };
 
   const handleDeactivate = async (d: ModelMonitorEntry) => {
-    if (!confirm(`Publish OFF for "${d.modelId}"? Sticky until you turn it ON again (sweeps will not re-enable it).`)) return;
+    const ok = await notify.confirm({
+      title: "Publish OFF?",
+      message: `Publish OFF for "${d.modelId}"? Sticky until you turn it ON again (sweeps will not re-enable it).`,
+      confirmLabel: "Publish OFF",
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await monitor.deactivate(d.modelId, d.provider || "");
       await loadData();
     } catch (err) {
       console.error("Deactivate failed:", err);
-      alert(`Deactivate failed: ${(err as any)?.message || err}`);
+      notify.error(`Deactivate failed: ${(err as any)?.message || err}`);
     }
   };
 
@@ -136,10 +149,10 @@ export default function ModelMonitorPage() {
       if (Array.isArray((res as any).skipped) && (res as any).skipped.length) {
         parts.push(`skipped ${((res as any).skipped as string[]).length}`);
       }
-      alert(parts.join(". ") + ".");
+      notify.success(parts.join(". ") + ".");
     } catch (err) {
       console.error("Sync catalog failed:", err);
-      alert(`Sync failed: ${(err as any)?.message || err}`);
+      notify.error(`Sync failed: ${(err as any)?.message || err}`);
     } finally {
       setSyncingCatalog(false);
     }
@@ -264,9 +277,12 @@ export default function ModelMonitorPage() {
           ? filtered.filter((d) => !d.probeOk).length
           : filtered.length;
     if (
-      !confirm(
-        `Turn Published ${verb}${probeLabel} for ${bulkScopeLabel}? (${matchCount} matching)`,
-      )
+      !(await notify.confirm({
+        title: `Published ${verb}?`,
+        message: `Turn Published ${verb}${probeLabel} for ${bulkScopeLabel}? (${matchCount} matching)`,
+        confirmLabel: `Set ${verb}`,
+        danger: action === "off",
+      }))
     )
       return;
     setBulkLoading(true);
@@ -278,10 +294,10 @@ export default function ModelMonitorPage() {
         probe: probe || "all",
       });
       await loadData();
-      alert(res.message || `Updated ${res.updated} model(s)`);
+      notify.success(res.message || `Updated ${res.updated} model(s)`);
     } catch (err) {
       console.error("Bulk override failed:", err);
-      alert(`Bulk override failed: ${(err as any)?.message || err}`);
+      notify.error(`Bulk override failed: ${(err as any)?.message || err}`);
     } finally {
       setBulkLoading(false);
     }
