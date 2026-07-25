@@ -22,13 +22,26 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
 
   useEffect(() => {
-    auth.me()
+    let cancelled = false;
+    const timeoutMs = 12_000;
+    const timedOut = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("Auth check timed out")), timeoutMs);
+    });
+    Promise.race([auth.me(), timedOut])
       .then((res) => {
-        setAuthenticated(res.authenticated);
+        if (cancelled) return;
+        setAuthenticated(!!res.authenticated);
         if (!res.authenticated) navigate("/login");
       })
-      .catch(() => navigate("/login"))
-      .finally(() => setChecking(false));
+      .catch(() => {
+        if (!cancelled) navigate("/login");
+      })
+      .finally(() => {
+        if (!cancelled) setChecking(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [navigate]);
 
   if (checking) {

@@ -804,7 +804,11 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
       sqlMatchDedicatedRule(rule),
     )!;
     const usedRow = await db
-      .select({ total: weightedHopTotalTokensSql(wherePool, tmOpts) })
+      .select({
+        total: weightedHopTotalTokensSql(wherePool, tmOpts),
+        input: weightedHopInputTokensSql(wherePool, tmOpts),
+        output: turnCompletionTokensSql(wherePool, tmOpts),
+      })
       .from(requestLogs)
       .where(wherePool)
       .then((r) => r[0]);
@@ -818,6 +822,10 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
       used,
       remaining: Math.max(0, limit - used),
       resetAt: null as string | null,
+      inputLimit: rule.dailyInputTokenLimit || 0,
+      outputLimit: rule.dailyOutputTokenLimit || 0,
+      inputUsed: Number(usedRow?.input) || 0,
+      outputUsed: Number(usedRow?.output) || 0,
     });
   }
 

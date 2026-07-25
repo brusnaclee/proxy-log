@@ -116,12 +116,29 @@ function isExactModelLimit(m: ModelLimitRow, normalizedModel: string): boolean {
   return storedBase === lower;
 }
 
-function isPatternModelLimit(m: ModelLimitRow, normalizedModel: string): boolean {
+/**
+ * Pattern match against normalized id and optional raw/catalog ids
+ * (e.g. pattern `tokito/gcli/grok-4.5` must see the prefixed request model,
+ * because normalizeModelForLimit strips provider prefixes).
+ */
+function isPatternModelLimit(
+  m: ModelLimitRow,
+  normalizedModel: string,
+  matchModels?: string[] | null,
+): boolean {
   if (!m.isPattern) return false;
   const pat = (m.model || "").toLowerCase().trim();
   if (!pat) return false;
-  const lower = normalizedModel.toLowerCase();
-  return lower.includes(pat) || lower.endsWith("/" + pat);
+  const haystacks = new Set<string>();
+  haystacks.add(normalizedModel.toLowerCase());
+  for (const extra of matchModels || []) {
+    const e = String(extra || "").toLowerCase().trim();
+    if (e) haystacks.add(e);
+  }
+  for (const h of haystacks) {
+    if (h.includes(pat) || h.endsWith("/" + pat)) return true;
+  }
+  return false;
 }
 
 function pickLongestPattern(rows: ModelLimitRow[]): ModelLimitRow | undefined {
@@ -132,6 +149,7 @@ function pickLongestPattern(rows: ModelLimitRow[]): ModelLimitRow | undefined {
 function pickOverrideFromCandidates(
   candidates: ModelLimitRow[],
   normalizedModel: string,
+  matchModels?: string[] | null,
 ): ModelLimitRow | null {
   const keyEx = candidates.find(
     (m) => m.scope === "key" && overrideHasLimits(m) && isExactModelLimit(m, normalizedModel),
@@ -139,7 +157,10 @@ function pickOverrideFromCandidates(
   if (keyEx) return keyEx;
   const keyPat = pickLongestPattern(
     candidates.filter(
-      (m) => m.scope === "key" && overrideHasLimits(m) && isPatternModelLimit(m, normalizedModel),
+      (m) =>
+        m.scope === "key" &&
+        overrideHasLimits(m) &&
+        isPatternModelLimit(m, normalizedModel, matchModels),
     ),
   );
   if (keyPat) return keyPat;
@@ -149,7 +170,10 @@ function pickOverrideFromCandidates(
   if (gEx) return gEx;
   const gPat = pickLongestPattern(
     candidates.filter(
-      (m) => m.scope === "global" && overrideHasLimits(m) && isPatternModelLimit(m, normalizedModel),
+      (m) =>
+        m.scope === "global" &&
+        overrideHasLimits(m) &&
+        isPatternModelLimit(m, normalizedModel, matchModels),
     ),
   );
   return gPat || null;
@@ -159,16 +183,18 @@ function pickOverrideFromCandidates(
  * Find the active model limit override for a (key, normalizedModel) pair.
  * Priority: keyExact > keyPattern (longest) > globalExact > globalPattern (longest).
  * Exact rows also match catalog IDs like `amanai/gpt-5.6-terra` vs bare `gpt-5.6-terra`.
+ * @param matchModels optional raw/catalog ids for slash-containing patterns
  */
 export async function findActiveOverride(
   apiKeyId: number,
   normalizedModel: string,
+  matchModels?: string[] | null,
 ): Promise<ModelLimitRow | null> {
   const candidates = await db.select().from(modelLimits).where(
     sql`(${modelLimits.scope} = 'key' AND ${modelLimits.scopeId} = ${apiKeyId})
         OR (${modelLimits.scope} = 'global' AND ${modelLimits.scopeId} = 0)`
   );
-  return pickOverrideFromCandidates(candidates, normalizedModel);
+  return pickOverrideFromCandidates(candidates, normalizedModel, matchModels);
 }
 
 /**
@@ -179,12 +205,13 @@ export async function findActiveOverrideInTx(
   tx: { select: typeof db.select },
   apiKeyId: number,
   normalizedModel: string,
+  matchModels?: string[] | null,
 ): Promise<ModelLimitRow | null> {
   const candidates = await tx.select().from(modelLimits).where(
     sql`(${modelLimits.scope} = 'key' AND ${modelLimits.scopeId} = ${apiKeyId})
         OR (${modelLimits.scope} = 'global' AND ${modelLimits.scopeId} = 0)`
   );
-  return pickOverrideFromCandidates(candidates, normalizedModel);
+  return pickOverrideFromCandidates(candidates, normalizedModel, matchModels);
 }
 
 /** Dedicated pool rule: usage excluded from account daily / daily input / daily output. */
@@ -196,6 +223,8 @@ export type DedicatedQuotaRule = {
   scopeId: number;
   dailyTokenLimit: number;
   monthlyTokenLimit: number;
+  dailyInputTokenLimit: number;
+  dailyOutputTokenLimit: number;
 };
 
 function rowIsDedicated(m: ModelLimitRow): boolean {
@@ -219,6 +248,8 @@ export async function listDedicatedQuotaRules(apiKeyId: number): Promise<Dedicat
     scopeId: m.scopeId,
     dailyTokenLimit: m.dailyTokenLimit || 0,
     monthlyTokenLimit: m.monthlyTokenLimit || 0,
+    dailyInputTokenLimit: m.dailyInputTokenLimit || 0,
+    dailyOutputTokenLimit: m.dailyOutputTokenLimit || 0,
   }));
 }
 
@@ -244,13 +275,14 @@ export function sqlExcludeDedicatedModels(rules: DedicatedQuotaRule[]): SQL | un
 export function modelMatchesDedicatedRule(
   normalizedModel: string,
   rule: Pick<DedicatedQuotaRule, "model" | "isPattern">,
+  matchModels?: string[] | null,
 ): boolean {
   const fake = {
     model: rule.model,
     isPattern: rule.isPattern,
   } as ModelLimitRow;
   return rule.isPattern
-    ? isPatternModelLimit(fake, normalizedModel)
+    ? isPatternModelLimit(fake, normalizedModel, matchModels)
     : isExactModelLimit(fake, normalizedModel);
 }
 
@@ -261,18 +293,17 @@ export function modelMatchesDedicatedRule(
 export function findDedicatedRuleForModel(
   rules: DedicatedQuotaRule[],
   normalizedModel: string,
+  matchModels?: string[] | null,
 ): DedicatedQuotaRule | null {
   if (!rules.length) return null;
   const asRows = rules.map((r) => ({
     ...r,
     promptLimit: 0,
     promptWindowStart: null,
-    dailyInputTokenLimit: 0,
-    dailyOutputTokenLimit: 0,
     dedicatedQuota: true,
     createdAt: new Date(),
   })) as ModelLimitRow[];
-  const picked = pickOverrideFromCandidates(asRows, normalizedModel);
+  const picked = pickOverrideFromCandidates(asRows, normalizedModel, matchModels);
   if (!picked || !rowIsDedicated(picked)) return null;
   return {
     id: picked.id,
@@ -282,6 +313,8 @@ export function findDedicatedRuleForModel(
     scopeId: picked.scopeId,
     dailyTokenLimit: picked.dailyTokenLimit || 0,
     monthlyTokenLimit: picked.monthlyTokenLimit || 0,
+    dailyInputTokenLimit: picked.dailyInputTokenLimit || 0,
+    dailyOutputTokenLimit: picked.dailyOutputTokenLimit || 0,
   };
 }
 

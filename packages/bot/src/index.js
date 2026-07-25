@@ -4227,6 +4227,36 @@ async function buildSearchEmbed() {
 		perModelLine = `- Per-Model Default: ${overrideNote}`;
 	}
 
+	let dedicatedLines = [];
+	try {
+		const ml = await proxyInternal('/admin/settings/model-limits');
+		const rows = (ml && ml.data) || [];
+		const dedicated = rows.filter(
+			(r) => r.dedicatedQuota && Number(r.dailyTokenLimit) > 0,
+		);
+		if (dedicated.length) {
+			dedicatedLines = [
+				'',
+				'**Dedicated model pools** _(di luar daily / input / output akun)_:',
+				...dedicated.slice(0, 8).map((r) => {
+					const pat = r.isPattern ? ' _(pattern)_' : '';
+					const bits = [`Total **${fmtTok(r.dailyTokenLimit)}**/hari`];
+					if (Number(r.dailyInputTokenLimit) > 0) {
+						bits.push(`In ${fmtTok(r.dailyInputTokenLimit)}`);
+					}
+					if (Number(r.dailyOutputTokenLimit) > 0) {
+						bits.push(`Out ${fmtTok(r.dailyOutputTokenLimit)}`);
+					}
+					return `- \`${r.model}\`${pat}: ${bits.join(' · ')}`;
+				}),
+				'-# Default = Total harian (input+output jadi satu limit credit). Bisa set In/Out terpisah di Admin Settings → Model Limits.',
+				'-# Sisa kuota live: **Lihat Usage Saya** / portal / admin Key Detail.',
+			];
+		}
+	} catch {
+		/* optional */
+	}
+
 	const lines = [
 		'Klik tombol **Lihat Usage Saya** untuk melihat penggunaan API Anda langsung (tanpa input ID).',
 		'Setelah itu, gunakan **Cari Usage User Lain** jika ingin cek user lain.',
@@ -4242,6 +4272,7 @@ async function buildSearchEmbed() {
 		`- Output Harian: ${fmtTok(limits.globalDailyOutputTokenLimit)}`,
 		`- Total Harian: ${fmtTok(limits.globalDailyTokenLimit)}`,
 		`- Bulanan: ${fmtTok(limits.globalMonthlyTokenLimit)}`,
+		...dedicatedLines,
 		'',
 		'_Per-user limits bervariasi per API key. Klik tombol untuk cek usage spesifik._',
 		'_Klik **See Model Limit** / **Add-on Config** untuk detail override & pack._',
@@ -6226,8 +6257,26 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 						const used = Number(p.used) || 0;
 						const mark = lim > 0 && used >= lim ? ' 🔴' : '';
 						const pat = p.isPattern ? ' _(pattern)_' : '';
-						return `- \`${p.model}\`${pat}: **${formatTokens(used)} / ${formatTokens(lim)}**${mark}` +
+						let line =
+							`- \`${p.model}\`${pat}: **${formatTokens(used)} / ${formatTokens(lim)}** total${mark}` +
 							formatResetTime(p.resetAt || data.dailyResetAt);
+						const inLim = Number(p.inputLimit) || 0;
+						const outLim = Number(p.outputLimit) || 0;
+						if (inLim > 0 || outLim > 0) {
+							const bits = [];
+							if (inLim > 0) {
+								bits.push(
+									`In ${formatTokens(Number(p.inputUsed) || 0)}/${formatTokens(inLim)}`,
+								);
+							}
+							if (outLim > 0) {
+								bits.push(
+									`Out ${formatTokens(Number(p.outputUsed) || 0)}/${formatTokens(outLim)}`,
+								);
+							}
+							line += `\n-# ${bits.join(' · ')}`;
+						}
+						return line;
 					})
 					.join('\n')
 			: '';

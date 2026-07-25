@@ -489,6 +489,10 @@ portal.get("/me", async (c) => {
     used: number;
     remaining: number;
     resetAt: string;
+    inputLimit?: number;
+    outputLimit?: number;
+    inputUsed?: number;
+    outputUsed?: number;
   }> = [];
   if (dedicatedRules.length > 0 && accountKeyIds.length > 0) {
     for (const rule of dedicatedRules) {
@@ -499,7 +503,11 @@ portal.get("/me", async (c) => {
         sqlMatchDedicatedRule(rule),
       )!;
       const usedRow = await db
-        .select({ total: weightedHopTotalTokensSql(wherePool, { isTrial }) })
+        .select({
+          total: weightedHopTotalTokensSql(wherePool, { isTrial }),
+          input: weightedHopInputTokensSql(wherePool, { isTrial }),
+          output: turnCompletionTokensSql(wherePool, { isTrial }),
+        })
         .from(requestLogs)
         .where(wherePool)
         .then((r) => r[0]);
@@ -513,6 +521,10 @@ portal.get("/me", async (c) => {
         used,
         remaining: Math.max(0, limit - used),
         resetAt: dailyResetAt,
+        inputLimit: rule.dailyInputTokenLimit || 0,
+        outputLimit: rule.dailyOutputTokenLimit || 0,
+        inputUsed: Number(usedRow?.input) || 0,
+        outputUsed: Number(usedRow?.output) || 0,
       });
     }
   }

@@ -148,6 +148,11 @@ export interface LiveUsagePayload {
 		used: number;
 		remaining: number;
 		resetAt: string;
+		/** Optional per-pool I/O caps (0 = not set; total-only pool) */
+		inputLimit?: number;
+		outputLimit?: number;
+		inputUsed?: number;
+		outputUsed?: number;
 	}>;
 }
 
@@ -542,7 +547,11 @@ export async function buildLiveUsageForKey(
 				sqlMatchDedicatedRule(rule),
 			)!;
 			const usedRow = await db
-				.select({ total: weightedHopTotalTokensSql(wherePool, tmOpts) })
+				.select({
+					total: weightedHopTotalTokensSql(wherePool, tmOpts),
+					input: weightedHopInputTokensSql(wherePool, tmOpts),
+					output: turnCompletionTokensSql(wherePool, tmOpts),
+				})
 				.from(requestLogs)
 				.where(wherePool)
 				.then((r) => r[0]);
@@ -556,6 +565,10 @@ export async function buildLiveUsageForKey(
 				used,
 				remaining: Math.max(0, limit - used),
 				resetAt: dailyResetAt,
+				inputLimit: rule.dailyInputTokenLimit || 0,
+				outputLimit: rule.dailyOutputTokenLimit || 0,
+				inputUsed: Number(usedRow?.input) || 0,
+				outputUsed: Number(usedRow?.output) || 0,
 			});
 		}
 	}

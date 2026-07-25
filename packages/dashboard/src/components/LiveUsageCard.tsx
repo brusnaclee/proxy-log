@@ -363,17 +363,26 @@ export function LiveUsageCard({
           <p className="text-[10px] text-muted-foreground">
             Outside account daily / input / output
           </p>
-          {pools.map((p) => (
-            <ProgressBar
-              key={`${p.scope}:${p.model}:${p.isPattern}`}
-              label={`${p.model}${p.isPattern ? " (pattern)" : ""} · ${p.scope}`}
-              value={p.used}
-              max={p.limit}
-              remaining={p.remaining}
-              sublabel="limit credit"
-              reset={formatReset(p.resetAt)}
-            />
-          ))}
+          {pools.map((p) => {
+            const ioBits: string[] = [];
+            if ((p.inputLimit || 0) > 0) {
+              ioBits.push(`In ${formatNumber(p.inputUsed || 0)}/${formatNumber(p.inputLimit || 0)}`);
+            }
+            if ((p.outputLimit || 0) > 0) {
+              ioBits.push(`Out ${formatNumber(p.outputUsed || 0)}/${formatNumber(p.outputLimit || 0)}`);
+            }
+            return (
+              <ProgressBar
+                key={`${p.scope}:${p.model}:${p.isPattern}`}
+                label={`${p.model}${p.isPattern ? " (pattern)" : ""} · ${p.scope}`}
+                value={p.used}
+                max={p.limit}
+                remaining={p.remaining}
+                sublabel={ioBits.length ? ioBits.join(" · ") : "total (in+out) limit credit"}
+                reset={formatReset(p.resetAt)}
+              />
+            );
+          })}
         </div>
       )}
       {(activeAddons && activeAddons.length > 0) && (

@@ -2518,7 +2518,10 @@ proxy.all('/*', async (c) => {
 				const wibNow = new Date(Date.now() + wibOffset);
 				const autoNorm = await normalizeModelForLimit(candidate.modelId);
 				const autoDedicatedRules = await listDedicatedQuotaRules(keyRecord.id);
-				const autoOverride = await findActiveOverride(keyRecord.id, autoNorm);
+				const autoOverride = await findActiveOverride(keyRecord.id, autoNorm, [
+					candidate.modelId,
+					`${candidate.provider}/${candidate.modelId}`,
+				]);
 				const autoDedicated = !!(
 					autoOverride &&
 					(autoOverride as { dedicatedQuota?: boolean }).dedicatedQuota &&
@@ -2991,7 +2994,10 @@ proxy.all('/*', async (c) => {
 										// Per-model window start — use pattern-aware helper so substring
 										// overrides like "claude" also match the candidate model.
 										const autoNormModel = await normalizeModelForLimit(candidate.modelId);
-										const autoActiveOverride = await findActiveOverrideInTx(tx, keyRecord.id, autoNormModel);
+										const autoActiveOverride = await findActiveOverrideInTx(tx, keyRecord.id, autoNormModel, [
+											candidate.modelId,
+											`${candidate.provider}/${candidate.modelId}`,
+										]);
 										if (autoActiveOverride) {
 											const autoModelWindowStr = keyRecord.perModelPromptLimitWindow || config.globalPerModelPromptLimitWindow || '30m';
 											const autoModelWindowMs = parseRateLimitWindow(autoModelWindowStr);
@@ -3152,7 +3158,10 @@ proxy.all('/*', async (c) => {
 						}
 						// Per-model window start — pattern-aware
 						const autoNormModel2 = await normalizeModelForLimit(candidate.modelId);
-						const autoActiveOverride2 = await findActiveOverrideInTx(tx, keyRecord.id, autoNormModel2);
+						const autoActiveOverride2 = await findActiveOverrideInTx(tx, keyRecord.id, autoNormModel2, [
+							candidate.modelId,
+							`${candidate.provider}/${candidate.modelId}`,
+						]);
 						if (autoActiveOverride2) {
 							const autoModelWindowStr2 = keyRecord.perModelPromptLimitWindow || config.globalPerModelPromptLimitWindow || '30m';
 							const autoModelWindowMs2 = parseRateLimitWindow(autoModelWindowStr2);
@@ -3730,7 +3739,7 @@ proxy.all('/*', async (c) => {
 	// Otherwise let through - may push slightly over, blocked on NEXT request.
 	{
 		const normalizedModelForToken = await normalizeModelForLimit(model);
-		const modelOverride = await findActiveOverride(keyRecord.id, normalizedModelForToken);
+		const modelOverride = await findActiveOverride(keyRecord.id, normalizedModelForToken, [model]);
 		const dedicatedRules = await listDedicatedQuotaRules(keyRecord.id);
 		const dedicatedForRequest = !!(
 			modelOverride &&
@@ -4377,7 +4386,7 @@ proxy.all('/*', async (c) => {
 
 				// Model limit tracking — use pattern-aware helper inside the tx.
 				const normalizedPersistModel = await normalizeModelForLimit(model);
-				const activeOverride = await findActiveOverrideInTx(tx, keyRecord.id, normalizedPersistModel);
+				const activeOverride = await findActiveOverrideInTx(tx, keyRecord.id, normalizedPersistModel, [model]);
 
 				if (activeOverride) {
 					const modelWindowStr =

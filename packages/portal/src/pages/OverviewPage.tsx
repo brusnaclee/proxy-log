@@ -389,20 +389,29 @@ export default function OverviewPage() {
             <p className="text-[10px] text-muted-foreground">
               Outside account daily / input / output
             </p>
-            {pools.map((p) => (
-              <div key={`${p.scope}:${p.model}`}>
-                <ProgressBar
-                  label={`${p.model}${p.isPattern ? " (pattern)" : ""}`}
-                  value={p.used}
-                  max={p.limit}
-                  sublabel="limit credit"
-                />
-                <div className="text-[10px] text-muted-foreground mt-0.5">
-                  {formatNumber(p.remaining)} left
-                  {p.resetAt ? ` · ${formatReset(p.resetAt)}` : ""}
+            {pools.map((p) => {
+              const ioBits: string[] = [];
+              if ((p.inputLimit || 0) > 0) {
+                ioBits.push(`In ${formatNumber(p.inputUsed || 0)}/${formatNumber(p.inputLimit || 0)}`);
+              }
+              if ((p.outputLimit || 0) > 0) {
+                ioBits.push(`Out ${formatNumber(p.outputUsed || 0)}/${formatNumber(p.outputLimit || 0)}`);
+              }
+              return (
+                <div key={`${p.scope}:${p.model}`}>
+                  <ProgressBar
+                    label={`${p.model}${p.isPattern ? " (pattern)" : ""}`}
+                    value={p.used}
+                    max={p.limit}
+                    sublabel={ioBits.length ? ioBits.join(" · ") : "total (in+out)"}
+                  />
+                  <div className="text-[10px] text-muted-foreground mt-0.5">
+                    {formatNumber(p.remaining)} left
+                    {p.resetAt ? ` · ${formatReset(p.resetAt)}` : ""}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
         {hasAddon && (

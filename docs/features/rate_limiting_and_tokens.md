@@ -92,4 +92,6 @@ Live meters (Discord Usage, admin Live Usage, portal Usage Today) show:
 - **Input Harian** bar = limit credit, with sublabel `context (cached) + input (billable)`
 - **Dedicated model pools** section when ≥1 dedicated rule applies
 
-Seeded default: global pattern `grok-4.5`, 5M tokens/day, `dedicated_quota=true`.
+Seeded default: global pattern `tokito/gcli/grok-4.5`, 5M tokens/day **total** (input+output as one hop-weighted pool), `dedicated_quota=true`. Optional `daily_input_token_limit` / `daily_output_token_limit` on the same row enforce separate I/O caps inside that pool; Discord / admin Live Usage / portal meters pick up changes automatically.
+
+Pattern matching for slash-containing rules also checks the raw/catalog model id (normalize strips `tokito/` / `gcli/`, so bare `grok-4.5` alone is not enough).

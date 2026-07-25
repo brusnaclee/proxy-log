@@ -120,6 +120,10 @@ export interface MeResponse {
     used: number;
     remaining: number;
     resetAt: string;
+    inputLimit?: number;
+    outputLimit?: number;
+    inputUsed?: number;
+    outputUsed?: number;
   }>;
   multipliers?: {
     input: number;
