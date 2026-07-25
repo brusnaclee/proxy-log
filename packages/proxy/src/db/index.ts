@@ -57,7 +57,7 @@ export async function initializeDatabase() {
 		if (grokSeed.rows[0]?.id) {
 			await pool.query(
 				`UPDATE model_limits SET
-				   daily_token_limit = 5000000,
+				   daily_token_limit = 3000000,
 				   dedicated_quota = true,
 				   prompt_limit = 0,
 				   monthly_token_limit = 0,
@@ -72,10 +72,10 @@ export async function initializeDatabase() {
 				   scope, scope_id, model, is_pattern, dedicated_quota,
 				   prompt_limit, daily_token_limit, monthly_token_limit,
 				   daily_input_token_limit, daily_output_token_limit
-				 ) VALUES ('global', 0, 'tokito/gcli/grok-4.5', true, true, 0, 5000000, 0, 0, 0)`,
+				 ) VALUES ('global', 0, 'tokito/gcli/grok-4.5', true, true, 0, 3000000, 0, 0, 0)`,
 			);
 		}
-		console.log('✅ Applied idempotent model_limits migrations (+ tokito/gcli/grok-4.5 dedicated 5M)');
+		console.log('✅ Applied idempotent model_limits migrations (+ tokito/gcli/grok-4.5 dedicated 3M)');
 	} catch (err: any) {
 		console.warn('⚠️ model_limits idempotent migration warning:', err?.message || err);
 	}
