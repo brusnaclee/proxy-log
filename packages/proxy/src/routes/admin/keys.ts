@@ -5,7 +5,7 @@ import { eq, sql, and, desc, inArray } from "drizzle-orm";
 import { generateApiKey, getKeyPrefix, sha256, maskKey } from "../../utils/crypto.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
-import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, turnCountSql, turnPromptTokensSql, peakPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, hopCountSql, hopFullInputTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, sanitizeRows, groupedInputSumSql } from "../../utils/counting.js";
+import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, turnCountSql, turnPromptTokensSql, peakPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, hopCountSql, hopFullInputTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, sanitizeRows, groupedInputSumSql, modelLimitCreditBreakdownSql } from "../../utils/counting.js";
 import { applyTokenMultiplierRows, getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { apiKeyCache, statsCache } from "../../utils/cache.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
@@ -307,37 +307,23 @@ keys.get("/keys/:id", async (c) => {
 
   const { input: tmInput, output: tmOutput } = getTokenMultipliers(tmOpts);
 
-  const topModels = sanitizeRows((await db.execute(sql`
-    SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta * ${tmInput} + sum_c * ${tmOutput}), 0) as tokens, 0 as "estimatedCost"
-    FROM (
-      SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
-        turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
-      FROM request_logs WHERE api_key_id = ${key.id} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 ${analyticsDateFilter}
-      GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
-      UNION ALL
-      SELECT TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
-        turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
-      FROM request_logs WHERE model LIKE 'auto (%)%' AND api_key_id = ${key.id} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 ${analyticsDateFilter}
-      GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
-    )
-    GROUP BY model ORDER BY count DESC LIMIT 10
-  `)).rows as any[], ['tokens']);
+  const modelCreditWhere = analyticsSince
+    ? sql`api_key_id = ${key.id} AND created_at >= ${analyticsSince} AND status_code BETWEEN 200 AND 299`
+    : sql`api_key_id = ${key.id} AND status_code BETWEEN 200 AND 299`;
 
-  const topModelsByTokens = sanitizeRows((await db.execute(sql`
-    SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta * ${tmInput} + sum_c * ${tmOutput}), 0) as tokens, 0 as "estimatedCost"
-    FROM (
-      SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
-        turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
-      FROM request_logs WHERE api_key_id = ${key.id} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 ${analyticsDateFilter}
-      GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
-      UNION ALL
-      SELECT TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
-        turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
-      FROM request_logs WHERE model LIKE 'auto (%)%' AND api_key_id = ${key.id} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 ${analyticsDateFilter}
-      GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
-    )
-    GROUP BY model ORDER BY tokens DESC LIMIT 10
-  `)).rows as any[], ['tokens']);
+  const topModelsByTokensRaw = sanitizeRows(
+    (await db.execute(modelLimitCreditBreakdownSql(modelCreditWhere, { ...tmOpts, limit: 10 }))).rows as any[],
+    ["requests", "promptTokens", "completionTokens", "tokens"],
+  );
+  const topModelsByTokens = topModelsByTokensRaw.map((r: any) => ({
+    model: r.model,
+    count: r.requests,
+    tokens: r.tokens,
+    promptTokens: r.promptTokens,
+    completionTokens: r.completionTokens,
+    estimatedCost: 0,
+  }));
+  const topModels = [...topModelsByTokens].sort((a, b) => (b.count || 0) - (a.count || 0));
 
   const topDevices = sanitizeRows((await db.execute(sql`
     SELECT device_fingerprint as "deviceFingerprint", ip_address as "ipAddress",

@@ -6160,16 +6160,20 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 		);
 		const lines = [
 			`📨 Prompts: **${p.requests.toLocaleString()}**`,
-			`🔢 Total Tokens: **${formatTokens(p.tokens)}**`,
-			`📥 Input: **${input.label}**`,
+			`🔢 Total Tokens (limit credit): **${formatTokens(p.tokens)}**`,
+			`📥 Input (limit credit): **${input.label}**`,
 			`📤 Output: **${formatTokens(p.completionTokens)}**`,
 			`💰 Est. Cost: **${formatCostMicro(p.estimatedCost)}**`,
 		];
+		if (p.peakPromptTokens > 0 && p.peakPromptTokens !== p.promptTokens) {
+			lines.push(`-# Peak input (per-turn): ${formatTokens(p.peakPromptTokens)}`);
+		}
 		if (p.topModels && p.topModels.length > 0) {
-			lines.push('\n**Top Models:**');
+			lines.push('\n**Top Models** _(limit credit — jumlah ≈ Total)_:');
 			p.topModels.forEach((m) => {
+				const req = Number(m.requests ?? m.count ?? 0);
 				lines.push(
-					`\`${m.model}\` (${m.requests.toLocaleString()} req, ${formatTokens(m.tokens)} tok)`,
+					`\`${m.model}\` (${req.toLocaleString()} prompts, ${formatTokens(m.tokens)} tok)`,
 				);
 			});
 		}
@@ -6207,15 +6211,15 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 			: '';
 	const limitSection = trialUser
 		? `**🎁 Trial Limits** _(all models + auto)_\nPrompt: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\n` +
-			`-# ℹ️ 1 prompt per turn; setiap hop = 1 API call.\n\n` +
+			`-# ℹ️ 1 prompt = 1 turn; tiap hop = 1 API call. Input/Total & Top Models = limit credit (hop-weighted).\n\n` +
 			`**🔢 Token Limits (Trial)**\nTotal Harian: ${dailyTokenStr}`
 		: data.dailyTokenBreakdown?.bypassIo
 			? `**🎯 Quotas**\nPrompts: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\n` +
-				`-# ℹ️ Per-model prompts bypassed · Input/Output soft base; exceed via add-on until Daily Total.\n\n` +
+				`-# ℹ️ Per-model prompts bypassed · Input/Output soft; exceed via add-on until Daily Total. Input/Total & Top Models = limit credit.\n\n` +
 				`**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}${stackNote}\nBulanan: ${monthlyTokenStr}` +
 				addonBlock
 			: `**🎯 Quotas**\nPrompts: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\nPer-Model:\n${modelLimitStr}\n` +
-				`-# ℹ️ 1 prompt per turn; setiap hop = 1 API call.\n\n` +
+				`-# ℹ️ 1 prompt = 1 turn; tiap hop = 1 API call. Input/Total & Top Models = limit credit (hop-weighted).\n\n` +
 				`**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}${stackNote}\nBulanan: ${monthlyTokenStr}` +
 				addonBlock;
 

@@ -332,6 +332,70 @@ export function hopCountSql(whereCondition: SQL | undefined): SQL<number> {
   return sql<number>`(SELECT COUNT(*) FROM request_logs WHERE ${whereCondition!})`;
 }
 
+/**
+ * Per-model limit-credit breakdown — same hop weights as {@link weightedHopTotalTokensSql}.
+ * Summing `tokens` across models ≈ period Total (limit credit); summing `promptTokens` ≈ Input credit.
+ * Does NOT double-list auto underlying models (normalizes `auto (...)` → `auto`).
+ */
+export function modelLimitCreditBreakdownSql(
+  extraWhere: SQL,
+  opts?: TokenMultiplierOpts & { limit?: number },
+): SQL {
+  const { input, output } = getTokenMultipliers(opts);
+  const lim =
+    opts?.limit && opts.limit > 0 ? sql`LIMIT ${opts.limit}` : sql``;
+
+  if (tokenLimitWeightModeCache === "full") {
+    return sql`
+      SELECT
+        model,
+        COUNT(DISTINCT turn_key)::int as requests,
+        COALESCE(SUM(inn * ${input}), 0) as "promptTokens",
+        COALESCE(SUM(outt * ${output}), 0) as "completionTokens",
+        COALESCE(SUM(inn * ${input} + outt * ${output}), 0) as tokens
+      FROM (
+        SELECT
+          CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
+          COALESCE(turn_id, 'orphan-' || id::text) as turn_key,
+          (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
+          COALESCE(completion_tokens, 0)::float8 AS outt
+        FROM request_logs
+        WHERE ${extraWhere}
+      ) hops
+      GROUP BY model
+      ORDER BY tokens DESC
+      ${lim}
+    `;
+  }
+
+  // peak / first_rest_flat / flat_all / custom — hop rn within turn
+  const w = inputHopWeightSqlExpr();
+  return sql`
+    SELECT
+      model,
+      COUNT(DISTINCT turn_key)::int as requests,
+      COALESCE(SUM(inn * (${sql.raw(w)}) * ${input}), 0) as "promptTokens",
+      COALESCE(SUM(outt * ${output}), 0) as "completionTokens",
+      COALESCE(SUM(inn * (${sql.raw(w)}) * ${input} + outt * ${output}), 0) as tokens
+    FROM (
+      SELECT
+        CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
+        COALESCE(turn_id, 'orphan-' || id::text) as turn_key,
+        (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
+        COALESCE(completion_tokens, 0)::float8 AS outt,
+        ROW_NUMBER() OVER (
+          PARTITION BY COALESCE(turn_id, 'orphan-' || id::text)
+          ORDER BY created_at ASC, id ASC
+        ) AS rn
+      FROM request_logs
+      WHERE ${extraWhere}
+    ) hops
+    GROUP BY model
+    ORDER BY tokens DESC
+    ${lim}
+  `;
+}
+
 /** WIB midnight as PostgreSQL datetime string (UTC storage). */
 export function wibTodayStartSql(): string {
   const now = new Date();

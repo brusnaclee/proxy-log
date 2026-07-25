@@ -8,7 +8,7 @@ import { normalizeIdeName } from "../../utils/detect-ide.js";
 import { checkPromptLimit, checkModelPromptLimit, checkApiCallLimit, parseRateLimitWindow, getWindowResetMs, getApiCallWindowResetMs } from "../../utils/rate-limit.js";
 import { isInternalRequest } from "../../middleware/session.js";
 import { configCache } from "../../utils/cache.js";
-import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, peakPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, inputHopWeightSqlExpr, getTokenLimitWeightModeSync, weightedHopInputTokensSql, weightedHopTotalTokensSql } from "../../utils/counting.js";
+import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, peakPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, inputHopWeightSqlExpr, getTokenLimitWeightModeSync, weightedHopInputTokensSql, weightedHopTotalTokensSql, modelLimitCreditBreakdownSql } from "../../utils/counting.js";
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
 import { resolveKeyDailyTokenLimit, resolveKeyPromptLimit, resolveKeyApiCallLimit } from "../../utils/trial-config.js";
@@ -702,22 +702,19 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   const monthDate = monthStart;
 
   async function getTopModels(since: Date) {
-    const rows = (await db.execute(sql`
-      SELECT model, COUNT(*) as requests, COALESCE(SUM(sum_delta * ${umInput} + sum_c * ${umOutput}), 0) as tokens
-      FROM (
-        SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
-          turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
-        FROM request_logs WHERE api_key_id = ${keyId} AND created_at >= ${since} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-        GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
-        UNION ALL
-        SELECT TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
-          turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
-        FROM request_logs WHERE model LIKE 'auto (%)%' AND api_key_id = ${keyId} AND created_at >= ${since} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-        GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
-      )
-      GROUP BY model ORDER BY tokens DESC LIMIT 3
-    `)).rows;
-    return rows as any[];
+    // Same limit-credit math as Hari Ini Total / Input — so model rows sum toward the period total.
+    const rows = sanitizeRows(
+      (
+        await db.execute(
+          modelLimitCreditBreakdownSql(
+            sql`api_key_id = ${keyId} AND created_at >= ${since} AND status_code BETWEEN 200 AND 299`,
+            { ...tmOpts, limit: 10 },
+          ),
+        )
+      ).rows as any[],
+      ["requests", "promptTokens", "completionTokens", "tokens"],
+    );
+    return rows;
   }
 
   async function getPeriodStats(since: Date) {
@@ -998,19 +995,29 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
         requests: todayStats?.requests || 0,
         tokens: todayStats?.tokens || 0,
         promptTokens: todayStats?.promptTokens || 0,
+        billablePromptTokens: todayStats?.billablePromptTokens || 0,
+        cachedTokens: todayStats?.cachedTokens || 0,
+        peakPromptTokens: todayStats?.peakPromptTokens || 0,
         completionTokens: todayStats?.completionTokens || 0,
         contextTokens: todayStats?.contextTokens || 0,
         estimatedCost: todayStats?.estimatedCost || 0,
         topModels: todayModels,
+        tokenAccountingNote:
+          "Input/Total = limit credit (hop-weighted). Top Models pakai credit yang sama.",
       },
       month: {
         requests: monthStats?.requests || 0,
         tokens: monthStats?.tokens || 0,
         promptTokens: monthStats?.promptTokens || 0,
+        billablePromptTokens: monthStats?.billablePromptTokens || 0,
+        cachedTokens: monthStats?.cachedTokens || 0,
+        peakPromptTokens: monthStats?.peakPromptTokens || 0,
         completionTokens: monthStats?.completionTokens || 0,
         contextTokens: monthStats?.contextTokens || 0,
         estimatedCost: monthStats?.estimatedCost || 0,
         topModels: monthModels,
+        tokenAccountingNote:
+          "Input/Total = limit credit (hop-weighted). Top Models pakai credit yang sama.",
       },
   });
 });

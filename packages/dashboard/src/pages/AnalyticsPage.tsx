@@ -199,9 +199,12 @@ export default function AnalyticsPage() {
         {/* Top Models Pie  -  with By Tokens / By Requests toggle */}
         <Card className="border-border/50">
           <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base font-medium">Top Models by Usage</CardTitle>
-              <div className="flex gap-1">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <CardTitle className="text-base font-medium">Top Models by Usage</CardTitle>
+                <p className="text-[11px] text-muted-foreground mt-0.5">Limit credit (same meter as Input/Total)</p>
+              </div>
+              <div className="flex gap-1 shrink-0">
                 {(["tokens", "requests"] as const).map(m => (
                   <button
                     key={m}

@@ -8,7 +8,7 @@ import { eq, sql, and, desc } from "drizzle-orm";
 import { generateApiKey, getKeyPrefix, sha256, maskKey } from "../../utils/crypto.js";
 import { createPortalSession, destroyPortalSession, getPortalDiscordUserId, resolvePortalDiscordUserId } from "../../middleware/portal-session.js";
 import { destroyAllAuthSessions } from "../../utils/auth-sessions.js";
-import { resolvePeriodRange, chartDaysForPeriod, type PeriodKey, turnCountSql, hopCountSql, turnPromptTokensSql, peakPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, hopFullInputTokensSql, weightedHopInputTokensSql } from "../../utils/counting.js";
+import { resolvePeriodRange, chartDaysForPeriod, type PeriodKey, turnCountSql, hopCountSql, peakPromptTokensSql, turnCompletionTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, hopFullInputTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, modelLimitCreditBreakdownSql } from "../../utils/counting.js";
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { getRecapWindow } from "../../utils/recap-window.js";
@@ -95,6 +95,17 @@ function periodWhereNoTurn(discordUserId: string, period: PeriodKey) {
     userWhere(discordUserId),
     sql`created_at >= ${range.start}`,
     range.end ? sql`created_at <= ${range.end}` : sql`1=1`,
+  );
+}
+
+/** Successful hops (no turn_id filter) — same scope as Discord limit-credit meters. */
+function periodWhereHops(discordUserId: string, period: PeriodKey) {
+  const range = resolvePeriodRange(period);
+  return and(
+    userWhere(discordUserId),
+    sql`created_at >= ${range.start}`,
+    range.end ? sql`created_at <= ${range.end}` : sql`1=1`,
+    sql`status_code BETWEEN 200 AND 299`,
   );
 }
 
@@ -279,8 +290,13 @@ portal.get("/me", async (c) => {
     sql`created_at >= ${monthRange.start}`,
     sql`status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL`,
   );
+  const monthHops = and(
+    userWhere(discordUserId),
+    sql`created_at >= ${monthRange.start}`,
+    sql`status_code BETWEEN 200 AND 299`,
+  );
   const usageMonth = (await db.select({
-    tokens: turnTotalTokensSql(monthPw!, { isTrial }),
+    tokens: weightedHopTotalTokensSql(monthHops!, { isTrial }),
   }).from(requestLogs).where(monthPw))[0];
 
   const { limit: promptLimit, window: promptLimitWindow } = primaryKey
@@ -592,15 +608,17 @@ portal.get("/stats/overview", async (c) => {
   const discordUserId = getPortalDiscordUserId(c)!;
   const period = (c.req.query("period") || "today") as PeriodKey;
   const pw = periodWhere(discordUserId, period);
+  const hops = periodWhereHops(discordUserId, period);
   const isTrial = await isTrialAccount(discordUserId);
 
   const stats = (await db.select({
     requests: turnCountSql(pw),
-    apiCalls: hopCountSql(pw),
-    tokens: turnTotalTokensSql(pw, { isTrial }),
-    promptTokens: turnPromptTokensSql(pw, { isTrial }),
+    apiCalls: hopCountSql(hops),
+    tokens: weightedHopTotalTokensSql(hops, { isTrial }),
+    promptTokens: weightedHopInputTokensSql(hops, { isTrial }),
     billablePromptTokens: turnBillablePromptTokensSql(pw, { isTrial }),
     cachedTokens: turnCachedTokensSql(pw, { isTrial }),
+    peakPromptTokens: peakPromptTokensSql(pw, { isTrial }),
     completionTokens: turnCompletionTokensSql(pw, { isTrial }),
   }).from(requestLogs).where(pw))[0];
 
@@ -644,10 +662,12 @@ portal.get("/stats/overview", async (c) => {
     promptTokens: stats?.promptTokens || 0,
     billablePromptTokens: stats?.billablePromptTokens || 0,
     cachedTokens: stats?.cachedTokens || 0,
+    peakPromptTokens: stats?.peakPromptTokens || 0,
     completionTokens: stats?.completionTokens || 0,
     sessions: Number(sessionCount?.count) || 0,
     toolCalls: Number(toolCount?.count) || 0,
     cost: { prompt: promptCost, completion: completionCost, total: promptCost + completionCost },
+    tokenAccountingNote: "Input/Total = limit credit (hop-weighted), sama dengan bar Usage Today.",
   });
 });
 
@@ -700,39 +720,25 @@ portal.get("/stats/by-model", async (c) => {
   const range = resolvePeriodRange(period);
   const isTrial = await isTrialAccount(discordUserId);
 
-  const rows = sanitizeRows((await db.execute(sql`
-    SELECT model, COUNT(*) as requests,
-      COALESCE(SUM(sum_delta), 0) as "promptTokens",
-      COALESCE(SUM(sum_bill), 0) as "billablePromptTokens",
-      COALESCE(SUM(sum_cache), 0) as "cachedTokens",
-      COALESCE(SUM(sum_c), 0) as "completionTokens"
-    FROM (
-      SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model, turn_id,
-        ${sql.raw(groupedInputSumSql())} as sum_delta,
-        SUM(COALESCE(prompt_tokens, 0)) as sum_bill,
-        SUM(COALESCE(cached_tokens, 0)) as sum_cache,
-        SUM(completion_tokens) as sum_c
-      FROM request_logs
-      WHERE api_key_id IN (${userApiKeyIds(discordUserId)})
-        AND created_at >= ${range.start}
-        ${range.end ? sql`AND created_at <= ${range.end}` : sql``}
-        AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY model, turn_id
-    ) sub
-    GROUP BY model
-    ORDER BY requests DESC
-    LIMIT 20
-  `)).rows as any[], ["requests", "promptTokens", "billablePromptTokens", "cachedTokens", "completionTokens"]);
+  const extraWhere = sql`
+    api_key_id IN (${userApiKeyIds(discordUserId)})
+    AND created_at >= ${range.start}
+    ${range.end ? sql`AND created_at <= ${range.end}` : sql``}
+    AND status_code BETWEEN 200 AND 299
+  `;
 
-  const { input, output } = getTokenMultipliers({ isTrial });
-  return c.json(rows.map((r: any) => ({
-    ...r,
-    promptTokens: Math.round(r.promptTokens * input),
-    billablePromptTokens: Math.round(r.billablePromptTokens * input),
-    cachedTokens: Math.round(r.cachedTokens * input),
-    completionTokens: Math.round(r.completionTokens * output),
-    tokens: Math.round(r.promptTokens * input + r.completionTokens * output),
-  })));
+  const rows = sanitizeRows(
+    (await db.execute(modelLimitCreditBreakdownSql(extraWhere, { isTrial, limit: 20 }))).rows as any[],
+    ["requests", "promptTokens", "completionTokens", "tokens"],
+  );
+
+  return c.json(
+    rows.map((r: any) => ({
+      ...r,
+      billablePromptTokens: r.promptTokens,
+      cachedTokens: 0,
+    })),
+  );
 });
 
 portal.get("/stats/by-ide", async (c) => {
@@ -819,40 +825,42 @@ portal.get("/stats/compare", async (c) => {
       sql`created_at <= ${end}`,
       sql`status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL`,
     );
+    const hops = and(
+      userWhere(discordUserId),
+      sql`created_at >= ${start}`,
+      sql`created_at <= ${end}`,
+      sql`status_code BETWEEN 200 AND 299`,
+    );
     const stats = (await db.select({
       requests: turnCountSql(pw),
-      apiCalls: hopCountSql(pw),
-      tokens: turnTotalTokensSql(pw, { isTrial }),
-      promptTokens: turnPromptTokensSql(pw, { isTrial }),
+      apiCalls: hopCountSql(hops),
+      tokens: weightedHopTotalTokensSql(hops, { isTrial }),
+      promptTokens: weightedHopInputTokensSql(hops, { isTrial }),
       billablePromptTokens: turnBillablePromptTokensSql(pw, { isTrial }),
       cachedTokens: turnCachedTokensSql(pw, { isTrial }),
       completionTokens: turnCompletionTokensSql(pw, { isTrial }),
     }).from(requestLogs).where(pw))[0];
 
-    const breakdownRows = sanitizeRows((await db.execute(sql`
-      SELECT model,
-        COALESCE(SUM(sum_delta), 0) as "promptTokens",
-        COALESCE(SUM(sum_c), 0) as "completionTokens"
-      FROM (
-        SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model, turn_id,
-          ${sql.raw(groupedInputSumSql())} as sum_delta,
-          SUM(completion_tokens) as sum_c
-        FROM request_logs
-        WHERE api_key_id IN (${userApiKeyIds(discordUserId)})
-          AND created_at >= ${start}
-          AND created_at <= ${end}
-          AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-        GROUP BY model, turn_id
-      ) sub
-      GROUP BY model
-    `)).rows as any[], ["promptTokens", "completionTokens"]);
+    const breakdownRows = sanitizeRows(
+      (
+        await db.execute(
+          modelLimitCreditBreakdownSql(
+            sql`api_key_id IN (${userApiKeyIds(discordUserId)})
+              AND created_at >= ${start}
+              AND created_at <= ${end}
+              AND status_code BETWEEN 200 AND 299`,
+            { isTrial },
+          ),
+        )
+      ).rows as any[],
+      ["promptTokens", "completionTokens"],
+    );
 
-    const { input, output } = getTokenMultipliers({ isTrial });
     let promptCost = 0, completionCost = 0;
     for (const row of breakdownRows) {
       const rates = getModelRates(row.model || "");
-      promptCost += Math.round(row.promptTokens * input * rates.prompt);
-      completionCost += Math.round(row.completionTokens * output * rates.completion);
+      promptCost += Math.round(row.promptTokens * rates.prompt);
+      completionCost += Math.round(row.completionTokens * rates.completion);
     }
 
     return {
@@ -906,8 +914,13 @@ portal.get("/stats/forecast", async (c) => {
       sql`created_at >= ${todayStart}`,
       sql`status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL`,
     );
+    const todayHops = and(
+      userWhere(discordUserId),
+      sql`created_at >= ${todayStart}`,
+      sql`status_code BETWEEN 200 AND 299`,
+    );
     const todayStats = (await db.select({
-      tokens: turnTotalTokensSql(todayPw!, { isTrial }),
+      tokens: weightedHopTotalTokensSql(todayHops!, { isTrial }),
     }).from(requestLogs).where(todayPw))[0];
     const tokensToday = todayStats?.tokens || 0;
 
@@ -945,8 +958,13 @@ portal.get("/stats/forecast", async (c) => {
         sql`created_at >= ${monthStartUtc}`,
         sql`status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL`,
       );
+      const monthHopsFc = and(
+        userWhere(discordUserId),
+        sql`created_at >= ${monthStartUtc}`,
+        sql`status_code BETWEEN 200 AND 299`,
+      );
       const monthStats = (await db.select({
-        tokens: turnTotalTokensSql(monthPw!, { isTrial }),
+        tokens: weightedHopTotalTokensSql(monthHopsFc!, { isTrial }),
       }).from(requestLogs).where(monthPw))[0];
       const tokensMonth = monthStats?.tokens || 0;
 

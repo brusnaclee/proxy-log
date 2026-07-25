@@ -2099,7 +2099,7 @@ export API_TIMEOUT_MS=500000`}
           <Card className="border-border/50 mb-4">
             <CardHeader className="pb-2">
               <CardTitle className="text-base font-medium">
-                Model Usage Chart ? {modelTabSort === "tokens" ? "By Tokens" : "By Prompts"}
+                Model Usage (limit credit) - {modelTabSort === "tokens" ? "By Tokens" : "By Prompts"}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -2145,9 +2145,9 @@ export API_TIMEOUT_MS=500000`}
                     <th className="text-left py-3 px-4 text-muted-foreground font-medium">#</th>
                     <th className="text-left py-3 px-4 text-muted-foreground font-medium">Model</th>
                     <th className="text-right py-3 px-4 text-muted-foreground font-medium">Requests</th>
-                    <th className="text-right py-3 px-4 text-muted-foreground font-medium">Input Tokens</th>
+                    <th className="text-right py-3 px-4 text-muted-foreground font-medium">Input (limit)</th>
                     <th className="text-right py-3 px-4 text-muted-foreground font-medium">Output Tokens</th>
-                    <th className="text-right py-3 px-4 text-muted-foreground font-medium">Total Tokens</th>
+                    <th className="text-right py-3 px-4 text-muted-foreground font-medium">Total (limit)</th>
                     <th className="text-right py-3 px-4 text-muted-foreground font-medium">Avg Latency</th>
                     <th className="text-right py-3 px-4 text-muted-foreground font-medium">Est. Cost</th>
                   </tr>

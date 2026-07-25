@@ -40,5 +40,6 @@ Same limit schedule drives:
 - Admin Live Usage input bar  
 - Portal client input bar  
 - Discord ranking “by tokens” (+ user-detail period stats)  
+- **Top Models / by-model charts** (Discord embed, admin Key Detail & Analytics, portal Overview) via `modelLimitCreditBreakdownSql` — model rows sum toward the same Input/Total limit credit  
 
 Prompts = distinct `turn_id`; API calls = hop rows — unchanged.

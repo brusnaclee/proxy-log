@@ -3,7 +3,7 @@ import { db } from "../../db/index.js";
 import { requestLogs, apiKeys, devices, chatSessions, monthlyStats } from "../../db/schema.js";
 import { eq, sql, and } from "drizzle-orm";
 import { getModelRates } from "../../utils/cost-calculator.js";
-import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, wibTodayStartSql, turnCountSql, hopCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, sanitizeRows, resolvePeriodRange, chartDaysForPeriod, groupedInputSumSql, getTokenInputModeSync, type PeriodKey } from "../../utils/counting.js";
+import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, wibTodayStartSql, turnCountSql, hopCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, sanitizeRows, resolvePeriodRange, chartDaysForPeriod, groupedInputSumSql, getTokenInputModeSync, modelLimitCreditBreakdownSql, type PeriodKey } from "../../utils/counting.js";
 import { applyTokenMultiplierRows, getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { statsCache } from "../../utils/cache.js";
 
@@ -371,7 +371,7 @@ stats.get("/stats/by-model", async (c) => {
   const period = c.req.query("period") as PeriodKey | undefined;
   const legacyDays = parseInt(c.req.query("days") || "0");
   const apiKeyId = c.req.query("api_key_id") ? parseInt(c.req.query("api_key_id")!) : null;
-  const cacheKey = `by-model:${period || legacyDays}:${apiKeyId}`;
+  const cacheKey = `by-model:credit:v1:${period || legacyDays}:${apiKeyId}`;
   return c.json(await statsCache.getOrFetch(cacheKey, async () => {
   let startDate: Date | null;
   if (period && ["today", "3d", "7d", "30d", "thisMonth", "lastMonth", "allTime"].includes(period)) {
@@ -381,49 +381,26 @@ stats.get("/stats/by-model", async (c) => {
     startDate = legacyDays > 0 ? new Date(Date.now() - legacyDays * 86400000) : null;
   }
 
-  // Build WHERE fragments for raw SQL
   const dateFilter = startDate ? sql`AND created_at >= ${startDate}` : sql``;
   const keyFilter = apiKeyId ? sql`AND api_key_id = ${apiKeyId}` : sql``;
+  const extraWhere = sql`status_code BETWEEN 200 AND 299 ${dateFilter} ${keyFilter}`;
 
-  const rows = sanitizeRows((await db.execute(sql`
-    SELECT
-      model,
-      COUNT(*) as "requests",
-      COALESCE(SUM(sum_delta), 0) as tokens,
-      COALESCE(SUM(sum_delta), 0) as "promptTokens",
-      COALESCE(SUM(sum_c), 0) as "completionTokens",
-      ROUND(AVG(avg_lat)::numeric, 0) as "avgLatency"
-    FROM (
-      SELECT
-        CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
-        turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c, AVG(latency_ms) as avg_lat
-      FROM request_logs
-      WHERE turn_id IS NOT NULL ${dateFilter} ${keyFilter} AND status_code BETWEEN 200 AND 299
-      GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
+  const rows = sanitizeRows(
+    (await db.execute(modelLimitCreditBreakdownSql(extraWhere))).rows as any[],
+    ["requests", "promptTokens", "completionTokens", "tokens"],
+  );
 
-      UNION ALL
-
-      SELECT
-        TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
-        turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c, AVG(latency_ms) as avg_lat
-      FROM request_logs
-      WHERE model LIKE 'auto (%)%' AND turn_id IS NOT NULL ${dateFilter} ${keyFilter} AND status_code BETWEEN 200 AND 299
-      GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
-    )
-    GROUP BY model
-    ORDER BY "requests" DESC
-  `)).rows as any[], ['requests', 'tokens', 'promptTokens', 'completionTokens', 'avgLatency']);
-
-  const withCost = (rows as any[]).map(row => {
-    const { input, output } = getTokenMultipliers();
-    const promptTokens = Math.round((row.promptTokens || 0) * input);
-    const completionTokens = Math.round((row.completionTokens || 0) * output);
-    const tokens = Math.round((row.tokens || 0) * input);
+  const withCost = (rows as any[]).map((row) => {
     const rates = getModelRates(row.model || "");
     const estimatedCost = Math.round(
-      promptTokens * rates.prompt + completionTokens * rates.completion
+      (row.promptTokens || 0) * rates.prompt + (row.completionTokens || 0) * rates.completion,
     );
-    return { ...row, promptTokens, completionTokens, tokens, estimatedCost };
+    // tokens already = credit in+out; keep prompt/completion splits for charts
+    return {
+      ...row,
+      avgLatency: 0,
+      estimatedCost,
+    };
   });
 
   return withCost;
