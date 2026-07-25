@@ -1529,19 +1529,19 @@ export API_TIMEOUT_MS=500000`}
             </CardHeader>
             <CardContent className="p-0">
               <div className="overflow-x-auto">
-                <table className="w-full text-sm min-w-[960px]">
+                <table className="w-full text-sm min-w-[1100px]">
                   <thead>
                     <tr className="border-b border-border/50">
                       <th className="text-left py-3 px-3 text-muted-foreground font-medium w-8" />
-                      <th className="text-left py-3 px-3 text-muted-foreground font-medium">Time</th>
-                      <th className="text-left py-3 px-3 text-muted-foreground font-medium">Model</th>
-                      <th className="text-left py-3 px-3 text-muted-foreground font-medium">IDE</th>
-                      <th className="text-left py-3 px-3 text-muted-foreground font-medium">Provider</th>
-                      <th className="text-left py-3 px-3 text-muted-foreground font-medium">OS / Client</th>
-                      <th className="text-left py-3 px-3 text-muted-foreground font-medium">IP</th>
+                      <th className="text-left py-3 px-3 text-muted-foreground font-medium whitespace-nowrap">Time</th>
+                      <th className="text-left py-3 px-3 text-muted-foreground font-medium min-w-[260px]">Model</th>
+                      <th className="text-left py-3 px-3 text-muted-foreground font-medium whitespace-nowrap">IDE</th>
+                      <th className="text-left py-3 px-3 text-muted-foreground font-medium whitespace-nowrap">Provider</th>
+                      <th className="text-left py-3 px-3 text-muted-foreground font-medium whitespace-nowrap">OS / Client</th>
+                      <th className="text-left py-3 px-3 text-muted-foreground font-medium whitespace-nowrap">IP</th>
                       <th className="text-left py-3 px-3 text-muted-foreground font-medium">Tools</th>
-                      <th className="text-right py-3 px-3 text-muted-foreground font-medium">Tokens</th>
-                      <th className="text-right py-3 px-3 text-muted-foreground font-medium">Latency</th>
+                      <th className="text-right py-3 px-3 text-muted-foreground font-medium whitespace-nowrap">Tokens</th>
+                      <th className="text-right py-3 px-3 text-muted-foreground font-medium whitespace-nowrap">Latency</th>
                       <th className="text-left py-3 px-3 text-muted-foreground font-medium whitespace-nowrap">Status</th>
                     </tr>
                   </thead>
@@ -1549,6 +1549,13 @@ export API_TIMEOUT_MS=500000`}
                     {keyLogs.map((log) => {
                       const open = expandedLogId === log.id;
                       const tools = Array.isArray(log.toolsUsed) ? log.toolsUsed.filter(Boolean) : [];
+                      const requestFull =
+                        (Array.isArray(log.transcript) && log.transcript.length > 0
+                          ? log.transcript.map((e) => `${e.role}: ${e.content}`).join("\n\n")
+                          : "") ||
+                        log.requestPreview ||
+                        "";
+                      const responseFull = log.responsePreview || "";
                       return (
                         <Fragment key={log.id}>
                           <tr
@@ -1562,17 +1569,22 @@ export API_TIMEOUT_MS=500000`}
                               <div>{formatDate(log.createdAt)}</div>
                               <div className="text-[10px]">{formatRelativeTime(log.createdAt)}</div>
                             </td>
-                            <td className="py-2 px-3">
-                              <code className="text-xs bg-accent/50 px-1.5 py-0.5 rounded break-all">{log.model}</code>
+                            <td className="py-2 px-3 min-w-[260px] max-w-[420px]">
+                              <code
+                                className="text-xs bg-accent/50 px-1.5 py-0.5 rounded inline-block max-w-full whitespace-nowrap overflow-hidden text-ellipsis align-middle"
+                                title={log.model}
+                              >
+                                {log.model}
+                              </code>
                             </td>
                             <td className="py-2 px-3 text-xs whitespace-nowrap">{log.ideDetected || "-"}</td>
                             <td className="py-2 px-3 text-xs whitespace-nowrap">{log.provider || "unknown"}</td>
-                            <td className="py-2 px-3 text-xs text-muted-foreground">
+                            <td className="py-2 px-3 text-xs text-muted-foreground whitespace-nowrap">
                               <div>{log.osDetected || "Unknown"}</div>
                               <div className="text-[10px]">{log.clientName || "-"}</div>
                             </td>
                             <td className="py-2 px-3 text-xs font-mono whitespace-nowrap">{log.ipAddress || "-"}</td>
-                            <td className="py-2 px-3 text-xs max-w-[140px] truncate" title={tools.join(", ") || undefined}>
+                            <td className="py-2 px-3 text-xs max-w-[160px] truncate" title={tools.join(", ") || undefined}>
                               {tools.length ? tools.slice(0, 2).join(", ") : "?"}
                             </td>
                             <td className="py-2 px-3 text-right font-mono text-xs whitespace-nowrap">{formatNumber(log.totalTokens)}</td>
@@ -1586,7 +1598,7 @@ export API_TIMEOUT_MS=500000`}
                           {open && (
                             <tr className="border-b border-border/50">
                               <td colSpan={11} className="px-4 py-3 bg-accent/15">
-                                <div className="space-y-3 text-sm max-w-5xl">
+                                <div className="space-y-3 text-sm w-full min-w-0">
                                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                                     <span className={`font-medium ${log.statusCode >= 400 ? "text-destructive" : "text-emerald-400"}`}>
                                       {log.statusCode} {statusLabel(log.statusCode)}
@@ -1598,27 +1610,35 @@ export API_TIMEOUT_MS=500000`}
                                   {(log.errorMessage || log.statusCode >= 400) && (
                                     <div>
                                       <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Error / reason</p>
-                                      <pre className="text-xs text-red-400/90 bg-red-400/5 border border-red-400/15 rounded-md px-2.5 py-2 font-mono whitespace-pre-wrap break-words max-h-40 overflow-y-auto">
+                                      <pre className="text-xs text-red-400/90 bg-red-400/5 border border-red-400/15 rounded-md px-2.5 py-2 font-mono whitespace-pre-wrap break-words max-h-[50vh] overflow-y-auto">
                                         {log.errorMessage || "(no error message stored ? check upstream response below)"}
                                       </pre>
                                     </div>
                                   )}
-                                  {log.requestPreview && (
+                                  {requestFull ? (
                                     <div>
-                                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Request preview</p>
-                                      <pre className="text-xs font-mono text-foreground/90 bg-background/60 border border-border rounded-md px-2.5 py-2 whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
-                                        {log.requestPreview}
+                                      <div className="flex items-center justify-between gap-2 mb-1">
+                                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                                          Request {Array.isArray(log.transcript) && log.transcript.length > 0 ? "(full transcript)" : "(stored preview)"}
+                                        </p>
+                                        <span className="text-[10px] text-muted-foreground font-mono">{requestFull.length.toLocaleString()} chars</span>
+                                      </div>
+                                      <pre className="text-xs font-mono text-foreground/90 bg-background/60 border border-border rounded-md px-2.5 py-2 whitespace-pre-wrap break-words max-h-[70vh] overflow-y-auto">
+                                        {requestFull}
                                       </pre>
                                     </div>
-                                  )}
-                                  {log.responsePreview && (
+                                  ) : null}
+                                  {responseFull ? (
                                     <div>
-                                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Upstream response</p>
-                                      <pre className="text-xs font-mono text-foreground/90 bg-background/60 border border-border rounded-md px-2.5 py-2 whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
-                                        {log.responsePreview}
+                                      <div className="flex items-center justify-between gap-2 mb-1">
+                                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Upstream response</p>
+                                        <span className="text-[10px] text-muted-foreground font-mono">{responseFull.length.toLocaleString()} chars</span>
+                                      </div>
+                                      <pre className="text-xs font-mono text-foreground/90 bg-background/60 border border-border rounded-md px-2.5 py-2 whitespace-pre-wrap break-words max-h-[70vh] overflow-y-auto">
+                                        {responseFull}
                                       </pre>
                                     </div>
-                                  )}
+                                  ) : null}
                                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 text-xs text-muted-foreground">
                                     {log.endpointPath && (
                                       <div>Endpoint: <span className="font-mono text-foreground/80">{log.endpointPath}</span></div>
@@ -1633,7 +1653,7 @@ export API_TIMEOUT_MS=500000`}
                                       Tokens: in {formatNumber(log.promptTokens || 0)} / out {formatNumber(log.completionTokens || 0)} / total {formatNumber(log.totalTokens || 0)}
                                     </div>
                                   </div>
-                                  {!log.errorMessage && !log.requestPreview && !log.responsePreview && log.statusCode < 400 && (
+                                  {!log.errorMessage && !requestFull && !responseFull && log.statusCode < 400 && (
                                     <p className="text-xs text-muted-foreground">No stored preview for this successful request.</p>
                                   )}
                                   <Button
@@ -1653,8 +1673,8 @@ export API_TIMEOUT_MS=500000`}
                                         `Endpoint: ${log.endpointPath || "-"}`,
                                         `Latency: ${log.latencyMs}ms`,
                                         `Time: ${formatDate(log.createdAt)}`,
-                                        log.requestPreview ? `\nRequest:\n${log.requestPreview}` : "",
-                                        log.responsePreview ? `\nResponse:\n${log.responsePreview}` : "",
+                                        requestFull ? `\nRequest:\n${requestFull}` : "",
+                                        responseFull ? `\nResponse:\n${responseFull}` : "",
                                       ].filter(Boolean).join("\n");
                                       void copyToClipboard(paste).then(() => notify.success("Copied log detail"));
                                     }}

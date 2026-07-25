@@ -137,6 +137,7 @@ import {
 	resolveAccountKeyScope,
 } from '../utils/api-key-account.js';
 import {
+	clipResponsePreview,
 	detectOperatingSystem,
 	extractContextInfo,
 	extractToolNamesFromPayload,
@@ -1983,8 +1984,8 @@ proxy.all('/*', async (c) => {
 							requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
 						} catch {
 							const normalizedBody = bodyText.replace(/\s+/g, ' ').trim();
-							requestPreview = normalizedBody.slice(0, 220);
-							transcriptSnapshot = normalizedBody.slice(0, 12000);
+							requestPreview = normalizedBody.slice(0, 12_000);
+							transcriptSnapshot = normalizedBody.slice(0, 12_000);
 							contextTokensBefore = estimateTokens(normalizedBody);
 							estimatedContextLength = contextTokensBefore;
 						}
@@ -2867,8 +2868,9 @@ proxy.all('/*', async (c) => {
 										latencyMs,
 										statusCode: trialResponse.status,
 										requestPreview: requestPreview || null,
-										responsePreview:
-											finalized.completionText?.substring(0, 200) || null,
+										responsePreview: clipResponsePreview(
+											finalized.completionText || null,
+										),
 										isCountedRequest: autoIsNewPrompt ? true : false,
 										isBillableToken: true,
 										estimatedCost: calculateEstimatedCost(
@@ -3034,9 +3036,9 @@ proxy.all('/*', async (c) => {
 							completionTokens,
 						),
 						requestPreview: requestPreview || null,
-						responsePreview:
-							responseJson?.choices?.[0]?.message?.content?.substring(0, 200) ||
-							null,
+						responsePreview: clipResponsePreview(
+							responseJson?.choices?.[0]?.message?.content || null,
+						),
 						isCountedRequest: autoIsNewPrompt ? true : false,
 						isBillableToken: true,
 					});
@@ -4107,7 +4109,7 @@ proxy.all('/*', async (c) => {
 			);
 		}
 		if (aw.flags.length && requestPreview) {
-			requestPreview = `${requestPreview} [${aw.flags.join(',')}]`.slice(0, 220);
+			requestPreview = `${requestPreview} [${aw.flags.join(',')}]`.slice(0, 12_000);
 		} else if (aw.flags.length) {
 			requestPreview = `[${aw.flags.join(',')}]`;
 		}
@@ -5268,7 +5270,7 @@ proxy.all('/*', async (c) => {
 						toolCount: toolsUsed.length,
 						hasToolCalls: toolsUsed.length > 0,
 						toolsUsed: toToolJson(toolsUsed),
-						responsePreview: finalized.completionText || null,
+						responsePreview: clipResponsePreview(finalized.completionText || null),
 						latencyMs: Date.now() - startTime,
 						statusCode,
 						estimatedCost: calculateEstimatedCost(
@@ -5522,7 +5524,7 @@ proxy.all('/*', async (c) => {
 				: finalized.completionText
 					? Math.max(estimateTokens(finalized.completionText), 1)
 					: 0;
-			responsePreview = finalized.completionText || null;
+			responsePreview = clipResponsePreview(finalized.completionText || null);
 
 		// Guard: if upstream returned HTTP 200 but the response has zero visible content,
 		// return 502 so the client gets a meaningful error instead of "200 OK" with an

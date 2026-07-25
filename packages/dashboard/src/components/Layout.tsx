@@ -61,7 +61,7 @@ export default function Layout() {
     navigate("/login");
   };
 
-  const sidebarWidth = sidebarCollapsed ? "w-[72px]" : "w-64";
+  const sidebarWidth = sidebarCollapsed ? "w-14" : "w-52";
 
   return (
     <div className="flex h-screen bg-background">
@@ -85,51 +85,51 @@ export default function Layout() {
       >
         {/* Logo */}
         <div className={cn(
-          "h-16 flex items-center border-b border-border/50 shrink-0",
-          sidebarCollapsed ? "justify-center px-2" : "justify-between px-5"
+          "h-14 flex items-center border-b border-border/50 shrink-0",
+          sidebarCollapsed ? "justify-center px-1.5" : "justify-between px-3"
         )}>
           {!sidebarCollapsed && (
-            <div className="flex items-center gap-3">
-              <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 shadow-lg shadow-indigo-500/20 flex items-center justify-center shrink-0">
-                <Zap className="h-4 w-4 text-white" />
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="h-7 w-7 rounded-md bg-gradient-to-br from-violet-500 to-indigo-600 shadow-md shadow-indigo-500/20 flex items-center justify-center shrink-0">
+                <Zap className="h-3.5 w-3.5 text-white" />
               </div>
-              <div>
-                <h1 className="text-sm font-bold tracking-tight">AI Proxy</h1>
-                <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-semibold">Gateway</p>
+              <div className="min-w-0">
+                <h1 className="text-sm font-bold tracking-tight truncate">AI Proxy</h1>
+                <p className="text-[9px] text-muted-foreground uppercase tracking-widest font-semibold">Gateway</p>
               </div>
             </div>
           )}
           {sidebarCollapsed && (
-            <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 shadow-lg shadow-indigo-500/20 flex items-center justify-center">
-              <Zap className="h-4 w-4 text-white" />
+            <div className="h-7 w-7 rounded-md bg-gradient-to-br from-violet-500 to-indigo-600 shadow-md shadow-indigo-500/20 flex items-center justify-center">
+              <Zap className="h-3.5 w-3.5 text-white" />
             </div>
           )}
           {!sidebarCollapsed && realtimeEnabled && (
-            <div title="Dashboard realtime feed (bukan status model Online)" className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+            <div title="Dashboard realtime feed (bukan status model Online)" className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 shrink-0">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 live-dot"></span>
-              <span className="text-[9px] font-bold text-emerald-500 uppercase tracking-wider">SSE</span>
+              <span className="text-[8px] font-bold text-emerald-500 uppercase tracking-wider">SSE</span>
             </div>
           )}
           {/* Mobile close button */}
           <button
             onClick={() => setSidebarOpen(false)}
-            className="lg:hidden p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+            className="lg:hidden p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors shrink-0"
           >
-            <X className="h-5 w-5" />
+            <X className="h-4 w-4" />
           </button>
         </div>
 
         {/* Navigation */}
         <nav className={cn(
-          "flex-1 py-6 overflow-y-auto",
-          sidebarCollapsed ? "px-2" : "px-3"
+          "flex-1 py-4 overflow-y-auto",
+          sidebarCollapsed ? "px-1.5" : "px-2"
         )}>
-          <div className="space-y-8">
+          <div className="space-y-6">
             <div>
               {!sidebarCollapsed && (
-                <p className="px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Main</p>
+                <p className="px-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Main</p>
               )}
-              <div className={cn("space-y-1", sidebarCollapsed && "flex flex-col items-center")}>
+              <div className={cn("space-y-0.5", sidebarCollapsed && "flex flex-col items-center")}>
                 {mainNav.map((item) => (
                   <NavLink
                     key={item.to}
@@ -139,8 +139,8 @@ export default function Layout() {
                     title={sidebarCollapsed ? item.label : undefined}
                     className={({ isActive }) =>
                       cn(
-                        "flex items-center gap-3 rounded-lg text-sm font-medium transition-colors duration-200",
-                        sidebarCollapsed ? "p-2.5 justify-center w-11 h-11" : "px-3 py-2.5",
+                        "flex items-center gap-2.5 rounded-md text-[13px] font-medium transition-colors duration-200",
+                        sidebarCollapsed ? "p-2 justify-center w-10 h-10" : "px-2.5 py-2",
                         isActive
                           ? "bg-primary/10 text-primary"
                           : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
@@ -156,9 +156,9 @@ export default function Layout() {
 
             <div>
               {!sidebarCollapsed && (
-                <p className="px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">System</p>
+                <p className="px-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">System</p>
               )}
-              <div className={cn("space-y-1", sidebarCollapsed && "flex flex-col items-center")}>
+              <div className={cn("space-y-0.5", sidebarCollapsed && "flex flex-col items-center")}>
                 {sysNav.map((item) => (
                   <NavLink
                     key={item.to}
@@ -168,8 +168,8 @@ export default function Layout() {
                     title={sidebarCollapsed ? item.label : undefined}
                     className={({ isActive }) =>
                       cn(
-                        "flex items-center gap-3 rounded-lg text-sm font-medium transition-colors duration-200",
-                        sidebarCollapsed ? "p-2.5 justify-center w-11 h-11" : "px-3 py-2.5",
+                        "flex items-center gap-2.5 rounded-md text-[13px] font-medium transition-colors duration-200",
+                        sidebarCollapsed ? "p-2 justify-center w-10 h-10" : "px-2.5 py-2",
                         isActive
                           ? "bg-primary/10 text-primary"
                           : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
@@ -188,12 +188,12 @@ export default function Layout() {
         {/* Footer */}
         <div className={cn(
           "border-t border-border/50 bg-card/50 shrink-0",
-          sidebarCollapsed ? "p-2" : "p-3"
+          sidebarCollapsed ? "p-1.5" : "p-2"
         )}>
           {/* Collapse toggle - desktop only */}
           <button
             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-            className="hidden lg:flex items-center justify-center w-full p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors duration-200 mb-2"
+            className="hidden lg:flex items-center justify-center w-full p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors duration-200 mb-1.5"
             title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
             <ChevronLeft className={cn("h-4 w-4 transition-transform duration-300", sidebarCollapsed && "rotate-180")} />
@@ -201,8 +201,8 @@ export default function Layout() {
           <button
             onClick={handleLogout}
             className={cn(
-              "flex items-center gap-3 rounded-lg text-sm font-medium text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors duration-200 w-full",
-              sidebarCollapsed ? "p-2.5 justify-center" : "px-3 py-2.5"
+              "flex items-center gap-2.5 rounded-md text-[13px] font-medium text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors duration-200 w-full",
+              sidebarCollapsed ? "p-2 justify-center" : "px-2.5 py-2"
             )}
             title="Logout"
           >

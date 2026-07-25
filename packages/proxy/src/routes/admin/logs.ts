@@ -198,6 +198,7 @@ logs.get("/logs", async (c) => {
   if (!lite) {
     selectFields.requestPreview = requestLogs.requestPreview;
     selectFields.responsePreview = requestLogs.responsePreview;
+    selectFields.transcriptSnapshot = requestLogs.transcriptSnapshot;
   }
 
   const rows = await db.select(selectFields).from(requestLogs)

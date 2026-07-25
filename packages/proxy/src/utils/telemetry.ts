@@ -1,7 +1,16 @@
 import { sha256 } from "./crypto.js";
 import { estimateTokens } from "./detect-ide.js";
 
-const MAX_PREVIEW_LENGTH = 220;
+const MAX_PREVIEW_LENGTH = 12_000;
+/** Cap for stored upstream response text (admin/portal expand views). */
+export const MAX_RESPONSE_PREVIEW_LENGTH = 32_000;
+
+export function clipResponsePreview(text: string | null | undefined): string | null {
+	if (!text) return null;
+	const s = String(text);
+	if (s.length <= MAX_RESPONSE_PREVIEW_LENGTH) return s;
+	return `${s.slice(0, MAX_RESPONSE_PREVIEW_LENGTH - 1)}…`;
+}
 
 export interface ContextInfo {
   model: string;
