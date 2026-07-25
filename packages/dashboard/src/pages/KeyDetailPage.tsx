@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { formatDate, formatNumber, formatRelativeTime, copyToClipboard, formatCost, formatInputBreakdown, statusLabel, statusDetail } from "@/lib/utils";
+import { formatDate, formatNumber, formatRelativeTime, copyToClipboard, formatCost, formatInputBreakdown, statusLabel, statusDetail, formatChartPeriod } from "@/lib/utils";
 import { ArrowLeft, Copy, Check, RotateCw, Trash2, Shield, ShieldOff, X, Download, DollarSign, Gift, Info, ExternalLink, CalendarClock, ChevronDown, ChevronRight } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -20,8 +20,9 @@ import { exportXlsx, buildLogsSection, buildSessionsSection, fmtCost } from "@/l
 import { LiveUsageCard } from "@/components/LiveUsageCard";
 import { DayOverrideDialog } from "@/components/DayOverrideDialog";
 import { useNotify } from "@/components/Notify";
+import { PeriodSelector, type PeriodKey } from "@/components/PeriodSelector";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, 
+  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, 
 } from "recharts";
 import { ChartBox } from "@/components/ChartBox";
 
@@ -29,6 +30,9 @@ const TOOLTIP_STYLE  = { backgroundColor: "hsl(var(--card))", border: "1px solid
 const ITEM_STYLE     = { color: "hsl(var(--foreground))" };
 const LABEL_STYLE    = { color: "hsl(var(--foreground))" };
 const MODEL_COLORS   = ["#818cf8", "#34d399", "#f59e0b", "#f87171", "#a78bfa", "#38bdf8", "#fb923c", "#e879f9"];
+const KEY_CHART_DAYS: Record<PeriodKey, number> = {
+  today: 1, "3d": 3, "7d": 7, "30d": 30, thisMonth: 62, lastMonth: 62, allTime: 90,
+};
 
 export default function KeyDetailPage() {
   const { id: idSlug } = useParams<{ id: string }>();
@@ -75,6 +79,13 @@ export default function KeyDetailPage() {
   // Logs period filter
   const [logsPeriod, setLogsPeriod] = useState<1 | 7 | 30 | 0>(0); // 0 = all
   const [expandedLogId, setExpandedLogId] = useState<number | null>(null);
+
+  // Per-key overview charts (same metrics as admin Overview)
+  const [chartPeriod, setChartPeriod] = useState<PeriodKey>("7d");
+  const [chartMetric, setChartMetric] = useState<"prompts" | "apiCalls">("prompts");
+  const [keyTimeseries, setKeyTimeseries] = useState<any[]>([]);
+  const [keyChartModels, setKeyChartModels] = useState<any[]>([]);
+  const [chartsLoading, setChartsLoading] = useState(false);
 
   // Models tab state
   const [modelTabDays, setModelTabDays] = useState(0); // 0 = all time
@@ -171,6 +182,37 @@ export default function KeyDetailPage() {
   }, [id]);
 
   useEffect(() => { void loadLogs(logsPeriod); }, [logsPeriod, loadLogs]);
+
+  const loadKeyCharts = useCallback(async () => {
+    if (!id) return;
+    const keyId = parseInt(id, 10);
+    if (!Number.isFinite(keyId) || keyId <= 0) return;
+    setChartsLoading(true);
+    try {
+      const days = KEY_CHART_DAYS[chartPeriod];
+      const tsperiod = days <= 1 ? "hourly" : "daily";
+      // Prefer named period keys when possible for consistent WIB ranges
+      const periodArg =
+        chartPeriod === "today" || chartPeriod === "3d" || chartPeriod === "7d" ||
+        chartPeriod === "30d" || chartPeriod === "thisMonth" || chartPeriod === "lastMonth" ||
+        chartPeriod === "allTime"
+          ? chartPeriod
+          : tsperiod;
+      const [ts, ms] = await Promise.all([
+        stats.timeseries(periodArg, days, keyId),
+        stats.byModel(days <= 1 ? 1 : days >= 90 ? 0 : days, keyId),
+      ]);
+      setKeyTimeseries(Array.isArray(ts) ? ts : []);
+      setKeyChartModels(Array.isArray(ms) ? ms : []);
+    } catch {
+      setKeyTimeseries([]);
+      setKeyChartModels([]);
+    } finally {
+      setChartsLoading(false);
+    }
+  }, [id, chartPeriod]);
+
+  useEffect(() => { void loadKeyCharts(); }, [loadKeyCharts]);
 
   const loadAll = async () => {
     if (!id) return;
@@ -740,10 +782,10 @@ export API_TIMEOUT_MS=500000`}
                 { label: "Est. Cost",     value: `$${(s.estimatedCost/1e6).toFixed(4)}` },
                 { label: "Devices",       value: keyData.stats.deviceCount.toString() },
               ].map(c => (
-                <Card key={c.label} className="border-border/50">
+                <Card key={c.label} className="border-border/50 transition-all duration-200 hover:border-border hover:bg-accent/10">
                   <CardContent className="p-3">
                     <p className="text-[10px] text-muted-foreground">{c.label}</p>
-                    <p className="text-lg font-bold mt-1 truncate">{c.value}</p>
+                    <p className="text-lg font-bold mt-1 truncate tabular-nums">{c.value}</p>
                     {c.sub && <p className="text-[10px] text-muted-foreground mt-0.5 truncate">{c.sub}</p>}
                   </CardContent>
                 </Card>
@@ -751,6 +793,145 @@ export API_TIMEOUT_MS=500000`}
             </div>
           );
         })()}
+      </div>
+
+      {/* Per-key charts ? same Prompts / API Calls / Tokens views as Overview */}
+      <div className="space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold">Usage charts</h2>
+            <p className="text-[11px] text-muted-foreground">Scoped to this API key only</p>
+          </div>
+          <PeriodSelector value={chartPeriod} onChange={setChartPeriod} />
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <Card className="border-border/50">
+            <CardHeader className="pb-2 space-y-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <CardTitle className="text-base font-medium">
+                  {chartMetric === "prompts" ? "Prompts Over Time" : "API Calls Over Time"}
+                </CardTitle>
+                {chartsLoading && <span className="text-[10px] text-muted-foreground">Loading?</span>}
+              </div>
+              <div className="inline-flex rounded-lg border border-border/60 p-0.5 bg-accent/20">
+                {([
+                  { key: "prompts" as const, label: "Prompts" },
+                  { key: "apiCalls" as const, label: "API Calls" },
+                ]).map((opt) => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    onClick={() => setChartMetric(opt.key)}
+                    className={`px-3 py-1 text-xs rounded-md transition-all duration-200 ${
+                      chartMetric === opt.key
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </CardHeader>
+            <CardContent>
+              {keyTimeseries.length === 0 && !chartsLoading ? (
+                <p className="text-sm text-muted-foreground py-10 text-center">No activity in this period.</p>
+              ) : (
+                <ChartBox>
+                  <LineChart data={keyTimeseries}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis
+                      dataKey="period"
+                      tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                      tickFormatter={formatChartPeriod}
+                    />
+                    <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
+                    <Tooltip contentStyle={TOOLTIP_STYLE} itemStyle={ITEM_STYLE} labelStyle={LABEL_STYLE} />
+                    <Line
+                      type="monotone"
+                      dataKey={chartMetric === "prompts" ? "requests" : "apiCalls"}
+                      name={chartMetric === "prompts" ? "Prompts" : "API Calls"}
+                      stroke={chartMetric === "prompts" ? "#818cf8" : "#34d399"}
+                      strokeWidth={2}
+                      dot={false}
+                      isAnimationActive
+                      animationDuration={450}
+                    />
+                  </LineChart>
+                </ChartBox>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="border-border/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base font-medium">Tokens Over Time</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {keyTimeseries.length === 0 && !chartsLoading ? (
+                <p className="text-sm text-muted-foreground py-10 text-center">No activity in this period.</p>
+              ) : (
+                <ChartBox>
+                  <LineChart data={keyTimeseries}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis
+                      dataKey="period"
+                      tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                      tickFormatter={formatChartPeriod}
+                    />
+                    <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} tickFormatter={(v) => formatNumber(v)} />
+                    <Tooltip
+                      contentStyle={TOOLTIP_STYLE}
+                      itemStyle={ITEM_STYLE}
+                      labelStyle={LABEL_STYLE}
+                      formatter={(value: number) => formatNumber(value)}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="tokens"
+                      name="Tokens"
+                      stroke="#38bdf8"
+                      strokeWidth={2}
+                      dot={false}
+                      isAnimationActive
+                      animationDuration={450}
+                    />
+                  </LineChart>
+                </ChartBox>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="border-border/50 lg:col-span-2">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base font-medium">Token Usage by Model</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {keyChartModels.length === 0 && !chartsLoading ? (
+                <p className="text-sm text-muted-foreground py-10 text-center">No model usage in this period.</p>
+              ) : (
+                <ChartBox>
+                  <BarChart data={keyChartModels.slice(0, 10)}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis
+                      dataKey="model"
+                      tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                      tickFormatter={(v) => String(v || "").split("/").pop()?.replace("claude-", "c-").replace("gpt-", "").substring(0, 14) || ""}
+                    />
+                    <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} tickFormatter={(v) => formatNumber(v)} />
+                    <Tooltip
+                      contentStyle={TOOLTIP_STYLE}
+                      itemStyle={ITEM_STYLE}
+                      labelStyle={LABEL_STYLE}
+                      formatter={(value: number) => formatNumber(value)}
+                    />
+                    <Bar dataKey="tokens" fill="#818cf8" radius={[4, 4, 0, 0]} name="Tokens" isAnimationActive animationDuration={450} />
+                  </BarChart>
+                </ChartBox>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">

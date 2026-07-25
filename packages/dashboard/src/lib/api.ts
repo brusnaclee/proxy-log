@@ -718,8 +718,11 @@ export const stats = {
     request<any[]>(`/stats/by-model?days=${days}${apiKeyId ? `&api_key_id=${apiKeyId}` : ""}`),
   byDevice: (days = 0) => request<any[]>(`/stats/by-device?days=${days}`),
   topUsers: (days = 0) => request<{ byRequests: any[]; byTokens: any[] }>(`/stats/top-users?days=${days}`),
-  timeseries: (period: string = "daily", days: number = 7) =>
-    request<any[]>(`/stats/timeseries?period=${period}&days=${days}`),
+  timeseries: (period: string = "daily", days: number = 7, apiKeyId?: number) => {
+    const q = new URLSearchParams({ period, days: String(days) });
+    if (apiKeyId && apiKeyId > 0) q.set("api_key_id", String(apiKeyId));
+    return request<any[]>(`/stats/timeseries?${q.toString()}`);
+  },
   userDetail: (discordUserId: string) =>
     request<any>(`/internal/stats/user-detail/${encodeURIComponent(discordUserId)}`),
 };

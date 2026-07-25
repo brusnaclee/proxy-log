@@ -482,10 +482,17 @@ stats.get("/stats/by-device", async (c) => {
 stats.get("/stats/timeseries", async (c) => {
   // Support new ?period= key (today|3d|7d|30d|thisMonth|lastMonth|allTime)
   // Fallback to legacy ?period=daily|hourly + ?days=N
+  // Optional ?api_key_id=N scopes to one key (Key Detail charts).
   const newPeriod = c.req.query("period") as PeriodKey | undefined;
   const legacyPeriod = c.req.query("period") as string | undefined; // daily|hourly
   const days = parseInt(c.req.query("days") || "7");
-  const cacheKey = `timeseries:v2:${newPeriod || legacyPeriod || "daily"}:${days}`;
+  const apiKeyRaw = c.req.query("api_key_id");
+  const apiKeyId = apiKeyRaw ? parseInt(apiKeyRaw, 10) : NaN;
+  const keyScoped = Number.isFinite(apiKeyId) && apiKeyId > 0;
+  if (apiKeyRaw && !keyScoped) {
+    return c.json({ error: "Invalid api_key_id" }, 400);
+  }
+  const cacheKey = `timeseries:v2:${newPeriod || legacyPeriod || "daily"}:${days}:k${keyScoped ? apiKeyId : "all"}`;
   return c.json(await statsCache.getOrFetch(cacheKey, async () => {
   let startDate: Date;
   let groupPeriod: "hourly" | "daily";
@@ -500,6 +507,7 @@ stats.get("/stats/timeseries", async (c) => {
   }
 
   const startStr = toUtcStr(startDate);
+  const keyFilter = keyScoped ? sql`AND api_key_id = ${apiKeyId}` : sql``;
 
   const groupExpr = groupPeriod === "hourly"
     ? sql`to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD HH24:00')`
@@ -525,7 +533,10 @@ stats.get("/stats/timeseries", async (c) => {
         ${sql.raw(groupedInputSumSql())} as sum_delta,
         SUM(completion_tokens) as sum_c
       FROM request_logs
-      WHERE created_at >= ${startStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+      WHERE created_at >= ${startStr}
+        AND status_code BETWEEN 200 AND 299
+        AND turn_id IS NOT NULL
+        ${keyFilter}
       GROUP BY ${groupExpr}, device_fingerprint, turn_id
     ) sub
     GROUP BY period_group
