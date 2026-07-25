@@ -704,7 +704,7 @@ export default function SettingsPage() {
                   </div>
                 </div>
                 <div>
-                  <Label>Input token mode</Label>
+                  <Label>Input token mode (stats / Discord only)</Label>
                   <select
                     className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
                     value={tokenInputMode}
@@ -715,12 +715,14 @@ export default function SettingsPage() {
                       );
                     }}
                   >
-                    <option value="per_turn_peak">Per-turn peak (recommended) — MAX context once per prompt</option>
-                    <option value="full">Full hop sum — match upstream In / amanai</option>
-                    <option value="billable">Billable / delta only (legacy)</option>
+                    <option value="per_turn_peak">Per-turn peak — MAX context once per prompt (tables/Discord)</option>
+                    <option value="full">Full hop sum — match upstream In / amanai (tables/Discord)</option>
+                    <option value="billable">Billable / delta only (legacy tables/Discord)</option>
                   </select>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Peak = cache+prompt counted once per user prompt (tool loops don’t multiply). Full = sum every API hop.
+                    Does <strong>not</strong> change daily/monthly token limits. Limits always use hop-weighted input
+                    (hop 1 = 100%, hops 2–5 = 0%, then +10% every 5 hops, ≥50 = 100%; output always 100%).
+                    Peak/full/billable only changes how input is shown in analytics, Discord, and Key Detail.
                   </p>
                 </div>
                 <div className="grid grid-cols-2 gap-4">

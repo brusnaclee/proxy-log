@@ -5,6 +5,12 @@
  * - strip: OpenCode / Kilo — drop reasoning fields (they spam a Thought block per delta)
  * - backfill: Hermes / default — copy reasoning → content only when content empty
  *   (avoids empty bubbles; never concatenates both into one string)
+ *
+ * Streaming caveat: never per-delta backfill. Models like gcli/grok-* emit a long
+ * reasoning_content trail then a short content answer. Copying each reasoning delta
+ * into content makes clients accumulate CoT as the visible reply (direct upstream OK,
+ * proxy looked "broken"). For backfill IDEs, defer to a single end-of-stream inject
+ * when the stream had reasoning but no plain content.
  */
 
 export type ReasoningProfile = "keep_separate" | "strip" | "backfill";
@@ -38,4 +44,16 @@ export function resolveReasoningProfile(ide: string | null | undefined): Reasoni
 	}
 	// Hermes, Unknown, Node.js Client, etc.
 	return "backfill";
+}
+
+/** True when a stream should emit one content chunk from buffered reasoning at [DONE]. */
+export function shouldInjectStreamReasoningBackfill(opts: {
+	profile: ReasoningProfile;
+	sawPlainContent: boolean;
+	reasoningText: string;
+	hasToolCalls?: boolean;
+}): boolean {
+	if (opts.profile !== "backfill") return false;
+	if (opts.sawPlainContent || opts.hasToolCalls) return false;
+	return Boolean(String(opts.reasoningText || "").trim());
 }

@@ -7,7 +7,7 @@ import {
 	isGrokTransientErrorBody,
 	parseGrokResetAfterMs,
 } from "./grok-resilience.js";
-import { resolveReasoningProfile } from "./reasoning-profile.js";
+import { resolveReasoningProfile, shouldInjectStreamReasoningBackfill } from "./reasoning-profile.js";
 
 describe("isGrokCliModel", () => {
 	it("matches gcli / grok-cli / grok- ids", () => {
@@ -64,5 +64,34 @@ describe("resolveReasoningProfile", () => {
 		assert.equal(resolveReasoningProfile("Hermes"), "backfill");
 		assert.equal(resolveReasoningProfile("Node.js Client"), "backfill");
 		assert.equal(resolveReasoningProfile(""), "backfill");
+	});
+});
+
+describe("shouldInjectStreamReasoningBackfill", () => {
+	it("injects only for backfill with reasoning and no content", () => {
+		assert.equal(
+			shouldInjectStreamReasoningBackfill({
+				profile: "backfill",
+				sawPlainContent: false,
+				reasoningText: "think",
+			}),
+			true,
+		);
+		assert.equal(
+			shouldInjectStreamReasoningBackfill({
+				profile: "backfill",
+				sawPlainContent: true,
+				reasoningText: "think",
+			}),
+			false,
+		);
+		assert.equal(
+			shouldInjectStreamReasoningBackfill({
+				profile: "keep_separate",
+				sawPlainContent: false,
+				reasoningText: "think",
+			}),
+			false,
+		);
 	});
 });

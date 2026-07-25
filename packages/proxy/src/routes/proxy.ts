@@ -173,6 +173,7 @@ import {
 } from '../utils/grok-resilience.js';
 import {
 	resolveReasoningProfile,
+	shouldInjectStreamReasoningBackfill,
 	type ReasoningProfile,
 } from '../utils/reasoning-profile.js';
 
@@ -223,7 +224,7 @@ function providerSupportsNativeAnthropic(provider: {
 
 function backfillOpenAIMessageContent<T extends { content?: unknown; reasoning_content?: unknown; reasoning?: unknown } | null | undefined>(
 	message: T,
-	opts?: { stripReasoning?: boolean; reasoningProfile?: ReasoningProfile },
+	opts?: { stripReasoning?: boolean; reasoningProfile?: ReasoningProfile; streaming?: boolean },
 ) {
 	if (!message || typeof message !== 'object') return message;
 	const msg = message as any;
@@ -245,8 +246,9 @@ function backfillOpenAIMessageContent<T extends { content?: unknown; reasoning_c
 	}
 
 	const contentEmpty = typeof msg?.content !== 'string' || !String(msg.content).trim();
-	if (profile === 'backfill') {
-		// Hermes / default: fill empty content from reasoning so IDEs don't show blank bubbles.
+	// Streaming: never per-delta backfill (gcli/grok CoT would pollute content).
+	// Non-stream / final message: Hermes fills empty content from reasoning.
+	if (profile === 'backfill' && !opts?.streaming) {
 		if (contentEmpty && rcStr?.trim()) {
 			msg.content = rcStr;
 		} else if (contentEmpty && rStr?.trim()) {
@@ -290,7 +292,7 @@ function normalizeToolCallArray(toolCalls: any[]): void {
 
 function backfillOpenAIResponseContent(
 	payload: any,
-	opts?: { stripReasoning?: boolean; reasoningProfile?: ReasoningProfile },
+	opts?: { stripReasoning?: boolean; reasoningProfile?: ReasoningProfile; streaming?: boolean },
 ) {
 	const profile: ReasoningProfile =
 		opts?.reasoningProfile ||
@@ -316,7 +318,7 @@ function backfillOpenAIResponseContent(
 	}
 
 	const contentEmpty = typeof d?.content !== 'string' || !String(d.content).trim();
-	if (profile === 'backfill') {
+	if (profile === 'backfill' && !opts?.streaming) {
 		if (contentEmpty && rcStr?.trim()) {
 			d.content = rcStr;
 		} else if (contentEmpty && rStr?.trim()) {
@@ -333,6 +335,46 @@ function backfillOpenAIResponseContent(
 		if (d.content === '') delete d.content;
 	}
 	return payload;
+}
+
+/** Track plain content vs reasoning across SSE deltas (for deferred backfill). */
+function noteStreamDeltaFields(
+	data: any,
+	state: { sawPlainContent: boolean; reasoningText: string },
+): void {
+	const d = data?.choices?.[0]?.delta;
+	if (!d || typeof d !== 'object') return;
+	if (typeof d.content === 'string' && d.content.length > 0) {
+		state.sawPlainContent = true;
+	}
+	if (typeof d.reasoning_content === 'string' && d.reasoning_content) {
+		state.reasoningText += d.reasoning_content;
+	} else if (typeof d.reasoning === 'string' && d.reasoning) {
+		state.reasoningText += d.reasoning;
+	}
+}
+
+function encodeDeferredReasoningBackfillChunk(
+	template: any,
+	reasoningText: string,
+): Uint8Array {
+	const id = template?.id || `chatcmpl-${Date.now()}`;
+	const model = template?.model || 'unknown';
+	const created = template?.created || Math.floor(Date.now() / 1000);
+	const chunk = {
+		id,
+		object: 'chat.completion.chunk',
+		created,
+		model,
+		choices: [
+			{
+				index: 0,
+				delta: { content: reasoningText },
+				finish_reason: null,
+			},
+		],
+	};
+	return new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\n`);
 }
 
 type ContextEvent = 'new_session' | 'append' | 'compact' | 'switch';
@@ -2638,6 +2680,9 @@ proxy.all('/*', async (c) => {
 						const decoder = new TextDecoder();
 						const logModel = `auto (${candidate.modelId}) [stream]`;
 						const reasoningOpts = reasoningOptsForIde(ide);
+						const streamReasoningOpts = { ...reasoningOpts, streaming: true as const };
+						const streamDeltaState = { sawPlainContent: false, reasoningText: '' };
+						let lastStreamChunk: any = null;
 						let openaiPassthroughBuffer = '';
 						let anthropicBuffer = '';
 						let autoHasActualToolCalls = false;
@@ -2686,6 +2731,25 @@ proxy.all('/*', async (c) => {
 									const lines = openaiPassthroughBuffer.split('\n');
 									openaiPassthroughBuffer = lines.pop() || '';
 									for (const line of lines) {
+										if (line === 'data: [DONE]') {
+											if (
+												shouldInjectStreamReasoningBackfill({
+													profile: reasoningOpts.reasoningProfile,
+													sawPlainContent: streamDeltaState.sawPlainContent,
+													reasoningText: streamDeltaState.reasoningText,
+													hasToolCalls: autoHasActualToolCalls,
+												})
+											) {
+												controller.enqueue(
+													encodeDeferredReasoningBackfillChunk(
+														lastStreamChunk,
+														streamDeltaState.reasoningText,
+													),
+												);
+											}
+											controller.enqueue(new TextEncoder().encode(`${line}\n`));
+											continue;
+										}
 										if (line.startsWith('data: ') && line !== 'data: [DONE]') {
 											const payloadText = line.slice(6).trim();
 											if (!payloadText || payloadText === '[DONE]') {
@@ -2697,8 +2761,10 @@ proxy.all('/*', async (c) => {
 											try {
 												const data = backfillOpenAIResponseContent(
 													JSON.parse(payloadText),
-													reasoningOpts,
+													streamReasoningOpts,
 												);
+												lastStreamChunk = data;
+												noteStreamDeltaFields(data, streamDeltaState);
 												consumeStreamPayload(acc, data);
 												controller.enqueue(
 													new TextEncoder().encode(
@@ -4809,6 +4875,9 @@ proxy.all('/*', async (c) => {
 			let hasActualToolCalls = false;
 			const decoder = new TextDecoder();
 			const reasoningOpts = reasoningOptsForIde(ide);
+			const streamReasoningOpts = { ...reasoningOpts, streaming: true as const };
+			const streamDeltaState = { sawPlainContent: false, reasoningText: '' };
+			let lastStreamChunk: any = null;
 			const anthropicPassthrough = isAnthropicProvider && isAnthropicRequest;
 			const anthropicStreamState =
 				isAnthropicProvider && !anthropicPassthrough
@@ -4913,12 +4982,10 @@ proxy.all('/*', async (c) => {
 									controller.enqueue(new TextEncoder().encode(createdEvent));
 								}
 
-								// Convert delta to Responses API format
+								// Convert delta to Responses API format — content only
+								// (do not dump reasoning_content into output_text; same Grok bug).
 								const delta = data.choices?.[0]?.delta;
-								const textDelta =
-									delta?.content ||
-									(delta as any)?.reasoning_content ||
-									(delta as any)?.reasoning;
+								const textDelta = delta?.content;
 								if (textDelta) {
 									const deltaEvent = `event: response.output_text.delta\ndata: ${JSON.stringify({ type: 'response.output_text.delta', item_id: responsesItemId, output_index: 0, content_index: 0, delta: textDelta })}\n\n`;
 									controller.enqueue(new TextEncoder().encode(deltaEvent));
@@ -4960,8 +5027,9 @@ proxy.all('/*', async (c) => {
 							try {
 								const data = backfillOpenAIResponseContent(
 									JSON.parse(payloadText),
-									reasoningOpts,
+									streamReasoningOpts,
 								);
+								noteStreamDeltaFields(data, streamDeltaState);
 								appendToolsFromPayload(data);
 								if (detectToolCallsInResponse(data)) hasActualToolCalls = true;
 								consumeStreamPayload(acc, data);
@@ -4975,9 +5043,9 @@ proxy.all('/*', async (c) => {
 							} catch {}
 						}
 					} else {
-						// OpenAI streaming: pass through, but backfill text from
-						// reasoning_content so OpenAI-compatible IDEs don't show
-						// "no response" for thinking-only deltas.
+						// OpenAI streaming: pass through. Do NOT per-delta copy
+						// reasoning→content (breaks gcli/grok). Defer Hermes backfill
+						// to a single inject before [DONE] if stream had no plain content.
 						try {
 							openaiPassthroughBuffer += decoder.decode(chunk, { stream: true });
 							const lines = openaiPassthroughBuffer.split('\n');
@@ -4987,6 +5055,21 @@ proxy.all('/*', async (c) => {
 								if (line === 'data: [DONE]') {
 									if (openaiSawDone) continue; // Drop duplicate
 									openaiSawDone = true;
+									if (
+										shouldInjectStreamReasoningBackfill({
+											profile: reasoningOpts.reasoningProfile,
+											sawPlainContent: streamDeltaState.sawPlainContent,
+											reasoningText: streamDeltaState.reasoningText,
+											hasToolCalls: hasActualToolCalls,
+										})
+									) {
+										controller.enqueue(
+											encodeDeferredReasoningBackfillChunk(
+												lastStreamChunk,
+												streamDeltaState.reasoningText,
+											),
+										);
+									}
 									controller.enqueue(new TextEncoder().encode(`${line}\n`));
 									continue;
 								}
@@ -4999,8 +5082,10 @@ proxy.all('/*', async (c) => {
 									try {
 										const data = backfillOpenAIResponseContent(
 											JSON.parse(payloadText),
-											reasoningOpts,
+											streamReasoningOpts,
 										);
+										lastStreamChunk = data;
+										noteStreamDeltaFields(data, streamDeltaState);
 										appendToolsFromPayload(data);
 										if (detectToolCallsInResponse(data))
 											hasActualToolCalls = true;
@@ -5044,8 +5129,10 @@ proxy.all('/*', async (c) => {
 									if (payloadText) {
 										const data = backfillOpenAIResponseContent(
 											JSON.parse(payloadText),
-											reasoningOpts,
+											streamReasoningOpts,
 										);
+										lastStreamChunk = data;
+										noteStreamDeltaFields(data, streamDeltaState);
 										controller.enqueue(
 											new TextEncoder().encode(
 												`data: ${JSON.stringify(data)}\n\n`,
@@ -5059,6 +5146,22 @@ proxy.all('/*', async (c) => {
 								controller.enqueue(new TextEncoder().encode(finalLine));
 							}
 						}
+					}
+					if (
+						!openaiSawDone &&
+						shouldInjectStreamReasoningBackfill({
+							profile: reasoningOpts.reasoningProfile,
+							sawPlainContent: streamDeltaState.sawPlainContent,
+							reasoningText: streamDeltaState.reasoningText,
+							hasToolCalls: hasActualToolCalls,
+						})
+					) {
+						controller.enqueue(
+							encodeDeferredReasoningBackfillChunk(
+								lastStreamChunk,
+								streamDeltaState.reasoningText,
+							),
+						);
 					}
 					const finalized = finalizeCompletion(acc);
 					// Inlined: finalizeCountedCompletion was never exported from token-extractor.ts
