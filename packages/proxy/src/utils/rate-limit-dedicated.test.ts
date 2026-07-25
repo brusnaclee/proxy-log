@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   findDedicatedRuleForModel,
   modelMatchesDedicatedRule,
+  patternMatchVariants,
   type DedicatedQuotaRule,
 } from "./rate-limit.js";
 
@@ -21,13 +22,35 @@ describe("dedicated quota matching", () => {
     },
   ];
 
+  it("patternMatchVariants keeps slash tails only", () => {
+    assert.deepEqual(patternMatchVariants("tokito/gcli/grok-4.5"), [
+      "tokito/gcli/grok-4.5",
+      "gcli/grok-4.5",
+    ]);
+    assert.deepEqual(patternMatchVariants("gcli/grok-4.5"), ["gcli/grok-4.5"]);
+  });
+
   it("matches only gcli-prefixed grok via raw model", () => {
     assert.equal(
       modelMatchesDedicatedRule("grok-4.5", rules[0], ["tokito/gcli/grok-4.5"]),
       true,
     );
     assert.equal(
+      modelMatchesDedicatedRule("grok-4.5", rules[0], ["gcli/grok-4.5"]),
+      true,
+    );
+    assert.equal(
+      modelMatchesDedicatedRule("grok-4.5", rules[0], [
+        "auto (gcli/grok-4.5) [stream]",
+      ]),
+      true,
+    );
+    assert.equal(
       modelMatchesDedicatedRule("grok-4.5", rules[0], ["xai/grok-4.5"]),
+      false,
+    );
+    assert.equal(
+      modelMatchesDedicatedRule("grok-4.5", rules[0], ["amanai/grok-4.5"]),
       false,
     );
     // Without raw matchModels, normalized alone must not match slash pattern

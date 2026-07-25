@@ -97,10 +97,35 @@ export function getModelMatchCondition(normalizedModel: string): SQL {
   )`;
 }
 
-/** Pattern family: count all logged models containing the pattern substring. */
+/**
+ * Slash-pattern variants for matching logged models.
+ * `tokito/gcli/grok-4.5` → also `gcli/grok-4.5` (keeps ≥1 `/`).
+ * Bare last segment (`grok-4.5`) is NOT included — too broad across providers.
+ * Covers logs like `auto (gcli/grok-4.5)` when the rule stores the full catalog id.
+ */
+export function patternMatchVariants(pattern: string): string[] {
+  const p = String(pattern || "").toLowerCase().trim();
+  if (!p) return [];
+  const out: string[] = [p];
+  let rest = p;
+  while (true) {
+    const i = rest.indexOf("/");
+    if (i < 0) break;
+    rest = rest.slice(i + 1);
+    if (!rest || !rest.includes("/")) break;
+    out.push(rest);
+  }
+  return out;
+}
+
+/** Pattern family: count logged models containing the pattern (or slash-tail variants). */
 export function getPatternModelMatchCondition(pattern: string): SQL {
-  const p = pattern.toLowerCase();
-  return sql`position(${p} in lower(${requestLogs.model})) > 0`;
+  const variants = patternMatchVariants(pattern);
+  if (!variants.length) return sql`false`;
+  const parts = variants.map(
+    (v) => sql`position(${v} in lower(${requestLogs.model})) > 0`,
+  );
+  return sql`(${sql.join(parts, sql` OR `)})`;
 }
 
 /** Exact match against normalized runtime id OR catalog-style `provider/id`. */
@@ -129,14 +154,21 @@ function isPatternModelLimit(
   if (!m.isPattern) return false;
   const pat = (m.model || "").toLowerCase().trim();
   if (!pat) return false;
+  const variants = patternMatchVariants(pat);
   const haystacks = new Set<string>();
   haystacks.add(normalizedModel.toLowerCase());
   for (const extra of matchModels || []) {
     const e = String(extra || "").toLowerCase().trim();
-    if (e) haystacks.add(e);
+    if (!e) continue;
+    haystacks.add(e);
+    // Also index auto-wrapper contents: "auto (gcli/grok-4.5) [stream]"
+    const autoInner = e.match(/^auto\s*\(([^)]+)\)/i)?.[1]?.trim().toLowerCase();
+    if (autoInner) haystacks.add(autoInner);
   }
   for (const h of haystacks) {
-    if (h.includes(pat) || h.endsWith("/" + pat)) return true;
+    for (const v of variants) {
+      if (h.includes(v) || h.endsWith("/" + v)) return true;
+    }
   }
   return false;
 }
@@ -256,8 +288,7 @@ export async function listDedicatedQuotaRules(apiKeyId: number): Promise<Dedicat
 /** SQL fragment: model column matches a dedicated rule (exact family or substring pattern). */
 export function sqlMatchDedicatedRule(rule: Pick<DedicatedQuotaRule, "model" | "isPattern">): SQL {
   if (rule.isPattern) {
-    const p = rule.model.toLowerCase();
-    return sql`position(${p} in lower(${requestLogs.model})) > 0`;
+    return getPatternModelMatchCondition(rule.model);
   }
   return getModelMatchCondition(rule.model);
 }
