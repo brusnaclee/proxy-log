@@ -99,6 +99,31 @@ export function copyToClipboard(text: string): Promise<void> {
   return navigator.clipboard.writeText(text);
 }
 
+export function statusLabel(code: number): string {
+  if (code >= 200 && code < 300) return "OK";
+  const labels: Record<number, string> = {
+    401: "Unauthorized",
+    403: "Forbidden",
+    429: "Rate Limited",
+    500: "Server Error",
+    502: "Bad Gateway",
+    503: "Unavailable",
+  };
+  return labels[code] || `HTTP ${code}`;
+}
+
+export function statusDetail(code: number): string {
+  const details: Record<number, string> = {
+    401: "Invalid or expired API key",
+    403: "Access denied for this resource",
+    429: "Too many requests — wait for the window reset",
+    500: "Upstream provider internal error",
+    502: "Upstream provider unavailable or returned an invalid response",
+    503: "Service temporarily unavailable",
+  };
+  return details[code] || "";
+}
+
 /**
  * Format a period string for chart display.
  * Daily: "2026-06-03" → "06/03"

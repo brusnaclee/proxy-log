@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { Fragment, useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { keys, logs, stats, trialSettings, type ApiKeyDetail, type KeyPeriodStats, type LogEntry, type SessionDetailResponse, type ModelLimitEntry, type TrialUserRow, globalSettings } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,8 +9,8 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { formatDate, formatNumber, formatRelativeTime, copyToClipboard, formatCost, formatInputBreakdown } from "@/lib/utils";
-import { ArrowLeft, Copy, Check, RotateCw, Trash2, Shield, ShieldOff, X, Download, DollarSign, Gift, Info, ExternalLink, CalendarClock } from "lucide-react";
+import { formatDate, formatNumber, formatRelativeTime, copyToClipboard, formatCost, formatInputBreakdown, statusLabel, statusDetail } from "@/lib/utils";
+import { ArrowLeft, Copy, Check, RotateCw, Trash2, Shield, ShieldOff, X, Download, DollarSign, Gift, Info, ExternalLink, CalendarClock, ChevronDown, ChevronRight } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
   DialogDescription, DialogFooter, DialogTrigger
@@ -74,6 +74,7 @@ export default function KeyDetailPage() {
 
   // Logs period filter
   const [logsPeriod, setLogsPeriod] = useState<1 | 7 | 30 | 0>(0); // 0 = all
+  const [expandedLogId, setExpandedLogId] = useState<number | null>(null);
 
   // Models tab state
   const [modelTabDays, setModelTabDays] = useState(0); // 0 = all time
@@ -147,7 +148,7 @@ export default function KeyDetailPage() {
       const params: Record<string, string> = {
         api_key_id: id,
         limit: "100",
-        lite: "1",
+        // Full rows so expand can show error / request / response previews (like portal Activity)
       };
       if (period === 0) {
         params.period = "allTime";
@@ -1316,7 +1317,8 @@ export API_TIMEOUT_MS=500000`}
               <CardTitle className="text-base">Device/IP Rules</CardTitle>
             </CardHeader>
             <CardContent className="p-0">
-              <table className="w-full text-sm">
+              <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[720px]">
                 <thead>
                   <tr className="border-b border-border/50">
                     <th className="text-left py-3 px-4 text-muted-foreground font-medium">Type</th>
@@ -1354,6 +1356,7 @@ export API_TIMEOUT_MS=500000`}
                   )}
                 </tbody>
               </table>
+              </div>
             </CardContent>
           </Card>
 
@@ -1387,7 +1390,8 @@ export API_TIMEOUT_MS=500000`}
               <CardTitle className="text-base">IDE Rules</CardTitle>
             </CardHeader>
             <CardContent className="p-0">
-              <table className="w-full text-sm">
+              <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[720px]">
                 <thead>
                   <tr className="border-b border-border/50">
                     <th className="text-left py-3 px-4 text-muted-foreground font-medium">Type</th>
@@ -1423,6 +1427,7 @@ export API_TIMEOUT_MS=500000`}
                   )}
                 </tbody>
               </table>
+              </div>
             </CardContent>
           </Card>
 
@@ -1433,7 +1438,8 @@ export API_TIMEOUT_MS=500000`}
         <TabsContent value="devices">
           <Card className="border-border/50">
             <CardContent className="p-0">
-              <table className="w-full text-sm">
+              <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[720px]">
                 <thead>
                   <tr className="border-b border-border/50">
                     <th className="text-left py-3 px-4 text-muted-foreground font-medium">Fingerprint</th>
@@ -1496,85 +1502,186 @@ export API_TIMEOUT_MS=500000`}
                   )}
                 </tbody>
               </table>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
 
         {/* Logs Tab */}
         <TabsContent value="logs">
-          <Card className="border-border/50">
+          <Card className="border-border/50 overflow-hidden">
             <CardHeader className="flex flex-row items-center justify-between pb-2 flex-wrap gap-2">
               <div className="flex items-center gap-2 flex-wrap">
                 <CardTitle className="text-base">Request Logs</CardTitle>
                 <div className="flex gap-1">
                   {([{l:"Today",v:1},{l:"7 Days",v:7},{l:"30 Days",v:30},{l:"All",v:0}] as const).map(o => (
-                    <button key={o.v} onClick={() => setLogsPeriod(o.v as 0|1|7|30)}
+                    <button key={o.v} onClick={() => { setLogsPeriod(o.v as 0|1|7|30); setExpandedLogId(null); }}
                       className={`px-2 py-0.5 text-xs rounded transition-colors ${logsPeriod === o.v ? "bg-primary text-primary-foreground font-medium" : "text-muted-foreground hover:text-foreground border border-border/50"}`}>
                       {o.l}
                     </button>
                   ))}
                 </div>
+                <p className="text-[11px] text-muted-foreground w-full sm:w-auto">Click a row to inspect error / request / response</p>
               </div>
               <Button variant="outline" size="sm" onClick={handleExportLogs}>
                 <Download className="h-4 w-4 mr-2" /> Export XLSX
               </Button>
             </CardHeader>
             <CardContent className="p-0">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border/50">
-                    <th className="text-left py-3 px-4 text-muted-foreground font-medium">Time</th>
-                    <th className="text-left py-3 px-4 text-muted-foreground font-medium">Model</th>
-                    <th className="text-left py-3 px-4 text-muted-foreground font-medium">IDE</th>
-                    <th className="text-left py-3 px-4 text-muted-foreground font-medium">Provider</th>
-                    <th className="text-left py-3 px-4 text-muted-foreground font-medium">OS / Client</th>
-                    <th className="text-left py-3 px-4 text-muted-foreground font-medium">IP</th>
-                    <th className="text-left py-3 px-4 text-muted-foreground font-medium">Tools</th>
-                    <th className="text-right py-3 px-4 text-muted-foreground font-medium">Tokens</th>
-                    <th className="text-right py-3 px-4 text-muted-foreground font-medium">Latency</th>
-                    <th className="text-center py-3 px-4 text-muted-foreground font-medium">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {keyLogs.map((log) => (
-                    <tr key={log.id} className="border-b border-border/30 hover:bg-accent/30">
-                      <td className="py-2 px-4 text-xs text-muted-foreground font-mono">
-                        <div>{formatDate(log.createdAt)}</div>
-                        <div className="text-[10px]">{formatRelativeTime(log.createdAt)}</div>
-                      </td>
-                      <td className="py-2 px-4">
-                        <code className="text-xs bg-accent/50 px-1.5 py-0.5 rounded">{log.model}</code>
-                      </td>
-                      <td className="py-2 px-4 text-xs">{log.ideDetected}</td>
-                      <td className="py-2 px-4 text-xs">{log.provider || "unknown"}</td>
-                      <td className="py-2 px-4 text-xs text-muted-foreground">
-                        <div>{log.osDetected || "Unknown"}</div>
-                        <div className="text-[10px]">{log.clientName || "-"}</div>
-                      </td>
-                      <td className="py-2 px-4 text-xs font-mono">{log.ipAddress}</td>
-                      <td className="py-2 px-4 text-xs">{(log.toolsUsed || []).length ? (log.toolsUsed || []).slice(0, 2).join(", ") : "?"}</td>
-                      <td className="py-2 px-4 text-right font-mono text-xs">{formatNumber(log.totalTokens)}</td>
-                      <td className="py-2 px-4 text-right text-xs text-muted-foreground">{log.latencyMs}ms</td>
-                      <td className="py-2 px-4 text-center">
-                        <Badge variant={log.statusCode >= 400 ? "destructive" : "success"} className="text-[10px]">
-                          {log.statusCode}
-                        </Badge>
-                      </td>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm min-w-[960px]">
+                  <thead>
+                    <tr className="border-b border-border/50">
+                      <th className="text-left py-3 px-3 text-muted-foreground font-medium w-8" />
+                      <th className="text-left py-3 px-3 text-muted-foreground font-medium">Time</th>
+                      <th className="text-left py-3 px-3 text-muted-foreground font-medium">Model</th>
+                      <th className="text-left py-3 px-3 text-muted-foreground font-medium">IDE</th>
+                      <th className="text-left py-3 px-3 text-muted-foreground font-medium">Provider</th>
+                      <th className="text-left py-3 px-3 text-muted-foreground font-medium">OS / Client</th>
+                      <th className="text-left py-3 px-3 text-muted-foreground font-medium">IP</th>
+                      <th className="text-left py-3 px-3 text-muted-foreground font-medium">Tools</th>
+                      <th className="text-right py-3 px-3 text-muted-foreground font-medium">Tokens</th>
+                      <th className="text-right py-3 px-3 text-muted-foreground font-medium">Latency</th>
+                      <th className="text-left py-3 px-3 text-muted-foreground font-medium whitespace-nowrap">Status</th>
                     </tr>
-                  ))}
-                  {keyLogs.length === 0 && (
-                    <tr>
-                      <td colSpan={10} className="text-center py-8 text-muted-foreground">
-                        {keyLogsLoading
-                          ? "Loading logs..."
-                          : keyLogsError
-                            ? `Failed to load logs: ${keyLogsError}`
-                            : "No request logs for this period."}
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {keyLogs.map((log) => {
+                      const open = expandedLogId === log.id;
+                      const tools = Array.isArray(log.toolsUsed) ? log.toolsUsed.filter(Boolean) : [];
+                      return (
+                        <Fragment key={log.id}>
+                          <tr
+                            className={`border-b border-border/30 hover:bg-accent/30 cursor-pointer ${open ? "bg-accent/20" : ""}`}
+                            onClick={() => setExpandedLogId(open ? null : log.id)}
+                          >
+                            <td className="py-2 px-3 text-muted-foreground">
+                              {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                            </td>
+                            <td className="py-2 px-3 text-xs text-muted-foreground font-mono whitespace-nowrap">
+                              <div>{formatDate(log.createdAt)}</div>
+                              <div className="text-[10px]">{formatRelativeTime(log.createdAt)}</div>
+                            </td>
+                            <td className="py-2 px-3">
+                              <code className="text-xs bg-accent/50 px-1.5 py-0.5 rounded break-all">{log.model}</code>
+                            </td>
+                            <td className="py-2 px-3 text-xs whitespace-nowrap">{log.ideDetected || "-"}</td>
+                            <td className="py-2 px-3 text-xs whitespace-nowrap">{log.provider || "unknown"}</td>
+                            <td className="py-2 px-3 text-xs text-muted-foreground">
+                              <div>{log.osDetected || "Unknown"}</div>
+                              <div className="text-[10px]">{log.clientName || "-"}</div>
+                            </td>
+                            <td className="py-2 px-3 text-xs font-mono whitespace-nowrap">{log.ipAddress || "-"}</td>
+                            <td className="py-2 px-3 text-xs max-w-[140px] truncate" title={tools.join(", ") || undefined}>
+                              {tools.length ? tools.slice(0, 2).join(", ") : "?"}
+                            </td>
+                            <td className="py-2 px-3 text-right font-mono text-xs whitespace-nowrap">{formatNumber(log.totalTokens)}</td>
+                            <td className="py-2 px-3 text-right text-xs text-muted-foreground whitespace-nowrap">{log.latencyMs}ms</td>
+                            <td className="py-2 px-3 whitespace-nowrap">
+                              <Badge variant={log.statusCode >= 400 ? "destructive" : "success"} className="text-[10px]">
+                                {log.statusCode} {statusLabel(log.statusCode)}
+                              </Badge>
+                            </td>
+                          </tr>
+                          {open && (
+                            <tr className="border-b border-border/50">
+                              <td colSpan={11} className="px-4 py-3 bg-accent/15">
+                                <div className="space-y-3 text-sm max-w-5xl">
+                                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                                    <span className={`font-medium ${log.statusCode >= 400 ? "text-destructive" : "text-emerald-400"}`}>
+                                      {log.statusCode} {statusLabel(log.statusCode)}
+                                    </span>
+                                    {statusDetail(log.statusCode) && (
+                                      <span className="text-muted-foreground text-xs">? {statusDetail(log.statusCode)}</span>
+                                    )}
+                                  </div>
+                                  {(log.errorMessage || log.statusCode >= 400) && (
+                                    <div>
+                                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Error / reason</p>
+                                      <pre className="text-xs text-red-400/90 bg-red-400/5 border border-red-400/15 rounded-md px-2.5 py-2 font-mono whitespace-pre-wrap break-words max-h-40 overflow-y-auto">
+                                        {log.errorMessage || "(no error message stored ? check upstream response below)"}
+                                      </pre>
+                                    </div>
+                                  )}
+                                  {log.requestPreview && (
+                                    <div>
+                                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Request preview</p>
+                                      <pre className="text-xs font-mono text-foreground/90 bg-background/60 border border-border rounded-md px-2.5 py-2 whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
+                                        {log.requestPreview}
+                                      </pre>
+                                    </div>
+                                  )}
+                                  {log.responsePreview && (
+                                    <div>
+                                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Upstream response</p>
+                                      <pre className="text-xs font-mono text-foreground/90 bg-background/60 border border-border rounded-md px-2.5 py-2 whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
+                                        {log.responsePreview}
+                                      </pre>
+                                    </div>
+                                  )}
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 text-xs text-muted-foreground">
+                                    {log.endpointPath && (
+                                      <div>Endpoint: <span className="font-mono text-foreground/80">{log.endpointPath}</span></div>
+                                    )}
+                                    {log.sessionId && (
+                                      <div>Session: <span className="font-mono text-foreground/80">{log.sessionId}</span></div>
+                                    )}
+                                    {tools.length > 0 && (
+                                      <div className="sm:col-span-2 lg:col-span-3">Tools: <span className="font-mono text-foreground/80">{tools.join(", ")}</span></div>
+                                    )}
+                                    <div>
+                                      Tokens: in {formatNumber(log.promptTokens || 0)} / out {formatNumber(log.completionTokens || 0)} / total {formatNumber(log.totalTokens || 0)}
+                                    </div>
+                                  </div>
+                                  {!log.errorMessage && !log.requestPreview && !log.responsePreview && log.statusCode < 400 && (
+                                    <p className="text-xs text-muted-foreground">No stored preview for this successful request.</p>
+                                  )}
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 text-xs"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const paste = [
+                                        `Status: ${log.statusCode} ${statusLabel(log.statusCode)}`,
+                                        statusDetail(log.statusCode) ? `Detail: ${statusDetail(log.statusCode)}` : "",
+                                        log.errorMessage ? `Error: ${log.errorMessage}` : "",
+                                        `Model: ${log.model}`,
+                                        `Provider: ${log.provider || "-"}`,
+                                        `IDE: ${log.ideDetected || "-"}`,
+                                        `Endpoint: ${log.endpointPath || "-"}`,
+                                        `Latency: ${log.latencyMs}ms`,
+                                        `Time: ${formatDate(log.createdAt)}`,
+                                        log.requestPreview ? `\nRequest:\n${log.requestPreview}` : "",
+                                        log.responsePreview ? `\nResponse:\n${log.responsePreview}` : "",
+                                      ].filter(Boolean).join("\n");
+                                      void copyToClipboard(paste).then(() => notify.success("Copied log detail"));
+                                    }}
+                                  >
+                                    <Copy className="h-3 w-3 mr-1.5" /> Copy for debug
+                                  </Button>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                    {keyLogs.length === 0 && (
+                      <tr>
+                        <td colSpan={11} className="text-center py-8 text-muted-foreground">
+                          {keyLogsLoading
+                            ? "Loading logs..."
+                            : keyLogsError
+                              ? `Failed to load logs: ${keyLogsError}`
+                              : "No request logs for this period."}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -1586,7 +1693,8 @@ export API_TIMEOUT_MS=500000`}
               <CardTitle className="text-base">Top Devices by Token Usage</CardTitle>
             </CardHeader>
             <CardContent className="p-0">
-              <table className="w-full text-sm">
+              <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[720px]">
                 <thead>
                   <tr className="border-b border-border/50">
                     <th className="text-left py-3 px-4 text-muted-foreground font-medium">Device</th>
@@ -1627,6 +1735,7 @@ export API_TIMEOUT_MS=500000`}
                   )}
                 </tbody>
               </table>
+              </div>
             </CardContent>
           </Card>
 
@@ -1638,7 +1747,8 @@ export API_TIMEOUT_MS=500000`}
               </Button>
             </CardHeader>
             <CardContent className="p-0">
-              <table className="w-full text-sm">
+              <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[720px]">
                 <thead>
                   <tr className="border-b border-border/50">
                     <th className="text-left py-3 px-4 text-muted-foreground font-medium">Session</th>
@@ -1688,6 +1798,7 @@ export API_TIMEOUT_MS=500000`}
                   )}
                 </tbody>
               </table>
+              </div>
             </CardContent>
           </Card>
 
@@ -1786,7 +1897,7 @@ export API_TIMEOUT_MS=500000`}
           <Card className="border-border/50 mb-4">
             <CardHeader className="pb-2">
               <CardTitle className="text-base font-medium">
-                Model Usage Chart — {modelTabSort === "tokens" ? "By Tokens" : "By Prompts"}
+                Model Usage Chart ? {modelTabSort === "tokens" ? "By Tokens" : "By Prompts"}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -1825,7 +1936,8 @@ export API_TIMEOUT_MS=500000`}
           {/* Unified Table */}
           <Card className="border-border/50">
             <CardContent className="p-0">
-              <table className="w-full text-sm">
+              <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[720px]">
                 <thead>
                   <tr className="border-b border-border/50">
                     <th className="text-left py-3 px-4 text-muted-foreground font-medium">#</th>
@@ -1862,6 +1974,7 @@ export API_TIMEOUT_MS=500000`}
                   )}
                 </tbody>
               </table>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
