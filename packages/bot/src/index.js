@@ -4249,8 +4249,6 @@ async function buildSearchEmbed() {
 					}
 					return `- \`${r.model}\`${pat}: ${bits.join(' · ')}`;
 				}),
-				'-# Default = Total harian (input+output jadi satu limit credit). Bisa set In/Out terpisah di Admin Settings → Model Limits.',
-				'-# Sisa kuota live: **Lihat Usage Saya** / portal / admin Key Detail.',
 			];
 		}
 	} catch {
