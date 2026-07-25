@@ -1370,23 +1370,15 @@ export async function refreshUsableProviderKeys(
 
   if (activeRows.length === 0) return [];
 
-  const now = Date.now();
+  // Always return active keys for live traffic. is_limited is informational /
+  // dashboard-only for now — auto-parking on 429 was bricking whole providers.
   const usable: Array<{ id: number; apiKey: string; requestCount: number | null }> = [];
   for (const k of activeRows) {
-    if (!k.isLimited) {
-      usable.push({ id: k.id, apiKey: k.apiKey, requestCount: k.requestCount });
-      continue;
-    }
-    const limitedAtMs = k.limitedAt ? new Date(k.limitedAt as string | Date).getTime() : 0;
-    // Missing limited_at = stuck flag — treat as expired so one bad park can't brick forever.
-    const expired =
-      !Number.isFinite(limitedAtMs) ||
-      limitedAtMs <= 0 ||
-      now - limitedAtMs >= KEY_LIMITED_TTL_MS;
-    if (expired) {
+    if (k.isLimited) {
+      // Clear sticky flags so dashboard / next probe show healthy again.
       await resetKeyLimited(k.id);
-      usable.push({ id: k.id, apiKey: k.apiKey, requestCount: k.requestCount });
     }
+    usable.push({ id: k.id, apiKey: k.apiKey, requestCount: k.requestCount });
   }
   return usable;
 }
@@ -1434,17 +1426,18 @@ export async function getNextApiKey(providerId: number): Promise<{ keyId: number
 }
 
 /**
- * Mark a key as rate-limited so it won't be selected again until reset.
+ * Previously parked a key (is_limited) so rotation skipped it for the whole
+ * provider — too aggressive when one model returns 429 (bricks all models on
+ * that upstream, especially single-key pools like tokito).
+ *
+ * Now a no-op: live traffic keeps using the key; callers should rotate/retry
+ * instead. Dashboard Retry / health probes still manage is_limited if needed.
  */
 export async function markKeyAsLimited(keyId: number): Promise<void> {
-  if (keyId < 0) return; // legacy key, can't mark
-  await db
-    .update(providerApiKeys)
-    .set({
-      isLimited: true,
-      limitedAt: new Date().toISOString(),
-    })
-    .where(eq(providerApiKeys.id, keyId));
+  if (keyId < 0) return;
+  console.warn(
+    `[key-rotation] markKeyAsLimited(${keyId}) ignored — auto-park disabled (per-model limit must not brick provider keys)`,
+  );
 }
 
 /**

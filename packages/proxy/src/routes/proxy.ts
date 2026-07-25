@@ -93,7 +93,6 @@ import {
 	getClientCatalogMonitorRows,
 	getProviderForModel,
 	isAutoCompatible,
-	markKeyAsLimited,
 	stripProviderPrefix,
 } from '../utils/model-catalog.js';
 import {
@@ -2737,8 +2736,11 @@ proxy.all('/*', async (c) => {
 				);
 
 				if (trialResponse.status === 429 || trialResponse.status === 401) {
-					// Rate limited or Invalid Key — mark key and try next model
-					await markKeyAsLimited(trialKeyResult.keyId);
+					// Do NOT park the provider key — a single model 429/401 must not
+					// brick every other model on this upstream (esp. single-key pools).
+					console.warn(
+						`[proxy] auto ${candidate.provider}/${candidate.modelId} HTTP ${trialResponse.status} on key ${trialKeyResult.keyId} — trying next model (key stays usable)`,
+					);
 				}
 				if (trialResponse.status >= 400) {
 					tried.push(
