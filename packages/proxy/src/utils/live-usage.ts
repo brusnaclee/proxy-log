@@ -8,6 +8,7 @@ import { and, eq, sql, inArray } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { apiKeys, adminConfig, requestLogs, modelLimits } from '../db/schema.js';
 import {
+	BILLABLE_LOG_SQL,
 	turnCountSql,
 	peakPromptTokensSql,
 	turnCompletionTokensSql,
@@ -35,6 +36,9 @@ import {
 	parseRateLimitWindow,
 	getWindowResetMs,
 	getApiCallWindowResetMs,
+	listDedicatedQuotaRules,
+	sqlExcludeDedicatedModels,
+	sqlMatchDedicatedRule,
 } from './rate-limit.js';
 import {
 	getAddonTeaseDefaultLimit,
@@ -135,6 +139,16 @@ export interface LiveUsagePayload {
 	/** Pack per-model token subcaps (not prompt caps) */
 	addonModelTokenCaps?: Array<{ pattern: string; dailyLimit: number }>;
 	perModelPromptsBypassedByAddon?: boolean;
+	/** Dedicated model pools (outside account daily/input/output) */
+	dedicatedPools?: Array<{
+		model: string;
+		isPattern: boolean;
+		scope: string;
+		limit: number;
+		used: number;
+		remaining: number;
+		resetAt: string;
+	}>;
 }
 
 function pickLimit(
@@ -231,6 +245,11 @@ export async function buildLiveUsageForKey(
 		sql`status_code BETWEEN 200 AND 299`,
 	)!;
 
+	const dedicatedRules = await listDedicatedQuotaRules(limitKey.id);
+	const excludeDedicated = sqlExcludeDedicatedModels(dedicatedRules);
+	const whereTodayHopsShared = and(whereTodayHops, excludeDedicated)!;
+	const whereTodayShared = and(whereToday, excludeDedicated)!;
+
 	const [usageToday, usageMonth, limitUsageToday] = await Promise.all([
 		db
 			.select({
@@ -238,12 +257,12 @@ export async function buildLiveUsageForKey(
 				hopCount: hopCountSql(whereTodayHops),
 				/** Peak In (display note) — not used for the input limit bar. */
 				peakPromptTokens: peakPromptTokensSql(whereToday, tmOpts),
-				/** Hop-weighted input — same as daily input gate. */
-				promptTokens: weightedHopInputTokensSql(whereTodayHops, tmOpts),
-				billablePromptTokens: turnBillablePromptTokensSql(whereToday, tmOpts),
-				cachedTokens: turnCachedTokensSql(whereToday, tmOpts),
-				fullInputTokens: hopFullInputTokensSql(whereTodayHops, tmOpts),
-				completionTokens: turnCompletionTokensSql(whereToday, tmOpts),
+				/** Hop-weighted input — same as daily input gate (excl. dedicated pools). */
+				promptTokens: weightedHopInputTokensSql(whereTodayHopsShared, tmOpts),
+				billablePromptTokens: turnBillablePromptTokensSql(whereTodayShared, tmOpts),
+				cachedTokens: turnCachedTokensSql(whereTodayShared, tmOpts),
+				fullInputTokens: hopFullInputTokensSql(whereTodayHopsShared, tmOpts),
+				completionTokens: turnCompletionTokensSql(whereTodayShared, tmOpts),
 			})
 			.from(requestLogs)
 			.where(whereToday)
@@ -257,10 +276,10 @@ export async function buildLiveUsageForKey(
 			.then((r) => r[0]),
 		db
 			.select({
-				tokens: weightedHopTotalTokensSql(whereTodayHops, tmOpts),
+				tokens: weightedHopTotalTokensSql(whereTodayHopsShared, tmOpts),
 			})
 			.from(requestLogs)
-			.where(whereTodayHops)
+			.where(whereTodayHopsShared)
 			.then((r) => r[0]),
 	]);
 
@@ -513,6 +532,34 @@ export async function buildLiveUsageForKey(
 		}
 	}
 
+	const dedicatedPools: NonNullable<LiveUsagePayload['dedicatedPools']> = [];
+	if (dedicatedRules.length > 0) {
+		for (const rule of dedicatedRules) {
+			const wherePool = and(
+				inArray(requestLogs.apiKeyId, keyIds),
+				sql`created_at >= ${todayStart}`,
+				BILLABLE_LOG_SQL,
+				sqlMatchDedicatedRule(rule),
+			)!;
+			const usedRow = await db
+				.select({ total: weightedHopTotalTokensSql(wherePool, tmOpts) })
+				.from(requestLogs)
+				.where(wherePool)
+				.then((r) => r[0]);
+			const used = Number(usedRow?.total) || 0;
+			const limit = rule.dailyTokenLimit || 0;
+			dedicatedPools.push({
+				model: rule.model,
+				isPattern: !!rule.isPattern,
+				scope: rule.scope,
+				limit,
+				used,
+				remaining: Math.max(0, limit - used),
+				resetAt: dailyResetAt,
+			});
+		}
+	}
+
 	return {
 		scope,
 		accountKeyCount: keyIds.length,
@@ -570,5 +617,6 @@ export async function buildLiveUsageForKey(
 		activeAddons: activeAddonsSummary,
 		addonModelTokenCaps,
 		perModelPromptsBypassedByAddon,
+		dedicatedPools,
 	};
 }

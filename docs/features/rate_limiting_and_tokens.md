@@ -73,3 +73,23 @@ const dw = new Date(wibNow); dw.setUTCHours(0, 0, 0, 0); // Sets to midnight
 // dw is then converted back to UTC string for SQLite comparison
 ```
 This ensures users in Indonesia experience a predictable reset at exactly 00:00 local time.
+
+---
+
+## 4. Model overrides & dedicated pools
+
+`model_limits` rows can be **global** (`scope=global`, `scope_id=0`) or **per-key** (`scope=key`). Resolution order for a request:
+
+`keyExact → keyPattern (longest) → globalExact → globalPattern (longest)`.
+
+| Mode | `dedicated_quota` | Behavior |
+|------|-------------------|----------|
+| Subcap (default) | `false` | Extra ceiling on that model; usage **still** counts toward account daily / daily input / daily output |
+| Dedicated pool | `true` (+ `daily_token_limit` > 0) | Usage matching the rule is **excluded** from account daily / input / output; only the model `daily_token_limit` (and model monthly if set) applies. Account **monthly** still includes dedicated usage |
+
+Live meters (Discord Usage, admin Live Usage, portal Usage Today) show:
+
+- **Input Harian** bar = limit credit, with sublabel `context (cached) + input (billable)`
+- **Dedicated model pools** section when ≥1 dedicated rule applies
+
+Seeded default: global pattern `grok-4.5`, 5M tokens/day, `dedicated_quota=true`.

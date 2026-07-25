@@ -261,18 +261,29 @@ settings.get("/settings/model-catalog/match", async (c) => {
 });
 
 settings.put("/settings/model-limits", async (c) => {
-  const body = await c.req.json<{ model: string; promptLimit?: number; dailyTokenLimit?: number; monthlyTokenLimit?: number; dailyInputTokenLimit?: number; dailyOutputTokenLimit?: number; isPattern?: boolean }>();
+  const body = await c.req.json<{
+    model: string;
+    promptLimit?: number;
+    dailyTokenLimit?: number;
+    monthlyTokenLimit?: number;
+    dailyInputTokenLimit?: number;
+    dailyOutputTokenLimit?: number;
+    isPattern?: boolean;
+    dedicatedQuota?: boolean;
+  }>();
   if (!body.model || body.model.trim() === "") return c.json({ error: "model is required" }, 400);
   const modelName = body.model.trim();
   const isPattern = !!body.isPattern;
+  const dedicatedQuota = !!body.dedicatedQuota;
   const limit = Math.max(0, body.promptLimit || 0);
   const dailyTokenLimit = Math.max(0, body.dailyTokenLimit || 0);
   const monthlyTokenLimit = Math.max(0, body.monthlyTokenLimit || 0);
   const dailyInputTokenLimit = Math.max(0, body.dailyInputTokenLimit || 0);
   const dailyOutputTokenLimit = Math.max(0, body.dailyOutputTokenLimit || 0);
 
-  // For exact (non-pattern), still allow any string (legacy compat). For pattern,
-  // we accept any substring — the matcher runs case-insensitive includes() at lookup.
+  if (dedicatedQuota && dailyTokenLimit <= 0) {
+    return c.json({ error: "dedicatedQuota requires dailyTokenLimit > 0" }, 400);
+  }
 
   // Upsert via UPDATE (preserve prompt_window_start) or INSERT. Raw SQL avoids
   // a known Drizzle issue with the boolean is_pattern column on some pg clients.
@@ -291,9 +302,10 @@ settings.put("/settings/model-limits", async (c) => {
            daily_token_limit = $2,
            monthly_token_limit = $3,
            daily_input_token_limit = $4,
-           daily_output_token_limit = $5
-         WHERE id = $6`,
-        [limit, dailyTokenLimit, monthlyTokenLimit, dailyInputTokenLimit, dailyOutputTokenLimit, existing.rows[0].id],
+           daily_output_token_limit = $5,
+           dedicated_quota = $6
+         WHERE id = $7`,
+        [limit, dailyTokenLimit, monthlyTokenLimit, dailyInputTokenLimit, dailyOutputTokenLimit, dedicatedQuota, existing.rows[0].id],
       );
     } else {
       await db.insert(modelLimits).values({
@@ -303,13 +315,17 @@ settings.put("/settings/model-limits", async (c) => {
         monthlyTokenLimit,
         dailyInputTokenLimit,
         dailyOutputTokenLimit,
+        dedicatedQuota,
       });
     }
   } else if (existing.rows[0]?.id) {
     await pool.query(`DELETE FROM model_limits WHERE id = $1`, [existing.rows[0].id]);
   }
 
-  return c.json({ success: true, model: modelName, isPattern, promptLimit: limit, dailyTokenLimit, monthlyTokenLimit, dailyInputTokenLimit, dailyOutputTokenLimit });
+  return c.json({
+    success: true, model: modelName, isPattern, dedicatedQuota,
+    promptLimit: limit, dailyTokenLimit, monthlyTokenLimit, dailyInputTokenLimit, dailyOutputTokenLimit,
+  });
 });
 
 settings.delete("/settings/model-limits/:model", async (c) => {

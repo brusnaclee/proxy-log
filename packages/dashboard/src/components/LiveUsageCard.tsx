@@ -114,7 +114,9 @@ export function LiveUsageCard({
     activeAddons,
     addonModelTokenCaps,
     perModelPromptsBypassedByAddon,
+    dedicatedPools,
   } = live;
+  const pools = (dedicatedPools || []).filter((p) => p.limit > 0);
 
   const bars: Array<{
     label: string;
@@ -163,16 +165,12 @@ export function LiveUsageCard({
     const used = usageToday.promptTokens;
     const overSoft = !!(dailyTokenBreakdown?.bypassIo && softMax > 0 && used > softMax);
     const softLeft = Math.max(0, softMax - used);
-    const full = Number(usageToday.fullInputTokens) || 0;
-    const peak = Number((usageToday as any).peakPromptTokens) || 0;
-    const fullNote =
-      full > used * 1.2
-        ? ` · full ${formatNumber(full)} (amanai)`
-        : "";
-    const peakNote =
-      peak > 0 && Math.abs(peak - used) > used * 0.05
-        ? ` · peak-view ${formatNumber(peak)}`
-        : "";
+    const ctx = Number(usageToday.cachedTokens) || 0;
+    const inp = Number(usageToday.billablePromptTokens) || 0;
+    const ctxInNote =
+      ctx > 0 || inp > 0
+        ? `context ${formatNumber(ctx)} + input ${formatNumber(inp)}`
+        : "limit credit";
     bars.push({
       label: "Input Tokens (limit)",
       value: used,
@@ -182,10 +180,7 @@ export function LiveUsageCard({
       sublabel:
         (dailyTokenBreakdown?.bypassIo
           ? `exceed OK until daily ${formatNumber(dailyCap)} · `
-          : "limit schedule · ") +
-        "tokens" +
-        peakNote +
-        fullNote,
+          : "") + ctxInNote,
       source: dailyTokenBreakdown?.bypassIo
         ? "add-on extends past soft"
         : sourceLabel(limits.dailyInputTokenLimitSource),
@@ -303,7 +298,7 @@ export function LiveUsageCard({
     );
   }
 
-  if (!bars.length && !modelLimits.length) {
+  if (!bars.length && !modelLimits.length && !pools.length) {
     return (
       <div className="rounded-xl border border-border/50 bg-card p-4 space-y-2">
         <div className="flex items-center justify-between">
@@ -362,6 +357,25 @@ export function LiveUsageCard({
           />
         ))}
       </div>
+      {pools.length > 0 && (
+        <div className="rounded-lg border border-sky-500/30 bg-sky-500/5 p-3 space-y-2 text-xs">
+          <p className="font-medium text-foreground">Dedicated model pools</p>
+          <p className="text-[10px] text-muted-foreground">
+            Outside account daily / input / output
+          </p>
+          {pools.map((p) => (
+            <ProgressBar
+              key={`${p.scope}:${p.model}:${p.isPattern}`}
+              label={`${p.model}${p.isPattern ? " (pattern)" : ""} · ${p.scope}`}
+              value={p.used}
+              max={p.limit}
+              remaining={p.remaining}
+              sublabel="limit credit"
+              reset={formatReset(p.resetAt)}
+            />
+          ))}
+        </div>
+      )}
       {(activeAddons && activeAddons.length > 0) && (
         <div className="rounded-lg border border-border/60 bg-muted/30 p-3 space-y-1.5 text-xs">
           <p className="font-medium text-foreground">Active add-on</p>

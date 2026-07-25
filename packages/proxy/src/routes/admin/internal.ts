@@ -5,7 +5,17 @@ import { adminConfig, allowedDevices, allowedIdes, apiKeys, devices, requestLogs
 import { generateApiKey, getKeyPrefix, sha256 } from "../../utils/crypto.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
-import { checkPromptLimit, checkModelPromptLimit, checkApiCallLimit, parseRateLimitWindow, getWindowResetMs, getApiCallWindowResetMs } from "../../utils/rate-limit.js";
+import {
+  checkPromptLimit,
+  checkModelPromptLimit,
+  checkApiCallLimit,
+  parseRateLimitWindow,
+  getWindowResetMs,
+  getApiCallWindowResetMs,
+  listDedicatedQuotaRules,
+  sqlExcludeDedicatedModels,
+  sqlMatchDedicatedRule,
+} from "../../utils/rate-limit.js";
 import { isInternalRequest } from "../../middleware/session.js";
 import { configCache } from "../../utils/cache.js";
 import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, peakPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, inputHopWeightSqlExpr, getTokenLimitWeightModeSync, weightedHopInputTokensSql, weightedHopTotalTokensSql, modelLimitCreditBreakdownSql } from "../../utils/counting.js";
@@ -717,21 +727,37 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     return rows;
   }
 
-  async function getPeriodStats(since: Date) {
-    const whereClause = and(eq(requestLogs.apiKeyId, keyId), sql`created_at >= ${since}`, VALID_LOG_SQL);
-    const whereHops = and(eq(requestLogs.apiKeyId, keyId), sql`created_at >= ${since}`, BILLABLE_LOG_SQL);
+  async function getPeriodStats(since: Date, opts?: { excludeDedicated?: boolean }) {
+    const dedicatedRules = opts?.excludeDedicated
+      ? await listDedicatedQuotaRules(keyId)
+      : [];
+    const excludeDedicated = opts?.excludeDedicated
+      ? sqlExcludeDedicatedModels(dedicatedRules)
+      : undefined;
+    const whereClause = and(
+      eq(requestLogs.apiKeyId, keyId),
+      sql`created_at >= ${since}`,
+      VALID_LOG_SQL,
+      excludeDedicated,
+    );
+    const whereHops = and(
+      eq(requestLogs.apiKeyId, keyId),
+      sql`created_at >= ${since}`,
+      BILLABLE_LOG_SQL,
+      excludeDedicated,
+    );
     const s = (await db.select({
-      requests: turnCountSql(whereClause),
-      tokens: weightedHopTotalTokensSql(whereHops, tmOpts),
-      promptTokens: weightedHopInputTokensSql(whereHops, tmOpts),
-      peakPromptTokens: peakPromptTokensSql(whereClause, tmOpts),
-      billablePromptTokens: turnBillablePromptTokensSql(whereClause, tmOpts),
-      cachedTokens: turnCachedTokensSql(whereClause, tmOpts),
-      completionTokens: turnCompletionTokensSql(whereClause, tmOpts),
+      requests: turnCountSql(whereClause!),
+      tokens: weightedHopTotalTokensSql(whereHops!, tmOpts),
+      promptTokens: weightedHopInputTokensSql(whereHops!, tmOpts),
+      peakPromptTokens: peakPromptTokensSql(whereClause!, tmOpts),
+      billablePromptTokens: turnBillablePromptTokensSql(whereClause!, tmOpts),
+      cachedTokens: turnCachedTokensSql(whereClause!, tmOpts),
+      completionTokens: turnCompletionTokensSql(whereClause!, tmOpts),
       contextTokens: sql<number>`0`,
     })
     .from(requestLogs)
-    .where(whereClause))[0];
+    .where(whereClause!))[0];
 
     // Cost derived from scaled per-model token split so it stays consistent.
     const breakdown = sanitizeRows((await db.execute(sql`
@@ -760,12 +786,40 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     };
   }
 
-  const [todayStats, monthStats, todayModels, monthModels] = await Promise.all([
+  const [todayStats, monthStats, todayModels, monthModels, todaySharedStats] = await Promise.all([
     getPeriodStats(todayDate),
     getPeriodStats(monthDate),
     getTopModels(todayDate),
     getTopModels(monthDate),
+    getPeriodStats(todayDate, { excludeDedicated: true }),
   ]);
+
+  const dedicatedRulesForKey = await listDedicatedQuotaRules(keyId);
+  const dedicatedPools = [];
+  for (const rule of dedicatedRulesForKey) {
+    const wherePool = and(
+      eq(requestLogs.apiKeyId, keyId),
+      sql`created_at >= ${todayDate}`,
+      BILLABLE_LOG_SQL,
+      sqlMatchDedicatedRule(rule),
+    )!;
+    const usedRow = await db
+      .select({ total: weightedHopTotalTokensSql(wherePool, tmOpts) })
+      .from(requestLogs)
+      .where(wherePool)
+      .then((r) => r[0]);
+    const used = Number(usedRow?.total) || 0;
+    const limit = rule.dailyTokenLimit || 0;
+    dedicatedPools.push({
+      model: rule.model,
+      isPattern: !!rule.isPattern,
+      scope: rule.scope,
+      limit,
+      used,
+      remaining: Math.max(0, limit - used),
+      resetAt: null as string | null,
+    });
+  }
 
   const [config] = await db.select().from(adminConfig);
 
@@ -985,10 +1039,13 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     dailyOutputTokenLimit: quotaStack.bypassIo
       ? quotaStack.outputBase
       : quotaStack.dailyOutputLimit,
-    dailyTokensUsed: todayStats?.tokens || 0,
+    dailyTokensUsed: todaySharedStats?.tokens || 0,
     monthlyTokensUsed: monthStats?.tokens || 0,
-    dailyInputUsed: todayStats?.promptTokens || 0,
-    dailyOutputUsed: todayStats?.completionTokens || 0,
+    dailyInputUsed: todaySharedStats?.promptTokens || 0,
+    dailyOutputUsed: todaySharedStats?.completionTokens || 0,
+    dailyInputBillable: todaySharedStats?.billablePromptTokens || 0,
+    dailyInputCached: todaySharedStats?.cachedTokens || 0,
+    dedicatedPools: dedicatedPools.map((p) => ({ ...p, resetAt: dailyResetAt })),
     dailyResetAt,
     monthlyResetAt,
       today: {

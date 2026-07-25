@@ -112,6 +112,15 @@ export interface MeResponse {
   }>;
   addonModelTokenCaps?: Array<{ pattern: string; dailyLimit: number }>;
   perModelPromptsBypassedByAddon?: boolean;
+  dedicatedPools?: Array<{
+    model: string;
+    isPattern: boolean;
+    scope: string;
+    limit: number;
+    used: number;
+    remaining: number;
+    resetAt: string;
+  }>;
   multipliers?: {
     input: number;
     output: number;

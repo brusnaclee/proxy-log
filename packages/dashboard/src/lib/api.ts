@@ -157,6 +157,15 @@ export interface LiveUsagePayload {
   }>;
   addonModelTokenCaps?: Array<{ pattern: string; dailyLimit: number }>;
   perModelPromptsBypassedByAddon?: boolean;
+  dedicatedPools?: Array<{
+    model: string;
+    isPattern: boolean;
+    scope: string;
+    limit: number;
+    used: number;
+    remaining: number;
+    resetAt: string;
+  }>;
 }
 
 export interface ApiKeyListItem {
@@ -364,7 +373,7 @@ export const keys = {
     request<{ success: boolean; message?: string }>(`/keys/${keyId}/policies/ide/${ruleId}`, { method: "DELETE" }),
   getModelLimits: (keyId: number) =>
     request<{ data: ModelLimitEntry[] }>(`/keys/${keyId}/model-limits`),
-  setModelLimit: (keyId: number, model: string, limits: { promptLimit?: number, dailyTokenLimit?: number, monthlyTokenLimit?: number, dailyInputTokenLimit?: number, dailyOutputTokenLimit?: number, isPattern?: boolean }) =>
+  setModelLimit: (keyId: number, model: string, limits: { promptLimit?: number, dailyTokenLimit?: number, monthlyTokenLimit?: number, dailyInputTokenLimit?: number, dailyOutputTokenLimit?: number, isPattern?: boolean, dedicatedQuota?: boolean }) =>
     request<{ success: boolean }>(`/keys/${keyId}/model-limits`, { method: "PUT", body: JSON.stringify({ model, ...limits }) }),
   matchModelCatalog: (keyId: number, pattern: string) =>
     request<{ data: string[]; total: number; totalAll: number }>(`/keys/${keyId}/model-catalog/match?pattern=${encodeURIComponent(pattern)}`),
@@ -659,6 +668,7 @@ export interface ModelLimitEntry {
   dailyInputTokenLimit: number;
   dailyOutputTokenLimit: number;
   isPattern?: boolean;
+  dedicatedQuota?: boolean;
   matchCount?: number;
   matchedIds?: string[];
   createdAt: string;
@@ -672,7 +682,7 @@ export const globalSettings = {
     request<{ data: string[] }>("/settings/models"),
   getModelLimits: () =>
     request<{ data: ModelLimitEntry[] }>("/settings/model-limits"),
-  setModelLimit: (model: string, limits: { promptLimit?: number, dailyTokenLimit?: number, monthlyTokenLimit?: number, dailyInputTokenLimit?: number, dailyOutputTokenLimit?: number, isPattern?: boolean }) =>
+  setModelLimit: (model: string, limits: { promptLimit?: number, dailyTokenLimit?: number, monthlyTokenLimit?: number, dailyInputTokenLimit?: number, dailyOutputTokenLimit?: number, isPattern?: boolean, dedicatedQuota?: boolean }) =>
     request<{ success: boolean }>("/settings/model-limits", { method: "PUT", body: JSON.stringify({ model, ...limits }) }),
   matchModelCatalog: (pattern: string) =>
     request<{ data: string[]; total: number; totalAll: number }>(`/settings/model-catalog/match?pattern=${encodeURIComponent(pattern)}`),

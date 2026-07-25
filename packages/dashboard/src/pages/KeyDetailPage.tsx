@@ -103,6 +103,7 @@ export default function KeyDetailPage() {
   const [newKeyModelOverrideMonthlyTokenLimit, setNewKeyModelOverrideMonthlyTokenLimit] = useState(0);
   const [newKeyModelOverrideDailyInputTokenLimit, setNewKeyModelOverrideDailyInputTokenLimit] = useState(0);
   const [newKeyModelOverrideDailyOutputTokenLimit, setNewKeyModelOverrideDailyOutputTokenLimit] = useState(0);
+  const [newKeyModelOverrideDedicatedQuota, setNewKeyModelOverrideDedicatedQuota] = useState(false);
   const [keyModelMatchPreview, setKeyModelMatchPreview] = useState<{ ids: string[]; total: number }>({ ids: [], total: 0 });
   const [trialInfo, setTrialInfo] = useState<TrialUserRow | null>(null);
   const [trialHistory, setTrialHistory] = useState<Array<{
@@ -1231,12 +1232,14 @@ export API_TIMEOUT_MS=500000`}
                       setNewKeyModelOverrideDailyInputTokenLimit(existing.dailyInputTokenLimit || 0);
                       setNewKeyModelOverrideDailyOutputTokenLimit(existing.dailyOutputTokenLimit || 0);
                       setNewKeyModelOverrideIsPattern(!!existing.isPattern);
+                      setNewKeyModelOverrideDedicatedQuota(!!existing.dedicatedQuota);
                     } else {
                       setNewKeyModelOverrideLimit(0);
                       setNewKeyModelOverrideDailyTokenLimit(0);
                       setNewKeyModelOverrideMonthlyTokenLimit(0);
                       setNewKeyModelOverrideDailyInputTokenLimit(0);
                       setNewKeyModelOverrideDailyOutputTokenLimit(0);
+                      setNewKeyModelOverrideDedicatedQuota(false);
                     }
                   }}
                 />
@@ -1308,6 +1311,19 @@ export API_TIMEOUT_MS=500000`}
                 <Label>Daily Output Token Limit</Label>
                 <Input type="number" value={newKeyModelOverrideDailyOutputTokenLimit} onChange={(e) => setNewKeyModelOverrideDailyOutputTokenLimit(parseInt(e.target.value) || 0)} className="mt-1" />
               </div>
+              <div className="col-span-2 md:col-span-3">
+                <label className="inline-flex items-start gap-2 cursor-pointer text-xs">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={newKeyModelOverrideDedicatedQuota}
+                    onChange={(e) => setNewKeyModelOverrideDedicatedQuota(e.target.checked)}
+                  />
+                  <span>
+                    <b>Dedicated pool</b> — outside account daily / input / output (requires Daily Token Limit &gt; 0)
+                  </span>
+                </label>
+              </div>
               <div className="col-span-2 md:col-span-3 flex flex-wrap items-center justify-end gap-2">
                 {newKeyModelOverrideIsPattern && keyModelMatchPreview.total > 0 && (
                   <Button
@@ -1325,6 +1341,7 @@ export API_TIMEOUT_MS=500000`}
                         monthlyTokenLimit: newKeyModelOverrideMonthlyTokenLimit,
                         dailyInputTokenLimit: newKeyModelOverrideDailyInputTokenLimit,
                         dailyOutputTokenLimit: newKeyModelOverrideDailyOutputTokenLimit,
+                        dedicatedQuota: newKeyModelOverrideDedicatedQuota,
                       };
                       for (const m of keyModelMatchPreview.ids) {
                         const bare = m.includes("/") ? m.slice(m.lastIndexOf("/") + 1) : m;
@@ -1337,6 +1354,7 @@ export API_TIMEOUT_MS=500000`}
                       setNewKeyModelOverrideMonthlyTokenLimit(0);
                       setNewKeyModelOverrideDailyInputTokenLimit(0);
                       setNewKeyModelOverrideDailyOutputTokenLimit(0);
+                      setNewKeyModelOverrideDedicatedQuota(false);
                       setKeyModelMatchPreview({ ids: [], total: 0 });
                       const ml = await keys.getModelLimits(parseInt(id)); setKeyModelLimits(ml.data || []);
                     }}
@@ -1353,6 +1371,7 @@ export API_TIMEOUT_MS=500000`}
                     dailyInputTokenLimit: newKeyModelOverrideDailyInputTokenLimit,
                     dailyOutputTokenLimit: newKeyModelOverrideDailyOutputTokenLimit,
                     isPattern: newKeyModelOverrideIsPattern,
+                    dedicatedQuota: newKeyModelOverrideDedicatedQuota,
                   });
                   setNewKeyModelOverride("");
                   setNewKeyModelOverrideIsPattern(false);
@@ -1361,6 +1380,7 @@ export API_TIMEOUT_MS=500000`}
                   setNewKeyModelOverrideMonthlyTokenLimit(0);
                   setNewKeyModelOverrideDailyInputTokenLimit(0);
                   setNewKeyModelOverrideDailyOutputTokenLimit(0);
+                  setNewKeyModelOverrideDedicatedQuota(false);
                   setKeyModelMatchPreview({ ids: [], total: 0 });
                   const ml = await keys.getModelLimits(parseInt(id)); setKeyModelLimits(ml.data || []);
                 }}>
@@ -1396,6 +1416,11 @@ export API_TIMEOUT_MS=500000`}
                               {ml.isPattern && (
                                 <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30" title="Pattern: applies to all models whose ID contains this substring">
                                   PATTERN
+                                </span>
+                              )}
+                              {ml.dedicatedQuota && (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30" title="Dedicated pool outside account daily/input/output">
+                                  DEDICATED
                                 </span>
                               )}
                               {ml.isPattern && (

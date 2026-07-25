@@ -8,13 +8,23 @@ import { eq, sql, and, desc } from "drizzle-orm";
 import { generateApiKey, getKeyPrefix, sha256, maskKey } from "../../utils/crypto.js";
 import { createPortalSession, destroyPortalSession, getPortalDiscordUserId, resolvePortalDiscordUserId } from "../../middleware/portal-session.js";
 import { destroyAllAuthSessions } from "../../utils/auth-sessions.js";
-import { resolvePeriodRange, chartDaysForPeriod, type PeriodKey, turnCountSql, hopCountSql, peakPromptTokensSql, turnCompletionTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, hopFullInputTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, modelLimitCreditBreakdownSql } from "../../utils/counting.js";
+import { resolvePeriodRange, chartDaysForPeriod, type PeriodKey, turnCountSql, hopCountSql, peakPromptTokensSql, turnCompletionTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, hopFullInputTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, modelLimitCreditBreakdownSql, BILLABLE_LOG_SQL } from "../../utils/counting.js";
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { getRecapWindow } from "../../utils/recap-window.js";
 import { getModelCatalogResponse, getClientCatalogMonitorRows } from "../../utils/model-catalog.js";
 import { parseTrialModelWhitelist, resolveKeyDailyTokenLimit, resolveKeyPromptLimit, resolveKeyApiCallLimit } from "../../utils/trial-config.js";
-import { checkPromptLimit, checkModelPromptLimit, checkApiCallLimit, parseRateLimitWindow, getWindowResetMs, getApiCallWindowResetMs } from "../../utils/rate-limit.js";
+import {
+  checkPromptLimit,
+  checkModelPromptLimit,
+  checkApiCallLimit,
+  parseRateLimitWindow,
+  getWindowResetMs,
+  getApiCallWindowResetMs,
+  listDedicatedQuotaRules,
+  sqlExcludeDedicatedModels,
+  sqlMatchDedicatedRule,
+} from "../../utils/rate-limit.js";
 import { logEmitter } from "../../utils/event-emitter.js";
 import { randomBytes } from "crypto";
 import { isProtectedPrimaryApiKey } from "../../utils/api-key-primary.js";
@@ -263,15 +273,21 @@ portal.get("/me", async (c) => {
 
   // Today's usage (WIB) — same token aggregation as Discord usage embed
   const todayStart = wibTodayStartDate();
+  const dedicatedRules = primaryKey
+    ? await listDedicatedQuotaRules(primaryKey.id)
+    : [];
+  const excludeDedicated = sqlExcludeDedicatedModels(dedicatedRules);
   const todayPw = and(
     userWhere(discordUserId),
     sql`created_at >= ${todayStart}`,
     sql`status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL`,
+    excludeDedicated,
   );
   const todayHops = and(
     userWhere(discordUserId),
     sql`created_at >= ${todayStart}`,
     sql`status_code BETWEEN 200 AND 299`,
+    excludeDedicated,
   );
   const usageToday = (await db.select({
     requests: turnCountSql(todayPw!),
@@ -281,6 +297,7 @@ portal.get("/me", async (c) => {
     cachedTokens: turnCachedTokensSql(todayPw!, { isTrial }),
     fullInputTokens: hopFullInputTokensSql(todayHops!, { isTrial }),
     completionTokens: turnCompletionTokensSql(todayPw!, { isTrial }),
+    totalTokens: weightedHopTotalTokensSql(todayHops!, { isTrial }),
   }).from(requestLogs).where(todayPw))[0];
 
   // This month usage (for monthly limit bar)
@@ -464,6 +481,41 @@ portal.get("/me", async (c) => {
   tomorrowWib.setUTCDate(tomorrowWib.getUTCDate() + 1);
   tomorrowWib.setUTCHours(0, 0, 0, 0);
   const dailyResetAt = new Date(tomorrowWib.getTime() - wibOffset).toISOString();
+  const dedicatedPools: Array<{
+    model: string;
+    isPattern: boolean;
+    scope: string;
+    limit: number;
+    used: number;
+    remaining: number;
+    resetAt: string;
+  }> = [];
+  if (dedicatedRules.length > 0 && accountKeyIds.length > 0) {
+    for (const rule of dedicatedRules) {
+      const wherePool = and(
+        sql`api_key_id IN (${sql.join(accountKeyIds.map((id) => sql`${id}`), sql`, `)})`,
+        sql`created_at >= ${todayStart}`,
+        BILLABLE_LOG_SQL,
+        sqlMatchDedicatedRule(rule),
+      )!;
+      const usedRow = await db
+        .select({ total: weightedHopTotalTokensSql(wherePool, { isTrial }) })
+        .from(requestLogs)
+        .where(wherePool)
+        .then((r) => r[0]);
+      const used = Number(usedRow?.total) || 0;
+      const limit = rule.dailyTokenLimit || 0;
+      dedicatedPools.push({
+        model: rule.model,
+        isPattern: !!rule.isPattern,
+        scope: rule.scope,
+        limit,
+        used,
+        remaining: Math.max(0, limit - used),
+        resetAt: dailyResetAt,
+      });
+    }
+  }
   const nextMonthWib = new Date(wibNow);
   nextMonthWib.setUTCMonth(nextMonthWib.getUTCMonth() + 1);
   nextMonthWib.setUTCDate(1);
@@ -542,7 +594,8 @@ portal.get("/me", async (c) => {
       // Rolling prompt window usage (matches Discord), NOT all-day requests
       promptCount: promptUsed,
       apiCallCount: apiCallUsed,
-      totalTokens: (usageToday?.promptTokens || 0) + (usageToday?.completionTokens || 0),
+      totalTokens: (usageToday as any)?.totalTokens
+        ?? ((usageToday?.promptTokens || 0) + (usageToday?.completionTokens || 0)),
     },
     usageMonth: {
       totalTokens: usageMonth?.tokens || 0,
@@ -553,6 +606,7 @@ portal.get("/me", async (c) => {
     apiCallResetMins,
     dailyResetAt,
     monthlyResetAt,
+    dedicatedPools,
     modelUsageLimits,
     dailyTokenBreakdown: {
       base: quotaStack.baseDaily,

@@ -80,6 +80,7 @@ export default function SettingsPage() {
   const [newModelOverrideMonthlyTokenLimit, setNewModelOverrideMonthlyTokenLimit] = useState(0);
   const [newModelOverrideDailyInputTokenLimit, setNewModelOverrideDailyInputTokenLimit] = useState(0);
   const [newModelOverrideDailyOutputTokenLimit, setNewModelOverrideDailyOutputTokenLimit] = useState(0);
+  const [newModelOverrideDedicatedQuota, setNewModelOverrideDedicatedQuota] = useState(false);
   const [upstreamEndpoint, setUpstreamEndpoint] = useState("");
   const [upstreamApiKey, setUpstreamApiKey] = useState("");
   const [showApiKey, setShowApiKey] = useState(false);
@@ -209,6 +210,7 @@ export default function SettingsPage() {
     setNewModelOverrideMonthlyTokenLimit(0);
     setNewModelOverrideDailyInputTokenLimit(0);
     setNewModelOverrideDailyOutputTokenLimit(0);
+    setNewModelOverrideDedicatedQuota(false);
     setGlobalModelMatchPreview({ ids: [], total: 0 });
     setMatchLockEnabled(false);
     setMatchLockedIds([]);
@@ -257,6 +259,7 @@ export default function SettingsPage() {
     setNewModelOverrideMonthlyTokenLimit(ml.monthlyTokenLimit || 0);
     setNewModelOverrideDailyInputTokenLimit(ml.dailyInputTokenLimit || 0);
     setNewModelOverrideDailyOutputTokenLimit(ml.dailyOutputTokenLimit || 0);
+    setNewModelOverrideDedicatedQuota(!!ml.dedicatedQuota);
     try {
       const r = await globalSettings.matchModelCatalog(ml.model);
       applyMatchPreview(r.data || [], r.total || 0, ml.model, addonRequiredModels);
@@ -984,12 +987,14 @@ export default function SettingsPage() {
                                 setNewModelOverrideDailyInputTokenLimit(existing.dailyInputTokenLimit || 0);
                                 setNewModelOverrideDailyOutputTokenLimit(existing.dailyOutputTokenLimit || 0);
                                 setNewModelOverrideIsPattern(!!existing.isPattern);
+                                setNewModelOverrideDedicatedQuota(!!existing.dedicatedQuota);
                               } else {
                                 setNewModelOverrideLimit(0);
                                 setNewModelOverrideDailyTokenLimit(0);
                                 setNewModelOverrideMonthlyTokenLimit(0);
                                 setNewModelOverrideDailyInputTokenLimit(0);
                                 setNewModelOverrideDailyOutputTokenLimit(0);
+                                setNewModelOverrideDedicatedQuota(false);
                               }
                             }}
                           />
@@ -1137,6 +1142,19 @@ export default function SettingsPage() {
                           <Label>Daily Output Token Limit</Label>
                           <Input type="number" value={newModelOverrideDailyOutputTokenLimit} onChange={(e) => setNewModelOverrideDailyOutputTokenLimit(parseInt(e.target.value) || 0)} className="mt-1" />
                         </div>
+                        <div className="col-span-2 md:col-span-3">
+                          <label className="inline-flex items-start gap-2 cursor-pointer text-xs">
+                            <input
+                              type="checkbox"
+                              className="mt-0.5"
+                              checked={newModelOverrideDedicatedQuota}
+                              onChange={(e) => setNewModelOverrideDedicatedQuota(e.target.checked)}
+                            />
+                            <span>
+                              <b>Dedicated pool</b> — outside account daily / input / output (requires Daily Token Limit &gt; 0)
+                            </span>
+                          </label>
+                        </div>
                         <div className="col-span-2 md:col-span-3 flex flex-wrap items-center justify-end gap-2">
                           {newModelOverrideIsPattern && globalModelMatchPreview.total > 0 && (
                             <Button
@@ -1157,6 +1175,7 @@ export default function SettingsPage() {
                                     monthlyTokenLimit: newModelOverrideMonthlyTokenLimit,
                                     dailyInputTokenLimit: newModelOverrideDailyInputTokenLimit,
                                     dailyOutputTokenLimit: newModelOverrideDailyOutputTokenLimit,
+                                    dedicatedQuota: newModelOverrideDedicatedQuota,
                                   };
                                   for (const m of globalModelMatchPreview.ids) {
                                     const bare = bareModelId(m);
@@ -1195,6 +1214,7 @@ export default function SettingsPage() {
                                   dailyInputTokenLimit: newModelOverrideDailyInputTokenLimit,
                                   dailyOutputTokenLimit: newModelOverrideDailyOutputTokenLimit,
                                   isPattern: newModelOverrideIsPattern,
+                                  dedicatedQuota: newModelOverrideDedicatedQuota,
                                 });
                                 if (
                                   globalModelMatchPreview.ids.length > 0 &&
@@ -1267,6 +1287,11 @@ export default function SettingsPage() {
                                         {ml.isPattern && (
                                           <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide bg-amber-500/15 text-amber-600 dark:text-amber-400">
                                             PATTERN
+                                          </span>
+                                        )}
+                                        {ml.dedicatedQuota && (
+                                          <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide bg-sky-500/15 text-sky-600 dark:text-sky-400">
+                                            DEDICATED
                                           </span>
                                         )}
                                         {ml.isPattern && (

@@ -6118,6 +6118,12 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 		}
 		return ' _(soft · exceed OK until daily)_';
 	};
+	const dailyInputBreakdownNote = (() => {
+		const bill = Number(data.dailyInputBillable ?? data.today?.billablePromptTokens) || 0;
+		const cache = Number(data.dailyInputCached ?? data.today?.cachedTokens) || 0;
+		if (bill <= 0 && cache <= 0) return '';
+		return `\n-# context ${formatTokens(cache)} + input ${formatTokens(bill)}`;
+	})();
 	const dailyInputStr =
 		(dailyInputTokenLimit || 0) > 0
 			? `**${formatTokens(dailyInputUsed)} / ${formatTokens(dailyInputTokenLimit)}**` +
@@ -6126,9 +6132,11 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 					: dailyInputUsed >= dailyInputTokenLimit
 						? ' 🔴'
 						: '') +
-				formatResetTime(data.dailyResetAt)
+				formatResetTime(data.dailyResetAt) +
+				dailyInputBreakdownNote
 			: `**${formatTokens(dailyInputUsed)} / Unlimited**` +
-				formatResetTime(data.dailyResetAt);
+				formatResetTime(data.dailyResetAt) +
+				dailyInputBreakdownNote;
 	const dailyOutputStr =
 		(dailyOutputTokenLimit || 0) > 0
 			? `**${formatTokens(dailyOutputUsed)} / ${formatTokens(dailyOutputTokenLimit)}**` +
@@ -6209,19 +6217,36 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 							.join(', ')}`
 					: '')
 			: '';
+	const dedicatedPoolsBlock =
+		Array.isArray(data.dedicatedPools) && data.dedicatedPools.length > 0
+			? `\n\n**🎯 Dedicated model pools** _(di luar daily/input/output akun)_\n` +
+				data.dedicatedPools
+					.map((p) => {
+						const lim = Number(p.limit) || 0;
+						const used = Number(p.used) || 0;
+						const mark = lim > 0 && used >= lim ? ' 🔴' : '';
+						const pat = p.isPattern ? ' _(pattern)_' : '';
+						return `- \`${p.model}\`${pat}: **${formatTokens(used)} / ${formatTokens(lim)}**${mark}` +
+							formatResetTime(p.resetAt || data.dailyResetAt);
+					})
+					.join('\n')
+			: '';
 	const limitSection = trialUser
 		? `**🎁 Trial Limits** _(all models + auto)_\nPrompt: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\n` +
 			`-# ℹ️ 1 prompt = 1 turn; tiap hop = 1 API call. Input/Total & Top Models = limit credit (hop-weighted).\n\n` +
-			`**🔢 Token Limits (Trial)**\nTotal Harian: ${dailyTokenStr}`
+			`**🔢 Token Limits (Trial)**\nTotal Harian: ${dailyTokenStr}` +
+			dedicatedPoolsBlock
 		: data.dailyTokenBreakdown?.bypassIo
 			? `**🎯 Quotas**\nPrompts: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\n` +
 				`-# ℹ️ Per-model prompts bypassed · Input/Output soft; exceed via add-on until Daily Total. Input/Total & Top Models = limit credit.\n\n` +
 				`**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}${stackNote}\nBulanan: ${monthlyTokenStr}` +
-				addonBlock
+				addonBlock +
+				dedicatedPoolsBlock
 			: `**🎯 Quotas**\nPrompts: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\nPer-Model:\n${modelLimitStr}\n` +
 				`-# ℹ️ 1 prompt = 1 turn; tiap hop = 1 API call. Input/Total & Top Models = limit credit (hop-weighted).\n\n` +
 				`**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}${stackNote}\nBulanan: ${monthlyTokenStr}` +
-				addonBlock;
+				addonBlock +
+				dedicatedPoolsBlock;
 
 	const tokenSaverHint =
 		`\n\n💡 **Token Saver** — RTK + Groupy Compact hemat input agent loop. Tekan tombol **Token Saver** di bawah, atau portal: ${PORTAL_DASHBOARD_URL}`;

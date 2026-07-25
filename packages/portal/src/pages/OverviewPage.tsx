@@ -273,16 +273,20 @@ export default function OverviewPage() {
       const used = usageToday.promptTokens;
       const overSoft = !!(user.dailyTokenBreakdown?.bypassIo && inputMax > 0 && used > inputMax);
       const softLeft = Math.max(0, inputMax - used);
-      const peak = Number((usageToday as any).peakPromptTokens) || 0;
-      const extra = peak > 0 && Math.abs(peak - used) > used * 0.05 ? ` · peak-view ${formatNumber(peak)}` : "";
+      const ctx = Number(usageToday.cachedTokens) || 0;
+      const inp = Number(usageToday.billablePromptTokens) || 0;
+      const ctxIn =
+        ctx > 0 || inp > 0
+          ? `context ${formatNumber(ctx)} + input ${formatNumber(inp)}`
+          : "limit credit";
       bars.push({
         label: t("Input Tokens"),
         value: used,
         max: inputMax,
         softMode: !!user.dailyTokenBreakdown?.bypassIo,
         sublabel: user.dailyTokenBreakdown?.bypassIo
-          ? `until daily ${formatNumber(dailyCap)} · limit${extra}`
-          : `limit credit${extra}`,
+          ? `until daily ${formatNumber(dailyCap)} · ${ctxIn}`
+          : ctxIn,
         source: user.dailyTokenBreakdown?.bypassIo
           ? "add-on extends past soft"
           : sourceLabel(limits.dailyInputTokenLimitSource),
@@ -373,11 +377,34 @@ export default function OverviewPage() {
 
     const modelLimits = (user.modelUsageLimits || []).filter((m) => m.limit > 0 || m.used > 0);
     const hasAddon = (user.activeAddons || []).length > 0;
-    if (!bars.length && !modelLimits.length && !hasAddon) return null;
+    const pools = (user.dedicatedPools || []).filter((p) => p.limit > 0);
+    if (!bars.length && !modelLimits.length && !hasAddon && !pools.length) return null;
 
     return (
       <div className="bg-card border border-border rounded-xl p-4 space-y-3">
         <h3 className="text-sm font-medium text-foreground">{t("Usage Today")}</h3>
+        {pools.length > 0 && (
+          <div className="rounded-lg border border-sky-500/30 bg-sky-500/5 p-2.5 space-y-2 text-xs">
+            <p className="font-medium text-foreground">{t("Dedicated model pools")}</p>
+            <p className="text-[10px] text-muted-foreground">
+              Outside account daily / input / output
+            </p>
+            {pools.map((p) => (
+              <div key={`${p.scope}:${p.model}`}>
+                <ProgressBar
+                  label={`${p.model}${p.isPattern ? " (pattern)" : ""}`}
+                  value={p.used}
+                  max={p.limit}
+                  sublabel="limit credit"
+                />
+                <div className="text-[10px] text-muted-foreground mt-0.5">
+                  {formatNumber(p.remaining)} left
+                  {p.resetAt ? ` · ${formatReset(p.resetAt)}` : ""}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         {hasAddon && (
           <div className="rounded-lg border border-border/60 bg-muted/20 p-2.5 space-y-1 text-xs">
             {(user.activeAddons || []).map((a) => (

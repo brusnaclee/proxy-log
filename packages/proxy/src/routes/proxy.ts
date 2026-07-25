@@ -108,9 +108,12 @@ import {
 	findActiveOverrideInTx,
 	getApiCallWindowResetMs,
 	getModelMatchCondition,
+	getPatternModelMatchCondition,
 	getWindowResetMs,
+	listDedicatedQuotaRules,
 	parseRateLimitWindow,
 	normalizeModelForLimit,
+	sqlExcludeDedicatedModels,
 } from '../utils/rate-limit.js';
 import {
 	countReserved,
@@ -2513,8 +2516,17 @@ proxy.all('/*', async (c) => {
 			{
 				const wibOffset = 7 * 60 * 60 * 1000;
 				const wibNow = new Date(Date.now() + wibOffset);
+				const autoNorm = await normalizeModelForLimit(candidate.modelId);
+				const autoDedicatedRules = await listDedicatedQuotaRules(keyRecord.id);
+				const autoOverride = await findActiveOverride(keyRecord.id, autoNorm);
+				const autoDedicated = !!(
+					autoOverride &&
+					(autoOverride as { dedicatedQuota?: boolean }).dedicatedQuota &&
+					(autoOverride.dailyTokenLimit || 0) > 0
+				);
+				const autoExcludeDedicated = sqlExcludeDedicatedModels(autoDedicatedRules);
 
-				// Monthly token limit
+				// Monthly token limit (account — includes dedicated usage)
 				if (keyRecord.monthlyTokenLimit && keyRecord.monthlyTokenLimit > 0) {
 					const monthlyCap =
 						keyRecord.monthlyTokenLimit + sumAddonMonthlyTokenBonus(autoActiveAddons);
@@ -2532,7 +2544,8 @@ proxy.all('/*', async (c) => {
 					}
 				}
 
-				// Daily token limit — with add-on: base = (in+out) or daily, + pack; I/O bypassed below
+				// Dedicated pool: skip account daily/input/output; enforce model daily below
+				if (!autoDedicated) {
 				const rawInAuto =
 					!keyRecord.isTrial &&
 					(keyRecord.dailyInputTokenLimit && keyRecord.dailyInputTokenLimit > 0
@@ -2563,19 +2576,94 @@ proxy.all('/*', async (c) => {
 					const dw = new Date(wibNow);
 					dw.setUTCHours(0, 0, 0, 0);
 					const ds = new Date(dw.getTime() - wibOffset);
+					const whereDaily = and(
+						accountKeyFilter,
+						sql`created_at >= ${ds}`,
+						BILLABLE_LOG_SQL,
+						autoExcludeDedicated,
+					);
 					const du = await db.select({ total: weightedHopTotalTokensSql(
-						and(accountKeyFilter, sql`created_at >= ${ds}`, BILLABLE_LOG_SQL),
+						whereDaily,
 						tokenCountOpts(keyRecord),
-					) }).from(requestLogs).where(and(accountKeyFilter, sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).then((r: any[]) => r[0]);
+					) }).from(requestLogs).where(whereDaily).then((r: any[]) => r[0]);
 					if (du && du.total >= globalDailyTokenLimit) {
 						tried.push(`${candidate.provider}/${candidate.modelId} (daily token limit)`);
 						continue;
 					}
 				}
 
+				const dailyInputLimit = autoStack.dailyInputLimit;
+				if (dailyInputLimit > 0) {
+					const dw = new Date(wibNow);
+					dw.setUTCHours(0, 0, 0, 0);
+					const ds = new Date(dw.getTime() - wibOffset);
+					const whereIn = and(
+						accountKeyFilter,
+						sql`created_at >= ${ds}`,
+						BILLABLE_LOG_SQL,
+						autoExcludeDedicated,
+					);
+					const di = await db.select({ total: weightedHopInputTokensSql(
+						whereIn,
+						tokenCountOpts(keyRecord),
+					) }).from(requestLogs).where(whereIn).then((r: any[]) => r[0]);
+					if (di && di.total >= dailyInputLimit) {
+						tried.push(`${candidate.provider}/${candidate.modelId} (daily input token limit)`);
+						continue;
+					}
+				}
+
+				const dailyOutputLimit = autoStack.dailyOutputLimit;
+				if (dailyOutputLimit > 0) {
+					const dw = new Date(wibNow);
+					dw.setUTCHours(0, 0, 0, 0);
+					const ds = new Date(dw.getTime() - wibOffset);
+					const whereOut = and(
+						accountKeyFilter,
+						sql`created_at >= ${ds}`,
+						BILLABLE_LOG_SQL,
+						autoExcludeDedicated,
+					);
+					const do_ = await db.select({ total: turnCompletionTokensSql(
+						whereOut,
+						tokenCountOpts(keyRecord),
+					) }).from(requestLogs).where(whereOut).then((r: any[]) => r[0]);
+					if (do_ && do_.total >= dailyOutputLimit) {
+						tried.push(`${candidate.provider}/${candidate.modelId} (daily output token limit)`);
+						continue;
+					}
+				}
+				} // end !autoDedicated account daily/io
+
+				// Dedicated / model override daily for this candidate
+				if (!keyRecord.isTrial && autoOverride?.dailyTokenLimit && autoOverride.dailyTokenLimit > 0) {
+					const dw = new Date(wibNow);
+					dw.setUTCHours(0, 0, 0, 0);
+					const ds = new Date(dw.getTime() - wibOffset);
+					const modelMatch = autoOverride.isPattern
+						? getPatternModelMatchCondition(autoOverride.model)
+						: getModelMatchCondition(autoNorm);
+					const whereOv = and(
+						accountKeyFilter,
+						modelMatch,
+						sql`created_at >= ${ds}`,
+						BILLABLE_LOG_SQL,
+					);
+					const duO = await db
+						.select({ total: weightedHopTotalTokensSql(whereOv, tokenCountOpts(keyRecord)) })
+						.from(requestLogs)
+						.where(whereOv)
+						.then((r: any[]) => r[0]);
+					if (duO && duO.total >= autoOverride.dailyTokenLimit) {
+						tried.push(
+							`${candidate.provider}/${candidate.modelId} (${autoDedicated ? 'dedicated ' : ''}model daily)`,
+						);
+						continue;
+					}
+				}
+
 				// Add-on per-model daily (same as non-auto path)
 				if (!keyRecord.isTrial) {
-					const autoNorm = await normalizeModelForLimit(candidate.modelId);
 					const addonModelDaily = resolveAddonModelDailyTokenLimit(autoActiveAddons, autoNorm);
 					if (addonModelDaily > 0) {
 						const dw = new Date(wibNow);
@@ -2596,37 +2684,6 @@ proxy.all('/*', async (c) => {
 							tried.push(`${candidate.provider}/${candidate.modelId} (addon model daily)`);
 							continue;
 						}
-					}
-				}
-
-				// Daily Input/Output — skipped when add-on bypasses I/O
-				const dailyInputLimit = autoStack.dailyInputLimit;
-				if (dailyInputLimit > 0) {
-					const dw = new Date(wibNow);
-					dw.setUTCHours(0, 0, 0, 0);
-					const ds = new Date(dw.getTime() - wibOffset);
-					const di = await db.select({ total: weightedHopInputTokensSql(
-						and(accountKeyFilter, sql`created_at >= ${ds}`, BILLABLE_LOG_SQL),
-						tokenCountOpts(keyRecord),
-					) }).from(requestLogs).where(and(accountKeyFilter, sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).then((r: any[]) => r[0]);
-					if (di && di.total >= dailyInputLimit) {
-						tried.push(`${candidate.provider}/${candidate.modelId} (daily input token limit)`);
-						continue;
-					}
-				}
-
-				const dailyOutputLimit = autoStack.dailyOutputLimit;
-				if (dailyOutputLimit > 0) {
-					const dw = new Date(wibNow);
-					dw.setUTCHours(0, 0, 0, 0);
-					const ds = new Date(dw.getTime() - wibOffset);
-					const do_ = await db.select({ total: turnCompletionTokensSql(
-						and(accountKeyFilter, sql`created_at >= ${ds}`, BILLABLE_LOG_SQL),
-						tokenCountOpts(keyRecord),
-					) }).from(requestLogs).where(and(accountKeyFilter, sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).then((r: any[]) => r[0]);
-					if (do_ && do_.total >= dailyOutputLimit) {
-						tried.push(`${candidate.provider}/${candidate.modelId} (daily output token limit)`);
-						continue;
 					}
 				}
 			}
@@ -3674,6 +3731,13 @@ proxy.all('/*', async (c) => {
 	{
 		const normalizedModelForToken = await normalizeModelForLimit(model);
 		const modelOverride = await findActiveOverride(keyRecord.id, normalizedModelForToken);
+		const dedicatedRules = await listDedicatedQuotaRules(keyRecord.id);
+		const dedicatedForRequest = !!(
+			modelOverride &&
+			(modelOverride as { dedicatedQuota?: boolean }).dedicatedQuota &&
+			(modelOverride.dailyTokenLimit || 0) > 0
+		);
+		const excludeDedicated = sqlExcludeDedicatedModels(dedicatedRules);
 
 		const wibOffset = 7 * 60 * 60 * 1000;
 		const wibNow = new Date(Date.now() + wibOffset);
@@ -3710,6 +3774,8 @@ proxy.all('/*', async (c) => {
 			}
 		}
 
+		// Dedicated pool request: skip account daily/input/output (still count monthly).
+		// Shared-pool sums exclude dedicated models so they do not burn account daily.
 		const rawIn =
 			!keyRecord.isTrial &&
 			(keyRecord.dailyInputTokenLimit && keyRecord.dailyInputTokenLimit > 0
@@ -3735,6 +3801,8 @@ proxy.all('/*', async (c) => {
 		}),
 			dayBonuses,
 		);
+
+		if (!dedicatedForRequest) {
 		const globalDailyTokenLimit = quotaStack.effectiveDaily;
 		if (globalDailyTokenLimit > 0) {
 			const dw = new Date(wibNow);
@@ -3744,6 +3812,7 @@ proxy.all('/*', async (c) => {
 				accountKeyFilter,
 				sql`created_at >= ${ds}`,
 				BILLABLE_LOG_SQL,
+				excludeDedicated,
 			);
 			const du = await db
 				.select({ total: weightedHopTotalTokensSql(whereClause, tokenCountOpts(keyRecord)) })
@@ -3784,6 +3853,7 @@ proxy.all('/*', async (c) => {
 				accountKeyFilter,
 				sql`created_at >= ${ds}`,
 				BILLABLE_LOG_SQL,
+				excludeDedicated,
 			);
 			const du = await db
 				.select({ total: weightedHopInputTokensSql(whereClause, tokenCountOpts(keyRecord)) })
@@ -3821,6 +3891,7 @@ proxy.all('/*', async (c) => {
 				accountKeyFilter,
 				sql`created_at >= ${ds}`,
 				BILLABLE_LOG_SQL,
+				excludeDedicated,
 			);
 			const du = await db
 				.select({ total: turnCompletionTokensSql(whereClause, tokenCountOpts(keyRecord)) })
@@ -3878,6 +3949,7 @@ proxy.all('/*', async (c) => {
 			}
 		}
 		} // end !keyRecord.isTrial global input/output/monthly limits
+		} // end !dedicatedForRequest account daily/io
 
 		// Model Specific Token Limits
 		if (!keyRecord.isTrial && modelOverride) {
@@ -3896,7 +3968,9 @@ proxy.all('/*', async (c) => {
 			mw.setUTCHours(0, 0, 0, 0);
 			const ms = new Date(mw.getTime() - wibOffset);
 
-			const modelMatch = getModelMatchCondition(normalizedModelForToken);
+			const modelMatch = modelOverride.isPattern
+				? getPatternModelMatchCondition(modelOverride.model)
+				: getModelMatchCondition(normalizedModelForToken);
 
 			if (overrideDailyToken && overrideDailyToken > 0) {
 				const whereClause = and(

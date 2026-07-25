@@ -187,6 +187,104 @@ export async function findActiveOverrideInTx(
   return pickOverrideFromCandidates(candidates, normalizedModel);
 }
 
+/** Dedicated pool rule: usage excluded from account daily / daily input / daily output. */
+export type DedicatedQuotaRule = {
+  id: number;
+  model: string;
+  isPattern: boolean;
+  scope: string;
+  scopeId: number;
+  dailyTokenLimit: number;
+  monthlyTokenLimit: number;
+};
+
+function rowIsDedicated(m: ModelLimitRow): boolean {
+  return !!(m as ModelLimitRow & { dedicatedQuota?: boolean }).dedicatedQuota
+    && (m.dailyTokenLimit || 0) > 0;
+}
+
+/** All dedicated-quota rules visible to a key (key-scoped + global). */
+export async function listDedicatedQuotaRules(apiKeyId: number): Promise<DedicatedQuotaRule[]> {
+  const rows = await db.select().from(modelLimits).where(
+    sql`((${modelLimits.scope} = 'key' AND ${modelLimits.scopeId} = ${apiKeyId})
+        OR (${modelLimits.scope} = 'global' AND ${modelLimits.scopeId} = 0))
+        AND COALESCE(${modelLimits.dedicatedQuota}, false) = true
+        AND COALESCE(${modelLimits.dailyTokenLimit}, 0) > 0`,
+  );
+  return rows.map((m) => ({
+    id: m.id,
+    model: m.model,
+    isPattern: !!m.isPattern,
+    scope: m.scope,
+    scopeId: m.scopeId,
+    dailyTokenLimit: m.dailyTokenLimit || 0,
+    monthlyTokenLimit: m.monthlyTokenLimit || 0,
+  }));
+}
+
+/** SQL fragment: model column matches a dedicated rule (exact family or substring pattern). */
+export function sqlMatchDedicatedRule(rule: Pick<DedicatedQuotaRule, "model" | "isPattern">): SQL {
+  if (rule.isPattern) {
+    const p = rule.model.toLowerCase();
+    return sql`position(${p} in lower(${requestLogs.model})) > 0`;
+  }
+  return getModelMatchCondition(rule.model);
+}
+
+/**
+ * Exclude logs for models covered by any dedicated pool rule.
+ * Returns undefined when there are no dedicated rules (no-op filter).
+ */
+export function sqlExcludeDedicatedModels(rules: DedicatedQuotaRule[]): SQL | undefined {
+  if (!rules.length) return undefined;
+  const parts = rules.map((r) => sqlMatchDedicatedRule(r));
+  return sql`NOT (${sql.join(parts, sql` OR `)})`;
+}
+
+export function modelMatchesDedicatedRule(
+  normalizedModel: string,
+  rule: Pick<DedicatedQuotaRule, "model" | "isPattern">,
+): boolean {
+  const fake = {
+    model: rule.model,
+    isPattern: rule.isPattern,
+  } as ModelLimitRow;
+  return rule.isPattern
+    ? isPatternModelLimit(fake, normalizedModel)
+    : isExactModelLimit(fake, normalizedModel);
+}
+
+/**
+ * Pick the winning dedicated rule for a model (same priority as findActiveOverride,
+ * but only among dedicated rows).
+ */
+export function findDedicatedRuleForModel(
+  rules: DedicatedQuotaRule[],
+  normalizedModel: string,
+): DedicatedQuotaRule | null {
+  if (!rules.length) return null;
+  const asRows = rules.map((r) => ({
+    ...r,
+    promptLimit: 0,
+    promptWindowStart: null,
+    dailyInputTokenLimit: 0,
+    dailyOutputTokenLimit: 0,
+    dedicatedQuota: true,
+    createdAt: new Date(),
+  })) as ModelLimitRow[];
+  const picked = pickOverrideFromCandidates(asRows, normalizedModel);
+  if (!picked || !rowIsDedicated(picked)) return null;
+  return {
+    id: picked.id,
+    model: picked.model,
+    isPattern: !!picked.isPattern,
+    scope: picked.scope,
+    scopeId: picked.scopeId,
+    dailyTokenLimit: picked.dailyTokenLimit || 0,
+    monthlyTokenLimit: picked.monthlyTokenLimit || 0,
+  };
+}
+
 /**
  * Count prompts as distinct turns (1 turn = 1 prompt) in a sliding window
  * (last N hours from now). Tool hops sharing the same turn_id do not add extra.

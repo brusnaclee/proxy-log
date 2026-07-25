@@ -41,7 +41,35 @@ export async function initializeDatabase() {
 	try {
 		await pool.query(`ALTER TABLE model_limits ADD COLUMN IF NOT EXISTS is_pattern boolean NOT NULL DEFAULT false`);
 		await pool.query(`CREATE INDEX IF NOT EXISTS idx_model_limits_pattern ON model_limits (is_pattern)`);
-		console.log('✅ Applied idempotent model_limits migrations');
+		await pool.query(`ALTER TABLE model_limits ADD COLUMN IF NOT EXISTS dedicated_quota boolean NOT NULL DEFAULT false`);
+		// Seed global dedicated pool: grok-4.5* → 5M tokens/day (outside account daily/io)
+		const grokSeed = await pool.query(
+			`SELECT id FROM model_limits
+			 WHERE scope = 'global' AND scope_id = 0 AND model = 'grok-4.5' AND is_pattern = true
+			 LIMIT 1`,
+		);
+		if (grokSeed.rows[0]?.id) {
+			await pool.query(
+				`UPDATE model_limits SET
+				   daily_token_limit = 5000000,
+				   dedicated_quota = true,
+				   prompt_limit = 0,
+				   monthly_token_limit = 0,
+				   daily_input_token_limit = 0,
+				   daily_output_token_limit = 0
+				 WHERE id = $1`,
+				[grokSeed.rows[0].id],
+			);
+		} else {
+			await pool.query(
+				`INSERT INTO model_limits (
+				   scope, scope_id, model, is_pattern, dedicated_quota,
+				   prompt_limit, daily_token_limit, monthly_token_limit,
+				   daily_input_token_limit, daily_output_token_limit
+				 ) VALUES ('global', 0, 'grok-4.5', true, true, 0, 5000000, 0, 0, 0)`,
+			);
+		}
+		console.log('✅ Applied idempotent model_limits migrations (+ grok-4.5 dedicated 5M)');
 	} catch (err: any) {
 		console.warn('⚠️ model_limits idempotent migration warning:', err?.message || err);
 	}
