@@ -15,7 +15,9 @@ const COOKIE_NAME = "portal_session";
 startAuthSessionPurgeJob();
 
 function cookieSecure(): boolean {
-  return process.env.NODE_ENV === "production" || process.env.COOKIE_SECURE === "1";
+  // Only Secure when explicitly enabled. NODE_ENV=production alone is NOT enough —
+  // admin (:5173) and portal often run over plain HTTP; Secure cookies are dropped by the browser.
+  return process.env.COOKIE_SECURE === "1";
 }
 
 function clientMeta(c: Context): { ip: string; userAgent: string } {
