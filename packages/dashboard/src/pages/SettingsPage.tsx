@@ -65,6 +65,8 @@ export default function SettingsPage() {
   const [tokenSaverCavemanLevel, setTokenSaverCavemanLevel] = useState(2);
   const [tokenSaverPonytailEnabled, setTokenSaverPonytailEnabled] = useState(false);
   const [tokenSaverPonytailLevel, setTokenSaverPonytailLevel] = useState("lite");
+  const [tokenSaverGroupyCompactEnabled, setTokenSaverGroupyCompactEnabled] = useState(true);
+  const [tokenSaverGroupyCompactLevel, setTokenSaverGroupyCompactLevel] = useState("balanced");
   const [globalModelLimits, setGlobalModelLimits] = useState<ModelLimitEntry[]>([]);
   const [modelCatalog, setModelCatalog] = useState<string[]>([]);
   const [newModelOverride, setNewModelOverride] = useState("");
@@ -184,6 +186,8 @@ export default function SettingsPage() {
       setTokenSaverCavemanLevel(g.tokenSaverCavemanLevel ?? 2);
       setTokenSaverPonytailEnabled(g.tokenSaverPonytailEnabled ?? false);
       setTokenSaverPonytailLevel(g.tokenSaverPonytailLevel || "lite");
+      setTokenSaverGroupyCompactEnabled(g.tokenSaverGroupyCompactEnabled ?? true);
+      setTokenSaverGroupyCompactLevel(g.tokenSaverGroupyCompactLevel || "balanced");
     } catch {}
 
     try {
@@ -289,6 +293,7 @@ export default function SettingsPage() {
         tokenSaverHeadroomEnabled, tokenSaverHeadroomUrl,
         tokenSaverCavemanEnabled, tokenSaverCavemanLevel,
         tokenSaverPonytailEnabled, tokenSaverPonytailLevel,
+        tokenSaverGroupyCompactEnabled, tokenSaverGroupyCompactLevel,
       });
       await request("/settings/bot", {
         method: "POST",
@@ -379,12 +384,14 @@ export default function SettingsPage() {
           <CardTitle className="text-base">Token Saver</CardTitle>
           <CardDescription className="space-y-2">
             <p>
-              Global defaults for all users. Pipeline order: <strong>RTK → Headroom → Caveman → Ponytail</strong>.
+              Global defaults for all users. Pipeline order:{" "}
+              <strong>RTK → Groupy Compact → Headroom → Caveman → Ponytail</strong>.
               Users can override per-feature in the portal (Default / On / Off). One-shot kill switch: header{" "}
               <code className="text-xs">X-Token-Saver: off</code>.
             </p>
             <p className="text-xs">
-              RTK touches <em>input</em> (tool dumps). Caveman/Ponytail touch <em>style of output</em> via system prompts — keep them OFF unless you want terse agents.
+              RTK + Groupy Compact touch <em>input</em> (tool dumps / history). Caveman/Ponytail touch{" "}
+              <em>style of output</em> via system prompts — keep them OFF unless you want terse agents.
             </p>
           </CardDescription>
         </CardHeader>
@@ -411,6 +418,36 @@ export default function SettingsPage() {
                 onChange={(e) => setTokenSaverRtkMaxChars(parseInt(e.target.value) || 2000)}
                 className="mt-1 max-w-xs"
               />
+            </div>
+          )}
+          <div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
+            <div className="pr-4">
+              <Label className="font-medium">Groupy Compact</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Smart trim for agent loops — keep the last tools full, stub older noisy tool dumps before upstream.
+                Does not delete messages or touch write/edit results.
+              </p>
+              <p className="text-[11px] text-muted-foreground/80 mt-1">
+                Effect: big savings on 10–200 hop Cline/OpenCode turns. Risk: model may re-read a stubbed file. Recommended default: ON (balanced).
+              </p>
+            </div>
+            <Switch
+              checked={tokenSaverGroupyCompactEnabled}
+              onCheckedChange={setTokenSaverGroupyCompactEnabled}
+            />
+          </div>
+          {tokenSaverGroupyCompactEnabled && (
+            <div>
+              <Label>Groupy Compact level</Label>
+              <select
+                value={tokenSaverGroupyCompactLevel}
+                onChange={(e) => setTokenSaverGroupyCompactLevel(e.target.value)}
+                className="mt-1 flex h-9 w-full max-w-xs rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+              >
+                <option value="lite">lite — keep last 4 tools; stub only if &gt;4k chars</option>
+                <option value="balanced">balanced — keep last 3; stub if &gt;1.5k (default)</option>
+                <option value="aggressive">aggressive — keep last 2; also trim old assistant prose</option>
+              </select>
             </div>
           )}
           <div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">

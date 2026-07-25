@@ -6224,7 +6224,7 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 				addonBlock;
 
 	const tokenSaverHint =
-		`\n\n💡 **Token Saver** — hemat token Cline/Roo (compress tool dump). Tekan tombol **Token Saver** di bawah, atau portal: ${PORTAL_DASHBOARD_URL}`;
+		`\n\n💡 **Token Saver** — RTK + Groupy Compact hemat input agent loop. Tekan tombol **Token Saver** di bawah, atau portal: ${PORTAL_DASHBOARD_URL}`;
 
 	const embed = new EmbedBuilder()
 		.setTitle(`📊 Usage: ${displayName}`)
@@ -6268,8 +6268,9 @@ async function handleTokenSaverPanel(interaction) {
 	const embed = new EmbedBuilder()
 		.setTitle('💾 Token Saver')
 		.setDescription(
-			'Pipeline: **RTK → Headroom → Caveman → Ponytail** (sebelum upstream).\n\n' +
+			'Pipeline: **RTK → Groupy Compact → Headroom → Caveman → Ponytail** (sebelum upstream).\n\n' +
 				'• **RTK** — potong tool dump besar (git/grep/read). Hemat input. Default ON.\n' +
+				'• **Groupy Compact** — stub tool result lama di agent loop; recent tetap penuh. Default ON.\n' +
 				'• **Headroom** — compress eksternal (butuh URL admin). Default OFF.\n' +
 				'• **Caveman** — jawaban lebih singkat (system prompt). Bisa ubah gaya. Default OFF.\n' +
 				'• **Ponytail** — skip basa-basi agent IDE. Default OFF.\n\n' +
@@ -6278,6 +6279,11 @@ async function handleTokenSaverPanel(interaction) {
 		)
 		.addFields(
 			{ name: 'RTK', value: fmtTriState(o.rtk, !!g.rtk), inline: true },
+			{
+				name: 'Groupy Compact',
+				value: fmtTriState(o.groupyCompact, g.groupyCompact !== false),
+				inline: true,
+			},
 			{ name: 'Headroom', value: fmtTriState(o.headroom, !!g.headroom), inline: true },
 			{ name: 'Caveman', value: fmtTriState(o.caveman, !!g.caveman), inline: true },
 			{ name: 'Ponytail', value: fmtTriState(o.ponytail, !!g.ponytail), inline: true },
@@ -6301,6 +6307,7 @@ async function handleTokenSaverPanel(interaction) {
 		embeds: [embed],
 		components: [
 			mkSelect('rtk', 'RTK'),
+			mkSelect('groupyCompact', 'Groupy Compact'),
 			mkSelect('headroom', 'Headroom'),
 			mkSelect('caveman', 'Caveman'),
 			mkSelect('ponytail', 'Ponytail'),
@@ -6315,7 +6322,7 @@ async function handleTokenSaverSelect(interaction) {
 	const value = raw === 'on' ? true : raw === 'off' ? false : null;
 	const discordUserId = interaction.user.id;
 
-	if (!['rtk', 'headroom', 'caveman', 'ponytail'].includes(feature)) {
+	if (!['rtk', 'groupyCompact', 'headroom', 'caveman', 'ponytail'].includes(feature)) {
 		await interaction.followUp({ content: '❌ Fitur tidak dikenal.', ephemeral: true });
 		return;
 	}
@@ -6327,11 +6334,18 @@ async function handleTokenSaverSelect(interaction) {
 		const data = await proxyInternal(`/admin/internal/token-saver/${discordUserId}`);
 		const g = data.global || {};
 		const o = data.overrides || {};
+		const globalOn =
+			feature === 'groupyCompact' ? g.groupyCompact !== false : !!g[feature];
 		const embed = new EmbedBuilder()
 			.setTitle('💾 Token Saver')
-			.setDescription(`Updated **${feature}** → ${fmtTriState(value, !!g[feature])}`)
+			.setDescription(`Updated **${feature}** → ${fmtTriState(value, globalOn)}`)
 			.addFields(
 				{ name: 'RTK', value: fmtTriState(o.rtk, !!g.rtk), inline: true },
+				{
+					name: 'Groupy Compact',
+					value: fmtTriState(o.groupyCompact, g.groupyCompact !== false),
+					inline: true,
+				},
 				{ name: 'Headroom', value: fmtTriState(o.headroom, !!g.headroom), inline: true },
 				{ name: 'Caveman', value: fmtTriState(o.caveman, !!g.caveman), inline: true },
 				{ name: 'Ponytail', value: fmtTriState(o.ponytail, !!g.ponytail), inline: true },
@@ -6355,6 +6369,7 @@ async function handleTokenSaverSelect(interaction) {
 			embeds: [embed],
 			components: [
 				mkSelect('rtk', 'RTK'),
+				mkSelect('groupyCompact', 'Groupy Compact'),
 				mkSelect('headroom', 'Headroom'),
 				mkSelect('caveman', 'Caveman'),
 				mkSelect('ponytail', 'Ponytail'),

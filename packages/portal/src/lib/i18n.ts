@@ -54,8 +54,8 @@ const dict: Record<string, Record<Lang, string>> = {
   "Webhook URL": { id: "URL Webhook", en: "Webhook URL" },
   "Token Saver": { id: "Token Saver", en: "Token Saver" },
   "Token Saver desc": {
-    id: "Pipeline hemat token sebelum request ke upstream: RTK → Headroom → Caveman → Ponytail. Default mengikuti admin. Pilih Default / Nyala / Mati per fitur. Header X-Token-Saver: off mematikan semua untuk 1 request.",
-    en: "Token-saving pipeline before upstream: RTK → Headroom → Caveman → Ponytail. Defaults follow admin. Set Default / On / Off per feature. Header X-Token-Saver: off disables all for one request.",
+    id: "Pipeline hemat token sebelum request ke upstream: RTK → Groupy Compact → Headroom → Caveman → Ponytail. Default mengikuti admin. Pilih Default / Nyala / Mati per fitur. Header X-Token-Saver: off mematikan semua untuk 1 request.",
+    en: "Token-saving pipeline before upstream: RTK → Groupy Compact → Headroom → Caveman → Ponytail. Defaults follow admin. Set Default / On / Off per feature. Header X-Token-Saver: off disables all for one request.",
   },
   Default: { id: "Default", en: "Default" },
   On: { id: "Nyala", en: "On" },
@@ -68,6 +68,15 @@ const dict: Record<string, Record<Lang, string>> = {
   "RTK effect": {
     id: "Efek: input ke model lebih kecil → kuota/token hemat di Cline/Roo/Kilo/OpenCode. Risiko: konteks tengah file panjang bisa hilang. Contoh: output `git status` 50KB → ~2KB (head+tail).",
     en: "Effect: smaller model input → saves quota on Cline/Roo/Kilo/OpenCode. Risk: middle of long dumps may be missing. Example: 50KB `git status` → ~2KB (head+tail).",
+  },
+  "Groupy Compact": { id: "Groupy Compact", en: "Groupy Compact" },
+  "Groupy Compact desc": {
+    id: "Smart trim untuk agent multi-hop: tool result terbaru tetap penuh; yang lama diganti stub berlabel sebelum ke upstream. Tidak hapus message / tidak sentuh write-edit.",
+    en: "Smart trim for agent loops: keep the latest tool results full; stub older noisy dumps before upstream. Never deletes messages or touches write/edit results.",
+  },
+  "Groupy Compact effect": {
+    id: "Efek: hemat besar di loop Cline/OpenCode 10–200 hop. Risiko: model bisa minta re-read file yang di-stub. Default ON (balanced).",
+    en: "Effect: big savings on 10–200 hop Cline/OpenCode turns. Risk: model may re-read a stubbed file. Default ON (balanced).",
   },
   Headroom: { id: "Headroom", en: "Headroom" },
   "Headroom desc": {

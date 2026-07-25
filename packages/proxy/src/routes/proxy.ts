@@ -2163,7 +2163,7 @@ proxy.all('/*', async (c) => {
 		}
 	}
 
-	// ─── 7d. Token Saver pipeline (RTK → Headroom → Caveman → Ponytail) ─────
+	// ─── 7d. Token Saver (RTK → Groupy Compact → Headroom → Caveman → Ponytail) ─
 	// Runs after Anthropic→OpenAI convert so both formats share one path.
 	// Header X-Token-Saver: off disables all; else user override > global default.
 	if (requestBody && Array.isArray((requestBody as any).messages)) {
@@ -2173,6 +2173,7 @@ proxy.all('/*', async (c) => {
 				tokenSaverHeadroomOverride?: boolean | null;
 				tokenSaverCavemanOverride?: boolean | null;
 				tokenSaverPonytailOverride?: boolean | null;
+				tokenSaverGroupyCompactOverride?: boolean | null;
 			} | null = null;
 			if (keyRecord.discordUserId) {
 				userOverrides =
@@ -2183,6 +2184,7 @@ proxy.all('/*', async (c) => {
 								tokenSaverHeadroomOverride: userPortalSettings.tokenSaverHeadroomOverride,
 								tokenSaverCavemanOverride: userPortalSettings.tokenSaverCavemanOverride,
 								tokenSaverPonytailOverride: userPortalSettings.tokenSaverPonytailOverride,
+								tokenSaverGroupyCompactOverride: userPortalSettings.tokenSaverGroupyCompactOverride,
 							})
 							.from(userPortalSettings)
 							.where(eq(userPortalSettings.discordUserId, keyRecord.discordUserId))
@@ -2193,6 +2195,7 @@ proxy.all('/*', async (c) => {
 			const tsResult = await applyTokenSavers(requestBody, tsFlags);
 			if (
 				tsResult.rtk?.charsSaved ||
+				tsResult.groupyCompact?.charsSaved ||
 				tsResult.headroom?.ok ||
 				tsResult.caveman ||
 				tsResult.ponytail
@@ -2201,6 +2204,10 @@ proxy.all('/*', async (c) => {
 				console.log(
 					`[token-saver] rtk=${tsFlags.rtk}` +
 						(tsResult.rtk ? `(saved=${tsResult.rtk.charsSaved})` : '') +
+						` groupyCompact=${tsFlags.groupyCompact}` +
+						(tsResult.groupyCompact
+							? `(stubs=${tsResult.groupyCompact.stubs},saved=${tsResult.groupyCompact.charsSaved},level=${tsResult.groupyCompact.level})`
+							: '') +
 						` headroom=${tsFlags.headroom}` +
 						` caveman=${tsFlags.caveman}` +
 						` ponytail=${tsFlags.ponytail}` +

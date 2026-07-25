@@ -36,6 +36,7 @@ export default function SettingsPage() {
   // Token Saver (tri-state: null=default, true=on, false=off)
   const [tsGlobal, setTsGlobal] = useState<any>(null);
   const [tsRtk, setTsRtk] = useState<boolean | null>(null);
+  const [tsGroupyCompact, setTsGroupyCompact] = useState<boolean | null>(null);
   const [tsHeadroom, setTsHeadroom] = useState<boolean | null>(null);
   const [tsCaveman, setTsCaveman] = useState<boolean | null>(null);
   const [tsPonytail, setTsPonytail] = useState<boolean | null>(null);
@@ -58,6 +59,7 @@ export default function SettingsPage() {
         if (data.tokenSaver) {
           setTsGlobal(data.tokenSaver.global);
           setTsRtk(data.tokenSaver.overrides?.rtk ?? null);
+          setTsGroupyCompact(data.tokenSaver.overrides?.groupyCompact ?? null);
           setTsHeadroom(data.tokenSaver.overrides?.headroom ?? null);
           setTsCaveman(data.tokenSaver.overrides?.caveman ?? null);
           setTsPonytail(data.tokenSaver.overrides?.ponytail ?? null);
@@ -151,11 +153,13 @@ export default function SettingsPage() {
     try {
       const result = await api.settings.setTokenSaver({
         rtk: tsRtk,
+        groupyCompact: tsGroupyCompact,
         headroom: tsHeadroom,
         caveman: tsCaveman,
         ponytail: tsPonytail,
       });
       setTsRtk(result.overrides.rtk);
+      setTsGroupyCompact(result.overrides.groupyCompact ?? null);
       setTsHeadroom(result.overrides.headroom);
       setTsCaveman(result.overrides.caveman);
       setTsPonytail(result.overrides.ponytail);
@@ -312,7 +316,7 @@ export default function SettingsPage() {
         <div className="flex items-center justify-between gap-2 mb-1">
           <h2 className="text-sm font-medium text-foreground">{t("Token Saver")}</h2>
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
-            RTK default ON
+            Compact + RTK ON
           </span>
         </div>
         <p className="text-xs text-muted-foreground mb-4">{t("Token Saver desc")}</p>
@@ -335,6 +339,14 @@ export default function SettingsPage() {
           value={tsRtk}
           onChange={setTsRtk}
           globalOn={!!tsGlobal?.rtk}
+        />
+        <TriState
+          label={t("Groupy Compact")}
+          desc={t("Groupy Compact desc")}
+          effect={t("Groupy Compact effect")}
+          value={tsGroupyCompact}
+          onChange={setTsGroupyCompact}
+          globalOn={tsGlobal?.groupyCompact !== false}
         />
         <TriState
           label={t("Headroom")}

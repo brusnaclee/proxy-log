@@ -644,6 +644,8 @@ export interface GlobalSettings {
   tokenSaverCavemanLevel?: number;
   tokenSaverPonytailEnabled?: boolean;
   tokenSaverPonytailLevel?: string;
+  tokenSaverGroupyCompactEnabled?: boolean;
+  tokenSaverGroupyCompactLevel?: string;
 }
 
 export interface ModelLimitEntry {

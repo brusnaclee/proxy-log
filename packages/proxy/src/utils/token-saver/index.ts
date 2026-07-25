@@ -1,5 +1,5 @@
-// Token Saver pipeline (9router order):
-//   RTK → Headroom → Caveman → Ponytail
+// Token Saver pipeline (9router order + Groupy Compact):
+//   RTK → Groupy Compact → Headroom → Caveman → Ponytail
 //
 // Resolution priority for each feature:
 //   1. Request header `X-Token-Saver: off` → disable ALL
@@ -10,6 +10,12 @@ import { applyRtk, type RtkStats } from './rtk.js';
 import { applyHeadroom, type HeadroomStats } from './headroom.js';
 import { applyCaveman } from './caveman.js';
 import { applyPonytail } from './ponytail.js';
+import {
+	applyGroupyCompact,
+	normalizeGroupyCompactLevel,
+	type GroupyCompactLevel,
+	type GroupyCompactStats,
+} from './groupy-compact.js';
 
 export interface TokenSaverGlobalConfig {
 	tokenSaverRtkEnabled?: boolean | null;
@@ -20,6 +26,8 @@ export interface TokenSaverGlobalConfig {
 	tokenSaverCavemanLevel?: number | null;
 	tokenSaverPonytailEnabled?: boolean | null;
 	tokenSaverPonytailLevel?: string | null;
+	tokenSaverGroupyCompactEnabled?: boolean | null;
+	tokenSaverGroupyCompactLevel?: string | null;
 }
 
 export interface TokenSaverUserOverrides {
@@ -27,11 +35,14 @@ export interface TokenSaverUserOverrides {
 	tokenSaverHeadroomOverride?: boolean | null;
 	tokenSaverCavemanOverride?: boolean | null;
 	tokenSaverPonytailOverride?: boolean | null;
+	tokenSaverGroupyCompactOverride?: boolean | null;
 }
 
 export interface EffectiveTokenSaverFlags {
 	rtk: boolean;
 	rtkMaxChars: number;
+	groupyCompact: boolean;
+	groupyCompactLevel: GroupyCompactLevel;
 	headroom: boolean;
 	headroomUrl: string;
 	caveman: boolean;
@@ -44,6 +55,7 @@ export interface EffectiveTokenSaverFlags {
 export interface TokenSaverResult {
 	applied: EffectiveTokenSaverFlags;
 	rtk?: RtkStats;
+	groupyCompact?: GroupyCompactStats;
 	headroom?: HeadroomStats;
 	caveman: boolean;
 	ponytail: boolean;
@@ -77,10 +89,14 @@ export function resolveTokenSaverFlags(
 		return raw === 'off' || raw === '0' || raw === 'false' || raw === 'disabled';
 	})();
 
+	const groupyLevel = normalizeGroupyCompactLevel(globalCfg?.tokenSaverGroupyCompactLevel);
+
 	if (headerOff) {
 		return {
 			rtk: false,
 			rtkMaxChars: Number(globalCfg?.tokenSaverRtkMaxChars) || 2000,
+			groupyCompact: false,
+			groupyCompactLevel: groupyLevel,
 			headroom: false,
 			headroomUrl: String(globalCfg?.tokenSaverHeadroomUrl || ''),
 			caveman: false,
@@ -94,6 +110,12 @@ export function resolveTokenSaverFlags(
 	return {
 		rtk: resolveFlag(userOverrides?.tokenSaverRtkOverride, globalCfg?.tokenSaverRtkEnabled, true),
 		rtkMaxChars: Math.max(200, Number(globalCfg?.tokenSaverRtkMaxChars) || 2000),
+		groupyCompact: resolveFlag(
+			userOverrides?.tokenSaverGroupyCompactOverride,
+			globalCfg?.tokenSaverGroupyCompactEnabled,
+			true,
+		),
+		groupyCompactLevel: groupyLevel,
 		headroom: resolveFlag(
 			userOverrides?.tokenSaverHeadroomOverride,
 			globalCfg?.tokenSaverHeadroomEnabled,
@@ -142,11 +164,7 @@ function isTinyChat(body: any): boolean {
 
 /**
  * Apply the full Token Saver pipeline in-place on an OpenAI-format request body.
- * Order matches 9router: RTK → Headroom → Caveman → Ponytail.
- *
- * Research note (2026): Caveman can raise total tokens on tool-heavy agents;
- * skip it when tools are present unless level ≥ 4. Skip Caveman/Ponytail on
- * tiny chats — the injected system lines would cost more than they save.
+ * Order: RTK → Groupy Compact → Headroom → Caveman → Ponytail.
  */
 export async function applyTokenSavers(
 	body: any,
@@ -164,6 +182,9 @@ export async function applyTokenSavers(
 
 	if (flags.rtk) {
 		result.rtk = applyRtk(body, flags.rtkMaxChars);
+	}
+	if (flags.groupyCompact && !tiny) {
+		result.groupyCompact = applyGroupyCompact(body, flags.groupyCompactLevel);
 	}
 	if (flags.headroom && flags.headroomUrl) {
 		result.headroom = await applyHeadroom(body, flags.headroomUrl);
@@ -184,3 +205,4 @@ export { applyRtk } from './rtk.js';
 export { applyHeadroom } from './headroom.js';
 export { applyCaveman, getCavemanPrompt } from './caveman.js';
 export { applyPonytail, getPonytailPrompt } from './ponytail.js';
+export { applyGroupyCompact, normalizeGroupyCompactLevel } from './groupy-compact.js';

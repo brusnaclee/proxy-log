@@ -1446,12 +1446,15 @@ internal.get("/internal/token-saver/:discordUserId", async (c) => {
       cavemanLevel: config?.tokenSaverCavemanLevel ?? 2,
       ponytail: config?.tokenSaverPonytailEnabled ?? false,
       ponytailLevel: config?.tokenSaverPonytailLevel || "lite",
+      groupyCompact: config?.tokenSaverGroupyCompactEnabled ?? true,
+      groupyCompactLevel: config?.tokenSaverGroupyCompactLevel || "balanced",
     },
     overrides: {
       rtk: settings?.tokenSaverRtkOverride ?? null,
       headroom: settings?.tokenSaverHeadroomOverride ?? null,
       caveman: settings?.tokenSaverCavemanOverride ?? null,
       ponytail: settings?.tokenSaverPonytailOverride ?? null,
+      groupyCompact: settings?.tokenSaverGroupyCompactOverride ?? null,
     },
   });
 });
@@ -1467,6 +1470,7 @@ internal.put("/internal/token-saver/:discordUserId", async (c) => {
     headroom?: boolean | null;
     caveman?: boolean | null;
     ponytail?: boolean | null;
+    groupyCompact?: boolean | null;
   }>().catch(() => ({} as any));
 
   const normalize = (v: unknown): boolean | null => {
@@ -1483,6 +1487,9 @@ internal.put("/internal/token-saver/:discordUserId", async (c) => {
   if (body.headroom !== undefined) updates.tokenSaverHeadroomOverride = normalize(body.headroom);
   if (body.caveman !== undefined) updates.tokenSaverCavemanOverride = normalize(body.caveman);
   if (body.ponytail !== undefined) updates.tokenSaverPonytailOverride = normalize(body.ponytail);
+  if (body.groupyCompact !== undefined) {
+    updates.tokenSaverGroupyCompactOverride = normalize(body.groupyCompact);
+  }
 
   const [existing] = await db
     .select()
@@ -1502,6 +1509,7 @@ internal.put("/internal/token-saver/:discordUserId", async (c) => {
       tokenSaverHeadroomOverride: updates.tokenSaverHeadroomOverride ?? null,
       tokenSaverCavemanOverride: updates.tokenSaverCavemanOverride ?? null,
       tokenSaverPonytailOverride: updates.tokenSaverPonytailOverride ?? null,
+      tokenSaverGroupyCompactOverride: updates.tokenSaverGroupyCompactOverride ?? null,
     });
   }
 
@@ -1518,6 +1526,7 @@ internal.put("/internal/token-saver/:discordUserId", async (c) => {
       headroom: refreshed?.tokenSaverHeadroomOverride ?? null,
       caveman: refreshed?.tokenSaverCavemanOverride ?? null,
       ponytail: refreshed?.tokenSaverPonytailOverride ?? null,
+      groupyCompact: refreshed?.tokenSaverGroupyCompactOverride ?? null,
     },
   });
 });

@@ -591,12 +591,15 @@ portal.get("/me", async (c) => {
         cavemanLevel: config?.tokenSaverCavemanLevel ?? 2,
         ponytail: config?.tokenSaverPonytailEnabled ?? false,
         ponytailLevel: config?.tokenSaverPonytailLevel || "lite",
+        groupyCompact: config?.tokenSaverGroupyCompactEnabled ?? true,
+        groupyCompactLevel: config?.tokenSaverGroupyCompactLevel || "balanced",
       },
       overrides: {
         rtk: settings?.tokenSaverRtkOverride ?? null,
         headroom: settings?.tokenSaverHeadroomOverride ?? null,
         caveman: settings?.tokenSaverCavemanOverride ?? null,
         ponytail: settings?.tokenSaverPonytailOverride ?? null,
+        groupyCompact: settings?.tokenSaverGroupyCompactOverride ?? null,
       },
     },
   });
@@ -1595,12 +1598,15 @@ portal.get("/settings/token-saver", async (c) => {
       cavemanLevel: config?.tokenSaverCavemanLevel ?? 2,
       ponytail: config?.tokenSaverPonytailEnabled ?? false,
       ponytailLevel: config?.tokenSaverPonytailLevel || "lite",
+      groupyCompact: config?.tokenSaverGroupyCompactEnabled ?? true,
+      groupyCompactLevel: config?.tokenSaverGroupyCompactLevel || "balanced",
     },
     overrides: {
       rtk: settings?.tokenSaverRtkOverride ?? null,
       headroom: settings?.tokenSaverHeadroomOverride ?? null,
       caveman: settings?.tokenSaverCavemanOverride ?? null,
       ponytail: settings?.tokenSaverPonytailOverride ?? null,
+      groupyCompact: settings?.tokenSaverGroupyCompactOverride ?? null,
     },
   });
 });
@@ -1612,6 +1618,7 @@ portal.put("/settings/token-saver", async (c) => {
     headroom?: boolean | null;
     caveman?: boolean | null;
     ponytail?: boolean | null;
+    groupyCompact?: boolean | null;
   }>();
 
   const normalize = (v: unknown): boolean | null => {
@@ -1626,6 +1633,9 @@ portal.put("/settings/token-saver", async (c) => {
   if (body.headroom !== undefined) updates.tokenSaverHeadroomOverride = normalize(body.headroom);
   if (body.caveman !== undefined) updates.tokenSaverCavemanOverride = normalize(body.caveman);
   if (body.ponytail !== undefined) updates.tokenSaverPonytailOverride = normalize(body.ponytail);
+  if (body.groupyCompact !== undefined) {
+    updates.tokenSaverGroupyCompactOverride = normalize(body.groupyCompact);
+  }
 
   const settings = (await db.select().from(userPortalSettings).where(eq(userPortalSettings.discordUserId, discordUserId)))[0];
   if (settings) {
@@ -1637,6 +1647,7 @@ portal.put("/settings/token-saver", async (c) => {
       tokenSaverHeadroomOverride: updates.tokenSaverHeadroomOverride ?? null,
       tokenSaverCavemanOverride: updates.tokenSaverCavemanOverride ?? null,
       tokenSaverPonytailOverride: updates.tokenSaverPonytailOverride ?? null,
+      tokenSaverGroupyCompactOverride: updates.tokenSaverGroupyCompactOverride ?? null,
     });
   }
 
@@ -1648,6 +1659,7 @@ portal.put("/settings/token-saver", async (c) => {
       headroom: refreshed?.tokenSaverHeadroomOverride ?? null,
       caveman: refreshed?.tokenSaverCavemanOverride ?? null,
       ponytail: refreshed?.tokenSaverPonytailOverride ?? null,
+      groupyCompact: refreshed?.tokenSaverGroupyCompactOverride ?? null,
     },
   });
 });

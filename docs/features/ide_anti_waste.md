@@ -20,6 +20,10 @@ UA + content fallback ([`detect-ide.ts`](../../packages/proxy/src/utils/detect-i
 
 Generic UAs (`node`, Bun, SDKs, …) re-run `detectIdeFromContent` via `GENERIC_IDE_LABELS`.
 
+## Related: Groupy Compact (Token Saver)
+
+For **non-duplicate** history bloat across many hops, see [`groupy_compact.md`](./groupy_compact.md) — stubs older noisy tool dumps while keeping the recent window full. Runs in the Token Saver pipeline (after RTK), default ON.
+
 ## Anti-waste (model-agnostic, no stream cut)
 
 Flag: `ANTI_WASTE_ENABLED` (default **on**) or header `X-Anti-Waste: off`.

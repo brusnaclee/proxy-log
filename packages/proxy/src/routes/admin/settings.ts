@@ -49,6 +49,8 @@ settings.get("/settings/global", async (c) => {
     tokenSaverCavemanLevel: config.tokenSaverCavemanLevel ?? 2,
     tokenSaverPonytailEnabled: config.tokenSaverPonytailEnabled ?? false,
     tokenSaverPonytailLevel: config.tokenSaverPonytailLevel || "lite",
+    tokenSaverGroupyCompactEnabled: config.tokenSaverGroupyCompactEnabled ?? true,
+    tokenSaverGroupyCompactLevel: config.tokenSaverGroupyCompactLevel || "balanced",
   });
 });
 
@@ -113,6 +115,15 @@ settings.put("/settings/global", async (c) => {
   if (body.tokenSaverPonytailLevel !== undefined) {
     const lvl = String(body.tokenSaverPonytailLevel || "lite").toLowerCase();
     updates.tokenSaverPonytailLevel = ["lite", "full", "ultra"].includes(lvl) ? lvl : "lite";
+  }
+  if (body.tokenSaverGroupyCompactEnabled !== undefined) {
+    updates.tokenSaverGroupyCompactEnabled = !!body.tokenSaverGroupyCompactEnabled;
+  }
+  if (body.tokenSaverGroupyCompactLevel !== undefined) {
+    const lvl = String(body.tokenSaverGroupyCompactLevel || "balanced").toLowerCase();
+    updates.tokenSaverGroupyCompactLevel = ["lite", "balanced", "aggressive"].includes(lvl)
+      ? lvl
+      : "balanced";
   }
 
   await db.update(adminConfig).set(updates).where(eq(adminConfig.id, config.id));
