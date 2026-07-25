@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { stats } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -7,8 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
 import {
   PieChart, Pie, Cell, BarChart, Bar, LineChart, Line,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  XAxis, YAxis, CartesianGrid, Tooltip, 
 } from "recharts";
+import { ChartBox } from "@/components/ChartBox";
 import { useRealtimeSSE } from "@/lib/use-realtime-sse";
 import { exportXlsx, buildModelsSection, fmtCost } from "@/lib/export-xlsx";
 import { PeriodSelector, type PeriodKey } from "@/components/PeriodSelector";
@@ -81,7 +82,7 @@ export default function AnalyticsPage() {
   const handleSSEMessage = useCallback(() => { void loadData(daysFromPeriod(periodKey)); }, [periodKey, loadData]);
   useRealtimeSSE(handleSSEMessage, 900);
 
-  // â”€â”€ Export â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Export ──────────────────────────────────────────────────────────────────
   const handleExport = () => {
     const pl = periodKeyToLabel(periodKey);
     const dateStr = new Date().toISOString().split("T")[0];
@@ -143,7 +144,7 @@ export default function AnalyticsPage() {
     if (timeseriesData.length) {
       sheets.push({
         name: "Daily Timeseries",
-        note: "Each row = one day  -  select columns and Insert â†’ Chart to visualize",
+        note: "Each row = one day  -  select columns and Insert → Chart to visualize",
         headers: ["Date", "Prompts", "Total Tokens", "Input Tokens", "Output Tokens", "Est. Cost", "Unique Devices"],
         rows: timeseriesData.map(t => [
           t.period, Number(t.requests)||0, Number(t.tokens)||0, Number(t.promptTokens)||0, Number(t.completionTokens)||0,
@@ -218,7 +219,7 @@ export default function AnalyticsPage() {
           <CardContent>
             <div className="h-[250px] sm:h-[300px]">
               {modelData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
+                <ChartBox className="!h-full !min-h-0 lg:!h-full">
                   <PieChart>
                     <Pie
                       data={modelData.slice(0, 8)}
@@ -247,7 +248,7 @@ export default function AnalyticsPage() {
                       ]}
                     />
                   </PieChart>
-                </ResponsiveContainer>
+                </ChartBox>
               ) : (
                 <div className="flex items-center justify-center h-full text-muted-foreground">No model data yet</div>
               )}
@@ -263,7 +264,7 @@ export default function AnalyticsPage() {
           <CardContent>
             <div className="h-[300px]">
               {ideChartData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
+                <ChartBox className="!h-full !min-h-0 lg:!h-full">
                   <BarChart data={ideChartData.slice(0, 8)} layout="vertical">
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                     <XAxis type="number" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
@@ -271,7 +272,7 @@ export default function AnalyticsPage() {
                     <Tooltip contentStyle={TOOLTIP_STYLE} itemStyle={ITEM_STYLE} labelStyle={LABEL_STYLE} />
                     <Bar dataKey="value" fill="#34d399" radius={[0, 4, 4, 0]} name="Prompts" />
                   </BarChart>
-                </ResponsiveContainer>
+                </ChartBox>
               ) : (
                 <div className="flex items-center justify-center h-full text-muted-foreground">No IDE data yet</div>
               )}
@@ -288,7 +289,7 @@ export default function AnalyticsPage() {
         <CardContent>
           <div className="h-[250px]">
             {keyData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
+              <ChartBox className="!h-full !min-h-0 lg:!h-full">
                 <BarChart data={keyData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis dataKey="name" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
@@ -297,7 +298,7 @@ export default function AnalyticsPage() {
                   <Bar dataKey="tokens"   fill="#a78bfa" radius={[4, 4, 0, 0]} name="Tokens" />
                   <Bar dataKey="requests" fill="#818cf8" radius={[4, 4, 0, 0]} name="Prompts" />
                 </BarChart>
-              </ResponsiveContainer>
+              </ChartBox>
             ) : (
               <div className="flex items-center justify-center h-full text-muted-foreground">No data yet</div>
             )}
@@ -399,9 +400,8 @@ export default function AnalyticsPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="chart-container">
-              {hourlyData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
+            {hourlyData.length > 0 ? (
+                <ChartBox>
                   <BarChart data={hourlyData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                     <XAxis dataKey="period" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} tickFormatter={(v) => { const p = formatChartPeriod(v); return p.replace(" WIB", ""); }} />
@@ -409,11 +409,10 @@ export default function AnalyticsPage() {
                     <Tooltip contentStyle={TOOLTIP_STYLE} itemStyle={ITEM_STYLE} labelStyle={LABEL_STYLE} />
                     <Bar dataKey="requests" fill="#f59e0b" radius={[2, 2, 0, 0]} />
                   </BarChart>
-                </ResponsiveContainer>
+                </ChartBox>
               ) : (
-                <div className="flex items-center justify-center h-full text-muted-foreground">No hourly data yet</div>
+                <div className="flex items-center justify-center h-[200px] text-muted-foreground">No hourly data yet</div>
               )}
-            </div>
           </CardContent>
         </Card>
 
@@ -422,9 +421,8 @@ export default function AnalyticsPage() {
             <CardTitle className="text-base font-medium">Unique Devices Over Time</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="chart-container">
-              {timeseriesData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
+            {timeseriesData.length > 0 ? (
+                <ChartBox>
                   <LineChart data={timeseriesData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                     <XAxis dataKey="period" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} tickFormatter={formatChartPeriod} />
@@ -432,11 +430,10 @@ export default function AnalyticsPage() {
                     <Tooltip contentStyle={TOOLTIP_STYLE} itemStyle={ITEM_STYLE} labelStyle={LABEL_STYLE} />
                     <Line type="monotone" dataKey="uniqueDevices" stroke="#38bdf8" strokeWidth={2} dot={false} name="Unique Devices" />
                   </LineChart>
-                </ResponsiveContainer>
+                </ChartBox>
               ) : (
-                <div className="flex items-center justify-center h-full text-muted-foreground">No device data yet</div>
+                <div className="flex items-center justify-center h-[200px] text-muted-foreground">No device data yet</div>
               )}
-            </div>
           </CardContent>
         </Card>
       </div>

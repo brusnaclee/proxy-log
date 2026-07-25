@@ -120,14 +120,9 @@
   }
 }
 
-/* Responsive chart container */
+/* Chart host — always give an explicit height (Recharts % height needs it) */
 .chart-container {
-  @apply w-full min-h-[200px];
-}
-@media (min-width: 1024px) {
-  .chart-container {
-    @apply h-[250px];
-  }
+  @apply w-full h-[200px] lg:h-[250px];
 }
 
 /* Mobile-friendly stat card */

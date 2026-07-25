@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis,
-  CartesianGrid, Tooltip, ResponsiveContainer,
+  CartesianGrid, Tooltip,
 } from "recharts";
 import {
   Activity, MessageSquare, Download, DollarSign, Users, Wrench, Zap,
@@ -9,6 +9,7 @@ import {
   Info,
 } from "lucide-react";
 import { PeriodSelector, type PeriodKey } from "@/components/PeriodSelector";
+import { ChartBox } from "@/components/ChartBox";
 import { api, type MeResponse, type TopError } from "@/lib/api";
 import { formatNumber, formatCost, formatInputBreakdown } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n";
@@ -108,9 +109,11 @@ export default function OverviewPage() {
   const [expandedError, setExpandedError] = useState<number | null>(null);
 
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [cheatSheetOpen, setCheatSheetOpen] = useState(false);
   const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
+  const hasLoadedRef = useRef(false);
 
   const fetchPeriodData = useCallback((p: string) => {
     return Promise.all([
@@ -122,7 +125,8 @@ export default function OverviewPage() {
   }, []);
 
   useEffect(() => {
-    setLoading(true);
+    if (hasLoadedRef.current) setRefreshing(true);
+    else setLoading(true);
     setError("");
 
     Promise.all([
@@ -142,9 +146,13 @@ export default function OverviewPage() {
         setTopErrors(errorsData as TopError[]);
         setCompare(compareData as any);
         setForecast(forecastData as any);
+        hasLoadedRef.current = true;
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load data"))
-      .finally(() => setLoading(false));
+      .finally(() => {
+        setLoading(false);
+        setRefreshing(false);
+      });
   }, [period, fetchPeriodData]);
 
   const copySnippet = (key: string, text: string) => {
@@ -685,8 +693,7 @@ export default function OverviewPage() {
     return (
       <div className="bg-card border border-border rounded-xl p-4">
         <h3 className="text-sm font-medium text-foreground mb-4">{t("Requests Over Time")}</h3>
-        <div className="chart-container">
-          <ResponsiveContainer width="100%" height="100%">
+        <ChartBox>
             <LineChart data={data}>
               <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} />
               <XAxis dataKey="date" stroke={CHART_COLORS.text} fontSize={11} tickLine={false} />
@@ -698,8 +705,7 @@ export default function OverviewPage() {
                 dot={false} activeDot={{ r: 4, fill: CHART_COLORS.primary }}
               />
             </LineChart>
-          </ResponsiveContainer>
-        </div>
+        </ChartBox>
       </div>
     );
   };
@@ -714,8 +720,7 @@ export default function OverviewPage() {
     return (
       <div className="bg-card border border-border rounded-xl p-4">
         <h3 className="text-sm font-medium text-foreground mb-4">{t("Token Usage by Model")}</h3>
-        <div className="chart-container">
-          <ResponsiveContainer width="100%" height="100%">
+        <ChartBox>
             <BarChart data={data} layout="vertical">
               <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} horizontal={false} />
               <XAxis type="number" stroke={CHART_COLORS.text} fontSize={11} tickLine={false} tickFormatter={formatNumber} />
@@ -728,8 +733,7 @@ export default function OverviewPage() {
               />
               <Bar dataKey="tokens" fill={CHART_COLORS.primary} radius={[0, 4, 4, 0]} />
             </BarChart>
-          </ResponsiveContainer>
-        </div>
+        </ChartBox>
       </div>
     );
   };
@@ -796,8 +800,8 @@ export default function OverviewPage() {
       {renderTrialCountdown()}
       {renderNotificationBanner()}
 
-      {/* Loading skeleton */}
-      {loading ? (
+      {/* Loading skeleton — only first load; keep previous charts while refreshing */}
+      {loading && !stats ? (
         <div className="space-y-6">
           <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
             {Array.from({ length: 6 }).map((_, i) => (
@@ -813,7 +817,7 @@ export default function OverviewPage() {
           </div>
         </div>
       ) : (
-        <>
+        <div className={refreshing ? "opacity-70 transition-opacity" : undefined}>
           {/* Limits card */}
           {renderLimitsCard()}
 
@@ -840,7 +844,7 @@ export default function OverviewPage() {
 
           {/* Cheat sheet */}
           {renderCheatSheet()}
-        </>
+        </div>
       )}
     </div>
   );

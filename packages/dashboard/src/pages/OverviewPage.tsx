@@ -7,8 +7,8 @@ import { formatNumber, formatRelativeTime, formatChartPeriod, formatLogUserDispl
 import { Activity, Coins, Key, Monitor, TrendingUp, Download, RefreshCw, DollarSign, Search, ChevronLeft, ChevronRight } from "lucide-react";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer,
 } from "recharts";
+import { ChartBox } from "@/components/ChartBox";
 import { useRealtimeSSE } from "@/lib/use-realtime-sse";
 import { exportXlsx, buildModelsSection, fmtCost } from "@/lib/export-xlsx";
 import { formatCost } from "@/lib/utils";
@@ -426,8 +426,7 @@ export default function OverviewPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="chart-container">
-              <ResponsiveContainer width="100%" height="100%">
+            <ChartBox>
                 <LineChart data={timeseries}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis
@@ -439,8 +438,7 @@ export default function OverviewPage() {
                   <Tooltip contentStyle={TOOLTIP_STYLE} itemStyle={ITEM_STYLE} labelStyle={LABEL_STYLE} />
                   <Line type="monotone" dataKey="requests" stroke="#818cf8" strokeWidth={2} dot={false} />
                 </LineChart>
-              </ResponsiveContainer>
-            </div>
+            </ChartBox>
           </CardContent>
         </Card>
 
@@ -467,8 +465,7 @@ export default function OverviewPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="chart-container">
-              <ResponsiveContainer width="100%" height="100%">
+            <ChartBox>
                 <BarChart data={modelStats.slice(0, 8)}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis
@@ -485,8 +482,7 @@ export default function OverviewPage() {
                   />
                   <Bar dataKey="tokens" fill="#818cf8" radius={[4, 4, 0, 0]} name="Tokens" />
                 </BarChart>
-              </ResponsiveContainer>
-            </div>
+            </ChartBox>
           </CardContent>
         </Card>
       </div>

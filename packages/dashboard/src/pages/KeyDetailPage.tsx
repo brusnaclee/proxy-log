@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { keys, logs, stats, trialSettings, type ApiKeyDetail, type KeyPeriodStats, type LogEntry, type SessionDetailResponse, type ModelLimitEntry, type TrialUserRow, globalSettings } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,8 +21,9 @@ import { LiveUsageCard } from "@/components/LiveUsageCard";
 import { DayOverrideDialog } from "@/components/DayOverrideDialog";
 import { useNotify } from "@/components/Notify";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, 
 } from "recharts";
+import { ChartBox } from "@/components/ChartBox";
 
 const TOOLTIP_STYLE  = { backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px", fontSize: "12px", color: "hsl(var(--foreground))" };
 const ITEM_STYLE     = { color: "hsl(var(--foreground))" };
@@ -31,7 +32,7 @@ const MODEL_COLORS   = ["#818cf8", "#34d399", "#f59e0b", "#f87171", "#a78bfa", "
 
 export default function KeyDetailPage() {
   const { id: idSlug } = useParams<{ id: string }>();
-  // Slug format is "{numericId}-{name-slug}" — extract just the numeric ID prefix
+  // Slug format is "{numericId}-{name-slug}" ? extract just the numeric ID prefix
   const id = idSlug?.split("-")[0] ?? "";
   const navigate = useNavigate();
   const [keyData, setKeyData] = useState<ApiKeyDetail | null>(null);
@@ -303,7 +304,7 @@ export default function KeyDetailPage() {
           durationDays: (res as any).durationDays || 0,
           expiresAt: (res as any).expiresAt || "",
         });
-        setStatusText(`Trial action "${action}" applied — new key sent to user via DM.`);
+        setStatusText(`Trial action "${action}" applied ? new key sent to user via DM.`);
       } else {
         setLastIssuedKey(null);
         setStatusText(`Trial action "${action}" applied.`);
@@ -495,7 +496,7 @@ export default function KeyDetailPage() {
               <Trash2 className="h-3 w-3 mr-1" /> Delete
             </Button>
           ) : (
-            <span className="text-xs text-muted-foreground px-2">Primary key — cannot delete</span>
+            <span className="text-xs text-muted-foreground px-2">Primary key ? cannot delete</span>
           )}
         </div>
       </div>
@@ -531,8 +532,8 @@ export default function KeyDetailPage() {
               <div className="text-xs text-muted-foreground border-t border-border/40 pt-2">
                 Overrides:
                 {trialInfo.overrideDays != null && ` duration ${trialInfo.overrideDays}d`}
-                {trialInfo.overrideDailyTokenLimit != null && ` · daily tokens ${trialInfo.overrideDailyTokenLimit.toLocaleString()}`}
-                {trialInfo.overridePromptLimit != null && ` · prompt ${trialInfo.overridePromptLimit}/${trialInfo.overridePromptLimitWindow || "5h"}`}
+                {trialInfo.overrideDailyTokenLimit != null && ` ? daily tokens ${trialInfo.overrideDailyTokenLimit.toLocaleString()}`}
+                {trialInfo.overridePromptLimit != null && ` ? prompt ${trialInfo.overridePromptLimit}/${trialInfo.overridePromptLimitWindow || "5h"}`}
               </div>
             )}
             <div className="flex flex-wrap gap-2 pt-1">
@@ -618,11 +619,11 @@ export default function KeyDetailPage() {
                       <tr key={h.id} className={`border-b border-border/20 ${isGrant ? "bg-amber-500/5" : ""}`}>
                         <td className="py-2 pr-3">{formatDate(h.claimedAt)}</td>
                         <td className="py-2 pr-3">{formatDate(h.expiresAt)}</td>
-                        <td className="py-2 pr-3">{h.endedAt ? formatDate(h.endedAt) : "—"}</td>
+                        <td className="py-2 pr-3">{h.endedAt ? formatDate(h.endedAt) : "?"}</td>
                         <td className="py-2 pr-3">
                           <Badge variant={status === "active" ? "default" : "secondary"}>{status}</Badge>
                         </td>
-                        <td className="py-2 pr-3">{h.endReason || "—"}</td>
+                        <td className="py-2 pr-3">{h.endReason || "?"}</td>
                         <td className="py-2 pr-3 font-mono text-[10px] text-muted-foreground">
                           {h.keyName} <span className="opacity-60">#{h.apiKeyId}</span>
                         </td>
@@ -675,7 +676,7 @@ export API_TIMEOUT_MS=500000`}
         </Card>
       )}
 
-      {/* Live usage — same semantics as client portal */}
+      {/* Live usage ? same semantics as client portal */}
       <div className="flex flex-col sm:flex-row sm:items-start gap-3">
         <div className="flex-1 min-w-0">
           <LiveUsageCard live={keyData.liveUsage} />
@@ -730,7 +731,7 @@ export API_TIMEOUT_MS=500000`}
                       : null,
                   ]
                     .filter(Boolean)
-                    .join(" · ") || undefined,
+                    .join(" ? ") || undefined,
                 },
                 { label: "Output Tokens", value: formatNumber(s.completionTokens) },
                 { label: "Context Tokens",value: formatNumber(s.contextTokens) },
@@ -1100,7 +1101,7 @@ export API_TIMEOUT_MS=500000`}
                     onChange={(e) => setNewKeyModelOverrideIsPattern(e.target.checked)}
                   />
                   <Label htmlFor="newKeyModelOverrideIsPattern" className="cursor-pointer text-xs">
-                    <b>Pattern / batch</b> (auto-detect: ON saat ≥2 model cocok) — 1 entry ini auto-apply ke semua model yang substring mengandung "{newKeyModelOverride}"
+                    <b>Pattern / batch</b> (auto-detect: ON saat =2 model cocok) ? 1 entry ini auto-apply ke semua model yang substring mengandung "{newKeyModelOverride}"
                   </Label>
                 </div>
               </div>
@@ -1452,17 +1453,17 @@ export API_TIMEOUT_MS=500000`}
                       <td className="py-2 px-4">
                         <code className="text-xs font-mono">{d.fingerprint?.substring(0, 16)}...</code>
                       </td>
-                      <td className="py-2 px-4 text-sm">{d.ipAddress || "—"}</td>
-                      <td className="py-2 px-4 text-sm">{d.ideDetected || "—"}</td>
-                      <td className="py-2 px-4 text-sm">{d.osDetected || "—"}</td>
-                      <td className="py-2 px-4 text-xs">{d.deviceName || "—"}</td>
+                      <td className="py-2 px-4 text-sm">{d.ipAddress || "?"}</td>
+                      <td className="py-2 px-4 text-sm">{d.ideDetected || "?"}</td>
+                      <td className="py-2 px-4 text-sm">{d.osDetected || "?"}</td>
+                      <td className="py-2 px-4 text-xs">{d.deviceName || "?"}</td>
                       <td className="py-2 px-4 text-xs text-muted-foreground">
                         {d.firstSeen ? (
                           <>
                             <div>{formatDate(d.firstSeen)}</div>
                             <div className="text-[10px]">{formatRelativeTime(d.firstSeen)}</div>
                           </>
-                        ) : "—"}
+                        ) : "?"}
                       </td>
                       <td className="py-2 px-4 text-xs text-muted-foreground">
                         {d.lastSeen ? (
@@ -1470,7 +1471,7 @@ export API_TIMEOUT_MS=500000`}
                             <div>{formatDate(d.lastSeen)}</div>
                             <div className="text-[10px]">{formatRelativeTime(d.lastSeen)}</div>
                           </>
-                        ) : "—"}
+                        ) : "?"}
                       </td>
                       <td className="py-2 px-4 text-right font-mono">{d.requestCount}</td>
                       <td className="py-2 px-4 text-center">
@@ -1551,7 +1552,7 @@ export API_TIMEOUT_MS=500000`}
                         <div className="text-[10px]">{log.clientName || "-"}</div>
                       </td>
                       <td className="py-2 px-4 text-xs font-mono">{log.ipAddress}</td>
-                      <td className="py-2 px-4 text-xs">{(log.toolsUsed || []).length ? (log.toolsUsed || []).slice(0, 2).join(", ") : "—"}</td>
+                      <td className="py-2 px-4 text-xs">{(log.toolsUsed || []).length ? (log.toolsUsed || []).slice(0, 2).join(", ") : "?"}</td>
                       <td className="py-2 px-4 text-right font-mono text-xs">{formatNumber(log.totalTokens)}</td>
                       <td className="py-2 px-4 text-right text-xs text-muted-foreground">{log.latencyMs}ms</td>
                       <td className="py-2 px-4 text-center">
@@ -1601,7 +1602,7 @@ export API_TIMEOUT_MS=500000`}
                   {(keyData.analytics?.topDevices || []).map((d, idx) => (
                     <tr key={`top-device-${idx}`} className="border-b border-border/30 hover:bg-accent/30">
                       <td className="py-2 px-4 text-xs font-mono">{d.deviceFingerprint ? `${d.deviceFingerprint.substring(0, 16)}...` : "unknown"}</td>
-                      <td className="py-2 px-4 text-xs font-mono">{d.ipAddress || "—"}</td>
+                      <td className="py-2 px-4 text-xs font-mono">{d.ipAddress || "?"}</td>
                       <td className="py-2 px-4 text-xs">
                         <div>{d.ideDetected || "Unknown IDE"}</div>
                         <div className="text-[10px] text-muted-foreground">{d.osDetected || "Unknown OS"}</div>
@@ -1615,7 +1616,7 @@ export API_TIMEOUT_MS=500000`}
                             <div>{formatDate(d.lastSeen)}</div>
                             <div className="text-[10px]">{formatRelativeTime(d.lastSeen)}</div>
                           </>
-                        ) : "—"}
+                        ) : "?"}
                       </td>
                     </tr>
                   ))}
@@ -1663,7 +1664,7 @@ export API_TIMEOUT_MS=500000`}
                         <div className="font-medium truncate max-w-[220px]" title={s.sessionName || s.sessionId}>
                           {s.sessionName && s.sessionName.trim() ? s.sessionName : "Untitled Chat"}
                         </div>
-                        <div className="text-[10px] font-mono text-muted-foreground">{s.sessionId ? `${s.sessionId.substring(0, 16)}…` : "—"}</div>
+                        <div className="text-[10px] font-mono text-muted-foreground">{s.sessionId ? `${s.sessionId.substring(0, 16)}?` : "?"}</div>
                       </td>
                       <td className="py-2 px-4 text-xs font-mono">{s.deviceFingerprint ? `${s.deviceFingerprint.substring(0, 16)}...` : "unknown"}</td>
                       <td className="py-2 px-4 text-xs"><code className="text-[10px] bg-accent/50 px-1.5 py-0.5 rounded">{s.model || "unknown"}</code></td>
@@ -1676,7 +1677,7 @@ export API_TIMEOUT_MS=500000`}
                             <div>{formatDate(s.lastSeenAt)}</div>
                             <div className="text-[10px]">{formatRelativeTime(s.lastSeenAt)}</div>
                           </>
-                        ) : "—"}
+                        ) : "?"}
                       </td>
                     </tr>
                   ))}
@@ -1789,9 +1790,8 @@ export API_TIMEOUT_MS=500000`}
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="h-[240px]">
-                {modelTabData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
+              {modelTabData.length > 0 ? (
+                <ChartBox className="!h-[240px] lg:!h-[240px]">
                     <BarChart data={modelTabData.slice(0, 10)}>
                       <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                       <XAxis
@@ -1813,13 +1813,12 @@ export API_TIMEOUT_MS=500000`}
                         name={modelTabSort === "tokens" ? "Tokens" : "Requests"}
                       />
                     </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-                    {modelTabLoading ? "Loading..." : "No model usage data yet."}
-                  </div>
-                )}
-              </div>
+                </ChartBox>
+              ) : (
+                <div className="flex items-center justify-center h-[240px] text-muted-foreground text-sm">
+                  {modelTabLoading ? "Loading..." : "No model usage data yet."}
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -1850,7 +1849,7 @@ export API_TIMEOUT_MS=500000`}
                       <td className="py-2 px-4 text-right font-mono text-xs text-blue-400">{formatNumber(m.promptTokens || 0)}</td>
                       <td className="py-2 px-4 text-right font-mono text-xs text-purple-400">{formatNumber(m.completionTokens || 0)}</td>
                       <td className="py-2 px-4 text-right font-mono text-xs font-semibold">{formatNumber(m.tokens || 0)}</td>
-                      <td className="py-2 px-4 text-right text-xs text-muted-foreground">{m.avgLatency ? `${m.avgLatency}ms` : "—"}</td>
+                      <td className="py-2 px-4 text-right text-xs text-muted-foreground">{m.avgLatency ? `${m.avgLatency}ms` : "?"}</td>
                       <td className="py-2 px-4 text-right font-mono text-xs text-emerald-400">{formatCost(m.estimatedCost || 0)}</td>
                     </tr>
                   ))}
