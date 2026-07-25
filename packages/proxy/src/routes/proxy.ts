@@ -97,7 +97,6 @@ import {
 } from '../utils/model-catalog.js';
 import {
 	getClientCatalogFlags,
-	markProviderModelsOffline,
 } from '../utils/model-monitor-store.js';
 import {
 	checkApiCallLimit,
@@ -862,9 +861,10 @@ async function fetchUpstreamWithRetry(
 }
 
 /**
- * Fetch upstream with API key rotation and retry-on-429 logic.
- * If the response is 429 (rate limited), marks the key as limited and retries with the next available key.
- * Returns { response, apiKeyId } so callers know which key was used.
+ * Fetch upstream with API key rotation.
+ * On 401/429: try other keys (if any). Do NOT park keys / flip model offline —
+ * when the pool is exhausted, return the upstream status+body so the client
+ * sees the real limit/auth error (esp. single-key providers like tokito).
  */
 async function fetchWithKeyRotation(
 	providerId: number,
@@ -878,37 +878,71 @@ async function fetchWithKeyRotation(
 	const MAX_KEY_ATTEMPTS = 10; // don't loop forever
 	const triedKeyIds = new Set<number>();
 	const isGrok = isGrokCliModel(upstreamModel);
+	let lastFail: {
+		status: number;
+		body: string;
+		keyId: number;
+		apiKey: string;
+		statusText: string;
+	} | null = null;
 
-	const markOffline = async (reason: string) => {
+	const rebuildFail = () => {
+		const fail = lastFail!;
+		const body =
+			fail.body ||
+			JSON.stringify({
+				error: {
+					message:
+						fail.status === 429
+							? 'Upstream rate limited this model/key. Retry later.'
+							: 'Upstream rejected the API key (HTTP 401).',
+					type: 'upstream_error',
+					code: fail.status === 429 ? 'upstream_rate_limited' : 'upstream_unauthorized',
+				},
+			});
+		return {
+			response: new Response(body, {
+				status: fail.status,
+				statusText: fail.statusText || (fail.status === 429 ? 'Too Many Requests' : 'Unauthorized'),
+				headers: { 'Content-Type': 'application/json' },
+			}),
+			keyId: fail.keyId,
+			apiKey: fail.apiKey,
+		};
+	};
+
+	const captureFail = async (
+		response: Response,
+		keyId: number,
+		apiKey: string,
+	) => {
+		let bodyText = '';
 		try {
-			await markProviderModelsOffline(providerName, reason);
-		} catch (err) {
-			console.warn(
-				`[key-rotation] failed to mark ${providerName} offline:`,
-				err,
-			);
+			bodyText = await response.text();
+		} catch {
+			bodyText = '';
 		}
+		lastFail = {
+			status: response.status,
+			body: bodyText,
+			keyId,
+			apiKey,
+			statusText: response.statusText || '',
+		};
 	};
 
 	for (let attempt = 0; attempt < MAX_KEY_ATTEMPTS; attempt++) {
 		const keyResult = await getNextApiKey(providerId);
 		if (!keyResult) {
-			await markOffline('No usable API keys (all limited/invalid)');
+			if (lastFail) return rebuildFail();
 			throw new Error(
-				'All API keys for this provider are rate-limited. Reset keys in the dashboard.',
+				'No usable API keys for this provider. Check Upstream Providers in the dashboard.',
 			);
 		}
 
 		if (triedKeyIds.has(keyResult.keyId)) {
-			// Only one (or few) keys — already tried this one. For transient
-			// 401/429, retry the same key with backoff instead of aborting the
-			// whole provider (which used to trigger silent auto→gemini fallback).
-			if (attempt < MAX_KEY_ATTEMPTS - 1) {
-				await sleep(UPSTREAM_RETRY_BACKOFF_MS * (attempt + 1));
-				triedKeyIds.delete(keyResult.keyId);
-				continue;
-			}
-			await markOffline('No new API keys available');
+			// No fresh key left in the pool — surface upstream error as-is.
+			if (lastFail) return rebuildFail();
 			throw new Error('No new API keys available. All have been tried.');
 		}
 		triedKeyIds.add(keyResult.keyId);
@@ -923,23 +957,11 @@ async function fetchWithKeyRotation(
 			upstreamModel,
 		);
 
-		if (response.status === 401) {
+		if (response.status === 401 || response.status === 429) {
 			console.warn(
-				`[key-rotation] Key ${keyResult.keyId} for provider ${providerId} returned 401, trying next key`,
+				`[key-rotation] Key ${keyResult.keyId} for provider ${providerId} returned ${response.status}, trying next key`,
 			);
-			try {
-				await response.body?.cancel();
-			} catch {}
-			continue;
-		}
-
-		if (response.status === 429) {
-			console.warn(
-				`[key-rotation] Key ${keyResult.keyId} for provider ${providerId} returned 429, trying next key`,
-			);
-			try {
-				await response.body?.cancel();
-			} catch {}
+			await captureFail(response, keyResult.keyId, keyResult.apiKey);
 			continue;
 		}
 
@@ -959,9 +981,13 @@ async function fetchWithKeyRotation(
 				console.warn(
 					`[key-rotation] Key ${keyResult.keyId} grok transient 400 for ${upstreamModel}, trying next key`,
 				);
-				try {
-					await response.body?.cancel();
-				} catch {}
+				lastFail = {
+					status: 400,
+					body: bodyText,
+					keyId: keyResult.keyId,
+					apiKey: keyResult.apiKey,
+					statusText: response.statusText || '',
+				};
 				continue;
 			}
 			// Non-transient 400 — return rebuilt body if clone failed
@@ -982,7 +1008,7 @@ async function fetchWithKeyRotation(
 		return { response, keyId: keyResult.keyId, apiKey: keyResult.apiKey };
 	}
 
-	await markOffline('All API keys exhausted');
+	if (lastFail) return rebuildFail();
 	throw new Error('All API keys exhausted after rate-limit retries.');
 }
 
