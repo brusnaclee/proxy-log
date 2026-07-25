@@ -15,6 +15,7 @@ import {
 	turnCachedTokensSql,
 	hopCountSql,
 	hopFullInputTokensSql,
+	weightedHopInputTokensSql,
 	weightedHopTotalTokensSql,
 	wibMonthStartSql,
 	sanitizeRows,
@@ -58,7 +59,10 @@ export interface LiveUsagePayload {
 		requests: number;
 		/** Every upstream API call today (matches Logs table row count). */
 		hopCount: number;
+		/** Graduated hop input — same as daily input gate / bar. */
 		promptTokens: number;
+		/** Per-turn peak In (informational). */
+		peakPromptTokens?: number;
 		billablePromptTokens: number;
 		cachedTokens: number;
 		/** SUM(prompt+cache) every hop — amanai / provider In style. */
@@ -225,7 +229,10 @@ export async function buildLiveUsageForKey(
 			.select({
 				requests: turnCountSql(whereToday),
 				hopCount: hopCountSql(whereTodayHops),
-				promptTokens: turnPromptTokensSql(whereToday, tmOpts),
+				/** Peak In (display note) — not used for the input limit bar. */
+				peakPromptTokens: turnPromptTokensSql(whereToday, tmOpts),
+				/** Graduated hop input — same as daily input gate. */
+				promptTokens: weightedHopInputTokensSql(whereTodayHops, tmOpts),
 				billablePromptTokens: turnBillablePromptTokensSql(whereToday, tmOpts),
 				cachedTokens: turnCachedTokensSql(whereToday, tmOpts),
 				fullInputTokens: hopFullInputTokensSql(whereTodayHops, tmOpts),
@@ -251,6 +258,7 @@ export async function buildLiveUsageForKey(
 	]);
 
 	const promptTokens = usageToday?.promptTokens || 0;
+	const peakPromptTokens = usageToday?.peakPromptTokens || 0;
 	const billablePromptTokens = usageToday?.billablePromptTokens || 0;
 	const cachedTokens = usageToday?.cachedTokens || 0;
 	const fullInputTokens = usageToday?.fullInputTokens || 0;
@@ -493,6 +501,7 @@ export async function buildLiveUsageForKey(
 			requests: usageToday?.requests || 0,
 			hopCount,
 			promptTokens,
+			peakPromptTokens,
 			billablePromptTokens,
 			cachedTokens,
 			fullInputTokens,

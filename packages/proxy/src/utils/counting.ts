@@ -191,6 +191,41 @@ export function inputLimitWeightPercentForHop(rn: number): number {
   return Math.min(90, 10 * Math.ceil((n - 5) / 5));
 }
 
+/** SQL CASE expr for input weight fraction (0..1) given hop rn. */
+const INPUT_HOP_WEIGHT_SQL = sql`
+  CASE
+    WHEN rn = 1 THEN 1.0
+    WHEN rn <= 5 THEN 0.0
+    WHEN rn <= 10 THEN 0.10
+    WHEN rn >= 50 THEN 1.0
+    ELSE LEAST(0.90, 0.10 * CEIL((rn - 5)::numeric / 5))
+  END
+`;
+
+/**
+ * Graduated INPUT-only credit toward daily input limit (× INPUT_TOKEN_MULTIPLIER).
+ * Same hop schedule as weightedHopTotalTokensSql input half.
+ */
+export function weightedHopInputTokensSql(
+  whereCondition: SQL | undefined,
+  opts?: TokenMultiplierOpts,
+): SQL<number> {
+  const { input } = getTokenMultipliers(opts);
+  return sql<number>`COALESCE((
+    SELECT SUM(inn * (${INPUT_HOP_WEIGHT_SQL}) * ${input})
+    FROM (
+      SELECT
+        (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
+        ROW_NUMBER() OVER (
+          PARTITION BY COALESCE(turn_id, 'orphan-' || id::text)
+          ORDER BY created_at ASC, id ASC
+        ) AS rn
+      FROM request_logs
+      WHERE ${whereCondition!}
+    ) hops
+  ), 0)`;
+}
+
 /**
  * Token LIMIT usage (fair agent billing) — logs stay full 100%.
  * - Input (+cache): graduated by hop index within turn_id (see inputLimitWeightPercentForHop)
@@ -204,13 +239,7 @@ export function weightedHopTotalTokensSql(
   const { input, output } = getTokenMultipliers(opts);
   return sql<number>`COALESCE((
     SELECT SUM(
-      (inn * (CASE
-        WHEN rn = 1 THEN 1.0
-        WHEN rn <= 5 THEN 0.0
-        WHEN rn <= 10 THEN 0.10
-        WHEN rn >= 50 THEN 1.0
-        ELSE LEAST(0.90, 0.10 * CEIL((rn - 5)::numeric / 5))
-      END)) * ${input}
+      (inn * (${INPUT_HOP_WEIGHT_SQL})) * ${input}
       + outt * ${output}
     )
     FROM (

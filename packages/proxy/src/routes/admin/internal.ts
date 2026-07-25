@@ -8,7 +8,7 @@ import { normalizeIdeName } from "../../utils/detect-ide.js";
 import { checkPromptLimit, checkModelPromptLimit, checkApiCallLimit, parseRateLimitWindow, getWindowResetMs, getApiCallWindowResetMs } from "../../utils/rate-limit.js";
 import { isInternalRequest } from "../../middleware/session.js";
 import { configCache } from "../../utils/cache.js";
-import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, getTokenInputModeSync } from "../../utils/counting.js";
+import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, getTokenInputModeSync, weightedHopInputTokensSql, weightedHopTotalTokensSql } from "../../utils/counting.js";
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
 import { resolveKeyDailyTokenLimit, resolveKeyPromptLimit, resolveKeyApiCallLimit } from "../../utils/trial-config.js";
@@ -704,10 +704,12 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
 
   async function getPeriodStats(since: Date) {
     const whereClause = and(eq(requestLogs.apiKeyId, keyId), sql`created_at >= ${since}`, VALID_LOG_SQL);
+    const whereHops = and(eq(requestLogs.apiKeyId, keyId), sql`created_at >= ${since}`, BILLABLE_LOG_SQL);
     const s = (await db.select({
       requests: turnCountSql(whereClause),
-      tokens: turnTotalTokensSql(whereClause, tmOpts),
-      promptTokens: turnPromptTokensSql(whereClause, tmOpts),
+      tokens: weightedHopTotalTokensSql(whereHops, tmOpts),
+      promptTokens: weightedHopInputTokensSql(whereHops, tmOpts),
+      peakPromptTokens: turnPromptTokensSql(whereClause, tmOpts),
       billablePromptTokens: turnBillablePromptTokensSql(whereClause, tmOpts),
       cachedTokens: turnCachedTokensSql(whereClause, tmOpts),
       completionTokens: turnCompletionTokensSql(whereClause, tmOpts),
@@ -734,6 +736,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
       requests: s?.requests || 0,
       tokens: s?.tokens || 0,
       promptTokens: s?.promptTokens || 0,
+      peakPromptTokens: s?.peakPromptTokens || 0,
       billablePromptTokens: s?.billablePromptTokens || 0,
       cachedTokens: s?.cachedTokens || 0,
       completionTokens: s?.completionTokens || 0,

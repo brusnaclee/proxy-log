@@ -47,6 +47,7 @@ import {
 	BILLABLE_LOG_SQL,
 	turnCompletionTokensSql,
 	turnPromptTokensSql,
+	weightedHopInputTokensSql,
 	weightedHopTotalTokensSql,
 } from '../utils/counting.js';
 import {
@@ -2533,7 +2534,7 @@ proxy.all('/*', async (c) => {
 					const dw = new Date(wibNow);
 					dw.setUTCHours(0, 0, 0, 0);
 					const ds = new Date(dw.getTime() - wibOffset);
-					const di = await db.select({ total: turnPromptTokensSql(
+					const di = await db.select({ total: weightedHopInputTokensSql(
 						and(accountKeyFilter, sql`created_at >= ${ds}`, BILLABLE_LOG_SQL),
 						tokenCountOpts(keyRecord),
 					) }).from(requestLogs).where(and(accountKeyFilter, sql`created_at >= ${ds}`, BILLABLE_LOG_SQL)).then((r: any[]) => r[0]);
@@ -3685,7 +3686,7 @@ proxy.all('/*', async (c) => {
 				BILLABLE_LOG_SQL,
 			);
 			const du = await db
-				.select({ total: turnPromptTokensSql(whereClause, tokenCountOpts(keyRecord)) })
+				.select({ total: weightedHopInputTokensSql(whereClause, tokenCountOpts(keyRecord)) })
 				.from(requestLogs)
 				.where(whereClause)
 				.then((r) => r[0]);
@@ -3857,7 +3858,7 @@ proxy.all('/*', async (c) => {
 					BILLABLE_LOG_SQL,
 				);
 				const du = await db
-					.select({ total: turnPromptTokensSql(whereClause, tokenCountOpts(keyRecord)) })
+					.select({ total: weightedHopInputTokensSql(whereClause, tokenCountOpts(keyRecord)) })
 					.from(requestLogs)
 					.where(whereClause)
 					.then((r) => r[0]);

@@ -163,19 +163,18 @@ export function LiveUsageCard({
     const used = usageToday.promptTokens;
     const overSoft = !!(dailyTokenBreakdown?.bypassIo && softMax > 0 && used > softMax);
     const softLeft = Math.max(0, softMax - used);
-    const inputBd = formatInputBreakdown(
-      usageToday.billablePromptTokens,
-      usageToday.cachedTokens,
-      usageToday.promptTokens,
-    );
     const full = Number(usageToday.fullInputTokens) || 0;
-    const peak = Number(usageToday.promptTokens) || 0;
+    const peak = Number((usageToday as any).peakPromptTokens) || 0;
     const fullNote =
-      full > peak * 1.5
-        ? ` · full ${formatNumber(full)} (amanai-style)`
+      full > used * 1.2
+        ? ` · full ${formatNumber(full)} (amanai)`
+        : "";
+    const peakNote =
+      peak > 0 && Math.abs(peak - used) > used * 0.05
+        ? ` · peak ${formatNumber(peak)}`
         : "";
     bars.push({
-      label: "Input Tokens (peak)",
+      label: "Input Tokens (limit)",
       value: used,
       max: softMax,
       remaining: dailyTokenBreakdown?.bypassIo ? null : remaining.input,
@@ -183,8 +182,9 @@ export function LiveUsageCard({
       sublabel:
         (dailyTokenBreakdown?.bypassIo
           ? `exceed OK until daily ${formatNumber(dailyCap)} · `
-          : "") +
-        (inputBd.label !== inputBd.total ? inputBd.label : "tokens") +
+          : "hop-weighted · ") +
+        "tokens" +
+        peakNote +
         fullNote,
       source: dailyTokenBreakdown?.bypassIo
         ? "add-on extends past soft"
@@ -411,9 +411,12 @@ export function LiveUsageCard({
       )}
       {(usageToday.fullInputTokens || 0) > (usageToday.promptTokens || 0) * 1.5 && (
         <p className="text-[10px] text-muted-foreground leading-relaxed border-t border-border/40 pt-2">
-          Daily token limit: input by hop schedule (1=100%, 2–5=0%, then 10%… up to 100% at hop ≥50); output always 100%. Logs still store 100%.
-          Peak display {formatNumber(usageToday.promptTokens)}; amanai-style full In{" "}
-          {formatNumber(usageToday.fullInputTokens || 0)}. Prompts/API bars = sliding last{" "}
+          Daily token limit: input bar = hop-weighted credit (1=100%, 2–5=0%, then 10%… ≥50=100%); output always 100%. Logs still store 100%.
+          Limit In {formatNumber(usageToday.promptTokens)}
+          {(usageToday as any).peakPromptTokens
+            ? `; peak ${formatNumber((usageToday as any).peakPromptTokens)}`
+            : ""}
+          ; amanai-style full In {formatNumber(usageToday.fullInputTokens || 0)}. Prompts/API bars = sliding last{" "}
           {limits.promptLimitWindow || "5h"} (not calendar day). Today:{" "}
           {formatNumber(usageToday.requests)} prompts · {formatNumber(usageToday.hopCount || 0)} API hops.
         </p>

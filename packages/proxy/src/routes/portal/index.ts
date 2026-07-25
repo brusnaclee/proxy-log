@@ -8,7 +8,7 @@ import { eq, sql, and, desc } from "drizzle-orm";
 import { generateApiKey, getKeyPrefix, sha256, maskKey } from "../../utils/crypto.js";
 import { createPortalSession, destroyPortalSession, getPortalDiscordUserId, resolvePortalDiscordUserId } from "../../middleware/portal-session.js";
 import { destroyAllAuthSessions } from "../../utils/auth-sessions.js";
-import { resolvePeriodRange, chartDaysForPeriod, type PeriodKey, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql } from "../../utils/counting.js";
+import { resolvePeriodRange, chartDaysForPeriod, type PeriodKey, turnCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, hopFullInputTokensSql, weightedHopInputTokensSql } from "../../utils/counting.js";
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { getRecapWindow } from "../../utils/recap-window.js";
@@ -257,11 +257,18 @@ portal.get("/me", async (c) => {
     sql`created_at >= ${todayStart}`,
     sql`status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL`,
   );
+  const todayHops = and(
+    userWhere(discordUserId),
+    sql`created_at >= ${todayStart}`,
+    sql`status_code BETWEEN 200 AND 299`,
+  );
   const usageToday = (await db.select({
     requests: turnCountSql(todayPw!),
-    promptTokens: turnPromptTokensSql(todayPw!, { isTrial }),
+    promptTokens: weightedHopInputTokensSql(todayHops!, { isTrial }),
+    peakPromptTokens: turnPromptTokensSql(todayPw!, { isTrial }),
     billablePromptTokens: turnBillablePromptTokensSql(todayPw!, { isTrial }),
     cachedTokens: turnCachedTokensSql(todayPw!, { isTrial }),
+    fullInputTokens: hopFullInputTokensSql(todayHops!, { isTrial }),
     completionTokens: turnCompletionTokensSql(todayPw!, { isTrial }),
   }).from(requestLogs).where(todayPw))[0];
 
@@ -511,8 +518,10 @@ portal.get("/me", async (c) => {
     usageToday: {
       requests: usageToday?.requests || 0,
       promptTokens: usageToday?.promptTokens || 0,
+      peakPromptTokens: (usageToday as any)?.peakPromptTokens || 0,
       billablePromptTokens: usageToday?.billablePromptTokens || 0,
       cachedTokens: usageToday?.cachedTokens || 0,
+      fullInputTokens: (usageToday as any)?.fullInputTokens || 0,
       completionTokens: usageToday?.completionTokens || 0,
       // Rolling prompt window usage (matches Discord), NOT all-day requests
       promptCount: promptUsed,
