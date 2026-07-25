@@ -59,13 +59,24 @@ Spaces are required between the number and `p`/`c` so Discord does not render `6
 | **Prompts** (stats field `requests`) | Distinct turns in a period (UI label: Prompts) | `COUNT(DISTINCT turn_id)` | Today / week / … |
 | **API calls / hops** (Logs table) | Every upstream API row | One `request_logs` row per hop | Same period |
 | **Input tokens (display)** | Mode-aware sum (default: peak) | See modes above | Cards / Discord |
-| **Daily/monthly token limit** | First hop of each turn **100%** In+Out; later hops in that turn at `token_limit_weight_percent` (default **10%**) | `weightedHopTotalTokensSql` | WIB day / month |
+| **Daily/monthly token limit** | **Input** by hop in turn: hop1 100%; hops 2–5 0%; then 10% +10%/5 hops; hop ≥50 = 100%. **Output always 100%.** | `weightedHopTotalTokensSql` | WIB day / month |
 | **Full input (amanai)** | `SUM(prompt+cache)` every hop | Informational on Key Detail | — |
 | **Output tokens** | `SUM(completion)` | Per turn aggregation | Daily output limit |
 
 Defaults (global): **50 prompts / 5h** and **1000 API calls / 5h**.
 
-Tool follow-ups do **not** burn prompt quota (same `turn_id`) but **do** burn API-call quota. Token **limit** charges the first hop at 100% and later hops at the weight %; logs still store full 100%.
+Tool follow-ups do **not** burn prompt quota (same `turn_id`) but **do** burn API-call quota. Token **limit** charges input on a graduated hop schedule and output at 100%; logs still store full 100%.
+
+### Hop input schedule (limit only)
+
+| Hop in turn | Input (+cache) | Output |
+|-------------|----------------|--------|
+| 1 | 100% | 100% |
+| 2–5 | 0% | 100% |
+| 6–10 | 10% | 100% |
+| 11–15 | 20% | 100% |
+| … | +10% every 5 hops | 100% |
+| ≥50 | 100% | 100% |
 
 ### Real example (ZCode agent, imam77, one WIB day)
 

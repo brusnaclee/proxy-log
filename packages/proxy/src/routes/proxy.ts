@@ -24,6 +24,7 @@ import {
 	buildAntiWasteShortCircuitJson,
 	buildAntiWasteShortCircuitSse,
 } from '../utils/anti-waste.js';
+import { sanitizeChatMessageRoles } from '../utils/sanitize-message-roles.js';
 import {
 	convertResponseToOpenAI,
 	convertStreamEvent,
@@ -3973,6 +3974,22 @@ proxy.all('/*', async (c) => {
 
 	const upstreamUrl = joinUpstreamOpenAIUrl(targetProvider.endpoint, forwardPath);
 	const isStreaming = requestBody?.stream === true;
+
+	// ─── Sanitize message roles (amanai-safe allowlist) ─────────────────────
+	if (requestBody && Array.isArray((requestBody as any).messages)) {
+		const roleFix = sanitizeChatMessageRoles(requestBody);
+		if (roleFix.changed) {
+			try {
+				requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
+			} catch {
+				/* ignore */
+			}
+			const summary = Object.entries(roleFix.remaps)
+				.map(([k, v]) => `${k}×${v}`)
+				.join(', ');
+			console.log(`[role-sanitize] ${summary}`);
+		}
+	}
 
 	// ─── IDE Smart Anti-Waste (dedupe / nudge / optional short-circuit) ─────
 	// After session resolve + limits; mutates messages or returns local SSE (no hard stop).

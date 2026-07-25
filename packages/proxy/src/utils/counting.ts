@@ -42,7 +42,7 @@ export type TokenInputMode = "per_turn_peak" | "full" | "billable";
 
 let tokenInputModeCache: TokenInputMode = "per_turn_peak";
 
-/** Percent of *later* hops' In+Out toward daily/monthly token LIMITS (first hop of turn = 100%; logs stay full). */
+/** Percent of *later* hops — DEPRECATED for hop math; graduated schedule is fixed in weightedHopTotalTokensSql. Kept for admin UI compat. */
 let tokenLimitWeightPercentCache = 10;
 
 export function normalizeTokenLimitWeightPercent(raw: unknown): number {
@@ -176,26 +176,47 @@ export function hopFullInputTokensSql(whereCondition: SQL | undefined, opts?: To
 }
 
 /**
- * Token LIMIT usage (fair agent billing):
- * - First hop of each turn_id: 100% of (In+cache + Out)
- * - Later tool/subagent hops in the same turn: weight% only (default 10%)
- * Orphan rows (no turn_id) each count as their own first hop at 100%.
- * request_logs still store full tokens; this is gate / limit-bar only.
+ * Input % toward daily/monthly token LIMITS by hop index within a turn (1-based).
+ * Output is always 100% (handled separately in SQL).
+ *
+ * rn=1: 100%; rn=2..5: 0%; rn=6..10: 10%; then +10% every 5 hops; rn>=50: 100%.
+ */
+export function inputLimitWeightPercentForHop(rn: number): number {
+  const n = Math.floor(Number(rn));
+  if (!Number.isFinite(n) || n <= 0) return 100;
+  if (n === 1) return 100;
+  if (n <= 5) return 0;
+  if (n <= 10) return 10;
+  if (n >= 50) return 100;
+  return Math.min(90, 10 * Math.ceil((n - 5) / 5));
+}
+
+/**
+ * Token LIMIT usage (fair agent billing) — logs stay full 100%.
+ * - Input (+cache): graduated by hop index within turn_id (see inputLimitWeightPercentForHop)
+ * - Output: always 100%
+ * Orphan rows (no turn_id) each count as rn=1.
  */
 export function weightedHopTotalTokensSql(
   whereCondition: SQL | undefined,
   opts?: TokenMultiplierOpts,
 ): SQL<number> {
   const { input, output } = getTokenMultipliers(opts);
-  const w = tokenLimitWeightPercentCache / 100;
   return sql<number>`COALESCE((
     SELECT SUM(
-      hop_tokens * CASE WHEN rn = 1 THEN 1.0 ELSE ${w} END
+      (inn * (CASE
+        WHEN rn = 1 THEN 1.0
+        WHEN rn <= 5 THEN 0.0
+        WHEN rn <= 10 THEN 0.10
+        WHEN rn >= 50 THEN 1.0
+        ELSE LEAST(0.90, 0.10 * CEIL((rn - 5)::numeric / 5))
+      END)) * ${input}
+      + outt * ${output}
     )
     FROM (
       SELECT
-        (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) * ${input}
-          + COALESCE(completion_tokens, 0) * ${output} AS hop_tokens,
+        (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
+        COALESCE(completion_tokens, 0)::float8 AS outt,
         ROW_NUMBER() OVER (
           PARTITION BY COALESCE(turn_id, 'orphan-' || id::text)
           ORDER BY created_at ASC, id ASC

@@ -411,7 +411,7 @@ export function LiveUsageCard({
       )}
       {(usageToday.fullInputTokens || 0) > (usageToday.promptTokens || 0) * 1.5 && (
         <p className="text-[10px] text-muted-foreground leading-relaxed border-t border-border/40 pt-2">
-          Daily token limit: first hop of each prompt at 100% In+Out (cache included); later tool hops at Settings weight % (default 10%). Logs still store 100%.
+          Daily token limit: input by hop schedule (1=100%, 2–5=0%, then 10%… up to 100% at hop ≥50); output always 100%. Logs still store 100%.
           Peak display {formatNumber(usageToday.promptTokens)}; amanai-style full In{" "}
           {formatNumber(usageToday.fullInputTokens || 0)}. Prompts/API bars = sliding last{" "}
           {limits.promptLimitWindow || "5h"} (not calendar day). Today:{" "}

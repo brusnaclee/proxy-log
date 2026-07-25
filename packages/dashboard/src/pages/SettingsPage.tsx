@@ -552,9 +552,18 @@ export default function SettingsPage() {
                   </p>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2">
+                <div className="rounded-lg border border-border/50 p-3 space-y-1">
+                  <Label>Token limit hop schedule (input)</Label>
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    Daily/monthly <strong>input</strong> credit by hop in a turn: hop&nbsp;1 = 100%;
+                    hops&nbsp;2–5 = 0%; then 10% → +10% every 5 hops; hop&nbsp;≥50 = 100%.
+                    <strong> Output always 100%.</strong> Logs still store full tokens.
+                    The flat “weight %” field below is unused for this schedule (kept for compatibility).
+                  </p>
+                </div>
                 <div>
-                  <Label>Token limit weight %</Label>
+                  <Label>Token limit weight % (legacy)</Label>
                   <Input
                     type="number"
                     value={tokenLimitWeightPercent}
@@ -563,14 +572,10 @@ export default function SettingsPage() {
                     className="mt-1"
                     min={1}
                     max={100}
+                    disabled
                   />
                   <p className="text-[10px] text-muted-foreground mt-1">
-                    Later hops in the same prompt (tools/subagent) count this % of In+Out toward daily/monthly token limits. First hop of each prompt = 100%. Logs stay full 100%. Default 10.
-                  </p>
-                </div>
-                <div className="flex items-end pb-1">
-                  <p className="text-[10px] text-muted-foreground">
-                    Example: prompt In 500k (cache included) + 9 tool hops × 50k → limit ≈ 500k + 9×5k = 545k at 10%. Visible on Key Detail / portal / Discord.
+                    Deprecated — hop math uses the fixed schedule above.
                   </p>
                 </div>
               </div>
