@@ -445,7 +445,7 @@ export default function OverviewPage() {
   };
 
   const renderAddonHistory = () => {
-    if (user?.isTrial) return null;
+    if (user?.accountType === "trial") return null;
     const history = user?.addonHistory || [];
     return (
       <div className="bg-card border border-border rounded-xl p-4 space-y-3">
