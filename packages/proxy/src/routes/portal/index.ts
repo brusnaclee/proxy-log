@@ -659,6 +659,7 @@ portal.get("/me", async (c) => {
         ponytailLevel: config?.tokenSaverPonytailLevel || "lite",
         groupyCompact: config?.tokenSaverGroupyCompactEnabled ?? true,
         groupyCompactLevel: config?.tokenSaverGroupyCompactLevel || "balanced",
+        batch: (config as any)?.tokenSaverBatchEnabled ?? true,
       },
       overrides: {
         rtk: settings?.tokenSaverRtkOverride ?? null,
@@ -666,6 +667,7 @@ portal.get("/me", async (c) => {
         caveman: settings?.tokenSaverCavemanOverride ?? null,
         ponytail: settings?.tokenSaverPonytailOverride ?? null,
         groupyCompact: settings?.tokenSaverGroupyCompactOverride ?? null,
+        batch: (settings as any)?.tokenSaverBatchOverride ?? null,
       },
     },
   });
@@ -1666,6 +1668,7 @@ portal.get("/settings/token-saver", async (c) => {
       ponytailLevel: config?.tokenSaverPonytailLevel || "lite",
       groupyCompact: config?.tokenSaverGroupyCompactEnabled ?? true,
       groupyCompactLevel: config?.tokenSaverGroupyCompactLevel || "balanced",
+      batch: (config as any)?.tokenSaverBatchEnabled ?? true,
     },
     overrides: {
       rtk: settings?.tokenSaverRtkOverride ?? null,
@@ -1673,6 +1676,7 @@ portal.get("/settings/token-saver", async (c) => {
       caveman: settings?.tokenSaverCavemanOverride ?? null,
       ponytail: settings?.tokenSaverPonytailOverride ?? null,
       groupyCompact: settings?.tokenSaverGroupyCompactOverride ?? null,
+      batch: (settings as any)?.tokenSaverBatchOverride ?? null,
     },
   });
 });
@@ -1685,6 +1689,7 @@ portal.put("/settings/token-saver", async (c) => {
     caveman?: boolean | null;
     ponytail?: boolean | null;
     groupyCompact?: boolean | null;
+    batch?: boolean | null;
   }>();
 
   const normalize = (v: unknown): boolean | null => {
@@ -1702,6 +1707,7 @@ portal.put("/settings/token-saver", async (c) => {
   if (body.groupyCompact !== undefined) {
     updates.tokenSaverGroupyCompactOverride = normalize(body.groupyCompact);
   }
+  if (body.batch !== undefined) updates.tokenSaverBatchOverride = normalize(body.batch);
 
   const settings = (await db.select().from(userPortalSettings).where(eq(userPortalSettings.discordUserId, discordUserId)))[0];
   if (settings) {
@@ -1714,6 +1720,7 @@ portal.put("/settings/token-saver", async (c) => {
       tokenSaverCavemanOverride: updates.tokenSaverCavemanOverride ?? null,
       tokenSaverPonytailOverride: updates.tokenSaverPonytailOverride ?? null,
       tokenSaverGroupyCompactOverride: updates.tokenSaverGroupyCompactOverride ?? null,
+      tokenSaverBatchOverride: updates.tokenSaverBatchOverride ?? null,
     });
   }
 
@@ -1726,6 +1733,7 @@ portal.put("/settings/token-saver", async (c) => {
       caveman: refreshed?.tokenSaverCavemanOverride ?? null,
       ponytail: refreshed?.tokenSaverPonytailOverride ?? null,
       groupyCompact: refreshed?.tokenSaverGroupyCompactOverride ?? null,
+      batch: refreshed?.tokenSaverBatchOverride ?? null,
     },
   });
 });

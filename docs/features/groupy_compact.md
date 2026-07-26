@@ -13,10 +13,10 @@ Groupy Compact stubs those older noisy tool bodies with a labeled marker so upst
 ## Pipeline position
 
 ```
-RTK → Groupy Compact → Headroom → Caveman → Ponytail
+RTK → Groupy Compact → Headroom → Caveman → Ponytail → Batch
 ```
 
-Applied in `packages/proxy/src/utils/token-saver/` from `proxy.ts` step 7d (after Anthropic→OpenAI convert when applicable).
+Applied in `packages/proxy/src/utils/token-saver/` from `proxy.ts` step 7d (after Anthropic→OpenAI convert when applicable). See [`token_saver.md`](./token_saver.md) for the full pipeline overview with before/after case studies for every feature, including **Batch**, which reduces *hop count* rather than shrinking each hop's body like Compact does.
 
 ## Behavior
 
@@ -56,6 +56,7 @@ Model may **re-read** a file that was stubbed → +1 small hop. Net savings usua
 
 ## Related
 
+- [`token_saver.md`](./token_saver.md) — full pipeline overview (RTK, Compact, Headroom, Caveman, Ponytail, Batch) with before/after examples
 - [`ide_anti_waste.md`](./ide_anti_waste.md) — duplicate-tool stub + short-circuit
 - [`rate_limiting_and_tokens.md`](./rate_limiting_and_tokens.md) — prompts vs hops
 - Source: `packages/proxy/src/utils/token-saver/groupy-compact.ts`

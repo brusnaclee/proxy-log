@@ -59,6 +59,7 @@ export const adminConfig = pgTable('admin_config', {
 	tokenSaverPonytailLevel: text('token_saver_ponytail_level').notNull().default('lite'),
 	tokenSaverGroupyCompactEnabled: boolean('token_saver_groupy_compact_enabled').notNull().default(true),
 	tokenSaverGroupyCompactLevel: text('token_saver_groupy_compact_level').notNull().default('balanced'),
+	tokenSaverBatchEnabled: boolean('token_saver_batch_enabled').notNull().default(true),
 	/** off | notif_only | auto — default notif_only (manual catalog publish) */
 	monitorAutoMode: text('monitor_auto_mode').notNull().default('notif_only'),
 	/** full = prompt_tokens+cached_tokens (match upstream In); billable = net context_delta */
@@ -576,6 +577,7 @@ export const userPortalSettings = pgTable('user_portal_settings', {
   tokenSaverCavemanOverride: boolean('token_saver_caveman_override'),
   tokenSaverPonytailOverride: boolean('token_saver_ponytail_override'),
   tokenSaverGroupyCompactOverride: boolean('token_saver_groupy_compact_override'),
+  tokenSaverBatchOverride: boolean('token_saver_batch_override'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });

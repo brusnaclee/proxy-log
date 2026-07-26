@@ -54,8 +54,8 @@ const dict: Record<string, Record<Lang, string>> = {
   "Webhook URL": { id: "URL Webhook", en: "Webhook URL" },
   "Token Saver": { id: "Token Saver", en: "Token Saver" },
   "Token Saver desc": {
-    id: "Pipeline hemat token sebelum request ke upstream: RTK → Groupy Compact → Headroom → Caveman → Ponytail. Default mengikuti admin. Pilih Default / Nyala / Mati per fitur. Header X-Token-Saver: off mematikan semua untuk 1 request.",
-    en: "Token-saving pipeline before upstream: RTK → Groupy Compact → Headroom → Caveman → Ponytail. Defaults follow admin. Set Default / On / Off per feature. Header X-Token-Saver: off disables all for one request.",
+    id: "Pipeline hemat token sebelum request ke upstream: RTK → Groupy Compact → Headroom → Caveman → Ponytail → Batch. Default mengikuti admin. Pilih Default / Nyala / Mati per fitur. Header X-Token-Saver: off mematikan semua untuk 1 request.",
+    en: "Token-saving pipeline before upstream: RTK → Groupy Compact → Headroom → Caveman → Ponytail → Batch. Defaults follow admin. Set Default / On / Off per feature. Header X-Token-Saver: off disables all for one request.",
   },
   Default: { id: "Default", en: "Default" },
   On: { id: "Nyala", en: "On" },
@@ -104,6 +104,15 @@ const dict: Record<string, Record<Lang, string>> = {
   "Ponytail effect": {
     id: "Efek: loop Cline/Roo lebih hemat token chat. Risiko: kurang narasi/status. Default OFF. Contoh: skip \"I'll read the file now…\" → langsung tool call.",
     en: "Effect: leaner Cline/Roo agent loops. Risk: less narration/status text. Default OFF. Example: skip \"I'll read the file now…\" → go straight to tool call.",
+  },
+  Batch: { id: "Batch", en: "Batch" },
+  "Batch desc": {
+    id: "Menyisipkan system prompt agar model minta beberapa read/edit sekaligus dalam 1 balasan (parallel tool_calls), bukan satu file per giliran. Tidak mengubah kemampuan model, cuma mengurangi jumlah kali hit ke upstream.",
+    en: "Injects a system prompt telling the model to request several reads/edits together in ONE reply (parallel tool_calls) instead of one file per turn. Does not change what the model can do — only how many hits it takes.",
+  },
+  "Batch effect": {
+    id: "Efek: lebih sedikit hop → history yang dikirim ulang lebih jarang → hemat token & biaya. Contoh: butuh 5 file → sebelumnya 5x baca terpisah (5 hit) → sesudah: diminta sekaligus (1 hit). Langkah yang memang harus lihat hasil dulu (edit → run test → baca error → perbaiki) tidak berubah — itu bukan hal yang bisa dihemat lewat prompt. Beda model beda hasil: Grok/Claude Opus sudah sering batch sendiri; GLM/Gemini Flash biasanya butuh dorongan ini. Default ON.",
+    en: "Effect: fewer hops → growing history resent less often → real token & cost savings. Example: task needs 5 files → was 5 separate reads (5 hits) → now requested together (1 hit). Steps that genuinely need to see a result first (edit → run test → read error → fix) are unaffected — that can't be shortcut by a prompt. Impact varies by model: Grok/Claude Opus already batch a lot on their own; GLM/Gemini Flash usually need this nudge. Default ON.",
   },
   "Live Updates": { id: "Pembaruan Langsung", en: "Live Updates" },
   "Portal Password": { id: "Kata Sandi Portal", en: "Portal Password" },

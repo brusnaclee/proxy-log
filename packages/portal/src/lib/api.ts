@@ -145,6 +145,7 @@ export interface MeResponse {
       ponytailLevel: string;
       groupyCompact: boolean;
       groupyCompactLevel: string;
+      batch: boolean;
     };
     overrides: {
       rtk: boolean | null;
@@ -152,6 +153,7 @@ export interface MeResponse {
       caveman: boolean | null;
       ponytail: boolean | null;
       groupyCompact: boolean | null;
+      batch: boolean | null;
     };
   };
 }
@@ -451,6 +453,7 @@ export const settings = {
         ponytailLevel: string;
         groupyCompact: boolean;
         groupyCompactLevel: string;
+        batch: boolean;
       };
       overrides: {
         rtk: boolean | null;
@@ -458,6 +461,7 @@ export const settings = {
         caveman: boolean | null;
         ponytail: boolean | null;
         groupyCompact: boolean | null;
+        batch: boolean | null;
       };
     }>("/settings/token-saver", "GET"),
 
@@ -467,6 +471,7 @@ export const settings = {
     caveman?: boolean | null;
     ponytail?: boolean | null;
     groupyCompact?: boolean | null;
+    batch?: boolean | null;
   }) =>
     request<{
       success: boolean;
@@ -476,6 +481,7 @@ export const settings = {
         caveman: boolean | null;
         ponytail: boolean | null;
         groupyCompact: boolean | null;
+        batch: boolean | null;
       };
     }>("/settings/token-saver", "PUT", overrides),
 };

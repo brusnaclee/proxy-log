@@ -6296,7 +6296,7 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 				dedicatedPoolsBlock;
 
 	const tokenSaverHint =
-		`\n\n💡 **Token Saver** — RTK + Groupy Compact hemat input agent loop. Tekan tombol **Token Saver** di bawah, atau portal: ${PORTAL_DASHBOARD_URL}`;
+		`\n\n💡 **Token Saver** — RTK + Groupy Compact + Batch hemat input & hop agent loop. Tekan tombol **Token Saver** di bawah, atau portal: ${PORTAL_DASHBOARD_URL}`;
 
 	const embed = new EmbedBuilder()
 		.setTitle(`📊 Usage: ${displayName}`)
@@ -6322,45 +6322,44 @@ function fmtTriState(override, globalOn) {
 	return globalOn ? '⚪ Default (ON)' : '⚪ Default (OFF)';
 }
 
-async function handleTokenSaverPanel(interaction) {
-	await interaction.deferReply({ ephemeral: true });
-	const discordUserId = interaction.user.id;
-	let data;
-	try {
-		data = await proxyInternal(`/admin/internal/token-saver/${discordUserId}`);
-	} catch (err) {
-		await interaction.editReply({
-			content: `❌ Gagal load Token Saver: ${err.message || err}`,
-		});
-		return;
-	}
+// Discord caps messages at 5 action rows. RTK/Groupy Compact/Batch (the three
+// features most worth tweaking, all default ON) get their own select dropdown;
+// Headroom/Caveman/Ponytail (niche, default OFF) share one row of cycle buttons.
+const TS_CYCLE_FEATURES = ['headroom', 'caveman', 'ponytail'];
+const TS_CYCLE_LABELS = { headroom: 'Headroom', caveman: 'Caveman', ponytail: 'Ponytail' };
 
+function tsGlobalOn(feature, g) {
+	if (feature === 'groupyCompact') return g.groupyCompact !== false;
+	if (feature === 'batch') return g.batch !== false;
+	return !!g[feature];
+}
+
+function buildTokenSaverPanel(data, headerNote) {
 	const g = data.global || {};
 	const o = data.overrides || {};
 	const embed = new EmbedBuilder()
 		.setTitle('💾 Token Saver')
 		.setDescription(
-			'Pipeline: **RTK → Groupy Compact → Headroom → Caveman → Ponytail** (sebelum upstream).\n\n' +
+			(headerNote ? `${headerNote}\n\n` : '') +
+				'Pipeline: **RTK → Groupy Compact → Headroom → Caveman → Ponytail → Batch** (sebelum upstream).\n\n' +
 				'• **RTK** — potong tool dump besar (git/grep/read). Hemat input. Default ON.\n' +
 				'• **Groupy Compact** — stub tool result lama di agent loop; recent tetap penuh. Default ON.\n' +
+				'• **Batch** — minta AI baca/edit beberapa file sekaligus dalam 1 balasan, bukan satu-satu. Lebih sedikit hit ke upstream = hemat token. Default ON.\n' +
 				'• **Headroom** — compress eksternal (butuh URL admin). Default OFF.\n' +
 				'• **Caveman** — jawaban lebih singkat (system prompt). Bisa ubah gaya. Default OFF.\n' +
 				'• **Ponytail** — skip basa-basi agent IDE. Default OFF.\n\n' +
-				'Tri-state: **Default** (ikut admin) / **ON** / **OFF**.\n' +
+				'Tri-state: **Default** (ikut admin) / **ON** / **OFF**. Klik tombol Headroom/Caveman/Ponytail untuk gonta-ganti state.\n' +
 				`Portal: ${PORTAL_DASHBOARD_URL}/settings`,
 		)
 		.addFields(
-			{ name: 'RTK', value: fmtTriState(o.rtk, !!g.rtk), inline: true },
-			{
-				name: 'Groupy Compact',
-				value: fmtTriState(o.groupyCompact, g.groupyCompact !== false),
-				inline: true,
-			},
-			{ name: 'Headroom', value: fmtTriState(o.headroom, !!g.headroom), inline: true },
-			{ name: 'Caveman', value: fmtTriState(o.caveman, !!g.caveman), inline: true },
-			{ name: 'Ponytail', value: fmtTriState(o.ponytail, !!g.ponytail), inline: true },
+			{ name: 'RTK', value: fmtTriState(o.rtk, tsGlobalOn('rtk', g)), inline: true },
+			{ name: 'Groupy Compact', value: fmtTriState(o.groupyCompact, tsGlobalOn('groupyCompact', g)), inline: true },
+			{ name: 'Batch', value: fmtTriState(o.batch, tsGlobalOn('batch', g)), inline: true },
+			{ name: 'Headroom', value: fmtTriState(o.headroom, tsGlobalOn('headroom', g)), inline: true },
+			{ name: 'Caveman', value: fmtTriState(o.caveman, tsGlobalOn('caveman', g)), inline: true },
+			{ name: 'Ponytail', value: fmtTriState(o.ponytail, tsGlobalOn('ponytail', g)), inline: true },
 		)
-		.setColor(0x5865f2)
+		.setColor(headerNote ? 0x57f287 : 0x5865f2)
 		.setTimestamp();
 
 	const mkSelect = (feature, label) =>
@@ -6375,16 +6374,41 @@ async function handleTokenSaverPanel(interaction) {
 				),
 		);
 
-	await interaction.editReply({
+	const cycleRow = new ActionRowBuilder().addComponents(
+		TS_CYCLE_FEATURES.map((feature) => {
+			const state = o[feature] === true ? 'on' : o[feature] === false ? 'off' : 'default';
+			return new ButtonBuilder()
+				.setCustomId(`ts_cycle:${feature}`)
+				.setLabel(`${TS_CYCLE_LABELS[feature]}: ${state === 'default' ? 'Default' : state === 'on' ? 'ON' : 'OFF'}`)
+				.setStyle(state === 'on' ? ButtonStyle.Success : state === 'off' ? ButtonStyle.Danger : ButtonStyle.Secondary);
+		}),
+	);
+
+	return {
 		embeds: [embed],
 		components: [
 			mkSelect('rtk', 'RTK'),
 			mkSelect('groupyCompact', 'Groupy Compact'),
-			mkSelect('headroom', 'Headroom'),
-			mkSelect('caveman', 'Caveman'),
-			mkSelect('ponytail', 'Ponytail'),
+			mkSelect('batch', 'Batch'),
+			cycleRow,
 		],
-	});
+	};
+}
+
+async function handleTokenSaverPanel(interaction) {
+	await interaction.deferReply({ ephemeral: true });
+	const discordUserId = interaction.user.id;
+	let data;
+	try {
+		data = await proxyInternal(`/admin/internal/token-saver/${discordUserId}`);
+	} catch (err) {
+		await interaction.editReply({
+			content: `❌ Gagal load Token Saver: ${err.message || err}`,
+		});
+		return;
+	}
+
+	await interaction.editReply(buildTokenSaverPanel(data));
 }
 
 async function handleTokenSaverSelect(interaction) {
@@ -6394,7 +6418,7 @@ async function handleTokenSaverSelect(interaction) {
 	const value = raw === 'on' ? true : raw === 'off' ? false : null;
 	const discordUserId = interaction.user.id;
 
-	if (!['rtk', 'groupyCompact', 'headroom', 'caveman', 'ponytail'].includes(feature)) {
+	if (!['rtk', 'groupyCompact', 'batch', 'headroom', 'caveman', 'ponytail'].includes(feature)) {
 		await interaction.followUp({ content: '❌ Fitur tidak dikenal.', ephemeral: true });
 		return;
 	}
@@ -6404,49 +6428,42 @@ async function handleTokenSaverSelect(interaction) {
 			[feature]: value,
 		});
 		const data = await proxyInternal(`/admin/internal/token-saver/${discordUserId}`);
-		const g = data.global || {};
-		const o = data.overrides || {};
-		const globalOn =
-			feature === 'groupyCompact' ? g.groupyCompact !== false : !!g[feature];
-		const embed = new EmbedBuilder()
-			.setTitle('💾 Token Saver')
-			.setDescription(`Updated **${feature}** → ${fmtTriState(value, globalOn)}`)
-			.addFields(
-				{ name: 'RTK', value: fmtTriState(o.rtk, !!g.rtk), inline: true },
-				{
-					name: 'Groupy Compact',
-					value: fmtTriState(o.groupyCompact, g.groupyCompact !== false),
-					inline: true,
-				},
-				{ name: 'Headroom', value: fmtTriState(o.headroom, !!g.headroom), inline: true },
-				{ name: 'Caveman', value: fmtTriState(o.caveman, !!g.caveman), inline: true },
-				{ name: 'Ponytail', value: fmtTriState(o.ponytail, !!g.ponytail), inline: true },
-			)
-			.setColor(0x57f287)
-			.setTimestamp();
-
-		const mkSelect = (feat, label) =>
-			new ActionRowBuilder().addComponents(
-				new StringSelectMenuBuilder()
-					.setCustomId(`ts_set:${feat}`)
-					.setPlaceholder(`${label}: pilih Default / ON / OFF`)
-					.addOptions(
-						{ label: `${label}: Default`, value: 'default' },
-						{ label: `${label}: ON`, value: 'on' },
-						{ label: `${label}: OFF`, value: 'off' },
-					),
-			);
-
-		await interaction.editReply({
-			embeds: [embed],
-			components: [
-				mkSelect('rtk', 'RTK'),
-				mkSelect('groupyCompact', 'Groupy Compact'),
-				mkSelect('headroom', 'Headroom'),
-				mkSelect('caveman', 'Caveman'),
-				mkSelect('ponytail', 'Ponytail'),
-			],
+		const globalOn = tsGlobalOn(feature, data.global || {});
+		await interaction.editReply(
+			buildTokenSaverPanel(data, `Updated **${feature}** → ${fmtTriState(value, globalOn)}`),
+		);
+	} catch (err) {
+		await interaction.followUp({
+			content: `❌ Gagal simpan: ${err.message || err}`,
+			ephemeral: true,
 		});
+	}
+}
+
+async function handleTokenSaverCycle(interaction) {
+	await interaction.deferUpdate();
+	const feature = interaction.customId.replace(/^ts_cycle:/, '');
+	const discordUserId = interaction.user.id;
+
+	if (!TS_CYCLE_FEATURES.includes(feature)) {
+		await interaction.followUp({ content: '❌ Fitur tidak dikenal.', ephemeral: true });
+		return;
+	}
+
+	try {
+		const current = await proxyInternal(`/admin/internal/token-saver/${discordUserId}`);
+		const o = current.overrides || {};
+		// Cycle: default (null) → ON (true) → OFF (false) → default
+		const nextValue = o[feature] === null || o[feature] === undefined ? true : o[feature] === true ? false : null;
+
+		await proxyInternal(`/admin/internal/token-saver/${discordUserId}`, 'PUT', {
+			[feature]: nextValue,
+		});
+		const data = await proxyInternal(`/admin/internal/token-saver/${discordUserId}`);
+		const globalOn = tsGlobalOn(feature, data.global || {});
+		await interaction.editReply(
+			buildTokenSaverPanel(data, `Updated **${feature}** → ${fmtTriState(nextValue, globalOn)}`),
+		);
 	} catch (err) {
 		await interaction.followUp({
 			content: `❌ Gagal simpan: ${err.message || err}`,
@@ -7328,6 +7345,10 @@ client.on('interactionCreate', async (interaction) => {
 			interaction.customId.startsWith('ts_set:')
 		) {
 			await handleTokenSaverSelect(interaction);
+			return;
+		}
+		if (interaction.isButton() && interaction.customId.startsWith('ts_cycle:')) {
+			await handleTokenSaverCycle(interaction);
 			return;
 		}
 

@@ -1513,6 +1513,7 @@ internal.get("/internal/token-saver/:discordUserId", async (c) => {
       ponytailLevel: config?.tokenSaverPonytailLevel || "lite",
       groupyCompact: config?.tokenSaverGroupyCompactEnabled ?? true,
       groupyCompactLevel: config?.tokenSaverGroupyCompactLevel || "balanced",
+      batch: (config as any)?.tokenSaverBatchEnabled ?? true,
     },
     overrides: {
       rtk: settings?.tokenSaverRtkOverride ?? null,
@@ -1520,6 +1521,7 @@ internal.get("/internal/token-saver/:discordUserId", async (c) => {
       caveman: settings?.tokenSaverCavemanOverride ?? null,
       ponytail: settings?.tokenSaverPonytailOverride ?? null,
       groupyCompact: settings?.tokenSaverGroupyCompactOverride ?? null,
+      batch: (settings as any)?.tokenSaverBatchOverride ?? null,
     },
   });
 });
@@ -1536,6 +1538,7 @@ internal.put("/internal/token-saver/:discordUserId", async (c) => {
     caveman?: boolean | null;
     ponytail?: boolean | null;
     groupyCompact?: boolean | null;
+    batch?: boolean | null;
   }>().catch(() => ({} as any));
 
   const normalize = (v: unknown): boolean | null => {
@@ -1555,6 +1558,7 @@ internal.put("/internal/token-saver/:discordUserId", async (c) => {
   if (body.groupyCompact !== undefined) {
     updates.tokenSaverGroupyCompactOverride = normalize(body.groupyCompact);
   }
+  if (body.batch !== undefined) updates.tokenSaverBatchOverride = normalize(body.batch);
 
   const [existing] = await db
     .select()
@@ -1575,6 +1579,7 @@ internal.put("/internal/token-saver/:discordUserId", async (c) => {
       tokenSaverCavemanOverride: updates.tokenSaverCavemanOverride ?? null,
       tokenSaverPonytailOverride: updates.tokenSaverPonytailOverride ?? null,
       tokenSaverGroupyCompactOverride: updates.tokenSaverGroupyCompactOverride ?? null,
+      tokenSaverBatchOverride: updates.tokenSaverBatchOverride ?? null,
     });
   }
 
@@ -1592,6 +1597,7 @@ internal.put("/internal/token-saver/:discordUserId", async (c) => {
       caveman: refreshed?.tokenSaverCavemanOverride ?? null,
       ponytail: refreshed?.tokenSaverPonytailOverride ?? null,
       groupyCompact: refreshed?.tokenSaverGroupyCompactOverride ?? null,
+      batch: refreshed?.tokenSaverBatchOverride ?? null,
     },
   });
 });

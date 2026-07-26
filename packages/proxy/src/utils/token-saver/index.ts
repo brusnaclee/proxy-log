@@ -1,5 +1,5 @@
 // Token Saver pipeline (9router order + Groupy Compact):
-//   RTK → Groupy Compact → Headroom → Caveman → Ponytail
+//   RTK → Groupy Compact → Headroom → Caveman → Ponytail → Batch
 //
 // Resolution priority for each feature:
 //   1. Request header `X-Token-Saver: off` → disable ALL
@@ -10,6 +10,7 @@ import { applyRtk, type RtkStats } from './rtk.js';
 import { applyHeadroom, type HeadroomStats } from './headroom.js';
 import { applyCaveman } from './caveman.js';
 import { applyPonytail } from './ponytail.js';
+import { applyBatch } from './batch.js';
 import {
 	applyGroupyCompact,
 	normalizeGroupyCompactLevel,
@@ -28,6 +29,7 @@ export interface TokenSaverGlobalConfig {
 	tokenSaverPonytailLevel?: string | null;
 	tokenSaverGroupyCompactEnabled?: boolean | null;
 	tokenSaverGroupyCompactLevel?: string | null;
+	tokenSaverBatchEnabled?: boolean | null;
 }
 
 export interface TokenSaverUserOverrides {
@@ -36,6 +38,7 @@ export interface TokenSaverUserOverrides {
 	tokenSaverCavemanOverride?: boolean | null;
 	tokenSaverPonytailOverride?: boolean | null;
 	tokenSaverGroupyCompactOverride?: boolean | null;
+	tokenSaverBatchOverride?: boolean | null;
 }
 
 export interface EffectiveTokenSaverFlags {
@@ -49,6 +52,7 @@ export interface EffectiveTokenSaverFlags {
 	cavemanLevel: number;
 	ponytail: boolean;
 	ponytailLevel: string;
+	batch: boolean;
 	disabledByHeader: boolean;
 }
 
@@ -59,6 +63,7 @@ export interface TokenSaverResult {
 	headroom?: HeadroomStats;
 	caveman: boolean;
 	ponytail: boolean;
+	batch: boolean;
 }
 
 function resolveFlag(
@@ -103,6 +108,7 @@ export function resolveTokenSaverFlags(
 			cavemanLevel: Number(globalCfg?.tokenSaverCavemanLevel) || 2,
 			ponytail: false,
 			ponytailLevel: String(globalCfg?.tokenSaverPonytailLevel || 'lite'),
+			batch: false,
 			disabledByHeader: true,
 		};
 	}
@@ -134,6 +140,11 @@ export function resolveTokenSaverFlags(
 			false,
 		),
 		ponytailLevel: String(globalCfg?.tokenSaverPonytailLevel || 'lite'),
+		batch: resolveFlag(
+			userOverrides?.tokenSaverBatchOverride,
+			globalCfg?.tokenSaverBatchEnabled,
+			true,
+		),
 		disabledByHeader: false,
 	};
 }
@@ -174,6 +185,7 @@ export async function applyTokenSavers(
 		applied: flags,
 		caveman: false,
 		ponytail: false,
+		batch: false,
 	};
 	if (!body || !Array.isArray(body.messages)) return result;
 
@@ -198,6 +210,13 @@ export async function applyTokenSavers(
 	if (flags.ponytail && !tiny) {
 		result.ponytail = applyPonytail(body, flags.ponytailLevel);
 	}
+	// Batch only makes sense when the model actually has tools to call. Unlike
+	// Caveman/Ponytail/Compact, do NOT skip on `tiny` — the very first hop of an
+	// agentic session is often a single short message, and that's exactly when
+	// nudging the model to plan/batch its upcoming tool calls matters most.
+	if (flags.batch && hasTools) {
+		result.batch = applyBatch(body);
+	}
 	return result;
 }
 
@@ -205,4 +224,5 @@ export { applyRtk } from './rtk.js';
 export { applyHeadroom } from './headroom.js';
 export { applyCaveman, getCavemanPrompt } from './caveman.js';
 export { applyPonytail, getPonytailPrompt } from './ponytail.js';
+export { applyBatch, getBatchPrompt } from './batch.js';
 export { applyGroupyCompact, normalizeGroupyCompactLevel } from './groupy-compact.js';

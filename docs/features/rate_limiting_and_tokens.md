@@ -87,6 +87,8 @@ This ensures users in Indonesia experience a predictable reset at exactly 00:00 
 | Subcap (default) | `false` | Extra ceiling on that model; usage **still** counts toward account daily / daily input / daily output |
 | Dedicated pool | `true` (+ `daily_token_limit` > 0) | Usage matching the rule is **excluded** from account daily / input / output; only the model `daily_token_limit` (and model monthly if set) applies. Account **monthly** still includes dedicated usage |
 
+When the account **shared** daily / input / output pool is exhausted, virtual `auto` only tries models that match a dedicated rule (e.g. grok pool). Other online models are not attempted. If no dedicated candidate remains (or its pool is also exhausted), the client gets a clear 429.
+
 Live meters (Discord Usage, admin Live Usage, portal Usage Today) show:
 
 - **Input Harian** bar = limit credit, with sublabel `context (cached) + input (billable)`

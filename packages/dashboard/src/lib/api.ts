@@ -659,6 +659,7 @@ export interface GlobalSettings {
   tokenSaverPonytailLevel?: string;
   tokenSaverGroupyCompactEnabled?: boolean;
   tokenSaverGroupyCompactLevel?: string;
+  tokenSaverBatchEnabled?: boolean;
 }
 
 export interface ModelLimitEntry {

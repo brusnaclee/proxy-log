@@ -16,12 +16,14 @@ export async function migrateTokenSaverColumns() {
     await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS token_saver_ponytail_level text NOT NULL DEFAULT 'lite'`);
     await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS token_saver_groupy_compact_enabled boolean NOT NULL DEFAULT true`);
     await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS token_saver_groupy_compact_level text NOT NULL DEFAULT 'balanced'`);
+    await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS token_saver_batch_enabled boolean NOT NULL DEFAULT true`);
 
     await pool.query(`ALTER TABLE user_portal_settings ADD COLUMN IF NOT EXISTS token_saver_rtk_override boolean`);
     await pool.query(`ALTER TABLE user_portal_settings ADD COLUMN IF NOT EXISTS token_saver_headroom_override boolean`);
     await pool.query(`ALTER TABLE user_portal_settings ADD COLUMN IF NOT EXISTS token_saver_caveman_override boolean`);
     await pool.query(`ALTER TABLE user_portal_settings ADD COLUMN IF NOT EXISTS token_saver_ponytail_override boolean`);
     await pool.query(`ALTER TABLE user_portal_settings ADD COLUMN IF NOT EXISTS token_saver_groupy_compact_override boolean`);
+    await pool.query(`ALTER TABLE user_portal_settings ADD COLUMN IF NOT EXISTS token_saver_batch_override boolean`);
     console.log('✅ Applied idempotent token_saver migrations');
   } catch (err: any) {
     console.warn('⚠️ token_saver idempotent migration warning:', err?.message || err);

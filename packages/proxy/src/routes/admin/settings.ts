@@ -51,6 +51,7 @@ settings.get("/settings/global", async (c) => {
     tokenSaverPonytailLevel: config.tokenSaverPonytailLevel || "lite",
     tokenSaverGroupyCompactEnabled: config.tokenSaverGroupyCompactEnabled ?? true,
     tokenSaverGroupyCompactLevel: config.tokenSaverGroupyCompactLevel || "balanced",
+    tokenSaverBatchEnabled: (config as any).tokenSaverBatchEnabled ?? true,
   });
 });
 
@@ -124,6 +125,9 @@ settings.put("/settings/global", async (c) => {
     updates.tokenSaverGroupyCompactLevel = ["lite", "balanced", "aggressive"].includes(lvl)
       ? lvl
       : "balanced";
+  }
+  if (body.tokenSaverBatchEnabled !== undefined) {
+    updates.tokenSaverBatchEnabled = !!body.tokenSaverBatchEnabled;
   }
 
   await db.update(adminConfig).set(updates).where(eq(adminConfig.id, config.id));

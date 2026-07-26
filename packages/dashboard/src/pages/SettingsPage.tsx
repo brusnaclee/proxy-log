@@ -67,6 +67,7 @@ export default function SettingsPage() {
   const [tokenSaverPonytailLevel, setTokenSaverPonytailLevel] = useState("lite");
   const [tokenSaverGroupyCompactEnabled, setTokenSaverGroupyCompactEnabled] = useState(true);
   const [tokenSaverGroupyCompactLevel, setTokenSaverGroupyCompactLevel] = useState("balanced");
+  const [tokenSaverBatchEnabled, setTokenSaverBatchEnabled] = useState(true);
   const [globalModelLimits, setGlobalModelLimits] = useState<ModelLimitEntry[]>([]);
   const [modelCatalog, setModelCatalog] = useState<string[]>([]);
   const [newModelOverride, setNewModelOverride] = useState("");
@@ -189,6 +190,7 @@ export default function SettingsPage() {
       setTokenSaverPonytailLevel(g.tokenSaverPonytailLevel || "lite");
       setTokenSaverGroupyCompactEnabled(g.tokenSaverGroupyCompactEnabled ?? true);
       setTokenSaverGroupyCompactLevel(g.tokenSaverGroupyCompactLevel || "balanced");
+      setTokenSaverBatchEnabled(g.tokenSaverBatchEnabled ?? true);
     } catch {}
 
     try {
@@ -297,6 +299,7 @@ export default function SettingsPage() {
         tokenSaverCavemanEnabled, tokenSaverCavemanLevel,
         tokenSaverPonytailEnabled, tokenSaverPonytailLevel,
         tokenSaverGroupyCompactEnabled, tokenSaverGroupyCompactLevel,
+        tokenSaverBatchEnabled,
       });
       await request("/settings/bot", {
         method: "POST",
@@ -388,13 +391,17 @@ export default function SettingsPage() {
           <CardDescription className="space-y-2">
             <p>
               Global defaults for all users. Pipeline order:{" "}
-              <strong>RTK → Groupy Compact → Headroom → Caveman → Ponytail</strong>.
+              <strong>RTK → Groupy Compact → Headroom → Caveman → Ponytail → Batch</strong>.
               Users can override per-feature in the portal (Default / On / Off). One-shot kill switch: header{" "}
               <code className="text-xs">X-Token-Saver: off</code>.
             </p>
             <p className="text-xs">
-              RTK + Groupy Compact touch <em>input</em> (tool dumps / history). Caveman/Ponytail touch{" "}
+              RTK + Groupy Compact shrink <em>each hop&apos;s body</em> (tool dumps / history). Batch reduces the{" "}
+              <em>number of hops</em> by asking the model to act on more at once. Caveman/Ponytail touch{" "}
               <em>style of output</em> via system prompts — keep them OFF unless you want terse agents.
+            </p>
+            <p className="text-xs">
+              See <code className="text-xs">docs/features/token_saver.md</code> for the full before/after case study of every feature.
             </p>
           </CardDescription>
         </CardHeader>
@@ -527,6 +534,24 @@ export default function SettingsPage() {
               </select>
             </div>
           )}
+          <div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
+            <div className="pr-4">
+              <Label className="font-medium">Batch (fewer round-trips)</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Injects a system prompt telling the model to request multiple reads or edits together in ONE response
+                (parallel tool_calls) instead of one file at a time. Does not change what the model can do — only how
+                many hits it takes to do it.
+              </p>
+              <p className="text-[11px] text-muted-foreground/80 mt-1">
+                Example: task needs 5 files → was 5 separate reads (5 upstream hits, full growing history resent each
+                time) → model asks for all 5 together (1 hit). Sequential steps that truly depend on seeing a prior
+                result (edit → run test → read error → fix) are not affected — this only helps the batchable
+                explore/edit portion of a session. Effect varies by model: some (e.g. Grok, Claude Opus) already
+                batch well; others (e.g. GLM, Gemini Flash) rarely do without this nudge. Recommended default: ON.
+              </p>
+            </div>
+            <Switch checked={tokenSaverBatchEnabled} onCheckedChange={setTokenSaverBatchEnabled} />
+          </div>
         </CardContent>
       </Card>
 

@@ -40,6 +40,7 @@ export default function SettingsPage() {
   const [tsHeadroom, setTsHeadroom] = useState<boolean | null>(null);
   const [tsCaveman, setTsCaveman] = useState<boolean | null>(null);
   const [tsPonytail, setTsPonytail] = useState<boolean | null>(null);
+  const [tsBatch, setTsBatch] = useState<boolean | null>(null);
   const [tsSaving, setTsSaving] = useState(false);
   const [tsSuccess, setTsSuccess] = useState("");
   const [tsError, setTsError] = useState("");
@@ -63,6 +64,7 @@ export default function SettingsPage() {
           setTsHeadroom(data.tokenSaver.overrides?.headroom ?? null);
           setTsCaveman(data.tokenSaver.overrides?.caveman ?? null);
           setTsPonytail(data.tokenSaver.overrides?.ponytail ?? null);
+          setTsBatch(data.tokenSaver.overrides?.batch ?? null);
         }
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load settings"))
@@ -157,12 +159,14 @@ export default function SettingsPage() {
         headroom: tsHeadroom,
         caveman: tsCaveman,
         ponytail: tsPonytail,
+        batch: tsBatch,
       });
       setTsRtk(result.overrides.rtk);
       setTsGroupyCompact(result.overrides.groupyCompact ?? null);
       setTsHeadroom(result.overrides.headroom);
       setTsCaveman(result.overrides.caveman);
       setTsPonytail(result.overrides.ponytail);
+      setTsBatch(result.overrides.batch ?? null);
       setTsSuccess(t("Save") + " OK");
     } catch (err) {
       setTsError(err instanceof Error ? err.message : "Failed to save token saver");
@@ -316,7 +320,7 @@ export default function SettingsPage() {
         <div className="flex items-center justify-between gap-2 mb-1">
           <h2 className="text-sm font-medium text-foreground">{t("Token Saver")}</h2>
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
-            Compact + RTK ON
+            Compact + RTK + Batch ON
           </span>
         </div>
         <p className="text-xs text-muted-foreground mb-4">{t("Token Saver desc")}</p>
@@ -371,6 +375,14 @@ export default function SettingsPage() {
           value={tsPonytail}
           onChange={setTsPonytail}
           globalOn={!!tsGlobal?.ponytail}
+        />
+        <TriState
+          label={t("Batch")}
+          desc={t("Batch desc")}
+          effect={t("Batch effect")}
+          value={tsBatch}
+          onChange={setTsBatch}
+          globalOn={tsGlobal?.batch !== false}
         />
         <button
           type="button"

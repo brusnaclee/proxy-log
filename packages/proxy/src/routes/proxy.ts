@@ -2203,6 +2203,7 @@ proxy.all('/*', async (c) => {
 				tokenSaverCavemanOverride?: boolean | null;
 				tokenSaverPonytailOverride?: boolean | null;
 				tokenSaverGroupyCompactOverride?: boolean | null;
+				tokenSaverBatchOverride?: boolean | null;
 			} | null = null;
 			if (keyRecord.discordUserId) {
 				userOverrides =
@@ -2214,6 +2215,7 @@ proxy.all('/*', async (c) => {
 								tokenSaverCavemanOverride: userPortalSettings.tokenSaverCavemanOverride,
 								tokenSaverPonytailOverride: userPortalSettings.tokenSaverPonytailOverride,
 								tokenSaverGroupyCompactOverride: userPortalSettings.tokenSaverGroupyCompactOverride,
+								tokenSaverBatchOverride: userPortalSettings.tokenSaverBatchOverride,
 							})
 							.from(userPortalSettings)
 							.where(eq(userPortalSettings.discordUserId, keyRecord.discordUserId))
@@ -2227,7 +2229,8 @@ proxy.all('/*', async (c) => {
 				tsResult.groupyCompact?.charsSaved ||
 				tsResult.headroom?.ok ||
 				tsResult.caveman ||
-				tsResult.ponytail
+				tsResult.ponytail ||
+				tsResult.batch
 			) {
 				requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
 				console.log(
@@ -2240,6 +2243,7 @@ proxy.all('/*', async (c) => {
 						` headroom=${tsFlags.headroom}` +
 						` caveman=${tsFlags.caveman}` +
 						` ponytail=${tsFlags.ponytail}` +
+						` batch=${tsFlags.batch}` +
 						(tsFlags.disabledByHeader ? ' (header-off)' : ''),
 				);
 			}
