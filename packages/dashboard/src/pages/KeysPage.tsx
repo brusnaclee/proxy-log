@@ -11,7 +11,7 @@ import {
   DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { formatNumber, formatCost, copyToClipboard } from "@/lib/utils";
-import { Plus, Copy, Check, Key, Download, Zap, ChevronDown, ChevronRight } from "lucide-react";
+import { Plus, Copy, Check, Key, Download, Zap, ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
 import { useRealtimeSSE } from "@/lib/use-realtime-sse";
 import { exportCsvSimple } from "@/lib/export-csv";
 import { Label } from "@/components/ui/label";
@@ -87,6 +87,7 @@ export default function KeysPage() {
   const navigate = useNavigate();
 
   const [syncedRoles, setSyncedRoles] = useState<Record<string, boolean>>({});
+  const [syncingAll, setSyncingAll] = useState(false);
 
   const groups = useMemo(() => groupKeysByDiscord(allKeys), [allKeys]);
 
@@ -247,6 +248,24 @@ export default function KeysPage() {
     exportCsvSimple(headers, rows, `api-keys-${new Date().toISOString().split("T")[0]}`);
   };
 
+  const handleSyncAllRoles = async () => {
+    if (syncingAll) return;
+    setSyncingAll(true);
+    try {
+      const res = await keys.syncAllRoles();
+      setSyncedRoles({});
+      await loadKeys();
+      alert(
+        `Discord roles synced: ${res.synced}/${res.total}` +
+          (res.errors ? ` (${res.errors} errors)` : ""),
+      );
+    } catch (e: any) {
+      alert(e?.message || "Sync all roles failed");
+    } finally {
+      setSyncingAll(false);
+    }
+  };
+
   const keySlug = (k: ApiKeyListItem) =>
     `/keys/${k.id}-${k.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").substring(0, 40)}`;
 
@@ -259,7 +278,11 @@ export default function KeysPage() {
             Grouped by Discord account — portal keys appear under the same user
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          <Button variant="outline" size="sm" onClick={handleSyncAllRoles} disabled={syncingAll}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${syncingAll ? "animate-spin" : ""}`} />
+            {syncingAll ? "Syncing…" : "Sync Discord Roles"}
+          </Button>
           <Button variant="outline" size="sm" onClick={handleExport}>
             <Download className="h-4 w-4 mr-2" /> Export CSV
           </Button>

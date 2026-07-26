@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { addonAssignments, addons, adminConfig, type Addon } from "../db/schema.js";
 import { normalizeModelForLimit } from "./rate-limit.js";
@@ -123,13 +123,36 @@ export type AddonHistoryRow = {
   dailyTokenLimit: number;
 };
 
-/** All assignments for a Discord user (active + past) — admin/portal history. */
+/** All assignments for a Discord user and/or API keys (active + past). */
 export async function listAddonHistoryForUser(
-  discordUserId: string,
+  opts:
+    | string
+    | {
+        discordUserId?: string | null;
+        apiKeyIds?: Array<number | null | undefined>;
+      },
   limit = 50,
 ): Promise<AddonHistoryRow[]> {
-  const uid = String(discordUserId || "").trim();
-  if (!uid) return [];
+  const uid =
+    typeof opts === "string"
+      ? String(opts || "").trim()
+      : String(opts?.discordUserId || "").trim();
+  const apiKeyIds =
+    typeof opts === "string"
+      ? []
+      : [
+          ...new Set(
+            (opts?.apiKeyIds || [])
+              .map((n) => Number(n))
+              .filter((n) => Number.isFinite(n) && n > 0),
+          ),
+        ];
+
+  const ownerParts = [];
+  if (uid) ownerParts.push(eq(addonAssignments.discordUserId, uid));
+  if (apiKeyIds.length) ownerParts.push(inArray(addonAssignments.apiKeyId, apiKeyIds));
+  if (!ownerParts.length) return [];
+
   const now = new Date();
   const rows = await db
     .select({
@@ -144,7 +167,7 @@ export async function listAddonHistoryForUser(
     })
     .from(addonAssignments)
     .innerJoin(addons, eq(addonAssignments.addonId, addons.id))
-    .where(eq(addonAssignments.discordUserId, uid))
+    .where(or(...ownerParts))
     .orderBy(desc(addonAssignments.startsAt))
     .limit(limit);
 

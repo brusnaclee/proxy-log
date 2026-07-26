@@ -423,6 +423,16 @@ export const keys = {
       method: "POST",
       body: JSON.stringify({ discordUserId }),
     }),
+  syncAllRoles: () =>
+    request<{
+      success: boolean;
+      total: number;
+      synced: number;
+      skipped: number;
+      errors: number;
+      enabled: number;
+      disabled: number;
+    }>(`/keys/sync-all-roles`, { method: "POST" }),
   getDevices: (id: number) =>
     request<any[]>(`/keys/${id}/devices`),
   blockDevice: (keyId: number, fingerprint: string) =>

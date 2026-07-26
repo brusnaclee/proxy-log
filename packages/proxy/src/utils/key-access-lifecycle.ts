@@ -5,7 +5,7 @@
  *   when add-on expires and no Phantom/Staff → disable
  *   when add-on assigned/extended on a disabled key → re-enable
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { adminConfig, apiKeys } from "../db/schema.js";
 import { getActiveAddonsForUser } from "./addons.js";
@@ -285,4 +285,90 @@ export async function syncUserKeyAccessAfterAddonChange(
 	const uid = String(discordUserId || "").trim();
 	if (!uid) return null;
 	return syncUserKeyAccess(uid, { reason: reason || "add-on change" });
+}
+
+async function mapWithConcurrency<T, R>(
+	items: T[],
+	concurrency: number,
+	fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+	const results: R[] = new Array(items.length);
+	let next = 0;
+	const workers = Array.from({ length: Math.max(1, concurrency) }, async () => {
+		while (true) {
+			const i = next++;
+			if (i >= items.length) return;
+			results[i] = await fn(items[i]);
+		}
+	});
+	await Promise.all(workers);
+	return results;
+}
+
+export type SyncAllDiscordKeyRolesResult = {
+	total: number;
+	synced: number;
+	skipped: number;
+	errors: number;
+	enabled: number;
+	disabled: number;
+};
+
+/**
+ * Refresh Discord roles/badges for every distinct Discord user linked to a non-trial key.
+ * Used for one-shot backfill + daily refresh. Keep concurrency low for Discord rate limits.
+ */
+export async function syncAllDiscordLinkedKeyRoles(opts?: {
+	concurrency?: number;
+	reason?: string;
+}): Promise<SyncAllDiscordKeyRolesResult> {
+	const rows = await db.execute(sql`
+		SELECT DISTINCT discord_user_id AS id
+		FROM api_keys
+		WHERE discord_user_id IS NOT NULL
+		  AND discord_user_id ~ '^[0-9]{15,25}$'
+		  AND COALESCE(is_trial, false) = false
+	`);
+	const ids = [
+		...new Set(
+			((rows.rows || []) as Array<{ id?: string }>)
+				.map((r) => String(r.id || "").trim())
+				.filter((id) => /^\d{15,25}$/.test(id)),
+		),
+	];
+
+	const reason = opts?.reason || "bulk discord role sync";
+	const concurrency = Math.max(1, Math.min(4, opts?.concurrency ?? 2));
+	let synced = 0;
+	let skipped = 0;
+	let errors = 0;
+	let enabled = 0;
+	let disabled = 0;
+
+	await mapWithConcurrency(ids, concurrency, async (uid) => {
+		try {
+			const result = await syncUserKeyAccess(uid, { reason });
+			if (result.action === "skipped") skipped += 1;
+			else {
+				synced += 1;
+				if (result.action === "enabled") enabled += 1;
+				if (result.action === "disabled") disabled += 1;
+			}
+		} catch (err) {
+			errors += 1;
+			console.warn(
+				`[key-access] bulk sync failed for ${uid}:`,
+				(err as Error)?.message || err,
+			);
+		}
+	});
+
+	return {
+		total: ids.length,
+		synced,
+		skipped,
+		errors,
+		enabled,
+		disabled,
+	};
 }

@@ -687,10 +687,16 @@ portal.get("/me", async (c) => {
       dailyTokenLimit: a.dailyTokenLimit || 0,
     })),
     addonHistory: await (async () => {
-      if (isTrial || !discordUserId) return [];
+      if (isTrial) return [];
       try {
         const { listAddonHistoryForUser } = await import("../../utils/addons.js");
-        return await listAddonHistoryForUser(discordUserId, 30);
+        return await listAddonHistoryForUser(
+          {
+            discordUserId,
+            apiKeyIds: userKeys.map((k) => k.id),
+          },
+          30,
+        );
       } catch {
         return [];
       }

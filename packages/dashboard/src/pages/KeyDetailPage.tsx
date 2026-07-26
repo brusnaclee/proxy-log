@@ -809,8 +809,8 @@ export API_TIMEOUT_MS=500000`}
         </Card>
       )}
 
-      {(keyData.addonHistory?.length || 0) > 0 && (
-        <Card className="border-border/50">
+      {!keyData.isTrial && (
+      <Card className="border-border/50">
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Add-on history</CardTitle>
             <p className="text-xs text-muted-foreground">
@@ -818,6 +818,9 @@ export API_TIMEOUT_MS=500000`}
             </p>
           </CardHeader>
           <CardContent>
+            {(keyData.addonHistory?.length || 0) === 0 ? (
+              <p className="text-xs text-muted-foreground">No add-on history yet</p>
+            ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -857,6 +860,7 @@ export API_TIMEOUT_MS=500000`}
                 </tbody>
               </table>
             </div>
+            )}
           </CardContent>
         </Card>
       )}

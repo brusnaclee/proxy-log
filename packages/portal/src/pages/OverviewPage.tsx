@@ -445,8 +445,8 @@ export default function OverviewPage() {
   };
 
   const renderAddonHistory = () => {
+    if (user?.isTrial) return null;
     const history = user?.addonHistory || [];
-    if (!history.length) return null;
     return (
       <div className="bg-card border border-border rounded-xl p-4 space-y-3">
         <div>
@@ -455,6 +455,9 @@ export default function OverviewPage() {
             {t("Past and active pack assignments")}
           </p>
         </div>
+        {!history.length ? (
+          <p className="text-xs text-muted-foreground py-1">{t("No add-on history yet")}</p>
+        ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -500,6 +503,7 @@ export default function OverviewPage() {
             </tbody>
           </table>
         </div>
+        )}
       </div>
     );
   };
@@ -729,48 +733,29 @@ export default function OverviewPage() {
 
   const renderStatCards = () => {
     if (!stats) return null;
-    const primary = [
+    const cards = [
       { key: "requests", label: t("Prompts"), icon: Activity, value: stats.requests, format: formatNumber },
       { key: "apiCalls", label: t("API Calls"), icon: Zap, value: stats.apiCalls || 0, format: formatNumber },
       { key: "promptTokens", label: t("Input Tokens"), icon: MessageSquare, value: stats.promptTokens, format: (n: number) => formatInputBreakdown(stats.billablePromptTokens, stats.cachedTokens, n).label },
       { key: "completionTokens", label: t("Output Tokens"), icon: Download, value: stats.completionTokens, format: formatNumber },
-    ];
-    const secondary = [
       { key: "cost", label: t("Est. Cost"), icon: DollarSign, value: stats.cost.total, format: formatCost },
       { key: "sessions", label: t("Sessions"), icon: Users, value: stats.sessions, format: formatNumber },
       { key: "toolCalls", label: t("Tool Calls"), icon: Wrench, value: stats.toolCalls, format: formatNumber },
     ];
-    const Card = ({
-      label,
-      icon: Icon,
-      value,
-      format,
-    }: {
-      label: string;
-      icon: typeof Activity;
-      value: number;
-      format: (n: number) => string;
-    }) => (
-      <div className="bg-card border border-border rounded-xl p-4 sm:p-5 transition-all duration-200 hover:border-primary/30 hover:bg-accent/20">
-        <div className="flex items-center gap-2 mb-2">
-          <Icon className="w-4 h-4 text-muted-foreground shrink-0" />
-          <span className="text-xs text-muted-foreground truncate">{label}</span>
-        </div>
-        <p className="text-xl font-semibold text-foreground tabular-nums">{format(value)}</p>
-      </div>
-    );
     return (
-      <div className="space-y-4">
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {primary.map((c) => (
-            <Card key={c.key} {...c} />
-          ))}
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {secondary.map((c) => (
-            <Card key={c.key} {...c} />
-          ))}
-        </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
+        {cards.map(({ key, label, icon: Icon, value, format }) => (
+          <div
+            key={key}
+            className="bg-card border border-border rounded-xl p-4 sm:p-5 transition-all duration-200 hover:border-primary/30 hover:bg-accent/20"
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <Icon className="w-4 h-4 text-muted-foreground shrink-0" />
+              <span className="text-xs text-muted-foreground truncate">{label}</span>
+            </div>
+            <p className="text-xl font-semibold text-foreground tabular-nums">{format(value)}</p>
+          </div>
+        ))}
       </div>
     );
   };
@@ -897,7 +882,7 @@ export default function OverviewPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -918,17 +903,9 @@ export default function OverviewPage() {
 
       {/* Loading skeleton — only first load; keep previous charts while refreshing */}
       {loading && !stats ? (
-        <div className="space-y-6">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="bg-card border border-border rounded-xl p-4 sm:p-5 animate-pulse">
-                <div className="h-4 w-16 bg-muted rounded mb-2" />
-                <div className="h-6 w-20 bg-muted rounded" />
-              </div>
-            ))}
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {Array.from({ length: 3 }).map((_, i) => (
+        <div className="space-y-8">
+          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
+            {Array.from({ length: 7 }).map((_, i) => (
               <div key={i} className="bg-card border border-border rounded-xl p-4 sm:p-5 animate-pulse">
                 <div className="h-4 w-16 bg-muted rounded mb-2" />
                 <div className="h-6 w-20 bg-muted rounded" />
@@ -941,7 +918,7 @@ export default function OverviewPage() {
           </div>
         </div>
       ) : (
-        <div className={`space-y-6${refreshing ? " opacity-70 transition-opacity" : ""}`}>
+        <div className={`space-y-8${refreshing ? " opacity-70 transition-opacity" : ""}`}>
           {/* Limits card */}
           {renderLimitsCard()}
 

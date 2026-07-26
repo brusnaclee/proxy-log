@@ -31,6 +31,10 @@ const dict: Record<string, Record<Lang, string>> = {
     id: "Riwayat paket aktif dan yang sudah berakhir",
     en: "Past and active pack assignments",
   },
+  "No add-on history yet": {
+    id: "Belum ada riwayat add-on",
+    en: "No add-on history yet",
+  },
   Started: { id: "Mulai", en: "Started" },
   Expires: { id: "Berakhir", en: "Expires" },
   Status: { id: "Status", en: "Status" },

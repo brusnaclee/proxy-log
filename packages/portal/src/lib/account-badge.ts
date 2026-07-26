@@ -128,18 +128,26 @@ export function resolveDisplayBadges(
 		),
 	];
 
-	const hasStaffRole = uniq.some((b) =>
-		["staff", "moderator", "troubleshooter", "contributor"].includes(b),
+	// Prefer specific staff roles (Moderator / Troubleshooter / Contributor)
+	// over a generic "Staff" chip when Discord already gave the subtype.
+	const hasSpecificStaff = uniq.some((b) =>
+		["moderator", "troubleshooter", "contributor"].includes(b),
 	);
-	if (hasStaffRole) {
-		uniq = uniq.filter(
-			(b) => !["moderator", "troubleshooter", "contributor"].includes(b),
-		);
-		if (!uniq.includes("staff")) uniq.push("staff");
+	if (hasSpecificStaff) {
+		uniq = uniq.filter((b) => b !== "staff");
 	}
 
 	const paid = uniq.some((b) =>
-		["phantom", "pro", "premium", "staff", "addon"].includes(b),
+		[
+			"phantom",
+			"pro",
+			"premium",
+			"staff",
+			"addon",
+			"moderator",
+			"troubleshooter",
+			"contributor",
+		].includes(b),
 	);
 	if (paid) uniq = uniq.filter((b) => b !== "trial");
 
@@ -148,5 +156,5 @@ export function resolveDisplayBadges(
 		const ib = ORDER.indexOf(b);
 		return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
 	});
-	return uniq.slice(0, 5);
+	return uniq.slice(0, 6);
 }

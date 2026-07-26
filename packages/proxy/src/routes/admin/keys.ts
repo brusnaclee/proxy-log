@@ -695,13 +695,17 @@ keys.get("/keys/:id", async (c) => {
     tierRaw && tierRaw !== "none" && tierRaw !== "admin_override" ? tierRaw : null;
 
   let addonHistory: Awaited<ReturnType<typeof import("../../utils/addons.js").listAddonHistoryForUser>> = [];
-  if (key.discordUserId) {
-    try {
-      const { listAddonHistoryForUser } = await import("../../utils/addons.js");
-      addonHistory = await listAddonHistoryForUser(key.discordUserId, 40);
-    } catch (err) {
-      console.warn("[keys/:id] addon history failed:", (err as Error)?.message || err);
-    }
+  try {
+    const { listAddonHistoryForUser } = await import("../../utils/addons.js");
+    addonHistory = await listAddonHistoryForUser(
+      {
+        discordUserId: key.discordUserId,
+        apiKeyIds: [key.id],
+      },
+      40,
+    );
+  } catch (err) {
+    console.warn("[keys/:id] addon history failed:", (err as Error)?.message || err);
   }
 
   return c.json({
@@ -919,6 +923,20 @@ keys.post("/keys/sync-roles", async (c) => {
   statsCache.invalidate("keys-list");
   statsCache.invalidate("keys-list-fast");
   statsCache.invalidate("keys-list-fast-v4");
+  return c.json({ success: true, ...result });
+});
+
+/** Backfill / refresh Discord badges for all Discord-linked non-trial keys. */
+keys.post("/keys/sync-all-roles", async (c) => {
+  const { syncAllDiscordLinkedKeyRoles } = await import("../../utils/key-access-lifecycle.js");
+  const result = await syncAllDiscordLinkedKeyRoles({
+    concurrency: 2,
+    reason: "admin sync-all-roles",
+  });
+  statsCache.invalidate("keys-list");
+  statsCache.invalidate("keys-list-fast");
+  statsCache.invalidate("keys-list-fast-v4");
+  console.log("[admin] sync-all-roles:", result);
   return c.json({ success: true, ...result });
 });
 
