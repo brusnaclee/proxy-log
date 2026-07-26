@@ -423,10 +423,10 @@ async function sendApiCredentialsDm(userId, apiKey, endpoint) {
 			`\`\`\`\n` +
 			`Untuk bantuan setup di IDE: buka Discord DM bot ini dan klik "How to Use".\n\n` +
 			`**Peraturan Penggunaan:**\n` +
-			`• Device limit mengikuti pengaturan akun (portal / admin)\n` +
-			`• Device baru berlebih → request **ditolak** (key Phantom **tidak** di-rotate otomatis)\n` +
-			`• Kalau key bocor / perlu ganti: portal Rotate atau minta admin\n\n` +
-			`Simpan key ini. **Pesan How to Use lama bisa berisi key usang** — salin Primary dari portal bila ragu.`;
+			`• Maksimal device mengikuti setting akun (sering 1 device)\n` +
+			`• Device baru berlebih → key di-rotate otomatis + Discord DM key baru\n` +
+			`• Pesan How to Use lama bisa berisi key usang — pakai Primary di portal bila ragu\n\n` +
+			`Simpan key ini baik-baik. Jika bocor, hubungi admin untuk rotate key.`,
 		0x57f287,
 	);
 	if (!result) {
