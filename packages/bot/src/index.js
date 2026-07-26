@@ -6707,6 +6707,107 @@ async function handleRankingSearchModal(interaction) {
 
 client.once('clientReady', async () => {
 	console.log(`Logged in as ${client.user.tag}`);
+
+	async function findGuildMember(discordUserId) {
+		const uid = String(discordUserId || '').trim();
+		if (!uid) return null;
+		for (const guild of client.guilds.cache.values()) {
+			const member = await guild.members.fetch(uid).catch(() => null);
+			if (member) return member;
+		}
+		try {
+			const fetched = await client.guilds.fetch();
+			for (const [, gRef] of fetched) {
+				const guild = client.guilds.cache.get(gRef.id) || (await gRef.fetch());
+				const member = await guild.members.fetch(uid).catch(() => null);
+				if (member) return member;
+			}
+		} catch (err) {
+			console.warn('[addon-role] guild fetch failed:', err.message);
+		}
+		return null;
+	}
+
+	async function processAddonRoleSync() {
+		try {
+			const data = await proxyInternal('/admin/internal/addon-role-sync');
+			const jobs = data?.jobs || [];
+			for (const job of jobs) {
+				if (!job.discordUserId || !job.discordRoleId || !job.assignmentId) continue;
+				try {
+					const member = await findGuildMember(job.discordUserId);
+					if (!member) {
+						if (job.action === 'revoke') {
+							await proxyInternal(
+								`/admin/internal/addon-role-sync/${job.assignmentId}/clear`,
+								'POST',
+							);
+						}
+						continue;
+					}
+					if (job.action === 'grant') {
+						await member.roles.add(
+							job.discordRoleId,
+							`Add-on ${job.addonName || ''} assigned`,
+						);
+						console.log(
+							`[addon-role] Granted ${job.discordRoleId} → ${job.discordUserId} (${job.addonName || ''})`,
+						);
+					} else if (job.action === 'revoke') {
+						await member.roles
+							.remove(
+								job.discordRoleId,
+								`Add-on ${job.addonName || ''} expired/deactivated`,
+							)
+							.catch(() => {});
+						console.log(
+							`[addon-role] Revoked ${job.discordRoleId} ← ${job.discordUserId} (${job.addonName || ''})`,
+						);
+					}
+					await proxyInternal(
+						`/admin/internal/addon-role-sync/${job.assignmentId}/clear`,
+						'POST',
+					);
+				} catch (err) {
+					console.error(
+						`[addon-role] Failed ${job.action} for ${job.discordUserId}:`,
+						err.message,
+					);
+				}
+			}
+		} catch (err) {
+			console.error('[addon-role] Poll failed:', err.message);
+		}
+	}
+
+	async function queueAddonRoleBackfill(reason) {
+		try {
+			const data = await proxyInternal(
+				'/admin/internal/addon-role-backfill',
+				'POST',
+			);
+			console.log(
+				`[addon-role] Backfill (${reason}): queued=${data?.queued ?? 0}`,
+			);
+			await processAddonRoleSync();
+		} catch (err) {
+			console.error(`[addon-role] Backfill (${reason}) failed:`, err.message);
+		}
+	}
+
+	// Start role sync immediately (don't wait for ranking/trial setup below)
+	void queueAddonRoleBackfill('bot ready');
+	setInterval(() => {
+		processAddonRoleSync().catch((err) =>
+			console.error('[addon-role] Poll error:', err.message),
+		);
+	}, 30000);
+	setInterval(() => {
+		queueAddonRoleBackfill('hourly').catch((err) =>
+			console.error('[addon-role] Hourly backfill error:', err.message),
+		);
+	}, 60 * 60 * 1000);
+
 	await loadDynamicSettings();
 	console.log(
 		`[agverif] Auto check AI: ${VERIF_AUTO_ENABLED ? 'AKTIF' : 'NONAKTIF'}`,
@@ -7238,115 +7339,13 @@ client.once('clientReady', async () => {
 		}
 	}
 
-	async function findGuildMember(discordUserId) {
-		const uid = String(discordUserId || '').trim();
-		if (!uid) return null;
-		for (const guild of client.guilds.cache.values()) {
-			const member = await guild.members.fetch(uid).catch(() => null);
-			if (member) return member;
-		}
-		try {
-			const fetched = await client.guilds.fetch();
-			for (const [, gRef] of fetched) {
-				const guild = client.guilds.cache.get(gRef.id) || (await gRef.fetch());
-				const member = await guild.members.fetch(uid).catch(() => null);
-				if (member) return member;
-			}
-		} catch (err) {
-			console.warn('[addon-role] guild fetch failed:', err.message);
-		}
-		return null;
-	}
-
-	async function processAddonRoleSync() {
-		try {
-			const data = await proxyInternal('/admin/internal/addon-role-sync');
-			const jobs = data?.jobs || [];
-			for (const job of jobs) {
-				if (!job.discordUserId || !job.discordRoleId || !job.assignmentId) continue;
-				try {
-					const member = await findGuildMember(job.discordUserId);
-					if (!member) {
-						// Member not in guild: clear revoke (nothing to remove).
-						// Keep grant pending so we retry when they rejoin / next poll.
-						if (job.action === 'revoke') {
-							await proxyInternal(
-								`/admin/internal/addon-role-sync/${job.assignmentId}/clear`,
-								'POST',
-							);
-						}
-						continue;
-					}
-					if (job.action === 'grant') {
-						await member.roles.add(
-							job.discordRoleId,
-							`Add-on ${job.addonName || ''} assigned`,
-						);
-						console.log(
-							`[addon-role] Granted ${job.discordRoleId} → ${job.discordUserId} (${job.addonName || ''})`,
-						);
-					} else if (job.action === 'revoke') {
-						await member.roles
-							.remove(
-								job.discordRoleId,
-								`Add-on ${job.addonName || ''} expired/deactivated`,
-							)
-							.catch(() => {});
-						console.log(
-							`[addon-role] Revoked ${job.discordRoleId} ← ${job.discordUserId} (${job.addonName || ''})`,
-						);
-					}
-					await proxyInternal(
-						`/admin/internal/addon-role-sync/${job.assignmentId}/clear`,
-						'POST',
-					);
-				} catch (err) {
-					console.error(
-						`[addon-role] Failed ${job.action} for ${job.discordUserId}:`,
-						err.message,
-					);
-					// Leave roleSyncAction set so the next poll retries (permissions/hierarchy/etc).
-				}
-			}
-		} catch (err) {
-			console.error('[addon-role] Poll failed:', err.message);
-		}
-	}
-
-	async function queueAddonRoleBackfill(reason) {
-		try {
-			const data = await proxyInternal(
-				'/admin/internal/addon-role-backfill',
-				'POST',
-			);
-			console.log(
-				`[addon-role] Backfill (${reason}): queued=${data?.queued ?? 0}`,
-			);
-			await processAddonRoleSync();
-		} catch (err) {
-			console.error(`[addon-role] Backfill (${reason}) failed:`, err.message);
-		}
-	}
-
-	// Run immediately then every 30 seconds
+	// Run notification poll immediately then every 30 seconds
 	void processPendingNotifications();
-	void queueAddonRoleBackfill('bot ready');
 	setInterval(() => {
 		processPendingNotifications().catch((err) =>
 			console.error('[notify] Poll error:', err.message),
 		);
 	}, 30000);
-	setInterval(() => {
-		processAddonRoleSync().catch((err) =>
-			console.error('[addon-role] Poll error:', err.message),
-		);
-	}, 30000);
-	// Re-queue grants hourly so missed/failed grants (incl. firek + others) catch up
-	setInterval(() => {
-		queueAddonRoleBackfill('hourly').catch((err) =>
-			console.error('[addon-role] Hourly backfill error:', err.message),
-		);
-	}, 60 * 60 * 1000);
 });
 
 // Re-grant add-on Discord roles when a member rejoins with an active assignment
