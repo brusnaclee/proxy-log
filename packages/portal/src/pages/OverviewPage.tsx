@@ -735,18 +735,19 @@ export default function OverviewPage() {
     if (!stats) return null;
     const cards = [
       { key: "requests", label: t("Prompts"), icon: Activity, value: stats.requests, format: formatNumber },
-      { key: "apiCalls", label: t("API Calls"), icon: Zap, value: stats.apiCalls || 0, format: formatNumber },
+      { key: "apiCalls", label: t("API Calls"), icon: Zap, value: stats.apiCalls || 0, format: formatNumber, hint: t("API Calls hint") },
       { key: "promptTokens", label: t("Input Tokens"), icon: MessageSquare, value: stats.promptTokens, format: (n: number) => formatInputBreakdown(stats.billablePromptTokens, stats.cachedTokens, n).label },
       { key: "completionTokens", label: t("Output Tokens"), icon: Download, value: stats.completionTokens, format: formatNumber },
       { key: "cost", label: t("Est. Cost"), icon: DollarSign, value: stats.cost.total, format: formatCost },
       { key: "sessions", label: t("Sessions"), icon: Users, value: stats.sessions, format: formatNumber },
-      { key: "toolCalls", label: t("Tool Calls"), icon: Wrench, value: stats.toolCalls, format: formatNumber },
+      { key: "toolCalls", label: t("Tool Calls"), icon: Wrench, value: stats.toolCalls, format: formatNumber, hint: t("Tool Calls hint") },
     ];
     return (
       <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
-        {cards.map(({ key, label, icon: Icon, value, format }) => (
+        {cards.map(({ key, label, icon: Icon, value, format, hint }) => (
           <div
             key={key}
+            title={hint}
             className="bg-card border border-border rounded-xl p-4 sm:p-5 transition-all duration-200 hover:border-primary/30 hover:bg-accent/20"
           >
             <div className="flex items-center gap-2 mb-2">

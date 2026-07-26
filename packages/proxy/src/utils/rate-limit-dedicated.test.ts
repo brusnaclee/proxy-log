@@ -11,7 +11,7 @@ describe("dedicated quota matching", () => {
   const rules: DedicatedQuotaRule[] = [
     {
       id: 1,
-      model: "tokito/gcli/grok-4.5",
+      model: "tokitoV2/gcli/grok-4.5",
       isPattern: true,
       scope: "global",
       scopeId: 0,
@@ -23,14 +23,18 @@ describe("dedicated quota matching", () => {
   ];
 
   it("patternMatchVariants keeps slash tails only", () => {
-    assert.deepEqual(patternMatchVariants("tokito/gcli/grok-4.5"), [
-      "tokito/gcli/grok-4.5",
+    assert.deepEqual(patternMatchVariants("tokitoV2/gcli/grok-4.5"), [
+      "tokitov2/gcli/grok-4.5",
       "gcli/grok-4.5",
     ]);
     assert.deepEqual(patternMatchVariants("gcli/grok-4.5"), ["gcli/grok-4.5"]);
   });
 
   it("matches only gcli-prefixed grok via raw model", () => {
+    assert.equal(
+      modelMatchesDedicatedRule("grok-4.5", rules[0], ["tokitoV2/gcli/grok-4.5"]),
+      true,
+    );
     assert.equal(
       modelMatchesDedicatedRule("grok-4.5", rules[0], ["tokito/gcli/grok-4.5"]),
       true,
@@ -59,7 +63,7 @@ describe("dedicated quota matching", () => {
 
   it("findDedicatedRuleForModel uses matchModels", () => {
     const picked = findDedicatedRuleForModel(rules, "grok-4.5", [
-      "tokito/gcli/grok-4.5",
+      "tokitoV2/gcli/grok-4.5",
     ]);
     assert.ok(picked);
     assert.equal(picked!.dailyTokenLimit, 5_000_000);

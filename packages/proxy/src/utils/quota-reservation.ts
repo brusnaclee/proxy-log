@@ -89,6 +89,28 @@ export function hasReservedTurn(scopeKey: string, turnId: string | null | undefi
 	return state.turnIds.has(turnId);
 }
 
+/** Drop a soft reservation (empty upstream / non-2xx) so the slot is not soft-burned. */
+export function releaseReservedTurn(
+	scopeKey: string,
+	turnId: string | null | undefined,
+): boolean {
+	if (!turnId) return false;
+	const state = buckets.get(scopeKey);
+	if (!state) return false;
+	const had = state.turnIds.delete(turnId);
+	state.reservedAt.delete(turnId);
+	if (state.turnIds.size === 0) buckets.delete(scopeKey);
+	return had;
+}
+
+export function releaseReservedTurns(
+	entries: Array<{ scopeKey: string; turnId: string }>,
+): void {
+	for (const e of entries) {
+		releaseReservedTurn(e.scopeKey, e.turnId);
+	}
+}
+
 /** Ms until next midnight Asia/Jakarta (WIB, UTC+7). */
 export function msUntilNextWibMidnight(nowMs = Date.now()): number {
 	const wibOffset = 7 * 60 * 60 * 1000;

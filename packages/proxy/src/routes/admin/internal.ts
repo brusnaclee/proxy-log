@@ -23,6 +23,7 @@ import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
 import { resolveKeyPromptLimit, resolveKeyApiCallLimit } from "../../utils/trial-config.js";
 import { listGpyCatalogModels } from "../../utils/trial-routing.js";
+import { pickPrimaryNonTrialKey } from "../../utils/api-key-primary.js";
 
 const internal = new Hono();
 
@@ -42,7 +43,13 @@ type UserBody = {
 };
 
 async function findKeyByDiscordUser(discordUserId: string) {
-  return (await db.select().from(apiKeys).where(eq(apiKeys.discordUserId, discordUserId)))[0];
+  const keys = await db.select().from(apiKeys).where(eq(apiKeys.discordUserId, discordUserId));
+  if (!keys.length) return undefined;
+  return (
+    pickPrimaryNonTrialKey(keys) ||
+    keys.find((k) => k.isActive) ||
+    keys[0]
+  );
 }
 
 async function findBestKeyForDiscordUser(discordUserId: string, targetUserId?: string) {
@@ -59,7 +66,7 @@ async function findBestKeyForDiscordUser(discordUserId: string, targetUserId?: s
   const trialKey = keys.find((k) => activeTrialKeyIds.has(k.id));
   if (trialKey) return trialKey;
 
-  const memberKey = keys.find((k) => !k.isTrial && k.isActive);
+  const memberKey = pickPrimaryNonTrialKey(keys);
   if (memberKey) return memberKey;
 
   return keys[0];
@@ -343,31 +350,24 @@ internal.get("/internal/keys", async (c) => {
 
 internal.get("/internal/key-for-user/:userId", async (c) => {
   const userId = c.req.param("userId");
+  const keys = await db.select().from(apiKeys).where(eq(apiKeys.discordUserId, userId));
 
-  // Always prefer phantom key, not trial key
-  const [phantomKey] = await db
-    .select()
-    .from(apiKeys)
-    .where(and(eq(apiKeys.discordUserId, userId), eq(apiKeys.isTrial, false), eq(apiKeys.isActive, true)))
-    .limit(1);
-
-  if (phantomKey) {
+  // Same Primary as portal (admin-override > discord-bot > oldest non-trial)
+  const primary = pickPrimaryNonTrialKey(keys);
+  if (primary) {
     return c.json({
-      apiKey: phantomKey.key,
-      keyPrefix: phantomKey.keyPrefix,
-      isActive: phantomKey.isActive,
+      apiKey: primary.key,
+      keyPrefix: primary.keyPrefix,
+      isActive: primary.isActive,
       isTrial: false,
+      keyId: primary.id,
+      provisionedBy: primary.provisionedBy,
       endpoint: `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`,
     });
   }
 
-  // If no phantom key, check for any active key (trial)
-  const [anyKey] = await db
-    .select()
-    .from(apiKeys)
-    .where(and(eq(apiKeys.discordUserId, userId), eq(apiKeys.isActive, true)))
-    .limit(1);
-
+  // Fallback: active trial
+  const anyKey = keys.find((k) => k.isActive) || keys[0];
   if (!anyKey) return c.json({ error: "No key found for user" }, 404);
 
   return c.json({
@@ -375,6 +375,8 @@ internal.get("/internal/key-for-user/:userId", async (c) => {
     keyPrefix: anyKey.keyPrefix,
     isActive: anyKey.isActive,
     isTrial: anyKey.isTrial,
+    keyId: anyKey.id,
+    provisionedBy: anyKey.provisionedBy,
     endpoint: `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`,
   });
 });
@@ -1680,26 +1682,17 @@ internal.get("/internal/user-key-type/:discordUserId", async (c) => {
   if (authErr) return authErr;
   const discordUserId = c.req.param("discordUserId");
 
-  // Get phantom key (non-trial, active)
-  const [phantomKey] = await db
-    .select({ id: apiKeys.id, isTrial: apiKeys.isTrial })
-    .from(apiKeys)
-    .where(and(eq(apiKeys.discordUserId, discordUserId), eq(apiKeys.isTrial, false), eq(apiKeys.isActive, true)))
-    .limit(1);
-
-  // Any active key (trial OR phantom) owned by this user
-  const [anyActiveKey] = await db
-    .select({ id: apiKeys.id, isTrial: apiKeys.isTrial })
-    .from(apiKeys)
-    .where(and(eq(apiKeys.discordUserId, discordUserId), eq(apiKeys.isActive, true)))
-    .limit(1);
+  const keys = await db.select().from(apiKeys).where(eq(apiKeys.discordUserId, discordUserId));
+  const primary = pickPrimaryNonTrialKey(keys);
+  const anyActiveKey = keys.find((k) => k.isActive) || null;
 
   return c.json({
-    found: !!phantomKey || !!anyActiveKey,
-    isTrial: phantomKey ? phantomKey.isTrial : (anyActiveKey ? anyActiveKey.isTrial : null),
-    hasPhantomKey: !!phantomKey,
+    found: !!primary || !!anyActiveKey,
+    isTrial: primary ? false : (anyActiveKey ? !!anyActiveKey.isTrial : null),
+    hasPhantomKey: !!primary,
     hasActiveApiKey: !!anyActiveKey,
-    isActive: phantomKey ? true : (anyActiveKey ? anyActiveKey.isTrial === false : false),
+    isActive: primary ? !!primary.isActive : false,
+    primaryKeyId: primary?.id ?? null,
     discordUserId,
   });
 });

@@ -96,6 +96,6 @@ Live meters (Discord Usage, admin Live Usage, portal Usage Today) show:
 - **Input Harian** bar = limit credit, with sublabel `context (cached) + input (billable)`
 - **Dedicated model pools** section when ≥1 dedicated rule applies
 
-Seeded default: global pattern `tokito/gcli/grok-4.5`, 3M tokens/day **total** (input+output as one hop-weighted pool), `dedicated_quota=true`. Editable anytime via Admin Settings → Model Limits (or per-key override). Optional `daily_input_token_limit` / `daily_output_token_limit` on the same row enforce separate I/O caps inside that pool; Discord / admin Live Usage / portal meters pick up changes automatically.
+Seeded default: global pattern `tokitoV2/gcli/grok-4.5`, 3M tokens/day **total** (input+output as one hop-weighted pool), `dedicated_quota=true`. Editable anytime via Admin Settings → Model Limits (or per-key override). Optional `daily_input_token_limit` / `daily_output_token_limit` on the same row enforce separate I/O caps inside that pool; Discord / admin Live Usage / portal meters pick up changes automatically.
 
-Pattern matching for slash-containing rules also checks the raw/catalog model id (normalize strips `tokito/` / `gcli/`, so bare `grok-4.5` alone is not enough). Slash tails are matched too: rule `tokito/gcli/grok-4.5` counts logs `tokito/gcli/grok-4.5`, `gcli/grok-4.5`, and `auto (gcli/grok-4.5)` — not `amanai/grok-4.5`.
+Pattern matching for slash-containing rules also checks the raw/catalog model id (normalize strips `tokito/` / `tokitoV2/` / `gcli/`, so bare `grok-4.5` alone is not enough). Slash tails are matched too: rule `tokitoV2/gcli/grok-4.5` counts logs `tokitoV2/gcli/grok-4.5`, `tokito/gcli/grok-4.5`, `gcli/grok-4.5`, and `auto (gcli/grok-4.5)` — not `amanai/grok-4.5`.

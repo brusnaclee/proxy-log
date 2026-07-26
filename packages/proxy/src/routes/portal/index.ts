@@ -27,7 +27,13 @@ import {
 } from "../../utils/rate-limit.js";
 import { logEmitter } from "../../utils/event-emitter.js";
 import { randomBytes } from "crypto";
-import { isProtectedPrimaryApiKey, canUserDeleteApiKey, getPortalPrimaryKeyIds } from "../../utils/api-key-primary.js";
+import {
+  isProtectedPrimaryApiKey,
+  canUserDeleteApiKey,
+  getPortalPrimaryKeyIds,
+  pickPrimaryNonTrialKey,
+  sortKeysPrimaryFirst,
+} from "../../utils/api-key-primary.js";
 
 const portal = new Hono();
 
@@ -259,7 +265,10 @@ portal.get("/me", async (c) => {
   ]);
 
   const isTrial = await isTrialAccount(discordUserId);
-  const primaryKey = userKeys.find(k => !k.isTrial && k.isActive) || userKeys.find(k => k.isActive) || userKeys[0];
+  const primaryKey =
+    pickPrimaryNonTrialKey(userKeys) ||
+    userKeys.find((k) => k.isActive) ||
+    userKeys[0];
   const config = (await db.select().from(adminConfig).limit(1))[0] ?? null;
 
   const { getActiveAddonsForUser, sumAddonDailyTokenBonus, parseModelDailyLimits, resolveAddonQuotaStack } = await import("../../utils/addons.js");
@@ -763,7 +772,11 @@ portal.get("/stats/overview", async (c) => {
 
   const sessionWhere = userWhere(discordUserId);
   const sessionCount = (await db.select({ count: sql<number>`count(*)` }).from(chatSessions).where(sessionWhere))[0];
-  const toolCount = (await db.select({ count: sql<number>`COALESCE(SUM(tool_count), 0)` }).from(requestLogs).where(pw))[0];
+  // Hops where the model actually invoked tools (not SUM(tool_count) — that
+  // counted request tool *definitions* on every hop and inflated vs Hermes).
+  const toolCount = (await db.select({
+    count: sql<number>`COALESCE(SUM(CASE WHEN actual_tool_calls_in_response = true THEN 1 ELSE 0 END), 0)`,
+  }).from(requestLogs).where(pw))[0];
 
   // Cost breakdown by model
   const range = resolvePeriodRange(period);
@@ -1027,7 +1040,10 @@ portal.get("/stats/forecast", async (c) => {
   const isTrial = await isTrialAccount(discordUserId);
 
   const userKeys = await db.select().from(apiKeys).where(eq(apiKeys.discordUserId, discordUserId));
-  const primaryKey = userKeys.find(k => !k.isTrial && k.isActive) || userKeys.find(k => k.isActive) || userKeys[0];
+  const primaryKey =
+    pickPrimaryNonTrialKey(userKeys) ||
+    userKeys.find((k) => k.isActive) ||
+    userKeys[0];
 
   if (!primaryKey) return c.json({ forecast: null, reason: "No keys found" });
 
@@ -1137,7 +1153,9 @@ portal.get("/stats/forecast", async (c) => {
 
 portal.get("/keys", async (c) => {
   const discordUserId = getPortalDiscordUserId(c)!;
-  const userKeys = await db.select().from(apiKeys).where(eq(apiKeys.discordUserId, discordUserId));
+  const userKeys = sortKeysPrimaryFirst(
+    await db.select().from(apiKeys).where(eq(apiKeys.discordUserId, discordUserId)),
+  );
   const result = [];
   const todayStart = wibTodayStartDate();
 
@@ -1189,8 +1207,8 @@ portal.post("/keys", async (c) => {
     return c.json({ error: "Maximum of 5 API keys allowed. Delete an existing key to create a new one." }, 400);
   }
 
-  // Copy limits from primary phantom key
-  const primaryKey = existing.find(k => !k.isTrial && k.isActive) || existing[0];
+  // Copy limits from portal Primary (same as Discord resend)
+  const primaryKey = pickPrimaryNonTrialKey(existing) || existing[0];
   const newKey = generateApiKey();
 
   const [result] = await db.insert(apiKeys).values({
@@ -1498,10 +1516,19 @@ portal.get("/recap/status", async (c) => {
   const discordUserId = getPortalDiscordUserId(c)!;
   const window = getRecapWindow();
 
-  const userKeys = await db.select({ name: apiKeys.name, isTrial: apiKeys.isTrial, isActive: apiKeys.isActive })
+  const userKeys = await db.select({
+    id: apiKeys.id,
+    name: apiKeys.name,
+    isTrial: apiKeys.isTrial,
+    isActive: apiKeys.isActive,
+    provisionedBy: apiKeys.provisionedBy,
+  })
     .from(apiKeys)
     .where(eq(apiKeys.discordUserId, discordUserId));
-  const primaryKey = userKeys.find(k => !k.isTrial && k.isActive) || userKeys.find(k => k.isActive) || userKeys[0];
+  const primaryKey =
+    pickPrimaryNonTrialKey(userKeys) ||
+    userKeys.find((k) => k.isActive) ||
+    userKeys[0];
   const primaryKeyName = primaryKey?.name ?? null;
 
   // Days until open (countdown phase) or days left open (inclusive-ish).

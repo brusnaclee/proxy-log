@@ -219,6 +219,9 @@ export default function KeysPage() {
         <div>
           <h1 className="text-xl font-semibold text-foreground">{t("API Keys")}</h1>
           <p className="text-sm text-muted-foreground">{t("Manage your API keys and devices")}</p>
+          <p className="text-xs text-muted-foreground mt-1.5 max-w-xl">
+            {t("Primary key Discord note")}
+          </p>
         </div>
         {!isTrial && (
           <button

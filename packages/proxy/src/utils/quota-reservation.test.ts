@@ -6,6 +6,7 @@ import {
 	globalPromptBucketKey,
 	modelPromptBucketKey,
 	msUntilNextWibMidnight,
+	releaseReservedTurn,
 	tryReserveTurn,
 } from "./quota-reservation.js";
 
@@ -48,5 +49,24 @@ describe("quota-reservation", () => {
 		const ms = msUntilNextWibMidnight();
 		assert.ok(ms > 0 && ms <= 86_400_000);
 		assert.match(formatResetEta(ms), /WIB/);
+	});
+
+	it("releaseReservedTurn frees a soft slot", () => {
+		const key = modelPromptBucketKey([9], "pat:x") + ":rel-" + Date.now();
+		const windowMs = 86_400_000;
+		assert.equal(
+			tryReserveTurn({ scopeKey: key, turnId: "r1", limit: 1, dbUsed: 0, windowMs }),
+			true,
+		);
+		assert.equal(
+			tryReserveTurn({ scopeKey: key, turnId: "r2", limit: 1, dbUsed: 0, windowMs }),
+			false,
+		);
+		assert.equal(releaseReservedTurn(key, "r1"), true);
+		assert.equal(countReserved(key, windowMs), 0);
+		assert.equal(
+			tryReserveTurn({ scopeKey: key, turnId: "r2", limit: 1, dbUsed: 0, windowMs }),
+			true,
+		);
 	});
 });

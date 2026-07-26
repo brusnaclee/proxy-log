@@ -120,6 +120,7 @@ import {
 	hasReservedTurn,
 	modelPromptBucketKey,
 	msUntilNextWibMidnight,
+	releaseReservedTurns,
 	tryReserveTurn,
 } from '../utils/quota-reservation.js';
 import {
@@ -652,6 +653,94 @@ function parseDbDate(value: string | Date | null | undefined): number {
 
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** True when HTTP 200 JSON/SSE has no usable assistant content or tool calls. */
+function isEmptyUpstreamResponseBody(bodyText: string): boolean {
+	const raw = String(bodyText || '').trim();
+	if (!raw) return true;
+
+	// SSE: look for any non-empty delta / message content or tool_calls
+	if (/^\s*data:\s*/m.test(raw)) {
+		let sawContent = false;
+		for (const line of raw.split(/\r?\n/)) {
+			const m = /^data:\s*(.+)$/.exec(line.trim());
+			if (!m) continue;
+			const payload = m[1].trim();
+			if (!payload || payload === '[DONE]') continue;
+			try {
+				const p = JSON.parse(payload);
+				const delta = p?.choices?.[0]?.delta || p?.choices?.[0]?.message;
+				if (delta) {
+					const c = delta.content ?? delta.reasoning_content ?? delta.reasoning ?? '';
+					if (typeof c === 'string' && c.length > 0) sawContent = true;
+					if (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) {
+						sawContent = true;
+					}
+				}
+				if (Array.isArray(p?.content)) {
+					for (const b of p.content) {
+						if (!b) continue;
+						if (b.type === 'tool_use') sawContent = true;
+						if (
+							(b.type === 'text' || b.type === 'thinking') &&
+							String(b.text || b.thinking || '').trim()
+						) {
+							sawContent = true;
+						}
+					}
+				}
+				if (p?.type === 'content_block_delta' || p?.type === 'content_block_start') {
+					const t = p?.delta?.text || p?.content_block?.text || '';
+					if (String(t).trim()) sawContent = true;
+					if (p?.content_block?.type === 'tool_use' || p?.delta?.type === 'input_json_delta') {
+						sawContent = true;
+					}
+				}
+			} catch {
+				/* ignore bad chunk */
+			}
+		}
+		return !sawContent;
+	}
+
+	try {
+		const parsed = JSON.parse(raw);
+		const finish = String(
+			parsed?.choices?.[0]?.finish_reason || parsed?.stop_reason || '',
+		).toLowerCase();
+		if (finish === 'length' || finish === 'max_tokens') return false;
+
+		const msg = parsed?.choices?.[0]?.message;
+		if (msg) {
+			const content = msg.content ?? msg.reasoning_content ?? msg.reasoning ?? '';
+			const hasContent =
+				(typeof content === 'string' && content.trim().length > 0) ||
+				(Array.isArray(content) && content.length > 0);
+			const hasTools =
+				Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0;
+			const completionTokens = parsed?.usage?.completion_tokens;
+			if (hasContent || hasTools) return false;
+			if (completionTokens != null && completionTokens > 0) return false;
+			return true;
+		}
+
+		if (Array.isArray(parsed?.content)) {
+			const hasVisible = parsed.content.some((b: any) => {
+				if (!b) return false;
+				if (b.type === 'tool_use') return true;
+				if (b.type === 'text' && String(b.text || '').trim()) return true;
+				if (b.type === 'thinking' && String(b.thinking || b.text || '').trim()) {
+					return true;
+				}
+				return false;
+			});
+			return !hasVisible;
+		}
+	} catch {
+		return false;
+	}
+	return false;
 }
 
 async function pumpStreamBody(
@@ -3643,6 +3732,15 @@ proxy.all('/*', async (c) => {
 	// Check for infinite tool loops removed as per user request to act as pure pass-through
 	// Anti-waste (dedupe/nudge/short-circuit) runs later — after isStreaming is known — without hard 429.
 
+	// Soft prompt reservations for this request (released on empty / final non-2xx).
+	const promptReservations: Array<{ scopeKey: string; turnId: string }> = [];
+	const releasePromptReservations = () => {
+		if (promptReservations.length) {
+			releaseReservedTurns(promptReservations);
+			promptReservations.length = 0;
+		}
+	};
+
 	// ΓöÇΓöÇΓöÇ 10. Prompt & Model Limit Checks ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 	//
 	// Per-model (incl. Claude/GPT tease) + global prompt caps.
@@ -3774,6 +3872,7 @@ proxy.all('/*', async (c) => {
 							},
 						);
 					}
+					promptReservations.push({ scopeKey, turnId: newTurnId });
 					turnIdCache.set(turnKeyForLimit, newTurnId);
 				}
 			}
@@ -3855,6 +3954,7 @@ proxy.all('/*', async (c) => {
 						429,
 					);
 				}
+				promptReservations.push({ scopeKey: gScope, turnId: newTurnId });
 				turnIdCache.set(turnKeyForLimit, newTurnId);
 			}
 		}
@@ -4921,42 +5021,41 @@ proxy.all('/*', async (c) => {
 				}
 
 				if (upstreamResponse.ok) {
-					// Empty tool_use detection (trial + non-streaming + has tools):
-					// some upstreams (e.g. tokito/glm-5.2) return HTTP 200 with
-					// choices[0].message.content empty AND no tool_calls when
-					// the client pushes back with a "you did not use a tool"
-					// retry message. Cline then loops forever asking for tool
-					// use that the model won't produce. To prevent wasted
-					// tokens and IDE stalls, treat that as a non-retryable
-					// failure and skip ahead to the next model in the chain.
+					// Empty tool_use detection (trial + has tools): skip to next model.
+					// Empty upstream (grok/transient / general): retry same model 2–3x
+					// before surfacing 502 so CLI auto-retry is not required.
 					const requestHasTools =
 						Array.isArray(requestBody?.tools) && requestBody.tools.length > 0;
+					const peekEmpty =
+						!!upstreamResponse.body &&
+						(keyRecord.isTrial ||
+							!attemptUsesStream ||
+							isGrokCliModel(attemptUpstreamModel) ||
+							isTransientUpstreamProvider(attemptProvider?.name));
+
 					let emptyToolUse = false;
-					if (
-						keyRecord.isTrial &&
-						requestHasTools &&
-						upstreamResponse.body &&
-						(consecutiveEmptyToolUse === 0 || true)
-					) {
+					let emptyUpstream = false;
+					if (peekEmpty) {
 						try {
-							const cloned = upstreamResponse.clone();
-							const bodyText = await cloned.text();
-							try {
-								const parsed = JSON.parse(bodyText);
-								const msg = parsed?.choices?.[0]?.message;
-								const hasContent =
-									typeof msg?.content === 'string' && msg.content.length > 0;
-								const hasToolCalls =
-									Array.isArray(msg?.tool_calls) && msg.tool_calls.length > 0;
-								if (!hasContent && !hasToolCalls) {
-									emptyToolUse = true;
-								}
-							} catch {
-								/* not JSON, treat as normal success */
+							const bodyText = await upstreamResponse.text();
+							emptyUpstream = isEmptyUpstreamResponseBody(bodyText);
+							if (
+								keyRecord.isTrial &&
+								requestHasTools &&
+								emptyUpstream
+							) {
+								emptyToolUse = true;
+							}
+							if (!emptyUpstream) {
+								upstreamResponse = new Response(bodyText, {
+									status: upstreamResponse.status,
+									statusText: upstreamResponse.statusText,
+									headers: upstreamResponse.headers,
+								});
 							}
 						} catch (err) {
 							console.error(
-								'[proxy] failed to peek response for empty-tool-use check:',
+								'[proxy] failed to peek response for empty check:',
 								(err as Error)?.message,
 							);
 						}
@@ -4967,17 +5066,27 @@ proxy.all('/*', async (c) => {
 						console.log(
 							`[proxy] trial empty tool_use response from ${pickModel} (key ${usedKeyId}); skipping to next model`,
 						);
-						// Drain the unread body so the connection can be reused.
-						try {
-							await upstreamResponse.body?.cancel();
-						} catch {
-							/* ignore */
-						}
 						upstreamResponse = null as any;
-						// Trial users skip ahead on first empty tool_use response.
-						if (consecutiveEmptyToolUse >= 1) {
-							// Break out of inner attempt loop and outer model loop —
-							// fall through to __auto__ next iteration if available.
+						break;
+					}
+
+					if (emptyUpstream) {
+						const canRetryEmpty = attempt + 1 < maxAttemptsPerModel;
+						console.warn(
+							`[proxy] empty upstream from ${pickModel} (attempt ${attempt + 1}/${maxAttemptsPerModel})${canRetryEmpty ? ', retrying' : ''}`,
+						);
+						upstreamResponse = null as any;
+						if (canRetryEmpty) {
+							await sleep(400 * (attempt + 1));
+							continue;
+						}
+						// Exhausted retries for this model — treat as failure and
+						// let outer loop / error path surface empty_upstream.
+						fetchError = new Error(
+							`Upstream returned empty content for ${pickModel}`,
+						);
+						consecutiveNonRetryable += 1;
+						if (consecutiveNonRetryable >= consecutiveFailuresToSkipAhead) {
 							break;
 						}
 						continue;
@@ -5423,6 +5532,7 @@ proxy.all('/*', async (c) => {
 						const errorMsg =
 							`Upstream returned empty content for ${model}. Prompt quota was NOT charged. Try again or switch model.`;
 						console.warn(`[proxy] ${errorMsg}`);
+						releasePromptReservations();
 						const toolsList = Array.from(toolNameSet);
 						const logEntry = {
 							...baseLogEntry,
@@ -5796,6 +5906,7 @@ proxy.all('/*', async (c) => {
 			const errMsg =
 				`Upstream returned empty content for ${model}. Prompt quota was NOT charged. Try again or switch model.`;
 			console.warn(`[proxy] ${errMsg}`);
+			releasePromptReservations();
 			const emptyTools = Array.from(toolNameSet);
 			const emptyLogEntry = {
 				...baseLogEntry,
@@ -5895,6 +6006,9 @@ proxy.all('/*', async (c) => {
 
 		// Only count request if status is 2xx (success)
 		const shouldCountRequest = statusCode >= 200 && statusCode < 300;
+		if (!shouldCountRequest) {
+			releasePromptReservations();
+		}
 		persistLogAndSession(logEntry, hasActualToolCalls, shouldCountRequest);
 
 		const responseHeaders: Record<string, string> = {
@@ -5956,6 +6070,7 @@ proxy.all('/*', async (c) => {
 				if (isEmptyCompletion) {
 					errorMessage = `Upstream model "${model}" returned empty response (0 tokens)`;
 					statusCode = 502;
+					releasePromptReservations();
 					console.warn(`[proxy] ${errorMessage}`);
 				} else {
 					const sseLines = buildYouComStreamChunks(openaiParsed);
@@ -6012,6 +6127,7 @@ proxy.all('/*', async (c) => {
 		};
 
 		// Don't count failed requests (502 = upstream error)
+		releasePromptReservations();
 		persistLogAndSession(logEntry, false, false);
 
 		return c.json(

@@ -51,6 +51,10 @@ const dict: Record<string, Record<Lang, string>> = {
   Rotate: { id: "Rotasi", en: "Rotate" },
   Revoke: { id: "Cabut", en: "Revoke" },
   "API Keys": { id: "Kunci API", en: "API Keys" },
+  "Primary key Discord note": {
+    id: "Key bertanda Primary dipakai Discord \"Dikirim Ulang\" — salin dari sini agar sama dengan bot.",
+    en: "The Primary key is what Discord resend uses — copy it here so it matches the bot.",
+  },
   "Your usage at a glance": { id: "Penggunaan kamu sekilas", en: "Your usage at a glance" },
   "Manage your API keys and devices": { id: "Kelola kunci API dan perangkat kamu", en: "Manage your API keys and devices" },
   "Recent API requests": { id: "Panggilan API terbaru", en: "Recent API calls" },
@@ -59,6 +63,14 @@ const dict: Record<string, Record<Lang, string>> = {
   "API Calls Over Time": { id: "Panggilan API Seiring Waktu", en: "API Calls Over Time" },
   "Prompts Over Time": { id: "Prompts Seiring Waktu", en: "Prompts Over Time" },
   "API Calls": { id: "Panggilan API", en: "API Calls" },
+  "API Calls hint": {
+    id: "Setiap hop ke proxy (termasuk retry & tool loop). Bukan jumlah pesan di Hermes/Cline.",
+    en: "Every hop through the proxy (including retries & tool loops). Not the same as Hermes/Cline message counts.",
+  },
+  "Tool Calls hint": {
+    id: "Jumlah hop di mana model benar-benar memanggil tool (bukan daftar tool di request).",
+    en: "Hops where the model actually invoked a tool (not the tool list on the request).",
+  },
   "Token Usage by Model": { id: "Token (limit credit) per Model", en: "Limit Credit by Model" },
   "IDE Breakdown": { id: "Rincian IDE", en: "IDE Breakdown" },
   "Available Models": { id: "Model Tersedia", en: "Available Models" },
