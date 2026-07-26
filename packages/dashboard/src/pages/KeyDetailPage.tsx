@@ -1989,10 +1989,15 @@ export API_TIMEOUT_MS=500000`}
                                     <div>
                                       <div className="flex items-center justify-between gap-2 mb-1">
                                         <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                                          Request {Array.isArray(log.transcript) && log.transcript.length > 0 ? "(full transcript)" : "(stored preview)"}
+                                          Request {Array.isArray(log.transcript) && log.transcript.length > 0 ? "(full transcript)" : "(latest user msg)"}
                                         </p>
                                         <span className="text-[10px] text-muted-foreground font-mono">{requestFull.length.toLocaleString()} chars</span>
                                       </div>
+                                      {!(Array.isArray(log.transcript) && log.transcript.length > 0) && (
+                                        <p className="text-[10px] text-muted-foreground/80 mb-1">
+                                          Stored preview is the latest user hop (may include IDE system/env dump), not chat-box text alone.
+                                        </p>
+                                      )}
                                       <pre className="text-xs font-mono text-foreground/90 bg-background/60 border border-border rounded-md px-2.5 py-2 whitespace-pre-wrap break-words max-h-[70vh] overflow-y-auto">
                                         {requestFull}
                                       </pre>

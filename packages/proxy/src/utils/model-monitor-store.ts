@@ -179,7 +179,8 @@ const MAX_RETRIES = 3;
  * source=admin: always writes published is_online (manual catalog for Discord/client).
  * source=sweep:
  *   - force-deactivated rows: probe fields only (keep published OFF + force message)
- *   - notif_only / off: probe fields only (never flip published is_online)
+ *   - notif_only: probe OK → heal published Online; probe fail keeps published as-is
+ *   - off: probe fields only (never flip published is_online)
  *   - auto: probe result writes published is_online
  */
 export async function upsertModelStatus(
@@ -226,13 +227,19 @@ export async function upsertModelStatus(
       // Sticky manual OFF: update probe indicators only.
       nextOnline = false;
       nextError = existing!.errorMessage;
-    } else if (mode === "notif_only" || mode === "off") {
-      // Probe notifies admin only — keep published catalog as-is.
+    } else if (mode === "off") {
+      // Probes may still run via force sweep — never flip published catalog.
       nextOnline = existing ? Boolean(existing.isOnline) : false;
-      // Keep prior force message if any; otherwise store probe error for indicator.
-      nextError = existingForced
-        ? existing!.errorMessage
-        : params.errorMessage;
+      nextError = params.errorMessage;
+    } else if (mode === "notif_only") {
+      // Heal-only: probe OK → published Online; fail keeps catalog as-is.
+      if (params.isOnline) {
+        nextOnline = true;
+        nextError = null;
+      } else {
+        nextOnline = existing ? Boolean(existing.isOnline) : false;
+        nextError = params.errorMessage;
+      }
     }
     // mode === "auto": use params.isOnline / params.errorMessage as published
   } else {
@@ -268,16 +275,18 @@ export async function upsertModelStatus(
     await db.insert(modelMonitor).values({
       modelId: params.modelId,
       provider: params.provider,
-      // New rows from sweep in notif_only start published OFF until admin ON.
-      isOnline: source === "admin" ? nextOnline : mode === "auto" ? params.isOnline : false,
+      // New rows: auto always uses probe; notif_only heals Online on probe OK; off stays OFF.
+      isOnline:
+        source === "admin"
+          ? nextOnline
+          : mode === "auto"
+            ? params.isOnline
+            : mode === "notif_only"
+              ? Boolean(params.isOnline)
+              : false,
       latencyMs: params.latencyMs,
       httpStatus: params.httpStatus,
-      errorMessage:
-        source === "admin"
-          ? nextError
-          : mode === "auto"
-            ? params.errorMessage
-            : params.errorMessage,
+      errorMessage: nextError,
       baseUrl: params.baseUrl,
       checkedAt: now,
     });

@@ -1774,29 +1774,7 @@ async function fetchMonitorAutoMode() {
 	return 'notif_only';
 }
 
-/** Models force-OFF by admin — still probe-safe to skip to save upstream quota. */
-async function getForceDeactivatedKeys() {
-	const keys = new Set();
-	try {
-		const prev = await proxyInternal(
-			'/admin/internal/monitor/models',
-			'GET',
-		);
-		const rows = Array.isArray(prev?.data)
-			? prev.data
-			: Array.isArray(prev)
-				? prev
-				: [];
-		for (const row of rows) {
-			const msg = String(row.errorMessage || row.error_message || '');
-			const online = row.isOnline ?? row.is_online;
-			if (!online && /force-deactivated/i.test(msg)) {
-				keys.add(`${row.provider || ''}:${row.modelId || row.model_id}`);
-			}
-		}
-	} catch (_) {}
-	return keys;
-}
+/** Force-OFF models are still probed (published stays OFF via proxy sticky). */
 
 /** Refresh runtime.latency from proxy database (for fresh data on button click). */
 async function ensureGpyModelEntries() {
@@ -2217,14 +2195,12 @@ async function runSweepForProviderPrefix(matcher, label, opts = {}) {
 	if (!runtime.modelEntries.length) return;
 	const filtered = runtime.modelEntries.filter((e) => matcher(e));
 	if (!filtered.length) return;
-	const forcedOff = await getForceDeactivatedKeys();
 	// For gpy 10min cadence we DO NOT honor suspendedUntil — trial-critical
 	// models must be re-tested every 10 minutes regardless of how many times
 	// they previously failed (otherwise they would be skipped for 24h after
 	// 3 consecutive failures like the standard retry sweep).
+	// Force-OFF models stay in the queue; proxy keeps published OFF sticky.
 	const queue = filtered.filter((entry) => {
-		const fk = `${entry.provider || ''}:${entry.modelId}`;
-		if (forcedOff.has(fk)) return false;
 		if (opts.ignoreSuspend) return true;
 		const key = entryKey(entry);
 		const retryState = runtime.modelRetryState.get(key);
@@ -2299,10 +2275,8 @@ async function runFullSweep(opts = {}) {
 	await pollModelStatus();
 	if (!runtime.modelEntries.length) return;
 
-	const forcedOff = await getForceDeactivatedKeys();
+	// Force-OFF models are probed too; proxy keeps published OFF sticky.
 	const queued = runtime.modelEntries.filter((entry) => {
-		const fk = `${entry.provider || ''}:${entry.modelId}`;
-		if (forcedOff.has(fk)) return false;
 		if (ignoreSuspend) return true;
 		const key = entryKey(entry);
 		const retryState = runtime.modelRetryState.get(key);
@@ -2316,7 +2290,7 @@ async function runFullSweep(opts = {}) {
 	const skipped = runtime.modelEntries.length - queued.length;
 	if (skipped > 0) {
 		console.log(
-			`[tokito-monitor] full sweep: skipping ${skipped} soft-suspended/force-OFF models`,
+			`[tokito-monitor] full sweep: skipping ${skipped} soft-suspended models`,
 		);
 	}
 
@@ -2336,11 +2310,8 @@ async function runRetrySweep() {
 	await pollModelStatus(); // refresh keys + model list before retry probes
 	if (!runtime.modelEntries.length) return;
 
-	const forcedOff = await getForceDeactivatedKeys();
 	const entriesToRetry = [];
 	for (const entry of runtime.modelEntries) {
-		const fk = `${entry.provider || ''}:${entry.modelId}`;
-		if (forcedOff.has(fk)) continue;
 		const key = entryKey(entry);
 		const retryState = runtime.modelRetryState.get(key);
 

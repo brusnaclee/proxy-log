@@ -60,7 +60,7 @@ export const adminConfig = pgTable('admin_config', {
 	tokenSaverGroupyCompactEnabled: boolean('token_saver_groupy_compact_enabled').notNull().default(true),
 	tokenSaverGroupyCompactLevel: text('token_saver_groupy_compact_level').notNull().default('balanced'),
 	tokenSaverBatchEnabled: boolean('token_saver_batch_enabled').notNull().default(true),
-	/** off | notif_only | auto — default notif_only (manual catalog publish) */
+	/** off | notif_only | auto — default notif_only (probe heal Online on OK; fail keeps catalog) */
 	monitorAutoMode: text('monitor_auto_mode').notNull().default('notif_only'),
 	/** full = prompt_tokens+cached_tokens (match upstream In); billable = net context_delta */
 	tokenInputMode: text('token_input_mode').notNull().default('per_turn_peak'),

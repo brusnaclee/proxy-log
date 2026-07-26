@@ -468,7 +468,7 @@ async function getLatestMonitorRows() {
 }
 
 // POST admin force-activate: publish model ON in Discord/client catalog.
-// Sticky until admin OFF (sweeps in notif_only never flip published).
+// Force-OFF is sticky; notif_only sweeps heal Online on probe OK but never undo force-OFF.
 monitor.post("/monitor/models/activate", async (c) => {
   const authErr = await checkAdminSession(c);
   if (authErr) return authErr;
