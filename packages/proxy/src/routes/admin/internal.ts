@@ -1272,6 +1272,21 @@ internal.post("/internal/sync-user-access", async (c) => {
   return c.json({ success: true, ...result });
 });
 
+/** Bulk recover / daily-style sync for all Discord-linked keys (internal secret). */
+internal.post("/internal/sync-all-key-access", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+  const body = await c.req.json<{ allowDisable?: boolean; reason?: string }>().catch(() => ({} as any));
+  const { syncAllDiscordLinkedKeyRoles } = await import("../../utils/key-access-lifecycle.js");
+  const result = await syncAllDiscordLinkedKeyRoles({
+    concurrency: 1,
+    allowDisable: body?.allowDisable !== false,
+    reason: body?.reason || "internal sync-all-key-access",
+  });
+  console.log("[key-access] internal sync-all-key-access:", result);
+  return c.json({ success: true, ...result });
+});
+
 internal.post("/internal/addon-role-sync/:assignmentId/clear", async (c) => {
   const authErr = checkInternal(c);
   if (authErr) return authErr;
