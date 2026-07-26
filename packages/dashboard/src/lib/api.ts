@@ -317,14 +317,32 @@ export interface CreateKeyResponse {
 }
 
 export const keys = {
-  list: () => request<ApiKeyListItem[]>("/keys"),
+  list: (opts?: { lite?: boolean }) =>
+    request<ApiKeyListItem[]>(opts?.lite ? "/keys?lite=1" : "/keys"),
   get: (id: number) => request<ApiKeyDetail>(`/keys/${id}`),
   create: (name: string) =>
     request<CreateKeyResponse>("/keys", {
       method: "POST",
       body: JSON.stringify({ name }),
     }),
-  adminOverrideDiscord: (discordUserId: string, discordUsername?: string, note?: string) =>
+  overridePreview: (discordUserId: string) =>
+    request<{
+      discordUserId: string;
+      found: boolean;
+      username?: string;
+      roleIds?: string[];
+      resolved?: {
+        primary: string;
+        staff: string[];
+        badges: string[];
+        limitMode: string;
+        hasPhantom: boolean;
+        hasPremium: boolean;
+        hasPro: boolean;
+        hasStaff: boolean;
+      };
+    }>(`/keys/override-preview?discordUserId=${encodeURIComponent(discordUserId)}`),
+  adminOverrideDiscord: (discordUserId?: string, discordUsername?: string, note?: string) =>
     request<{
       success: boolean;
       alreadyExists: boolean;
@@ -332,12 +350,19 @@ export const keys = {
       keyId: number;
       keyName: string;
       endpoint: string;
-      discordUserId: string;
+      discordUserId: string | null;
       discordUsername: string;
+      roleLimitMode?: string;
+      accountTier?: string;
+      resolved?: unknown;
       message?: string;
     }>("/keys/override-discord", {
       method: "POST",
-      body: JSON.stringify({ discordUserId, discordUsername, note }),
+      body: JSON.stringify({
+        discordUserId: discordUserId?.trim() || null,
+        discordUsername,
+        note,
+      }),
     }),
   update: (id: number, data: Partial<{
     name: string; isActive: boolean; maxDevices: number;

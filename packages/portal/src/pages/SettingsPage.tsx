@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useI18n, type Lang } from "@/lib/i18n";
+import { badgeClass, badgeLabel, resolveDisplayBadges } from "@/lib/account-badge";
 import { formatRelativeTime } from "@/lib/utils";
 import { useNotify } from "@/components/Notify";
 
@@ -285,15 +286,11 @@ export default function SettingsPage() {
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-foreground font-medium">{user?.discordUsername || "—"}</span>
-              {user?.accountType && (
-                <span className={`px-2 py-0.5 text-xs rounded-full ${
-                  user.accountType === "phantom"
-                    ? "bg-primary/10 text-primary"
-                    : "bg-yellow-400/10 text-yellow-400"
-                }`}>
-                  {user.accountType === "phantom" ? t("Phantom") : t("Trial")}
+              {resolveDisplayBadges(user?.accountType, user?.accountBadges).map((b) => (
+                <span key={b} className={`px-2 py-0.5 text-xs rounded-full ${badgeClass(b)}`}>
+                  {t(badgeLabel(b))}
                 </span>
-              )}
+              ))}
             </div>
           </div>
           <div className="flex items-center justify-between py-2 border-b border-border/40">

@@ -22,6 +22,30 @@ import {
   wibDayStartUtc,
   wibTodayDateString,
 } from "../../utils/day-override.js";
+import {
+  fetchDiscordMemberRoleIds,
+  parseRoleLimitModes,
+  resolveDiscordRoles,
+} from "../../utils/discord-roles.js";
+import { queueUserNotification } from "../../utils/user-notify.js";
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let idx = 0;
+  async function worker() {
+    while (idx < items.length) {
+      const i = idx++;
+      results[i] = await fn(items[i]);
+    }
+  }
+  const n = Math.max(1, Math.min(concurrency, items.length || 1));
+  await Promise.all(Array.from({ length: n }, () => worker()));
+  return results;
+}
 
 const keys = new Hono();
 
@@ -99,15 +123,22 @@ keys.get("/keys", async (c) => {
     return result;
   }, 30_000);
 
-  // Fresh liveUsage per key (limits = that key's override; usage = account when Discord-linked)
+  // lite=1 skips heavy liveUsage (fast list); default still loads meters with concurrency cap
+  const lite = c.req.query("lite") === "1" || c.req.query("lite") === "true";
+  if (lite) {
+    return c.json((listBase as any[]).map((row) => ({ ...row, liveUsage: null })));
+  }
+
   const allKeysFresh = await db.select().from(apiKeys);
   const configFresh = (await db.select().from(adminConfig))[0];
   const liveByKeyId = new Map<number, Awaited<ReturnType<typeof buildLiveUsageForKey>>>();
-  await Promise.all(
-    allKeysFresh.map(async (key) => {
+  await mapWithConcurrency(allKeysFresh, 6, async (key) => {
+    try {
       liveByKeyId.set(key.id, await buildLiveUsageForKey(key, configFresh));
-    }),
-  );
+    } catch (err) {
+      console.warn(`[keys-list] liveUsage failed for key ${key.id}:`, (err as Error)?.message || err);
+    }
+  });
 
   return c.json(
     (listBase as any[]).map((row) => ({
@@ -132,50 +163,123 @@ keys.post("/keys", async (c) => {
   return c.json({ id: result.id, name: result.name, key, keyPrefix: result.keyPrefix, isActive: result.isActive, createdAt: result.createdAt }, 201);
 });
 
-// Admin Override: create (or return existing) unlimited API key for a Discord
-// user without requiring agverif / phantom role. The key is marked
-// `provisionedBy = "admin-override"` so the bot's daily-cleanup cron
-// (which only targets `discord-bot` keys) leaves it alone indefinitely.
-// Use case: VIP / sponsor / trusted user who needs API access without
-// the standard agverif flow.
+// Preview Discord roles for Admin Override (optional Discord ID).
+keys.get("/keys/override-preview", async (c) => {
+  if (!(await isAuthenticated(c))) return c.json({ error: "Unauthorized" }, 401);
+  const discordUserId = String(c.req.query("discordUserId") || "").trim();
+  if (!discordUserId) {
+    return c.json({
+      discordUserId: null,
+      resolved: null,
+      message: "No Discord ID — custom key, no DM / role detect",
+    });
+  }
+  if (!/^\d{15,25}$/.test(discordUserId)) {
+    return c.json({ error: "Valid discordUserId required (15-25 digits)" }, 400);
+  }
+  const [config] = await db.select().from(adminConfig).limit(1);
+  const member = await fetchDiscordMemberRoleIds(config?.discordBotToken || "", discordUserId);
+  if (!member) {
+    return c.json({
+      discordUserId,
+      found: false,
+      resolved: null,
+      message: "Member not found in bot guilds (or bot token missing)",
+    });
+  }
+  const resolved = resolveDiscordRoles(member.roleIds, {
+    phantomRoleId: config?.requiredRoleId,
+    premiumRoleId: config?.trialRequiredRoleId,
+    proRoleId: (config as any)?.proRoleId,
+    contributorRoleId: (config as any)?.contributorRoleId,
+    troubleshooterRoleId: (config as any)?.troubleshooterRoleId,
+    moderatorRoleId: (config as any)?.moderatorRoleId,
+    roleLimitModes: parseRoleLimitModes((config as any)?.roleLimitModes),
+  });
+  return c.json({
+    discordUserId,
+    found: true,
+    username: member.username,
+    roleIds: member.roleIds,
+    resolved,
+  });
+});
+
+// Admin Override: optional Discord ID. provisionedBy=admin-override (cleanup-immune).
+// With Discord ID: auto-detect roles → limit mode; queue DM. Without: silent custom key.
 keys.post("/keys/override-discord", async (c) => {
   if (!(await isAuthenticated(c))) return c.json({ error: "Unauthorized" }, 401);
 
-  const body = await c.req.json<{ discordUserId: string; discordUsername?: string; note?: string }>();
-  if (!body.discordUserId || !/^\d{15,25}$/.test(body.discordUserId)) {
-    return c.json({ error: "Valid discordUserId required (15-25 digits)" }, 400);
+  const body = await c.req.json<{
+    discordUserId?: string | null;
+    discordUsername?: string;
+    note?: string;
+  }>();
+  const rawId = String(body.discordUserId || "").trim();
+  const hasDiscord = !!rawId;
+  if (hasDiscord && !/^\d{15,25}$/.test(rawId)) {
+    return c.json({ error: "Valid discordUserId required (15-25 digits), or leave empty for custom key" }, 400);
   }
-  const discordUserId = body.discordUserId;
-  const discordUsername = body.discordUsername || `override-${discordUserId}`;
-
-  // Check existing active admin-override key for this user
-  const [existing] = await db.select()
-    .from(apiKeys)
-    .where(and(
-      eq(apiKeys.discordUserId, discordUserId),
-      eq(apiKeys.provisionedBy, "admin-override"),
-      eq(apiKeys.isActive, true),
-    ))
-    .limit(1);
-
+  const discordUserId = hasDiscord ? rawId : null;
   const endpoint = `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`;
+  const [config] = await db.select().from(adminConfig).limit(1);
 
-  if (existing) {
-    return c.json({
-      success: true,
-      alreadyExists: true,
-      apiKey: existing.key,
-      keyId: existing.id,
-      keyName: existing.name,
-      endpoint,
-      discordUserId,
-      discordUsername,
-      message: "User already has an active admin-override key",
-    });
+  let resolved = resolveDiscordRoles([], {
+    roleLimitModes: parseRoleLimitModes((config as any)?.roleLimitModes),
+  });
+  let discordUsername = body.discordUsername?.trim() || (discordUserId ? `override-${discordUserId}` : "custom-override");
+
+  if (discordUserId) {
+    const member = await fetchDiscordMemberRoleIds(config?.discordBotToken || "", discordUserId);
+    if (member) {
+      if (!body.discordUsername?.trim() && member.username) discordUsername = member.username;
+      resolved = resolveDiscordRoles(member.roleIds, {
+        phantomRoleId: config?.requiredRoleId,
+        premiumRoleId: config?.trialRequiredRoleId,
+        proRoleId: (config as any)?.proRoleId,
+        contributorRoleId: (config as any)?.contributorRoleId,
+        troubleshooterRoleId: (config as any)?.troubleshooterRoleId,
+        moderatorRoleId: (config as any)?.moderatorRoleId,
+        roleLimitModes: parseRoleLimitModes((config as any)?.roleLimitModes),
+      });
+    }
+
+    const [existing] = await db.select()
+      .from(apiKeys)
+      .where(and(
+        eq(apiKeys.discordUserId, discordUserId),
+        eq(apiKeys.provisionedBy, "admin-override"),
+        eq(apiKeys.isActive, true),
+      ))
+      .limit(1);
+
+    if (existing) {
+      return c.json({
+        success: true,
+        alreadyExists: true,
+        apiKey: existing.key,
+        keyId: existing.id,
+        keyName: existing.name,
+        endpoint,
+        discordUserId,
+        discordUsername: existing.discordUsername || discordUsername,
+        resolved,
+        message: "User already has an active admin-override key",
+      });
+    }
   }
+
+  // zero_unless_addon → hard 0 on I/O (and dedicated gated in proxy). follow_global → 0 = inherit global.
+  const limitMode = resolved.limitMode;
+  const accountTier =
+    resolved.primary === "none" ? "admin_override" : resolved.primary === "staff" ? "staff" : resolved.primary;
+  const badges = ["admin_override", ...resolved.badges.filter((b) => b !== "none")];
 
   const key = generateApiKey();
-  const keyName = `Override-${discordUsername}-${discordUserId.slice(-6)}`;
+  const keyName = discordUserId
+    ? `Override-${discordUsername}-${discordUserId.slice(-6)}`
+    : `Override-custom-${Date.now().toString(36).slice(-6)}`;
+
   const [result] = await db.insert(apiKeys).values({
     name: keyName,
     key,
@@ -186,7 +290,6 @@ keys.post("/keys/override-discord", async (c) => {
     provisionedBy: "admin-override",
     isActive: true,
     isTrial: false,
-    // Unlimited by default — admin can adjust limits later via Key Detail page
     maxDevices: 99,
     devicePolicy: "none",
     ipPolicy: "none",
@@ -198,10 +301,34 @@ keys.post("/keys/override-discord", async (c) => {
     promptLimit: 0,
     promptLimitWindow: "5h",
     perModelPromptLimit: 0,
-  }).returning();
+    roleLimitMode: limitMode,
+    accountBadges: JSON.stringify(badges),
+    accountTier,
+  } as any).returning();
 
-  console.log(`[admin-override] key ${result.id} (${keyName}) issued for discordUserId=${discordUserId}` +
-    (body.note ? ` note="${body.note}"` : ""));
+  if (discordUserId) {
+    await queueUserNotification(result.id, {
+      type: "admin_override_created",
+      title: "🔑 API Key (Admin Override)",
+      message:
+        `Admin telah menerbitkan API key untuk akun Anda.\n\n` +
+        `**Endpoint:** \`${endpoint}\`\n` +
+        `**Authorization:** \`Bearer ${key}\`\n` +
+        `**Tier:** ${accountTier}` +
+        (resolved.badges.length ? ` (${resolved.badges.join(", ")})` : "") +
+        `\n**Limit mode:** ${limitMode}` +
+        (body.note ? `\n**Note:** ${body.note}` : "") +
+        `\n\nSimpan key ini — tidak ditampilkan ulang.`,
+      endpoint,
+      apiKey: key,
+      newKey: key,
+    });
+  }
+
+  console.log(
+    `[admin-override] key ${result.id} (${keyName}) discord=${discordUserId || "(none)"} tier=${accountTier} mode=${limitMode}` +
+      (body.note ? ` note="${body.note}"` : ""),
+  );
 
   return c.json({
     success: true,
@@ -212,6 +339,9 @@ keys.post("/keys/override-discord", async (c) => {
     endpoint,
     discordUserId,
     discordUsername,
+    resolved,
+    roleLimitMode: limitMode,
+    accountTier,
   });
 });
 
@@ -457,12 +587,38 @@ keys.put("/keys/:id", async (c) => {
   if (body.promptLimitWindow !== undefined) updates.promptLimitWindow = body.promptLimitWindow || null;
   if (body.perModelPromptLimit !== undefined) updates.perModelPromptLimit = body.perModelPromptLimit;
   if (body.perModelPromptLimitWindow !== undefined) updates.perModelPromptLimitWindow = body.perModelPromptLimitWindow || null;
-  if (body.dailyInputTokenLimit !== undefined) updates.dailyInputTokenLimit = body.dailyInputTokenLimit;
-  if (body.dailyOutputTokenLimit !== undefined) updates.dailyOutputTokenLimit = body.dailyOutputTokenLimit;
 
   await db.update(apiKeys).set(updates).where(eq(apiKeys.id, id));
-  apiKeyCache.clear(); // invalidate all cached keys since we matched by id, not key string
-  statsCache.invalidate("keys-list"); // invalidate keys list cache
+  apiKeyCache.clear();
+  statsCache.invalidate("keys-list");
+
+  if (key.discordUserId) {
+    if (body.isActive !== undefined && body.isActive !== key.isActive) {
+      await queueUserNotification(id, {
+        type: body.isActive ? "key_enabled" : "key_disabled",
+        title: body.isActive ? "✅ API Key Diaktifkan" : "🚫 API Key Dinonaktifkan",
+        message: body.isActive
+          ? `API key **${key.name}** telah diaktifkan kembali oleh admin.`
+          : `API key **${key.name}** telah dinonaktifkan oleh admin. Hubungi admin jika ini tidak diharapkan.`,
+      });
+    }
+    const limitFields = [
+      "dailyTokenLimit", "monthlyTokenLimit", "dailyInputTokenLimit", "dailyOutputTokenLimit",
+      "promptLimit", "rateLimit", "maxDevices", "perModelPromptLimit",
+    ];
+    const changedLimits = limitFields.filter((f) => body[f] !== undefined && body[f] !== (key as any)[f]);
+    if (changedLimits.length > 0) {
+      await queueUserNotification(id, {
+        type: "limits_changed",
+        title: "⚙️ Limit API Key Diubah",
+        message:
+          `Admin mengubah konfigurasi limit untuk key **${key.name}**.\n` +
+          `Field: ${changedLimits.join(", ")}.\n` +
+          `Cek portal / Discord Usage untuk sisa kuota terbaru.`,
+      });
+    }
+  }
+
   return c.json({ success: true, message: "API key updated" });
 });
 
@@ -475,6 +631,28 @@ keys.delete("/keys/:id", async (c) => {
       error: "Cannot delete the primary Discord/trial API key. Delete secondary portal keys only.",
     }, 403);
   }
+
+  // Notify before delete (queue on a sibling key if possible, else this key then delete — bot may miss)
+  if (key.discordUserId) {
+    const siblings = await db.select().from(apiKeys).where(eq(apiKeys.discordUserId, key.discordUserId));
+    const other = siblings.find((k) => k.id !== id);
+    if (other) {
+      await queueUserNotification(other.id, {
+        type: "key_deleted",
+        title: "🗑️ API Key Dihapus",
+        message: `API key **${key.name}** telah dihapus oleh admin.`,
+      });
+    } else {
+      await queueUserNotification(id, {
+        type: "key_deleted",
+        title: "🗑️ API Key Dihapus",
+        message: `API key **${key.name}** telah dihapus oleh admin.`,
+      });
+      // Give bot a short window: leave pending on deleted row won't work — clear after brief wait is impossible.
+      // Instead keep a tombstone: update then delay delete is too heavy; notify via sibling-only is enough.
+    }
+  }
+
   await db.delete(apiKeys).where(eq(apiKeys.id, id));
   apiKeyCache.clear();
   statsCache.invalidate("keys-list");
@@ -487,12 +665,28 @@ keys.post("/keys/:id/rotate", async (c) => {
   if (!key) return c.json({ error: "API key not found" }, 404);
 
   const newKey = generateApiKey();
+  const endpoint = `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`;
   await db.update(apiKeys).set({
     key: newKey, keyPrefix: getKeyPrefix(newKey), keyHash: sha256(newKey),
     updatedAt: new Date(),
   }).where(eq(apiKeys.id, id));
 
-  apiKeyCache.clear(); // invalidate cached keys after rotation
+  if (key.discordUserId) {
+    await queueUserNotification(id, {
+      type: "key_rotated",
+      title: "🔄 API Key Di-rotate (Admin)",
+      message:
+        `Admin merotasi API key **${key.name}**.\n\n` +
+        `**Endpoint:** \`${endpoint}\`\n` +
+        `**Authorization:** \`Bearer ${newKey}\`\n\n` +
+        `Key lama sudah tidak valid. Update IDE/client Anda.`,
+      endpoint,
+      newKey,
+      apiKey: newKey,
+    });
+  }
+
+  apiKeyCache.clear();
   statsCache.invalidate("keys-list");
   return c.json({ success: true, key: newKey, keyPrefix: getKeyPrefix(newKey), message: "API key rotated." });
 });
@@ -838,6 +1032,18 @@ keys.put("/keys/:id/day-override", async (c) => {
 
   const saved = await getKeyDayOverride(keyId, dayWib);
   statsCache.invalidate("keys-list");
+
+  const [fullKey] = await db.select().from(apiKeys).where(eq(apiKeys.id, keyId)).limit(1);
+  if (fullKey?.discordUserId && dayOverrideHasAny(bonuses)) {
+    await queueUserNotification(keyId, {
+      type: "limits_changed",
+      title: "⚙️ Day Override Ditetapkan",
+      message:
+        `Admin menambah kuota harian untuk **${fullKey.name}** (hari ${dayWib} WIB).\n` +
+        `Cek portal / Discord Usage untuk sisa kuota terbaru.`,
+    });
+  }
+
   return c.json({
     success: true,
     dayWib,
@@ -882,6 +1088,16 @@ keys.post("/keys/:id/reset-today-usage", async (c) => {
     .delete(requestLogs)
     .where(and(inArray(requestLogs.apiKeyId, keyIds), sql`created_at >= ${dayStart}`))
     .returning({ id: requestLogs.id });
+
+  if (key.discordUserId) {
+    await queueUserNotification(keyId, {
+      type: "usage_reset",
+      title: "🔄 Usage Hari Ini Di-reset",
+      message:
+        `Admin mereset usage hari ini (${dayWib} WIB) untuk akun Anda.\n` +
+        `${deleted.length} log dihapus. Kuota harian dihitung ulang dari nol.`,
+    });
+  }
 
   statsCache.invalidate("keys-list");
   return c.json({

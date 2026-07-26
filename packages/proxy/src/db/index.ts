@@ -101,11 +101,22 @@ export async function initializeDatabase() {
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_embed_config text NOT NULL DEFAULT '{}'`);
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS trial_dm_templates text NOT NULL DEFAULT '{}'`);
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS pro_role_id text DEFAULT '1354682701453725857'`);
+		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS contributor_role_id text DEFAULT '1354642624895778866'`);
+		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS troubleshooter_role_id text DEFAULT '1354683007427936366'`);
+		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS moderator_role_id text DEFAULT '1354683043478110309'`);
+		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS role_limit_modes text NOT NULL DEFAULT '{}'`);
 		await pool.query(`UPDATE admin_config SET required_role_id = '1354646304042651728' WHERE required_role_id IS NULL OR required_role_id = ''`);
 		await pool.query(`UPDATE admin_config SET trial_required_role_id = '1354682641961582632' WHERE trial_required_role_id IS NULL OR trial_required_role_id = ''`);
 		await pool.query(`UPDATE admin_config SET pro_role_id = '1354682701453725857' WHERE pro_role_id IS NULL OR pro_role_id = ''`);
+		await pool.query(`UPDATE admin_config SET contributor_role_id = '1354642624895778866' WHERE contributor_role_id IS NULL OR contributor_role_id = ''`);
+		await pool.query(`UPDATE admin_config SET troubleshooter_role_id = '1354683007427936366' WHERE troubleshooter_role_id IS NULL OR troubleshooter_role_id = ''`);
+		await pool.query(`UPDATE admin_config SET moderator_role_id = '1354683043478110309' WHERE moderator_role_id IS NULL OR moderator_role_id = ''`);
 		await pool.query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS is_trial boolean NOT NULL DEFAULT false`);
 		await pool.query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS rate_window_start text`);
+		await pool.query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS role_limit_mode text`);
+		await pool.query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS account_badges text NOT NULL DEFAULT '[]'`);
+		await pool.query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS account_tier text NOT NULL DEFAULT ''`);
+		await pool.query(`ALTER TABLE addon_assignments ADD COLUMN IF NOT EXISTS role_sync_action text`);
 		await pool.query(`
 			CREATE TABLE IF NOT EXISTS trial_users (
 				id SERIAL PRIMARY KEY,

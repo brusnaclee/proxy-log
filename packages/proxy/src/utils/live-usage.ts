@@ -157,6 +157,8 @@ export interface LiveUsagePayload {
 		/** SUM(prompt+cache) every hop — amanai / provider In style for this pool. */
 		fullInputTokens?: number;
 	}>;
+	roleLimitMode?: string;
+	blockedWithoutAddon?: boolean;
 }
 
 function pickLimit(
@@ -308,6 +310,10 @@ export async function buildLiveUsageForKey(
 				apiKeyId: limitKey.id,
 			})
 		: [];
+	const blockedWithoutAddon =
+		!limitKey.isTrial &&
+		String((limitKey as any).roleLimitMode || "").trim() === "zero_unless_addon" &&
+		activeAddons.length <= 0;
 	const addonDailyBonus = sumAddonDailyTokenBonus(activeAddons);
 
 	const rawDailyInput = pickLimit(limitKey.dailyInputTokenLimit, cfg?.globalDailyInputTokenLimit);
@@ -541,7 +547,7 @@ export async function buildLiveUsageForKey(
 	}
 
 	const dedicatedPools: NonNullable<LiveUsagePayload['dedicatedPools']> = [];
-	if (dedicatedRules.length > 0) {
+	if (!blockedWithoutAddon && dedicatedRules.length > 0) {
 		for (const rule of dedicatedRules) {
 			const wherePool = and(
 				inArray(requestLogs.apiKeyId, keyIds),
@@ -576,6 +582,77 @@ export async function buildLiveUsageForKey(
 				fullInputTokens: Number(usedRow?.fullInput) || 0,
 			});
 		}
+	}
+
+	if (blockedWithoutAddon) {
+		return {
+			scope,
+			accountKeyCount: keyIds.length,
+			usageToday: {
+				requests: usageToday?.requests || 0,
+				hopCount,
+				promptTokens,
+				peakPromptTokens,
+				billablePromptTokens,
+				cachedTokens,
+				fullInputTokens,
+				completionTokens,
+				totalTokens,
+				promptCount: promptUsed,
+				apiCallCount: apiCallUsed,
+			},
+			usageMonth: {
+				totalTokens: monthTokens,
+			},
+			limits: {
+				dailyTokenLimit: 0,
+				dailyTokenLimitSource: 'none',
+				dailyInputTokenLimit: 0,
+				dailyInputTokenLimitSource: 'none',
+				dailyOutputTokenLimit: 0,
+				dailyOutputTokenLimitSource: 'none',
+				monthlyTokenLimit: 0,
+				monthlyTokenLimitSource: 'none',
+				promptLimit: 0,
+				promptLimitWindow,
+				promptLimitSource: 'none',
+				apiCallLimit: 0,
+				apiCallLimitWindow,
+				apiCallLimitSource: 'none',
+				perModelPromptLimit: 0,
+				perModelPromptLimitWindow: perModelWindow,
+				perModelPromptLimitSource: 'none',
+			},
+			remaining: {
+				input: 0,
+				output: 0,
+				daily: 0,
+				monthly: 0,
+				prompt: 0,
+				apiCalls: 0,
+			},
+			dailyResetAt,
+			monthlyResetAt,
+			promptResetAt: null,
+			promptResetMins: 0,
+			apiCallResetAt: null,
+			apiCallResetMins: 0,
+			modelUsageLimits: [],
+			dailyTokenBreakdown: {
+				base: 0,
+				addonBonus: 0,
+				effective: 0,
+				bypassIo: false,
+				inputBase: 0,
+				outputBase: 0,
+			},
+			activeAddons: activeAddonsSummary,
+			addonModelTokenCaps: [],
+			perModelPromptsBypassedByAddon: false,
+			dedicatedPools: [],
+			roleLimitMode: 'zero_unless_addon',
+			blockedWithoutAddon: true,
+		};
 	}
 
 	return {

@@ -6976,56 +6976,85 @@ client.once('clientReady', async () => {
 						continue;
 					}
 
-					if (!notif.newKey) continue;
-					if (notif.type === 'admin_bulk_rotate') {
-						const dmText =
+					// Generic + override / admin key lifecycle notifications
+					const resolveThreadId = () =>
+						client.agverifData?.verifiedUsers?.[notif.discordUserId]
+							?.threadId ||
+						Object.entries(client.agverifData?.threads || {}).find(
+							([, data]) => data.userId === notif.discordUserId,
+						)?.[0];
+
+					const mirrorThread = async (title, description, color) => {
+						if (notif.alsoThread === false) return;
+						const threadId = resolveThreadId();
+						if (!threadId) return;
+						try {
+							const thread = await client.channels.fetch(threadId);
+							if (thread && thread.send) {
+								const { EmbedBuilder } = await import('discord.js');
+								const embed = new EmbedBuilder()
+									.setTitle(title)
+									.setDescription(description)
+									.setColor(color)
+									.setTimestamp();
+								await thread.send({ embeds: [embed] });
+							}
+						} catch (err) {
+							console.error(
+								`[notify] Thread mirror failed for ${notif.discordUserId}:`,
+								err.message,
+							);
+						}
+					};
+
+					let title = notif.title || 'API Notification';
+					let color = 0x5865f2;
+					let dmText = notif.message || '';
+
+					if (notif.type === 'admin_bulk_rotate' && notif.newKey) {
+						title = '🔑 API Key Baru — Rotasi Massal';
+						color = 0x5865f2;
+						dmText =
 							`🔄 **API Key Di-rotate (Admin)**\n\n` +
 							`Semua API key telah di-rotate untuk keamanan. Gunakan kredensial baru di bawah:\n\n` +
 							`**Endpoint:** \`${notif.endpoint}\`\n` +
 							`**Authorization:** \`Bearer ${notif.newKey}\`\n\n` +
 							`Key lama sudah tidak valid. Update IDE/client Anda segera.\n` +
 							`Device lama juga sudah di-reset (max 1 device per key).`;
-
-						await sendDMToUser(
-							notif.discordUserId,
-							'🔑 API Key Baru — Rotasi Massal',
-							dmText,
-							0x5865f2,
-						);
-
-						const threadId =
-							client.agverifData?.verifiedUsers?.[notif.discordUserId]
-								?.threadId ||
-							Object.entries(client.agverifData?.threads || {}).find(
-								([, data]) => data.userId === notif.discordUserId,
-							)?.[0];
-
-						if (threadId) {
-							try {
-								const thread = await client.channels.fetch(threadId);
-								if (thread && thread.send) {
-									const { EmbedBuilder } = await import('discord.js');
-									const embed = new EmbedBuilder()
-										.setTitle('🔄 API Key Di-rotate — Kredensial Baru')
-										.setDescription(
-											`Admin telah melakukan rotasi massal API key.\n\n` +
-												`**Endpoint:** \`${notif.endpoint}\`\n` +
-												`**Authorization:** \`Bearer ${notif.newKey}\`\n\n` +
-												`Key lama sudah tidak berlaku. Update IDE/client Anda.`,
-										)
-										.setColor(0x5865f2)
-										.setTimestamp();
-									await thread.send({ embeds: [embed] });
-								}
-							} catch (err) {
-								console.error(
-									`[notify] Failed to send bulk rotate thread for ${notif.discordUserId}:`,
-									err.message,
-								);
-							}
+					} else if (
+						(notif.type === 'key_rotated' ||
+							notif.type === 'admin_override_created' ||
+							notif.type === 'portal_key_rotated') &&
+						(notif.newKey || notif.apiKey)
+					) {
+						const keyVal = notif.newKey || notif.apiKey;
+						if (notif.type === 'admin_override_created') {
+							title = notif.title || '🔑 API Key (Admin Override)';
+							color = 0x57f287;
+							dmText =
+								notif.message ||
+								`**Endpoint:** \`${notif.endpoint || ''}\`\n**Authorization:** \`Bearer ${keyVal}\``;
+						} else if (notif.type === 'portal_key_rotated') {
+							title = '🔑 API Key Diperbarui';
+							color = 0xf59e0b;
+							dmText =
+								notif.message ||
+								`API key di-rotate via portal.\n**Key baru:** \`${keyVal}\``;
+						} else {
+							title = notif.title || '🔄 API Key Di-rotate (Admin)';
+							color = 0xf59e0b;
+							dmText =
+								notif.message ||
+								`**Endpoint:** \`${notif.endpoint || ''}\`\n**Authorization:** \`Bearer ${keyVal}\``;
 						}
-					} else {
-						const dmText =
+					} else if (
+						notif.type === 'device_limit_rotate' ||
+						(!notif.type && notif.newKey)
+					) {
+						// Legacy auto device-rotate payload
+						title = '🔑 API Key Rotated — New Device Detected';
+						color = 0xf59e0b;
+						dmText =
 							`⚠️ **New Device Detected — API Key Rotated**\n\n` +
 							`A new device attempted to connect to your API key, but only **1 device** is allowed.\n\n` +
 							`Your key has been **automatically rotated**. Here are your new credentials:\n\n` +
@@ -7033,46 +7062,49 @@ client.once('clientReady', async () => {
 							`**Authorization:** \`Bearer ${notif.newKey}\`\n\n` +
 							`Your old device has been removed. Configure your IDE with the new key above.\n\n` +
 							`If you need more than 1 device, please contact an admin.`;
-
-						await sendDMToUser(
-							notif.discordUserId,
-							'🔑 API Key Rotated — New Device Detected',
-							dmText,
-							0xf59e0b,
-						);
-
-						const threadId =
-							client.agverifData?.verifiedUsers?.[notif.discordUserId]
-								?.threadId;
-						if (threadId) {
-							try {
-								const thread = await client.channels.fetch(threadId);
-								if (thread && thread.send) {
-									const { EmbedBuilder } = await import('discord.js');
-									const embed = new EmbedBuilder()
-										.setTitle('⚠️ New Device Detected — Key Rotated')
-										.setDescription(
-											`A new device connected to your key and exceeded your maximum device limit.\n\n` +
-												`Your API key has been **rotated automatically**. Check your DMs for the new key.\n\n` +
-												`If this wasn't you, contact an admin immediately.`,
-										)
-										.setColor(0xf59e0b)
-										.setTimestamp();
-									await thread.send({ embeds: [embed] });
-								}
-							} catch (err) {
-								console.error(
-									`[notify] Failed to send thread message for ${notif.discordUserId}:`,
-									err.message,
-								);
-							}
+					} else if (
+						[
+							'key_disabled',
+							'key_enabled',
+							'key_deleted',
+							'limits_changed',
+							'usage_reset',
+							'limit_reached',
+							'addon_assigned',
+							'addon_expired',
+							'key_created',
+						].includes(notif.type)
+					) {
+						title = notif.title || 'API Notification';
+						color =
+							notif.type === 'key_disabled' || notif.type === 'key_deleted'
+								? 0xed4245
+								: notif.type === 'addon_assigned' || notif.type === 'key_enabled'
+									? 0x57f287
+									: 0xf59e0b;
+						dmText = notif.message || title;
+					} else if (!dmText && !notif.newKey) {
+						// Unknown empty — skip
+						if (notif.keyId) {
+							await proxyInternal(
+								`/admin/internal/clear-notification/${notif.keyId}`,
+								'POST',
+							);
 						}
+						continue;
 					}
 
-					await proxyInternal(
-						`/admin/internal/clear-notification/${notif.keyId}`,
-						'POST',
-					);
+					if (dmText) {
+						await sendDMToUser(notif.discordUserId, title, dmText, color);
+						await mirrorThread(title, dmText, color);
+					}
+
+					if (notif.keyId) {
+						await proxyInternal(
+							`/admin/internal/clear-notification/${notif.keyId}`,
+							'POST',
+						);
+					}
 				} catch (err) {
 					console.error(
 						`[notify] Failed to process notification for ${notif.discordUserId}:`,
@@ -7088,13 +7120,93 @@ client.once('clientReady', async () => {
 		}
 	}
 
+	async function processAddonRoleSync() {
+		try {
+			const data = await proxyInternal('/admin/internal/addon-role-sync');
+			const jobs = data?.jobs || [];
+			for (const job of jobs) {
+				if (!job.discordUserId || !job.discordRoleId || !job.assignmentId) continue;
+				try {
+					const guild =
+						client.guilds.cache.first() ||
+						(await client.guilds.fetch().then((c) => c.first()));
+					if (!guild) continue;
+					const g = await client.guilds.fetch(guild.id);
+					const member = await g.members.fetch(job.discordUserId).catch(() => null);
+					if (!member) {
+						// Still clear grant if member left; keep revoke pending briefly
+						if (job.action === 'grant') {
+							await proxyInternal(
+								`/admin/internal/addon-role-sync/${job.assignmentId}/clear`,
+								'POST',
+							);
+						}
+						continue;
+					}
+					if (job.action === 'grant') {
+						await member.roles.add(
+							job.discordRoleId,
+							`Add-on ${job.addonName || ''} assigned`,
+						);
+					} else if (job.action === 'revoke') {
+						await member.roles
+							.remove(
+								job.discordRoleId,
+								`Add-on ${job.addonName || ''} expired/deactivated`,
+							)
+							.catch(() => {});
+					}
+					await proxyInternal(
+						`/admin/internal/addon-role-sync/${job.assignmentId}/clear`,
+						'POST',
+					);
+				} catch (err) {
+					console.error(
+						`[addon-role] Failed ${job.action} for ${job.discordUserId}:`,
+						err.message,
+					);
+				}
+			}
+		} catch (err) {
+			console.error('[addon-role] Poll failed:', err.message);
+		}
+	}
+
 	// Run immediately then every 30 seconds
 	void processPendingNotifications();
+	void processAddonRoleSync();
 	setInterval(() => {
 		processPendingNotifications().catch((err) =>
 			console.error('[notify] Poll error:', err.message),
 		);
 	}, 30000);
+	setInterval(() => {
+		processAddonRoleSync().catch((err) =>
+			console.error('[addon-role] Poll error:', err.message),
+		);
+	}, 30000);
+});
+
+// Re-grant add-on Discord roles when a member rejoins with an active assignment
+client.on('guildMemberAdd', async (member) => {
+	try {
+		const data = await proxyInternal(
+			`/admin/internal/addon-roles/${member.id}`,
+		);
+		const roleIds = data?.roleIds || [];
+		for (const roleId of roleIds) {
+			await member.roles
+				.add(roleId, 'Rejoin: active add-on assignment')
+				.catch((err) =>
+					console.error(
+						`[addon-role] Rejoin grant failed ${member.id}/${roleId}:`,
+						err.message,
+					),
+				);
+		}
+	} catch (err) {
+		console.error('[addon-role] guildMemberAdd sync failed:', err.message);
+	}
 });
 
 client.on('interactionCreate', async (interaction) => {

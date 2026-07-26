@@ -4,6 +4,7 @@ import { LayoutDashboard, Key, Activity, Settings, LogOut, Menu, X, Zap, Boxes }
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
+import { badgeClass, badgeLabel, resolveDisplayBadges } from "@/lib/account-badge";
 import RecapGate from "./RecapGate";
 
 export default function Layout() {
@@ -40,16 +41,19 @@ export default function Layout() {
     { to: "/settings", icon: Settings, label: t("Settings") },
   ];
 
-  const accountType = user?.accountType;
   const AccountBadge = () => {
-    if (!accountType) return null;
+    const badges = resolveDisplayBadges(user?.accountType, user?.accountBadges);
+    if (!badges.length) return null;
     return (
-      <span className={`px-1.5 py-0.5 text-[10px] font-medium rounded-full ${
-        accountType === "phantom"
-          ? "bg-primary/15 text-primary"
-          : "bg-yellow-400/15 text-yellow-400"
-      }`}>
-        {accountType === "phantom" ? t("Phantom") : t("Trial")}
+      <span className="inline-flex flex-wrap gap-1">
+        {badges.map((b) => (
+          <span
+            key={b}
+            className={`px-1.5 py-0.5 text-[10px] font-medium rounded-full ${badgeClass(b)}`}
+          >
+            {t(badgeLabel(b))}
+          </span>
+        ))}
       </span>
     );
   };

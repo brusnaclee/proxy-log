@@ -106,6 +106,17 @@ export default function SettingsPage() {
   const [verifiedRoleId, setVerifiedRoleId] = useState("");
   const [proRoleId, setProRoleId] = useState("1354682701453725857");
   const [trialRequiredRoleId, setTrialRequiredRoleId] = useState("1354682641961582632");
+  const [contributorRoleId, setContributorRoleId] = useState("1354642624895778866");
+  const [troubleshooterRoleId, setTroubleshooterRoleId] = useState("1354683007427936366");
+  const [moderatorRoleId, setModeratorRoleId] = useState("1354683043478110309");
+  const [roleLimitModes, setRoleLimitModes] = useState<Record<string, string>>({
+    premium: "zero_unless_addon",
+    pro: "zero_unless_addon",
+    phantom: "follow_global",
+    contributor: "follow_global",
+    troubleshooter: "follow_global",
+    moderator: "follow_global",
+  });
   const [geminiApiKey, setGeminiApiKey] = useState("");
   const [verifAutoEnabled, setVerifAutoEnabled] = useState(false);
   const [tokitoApiKey, setTokitoApiKey] = useState("");
@@ -127,6 +138,18 @@ export default function SettingsPage() {
       setVerifiedRoleId(b.verifiedRoleId || "");
       setProRoleId((b as any).proRoleId || "1354682701453725857");
       setTrialRequiredRoleId((b as any).trialRequiredRoleId || "1354682641961582632");
+      setContributorRoleId((b as any).contributorRoleId || "1354642624895778866");
+      setTroubleshooterRoleId((b as any).troubleshooterRoleId || "1354683007427936366");
+      setModeratorRoleId((b as any).moderatorRoleId || "1354683043478110309");
+      const modes = (b as any).roleLimitModes || {};
+      setRoleLimitModes({
+        premium: modes.premium || "zero_unless_addon",
+        pro: modes.pro || "zero_unless_addon",
+        phantom: modes.phantom || "follow_global",
+        contributor: modes.contributor || "follow_global",
+        troubleshooter: modes.troubleshooter || "follow_global",
+        moderator: modes.moderator || "follow_global",
+      });
       setGeminiApiKey(b.geminiApiKey || "");
       setVerifAutoEnabled(Boolean(b.verifAutoEnabled));
       setTokitoApiKey(b.tokitoApiKey || "");
@@ -312,6 +335,10 @@ export default function SettingsPage() {
           verifiedRoleId,
           proRoleId,
           trialRequiredRoleId,
+          contributorRoleId,
+          troubleshooterRoleId,
+          moderatorRoleId,
+          roleLimitModes,
           geminiApiKey,
           verifAutoEnabled,
           tokitoApiKey,
@@ -1472,20 +1499,53 @@ export default function SettingsPage() {
             <div className="md:col-span-2 pt-2 border-t border-border/50">
               <Label className="text-base">Discord roles (proxy)</Label>
               <p className="text-[10px] text-muted-foreground mt-0.5 mb-3">
-                Premium = required for trial + add-on · Pro = social only (no proxy perk) · Phantom = claim / base daily tokens
+                Staff (mod/troubleshooter/contributor) above Phantom/Pro/Premium for limits. Premium/Pro default: 0 until add-on.
               </p>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
-                  <Label>Premium (required)</Label>
+                  <Label>Premium</Label>
                   <Input value={trialRequiredRoleId} onChange={(e) => setTrialRequiredRoleId(e.target.value)} placeholder="1354682641961582632" className="mt-1 font-mono text-xs" />
                 </div>
                 <div>
-                  <Label>Pro (display only)</Label>
+                  <Label>Pro</Label>
                   <Input value={proRoleId} onChange={(e) => setProRoleId(e.target.value)} placeholder="1354682701453725857" className="mt-1 font-mono text-xs" />
                 </div>
                 <div>
                   <Label>Phantom</Label>
                   <Input value={requiredRoleId} onChange={(e) => setRequiredRoleId(e.target.value)} placeholder="1354646304042651728" className="mt-1 font-mono text-xs" />
+                </div>
+                <div>
+                  <Label>Contributor</Label>
+                  <Input value={contributorRoleId} onChange={(e) => setContributorRoleId(e.target.value)} placeholder="1354642624895778866" className="mt-1 font-mono text-xs" />
+                </div>
+                <div>
+                  <Label>Troubleshooter</Label>
+                  <Input value={troubleshooterRoleId} onChange={(e) => setTroubleshooterRoleId(e.target.value)} placeholder="1354683007427936366" className="mt-1 font-mono text-xs" />
+                </div>
+                <div>
+                  <Label>Moderator</Label>
+                  <Input value={moderatorRoleId} onChange={(e) => setModeratorRoleId(e.target.value)} placeholder="1354683043478110309" className="mt-1 font-mono text-xs" />
+                </div>
+              </div>
+              <div className="mt-4 space-y-2">
+                <Label className="text-sm">Role limit modes</Label>
+                <p className="text-[10px] text-muted-foreground">follow_global = inherit Settings daily · zero_unless_addon = no shared/dedicated until add-on</p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {(["premium", "pro", "phantom", "contributor", "troubleshooter", "moderator"] as const).map((role) => (
+                    <div key={role}>
+                      <Label className="capitalize text-xs">{role}</Label>
+                      <select
+                        className="mt-1 w-full h-9 rounded-md border border-input bg-background px-2 text-xs"
+                        value={roleLimitModes[role] || "follow_global"}
+                        onChange={(e) =>
+                          setRoleLimitModes((prev) => ({ ...prev, [role]: e.target.value }))
+                        }
+                      >
+                        <option value="follow_global">follow_global</option>
+                        <option value="zero_unless_addon">zero_unless_addon</option>
+                      </select>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>

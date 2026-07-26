@@ -270,7 +270,8 @@ addonsApi.post("/addon-assignments", async (c) => {
       expiresAt,
       assignedBy: body.assignedBy || "dashboard",
       isActive: true,
-    })
+      roleSyncAction: addon.discordRoleId && body.discordUserId ? "grant" : null,
+    } as any)
     .returning();
 
   await applyMaxDevicesForAssignment({
@@ -279,16 +280,37 @@ addonsApi.post("/addon-assignments", async (c) => {
     apiKeyId: body.apiKeyId,
   });
 
+  if (body.discordUserId) {
+    const { queueUserNotificationByDiscord } = await import("../../utils/user-notify.js");
+    await queueUserNotificationByDiscord(body.discordUserId, {
+      type: "addon_assigned",
+      title: "✅ Add-on Aktif",
+      message:
+        `Add-on **${addon.name}** telah diaktifkan` +
+        (expiresAt ? ` (berakhir <t:${Math.floor(expiresAt.getTime() / 1000)}:F>)` : "") +
+        `.\nKuota harian pack: ${(addon.dailyTokenLimit || 0).toLocaleString()} tokens.`,
+    });
+  }
+
   return c.json({ success: true, assignment: row });
 });
 
 addonsApi.patch("/addon-assignments/:id", async (c) => {
   const id = parseInt(c.req.param("id"));
   const body = await c.req.json<{ isActive?: boolean; expiresAt?: string | null }>();
+  const [existing] = await db.select().from(addonAssignments).where(eq(addonAssignments.id, id)).limit(1);
+  if (!existing) return c.json({ error: "Assignment not found" }, 404);
+
   const updates: Record<string, unknown> = {};
   if (body.isActive !== undefined) updates.isActive = Boolean(body.isActive);
   if (body.expiresAt !== undefined) {
     updates.expiresAt = body.expiresAt ? new Date(body.expiresAt) : null;
+  }
+  if (body.isActive === false && existing.isActive) {
+    updates.roleSyncAction = "revoke";
+  }
+  if (body.isActive === true && !existing.isActive) {
+    updates.roleSyncAction = "grant";
   }
   const [row] = await db
     .update(addonAssignments)
@@ -296,11 +318,31 @@ addonsApi.patch("/addon-assignments/:id", async (c) => {
     .where(eq(addonAssignments.id, id))
     .returning();
   if (!row) return c.json({ error: "Assignment not found" }, 404);
+
+  if (body.isActive === false && existing.isActive && existing.discordUserId) {
+    const { queueUserNotificationByDiscord } = await import("../../utils/user-notify.js");
+    const [addon] = await db.select().from(addons).where(eq(addons.id, existing.addonId)).limit(1);
+    await queueUserNotificationByDiscord(existing.discordUserId, {
+      type: "addon_expired",
+      title: "⏰ Add-on Nonaktif",
+      message: `Add-on **${addon?.name || "pack"}** telah dinonaktifkan / expired.`,
+    });
+  }
+
   return c.json({ success: true, assignment: row });
 });
 
 addonsApi.delete("/addon-assignments/:id", async (c) => {
   const id = parseInt(c.req.param("id"));
+  const [existing] = await db.select().from(addonAssignments).where(eq(addonAssignments.id, id)).limit(1);
+  if (existing?.discordUserId && existing.isActive) {
+    // Mark revoke before delete so bot can still see it — keep row soft-inactive instead
+    await db
+      .update(addonAssignments)
+      .set({ isActive: false, roleSyncAction: "revoke" } as any)
+      .where(eq(addonAssignments.id, id));
+    return c.json({ success: true, softDeleted: true });
+  }
   await db.delete(addonAssignments).where(eq(addonAssignments.id, id));
   return c.json({ success: true });
 });

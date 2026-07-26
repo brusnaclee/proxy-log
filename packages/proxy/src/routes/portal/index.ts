@@ -556,10 +556,46 @@ portal.get("/me", async (c) => {
     }
   }
 
+  let accountBadges: string[] = [];
+  try {
+    accountBadges = JSON.parse((primaryKey as any)?.accountBadges || "[]");
+    if (!Array.isArray(accountBadges)) accountBadges = [];
+  } catch {
+    accountBadges = [];
+  }
+  if (isTrial) {
+    accountBadges = ["trial", ...accountBadges.filter((b) => b !== "trial")];
+  } else if (
+    (primaryKey as any)?.provisionedBy === "admin-override" &&
+    !accountBadges.includes("admin_override")
+  ) {
+    accountBadges = ["admin_override", ...accountBadges];
+  } else if (accountBadges.length === 0) {
+    accountBadges = ["phantom"];
+  }
+  const tierRaw = String((primaryKey as any)?.accountTier || "").trim();
+  let accountType = isTrial
+    ? "trial"
+    : tierRaw && tierRaw !== "none"
+      ? tierRaw
+      : accountBadges.includes("admin_override")
+        ? "admin_override"
+        : accountBadges.includes("moderator") ||
+            accountBadges.includes("troubleshooter") ||
+            accountBadges.includes("contributor") ||
+            accountBadges.includes("staff")
+          ? "staff"
+          : accountBadges.includes("pro")
+            ? "pro"
+            : accountBadges.includes("premium")
+              ? "premium"
+              : "phantom";
+
   return c.json({
     discordUserId,
     discordUsername: primaryKey?.discordUsername ?? null,
-    accountType: isTrial ? "trial" : "phantom",
+    accountType,
+    accountBadges,
     trialExpiresAt,
     hasPassword: !!settings?.passwordHash,
     webhookUrl: settings?.webhookUrl ? maskWebhookUrl(settings.webhookUrl) : null,

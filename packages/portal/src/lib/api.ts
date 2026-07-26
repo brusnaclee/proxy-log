@@ -36,7 +36,8 @@ export type LimitSource = "override" | "global" | "none" | "addon";
 export interface MeResponse {
   discordUserId: string;
   discordUsername: string | null;
-  accountType: "trial" | "phantom";
+  accountType: "trial" | "phantom" | "pro" | "premium" | "staff" | "admin_override" | string;
+  accountBadges?: string[];
   trialExpiresAt: string | null;
   hasPassword: boolean;
   webhookUrl: string | null;

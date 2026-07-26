@@ -68,6 +68,14 @@ export const adminConfig = pgTable('admin_config', {
 	addonRequiredModels: text('addon_required_models').notNull().default('[]'),
 	/** Discord Pro role — display/social only; no proxy perk */
 	proRoleId: text('pro_role_id').default('1354682701453725857'),
+	contributorRoleId: text('contributor_role_id').default('1354642624895778866'),
+	troubleshooterRoleId: text('troubleshooter_role_id').default('1354683007427936366'),
+	moderatorRoleId: text('moderator_role_id').default('1354683043478110309'),
+	/**
+	 * JSON map of role → limit mode: follow_global | zero_unless_addon
+	 * Defaults: premium/pro = zero_unless_addon; phantom + staff = follow_global
+	 */
+	roleLimitModes: text('role_limit_modes').notNull().default('{}'),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
 	updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
@@ -102,6 +110,15 @@ export const apiKeys = pgTable('api_keys', {
 	dailyOutputTokenLimit: integer('daily_output_token_limit').default(0),
 	pendingNotification: text('pending_notification'),
 	isTrial: boolean('is_trial').notNull().default(false),
+	/**
+	 * follow_global | zero_unless_addon — set at admin-override / role sync.
+	 * null = legacy follow_global behavior.
+	 */
+	roleLimitMode: text('role_limit_mode'),
+	/** JSON string[] badges for portal/admin display e.g. ["pro","contributor"] */
+	accountBadges: text('account_badges').notNull().default('[]'),
+	/** phantom | pro | premium | staff | admin_override | trial | none */
+	accountTier: text('account_tier').notNull().default(''),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
 	updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
@@ -551,6 +568,8 @@ export const addonAssignments = pgTable('addon_assignments', {
 	expiresAt: timestamp('expires_at'),
 	isActive: boolean('is_active').notNull().default(true),
 	assignedBy: text('assigned_by').notNull().default('dashboard'),
+	/** grant | revoke | null — bot polls and applies pack discordRoleId */
+	roleSyncAction: text('role_sync_action'),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
 }, (table) => ({
 	addonIdx: index('idx_addon_assignments_addon').on(table.addonId),

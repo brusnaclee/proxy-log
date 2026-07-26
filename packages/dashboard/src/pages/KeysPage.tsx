@@ -59,6 +59,13 @@ export default function KeysPage() {
   const [overrideDiscordId, setOverrideDiscordId] = useState("");
   const [overrideUsername, setOverrideUsername] = useState("");
   const [overrideNote, setOverrideNote] = useState("");
+  const [overridePreview, setOverridePreview] = useState<{
+    found: boolean;
+    username?: string;
+    primary?: string;
+    badges?: string[];
+    limitMode?: string;
+  } | null>(null);
   const [overrideResult, setOverrideResult] = useState<{
     apiKey: string;
     keyName: string;
@@ -92,8 +99,11 @@ export default function KeysPage() {
 
   const loadKeys = async () => {
     try {
-      const data = await keys.list();
-      setAllKeys(data);
+      // Fast first paint without liveUsage, then full meters
+      const lite = await keys.list({ lite: true });
+      setAllKeys(lite);
+      const full = await keys.list();
+      setAllKeys(full);
     } catch {}
   };
 
@@ -112,7 +122,10 @@ export default function KeysPage() {
   const handleToggleActive = async (id: number, isActive: boolean) => {
     try {
       await keys.update(id, { isActive: !isActive });
-      loadKeys();
+      // Optimistic local update — avoid full list refetch lag
+      setAllKeys((prev) =>
+        prev.map((k) => (k.id === id ? { ...k, isActive: !isActive } : k)),
+      );
     } catch {}
   };
 
@@ -122,15 +135,40 @@ export default function KeysPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handlePreviewOverride = async () => {
+    setOverridePreview(null);
+    const id = overrideDiscordId.trim();
+    if (!id) return;
+    if (!/^\d{15,25}$/.test(id)) {
+      setOverrideError("Discord ID harus 15-25 digit angka (atau kosongkan)");
+      return;
+    }
+    try {
+      const res = await keys.overridePreview(id);
+      setOverridePreview({
+        found: res.found,
+        username: res.username,
+        primary: res.resolved?.primary,
+        badges: res.resolved?.badges,
+        limitMode: res.resolved?.limitMode,
+      });
+      if (res.username && !overrideUsername.trim()) setOverrideUsername(res.username);
+      setOverrideError(null);
+    } catch (err: any) {
+      setOverrideError(err?.message || "Preview failed");
+    }
+  };
+
   const handleOverride = async () => {
     setOverrideError(null);
-    if (!/^\d{15,25}$/.test(overrideDiscordId.trim())) {
-      setOverrideError("Discord ID harus 15-25 digit angka");
+    const id = overrideDiscordId.trim();
+    if (id && !/^\d{15,25}$/.test(id)) {
+      setOverrideError("Discord ID harus 15-25 digit angka, atau kosongkan untuk custom key");
       return;
     }
     try {
       const res = await keys.adminOverrideDiscord(
-        overrideDiscordId.trim(),
+        id || undefined,
         overrideUsername.trim() || undefined,
         overrideNote.trim() || undefined,
       );
@@ -387,8 +425,8 @@ export default function KeysPage() {
               {overrideResult
                 ? overrideResult.alreadyExists
                   ? "User sudah punya active admin-override key. Key ditampilkan ulang."
-                  : "Key unlimited berhasil dibuat. Key ini dikecualikan dari daily-cleanup (admin-override)."
-                : "Buat API key untuk Discord user tanpa agverif gate. Key unlimited, isActive=true, tidak akan auto-revoke."}
+                  : "Override key dibuat (cleanup-immune). Limit mode mengikuti Discord roles jika ID diisi."
+                : "Discord ID opsional. Dengan ID: deteksi role + DM. Tanpa ID: custom key tanpa DM."}
             </DialogDescription>
           </DialogHeader>
 
@@ -410,7 +448,7 @@ export default function KeysPage() {
                 </div>
               </div>
               <p className="text-xs text-muted-foreground">
-                DM user Discord-nya via bot command atau manual. Key ini sudah aktif dan bisa langsung dipakai.
+                Jika Discord ID diisi, bot mengirim DM (+ thread jika ada). Simpan key ini.
               </p>
               <DialogFooter>
                 <Button onClick={() => setShowOverride(false)}>Done</Button>
@@ -419,14 +457,30 @@ export default function KeysPage() {
           ) : (
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label>Discord User ID <span className="text-red-400">*</span></Label>
-                <Input
-                  placeholder="123456789012345678"
-                  value={overrideDiscordId}
-                  onChange={(e) => setOverrideDiscordId(e.target.value.replace(/[^0-9]/g, ""))}
-                  maxLength={25}
-                />
-                <p className="text-xs text-muted-foreground">15-25 digit angka (snowflake ID Discord)</p>
+                <Label>Discord User ID (optional)</Label>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="123456789012345678"
+                    value={overrideDiscordId}
+                    onChange={(e) => {
+                      setOverrideDiscordId(e.target.value.replace(/[^0-9]/g, ""));
+                      setOverridePreview(null);
+                    }}
+                    maxLength={25}
+                  />
+                  <Button type="button" variant="outline" onClick={handlePreviewOverride} disabled={!overrideDiscordId.trim()}>
+                    Preview
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">Kosongkan untuk custom key tanpa Discord / tanpa DM</p>
+                {overridePreview && (
+                  <p className="text-xs text-muted-foreground border border-border/60 rounded-md p-2">
+                    {overridePreview.found
+                      ? `Found: ${overridePreview.username || "—"} · tier=${overridePreview.primary} · mode=${overridePreview.limitMode}` +
+                        (overridePreview.badges?.length ? ` · badges=${overridePreview.badges.join(", ")}` : "")
+                      : "Member tidak ditemukan di guild (key tetap bisa dibuat; mode default)."}
+                  </p>
+                )}
               </div>
               <div className="space-y-2">
                 <Label>Discord Username (optional)</Label>
@@ -449,7 +503,7 @@ export default function KeysPage() {
               )}
               <DialogFooter>
                 <Button variant="outline" onClick={() => setShowOverride(false)}>Cancel</Button>
-                <Button onClick={handleOverride} disabled={!overrideDiscordId.trim()}>
+                <Button onClick={handleOverride}>
                   Create Override Key
                 </Button>
               </DialogFooter>

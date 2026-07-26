@@ -1,7 +1,7 @@
 import { Hono } from "hono";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { adminConfig, allowedDevices, allowedIdes, apiKeys, devices, requestLogs, modelLimits, providers, trialUsers, userPortalSettings } from "../../db/schema.js";
+import { adminConfig, addonAssignments, addons, allowedDevices, allowedIdes, apiKeys, devices, requestLogs, modelLimits, providers, trialUsers, userPortalSettings } from "../../db/schema.js";
 import { generateApiKey, getKeyPrefix, sha256 } from "../../utils/crypto.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
@@ -1151,19 +1151,111 @@ internal.get("/internal/pending-notifications", async (c) => {
     .select({ id: apiKeys.id, pendingNotification: apiKeys.pendingNotification })
     .from(apiKeys);
 
-  const notifications = rows
-    .filter((r) => r.pendingNotification)
-    .map((r) => {
-      try {
-        const parsed = JSON.parse(r.pendingNotification!);
-        return { keyId: r.id, ...parsed };
-      } catch {
-        return null;
+  const notifications: any[] = [];
+  for (const r of rows) {
+    if (!r.pendingNotification) continue;
+    try {
+      const parsed = JSON.parse(r.pendingNotification);
+      const items = Array.isArray(parsed) ? parsed : [parsed];
+      for (const item of items) {
+        if (item && typeof item === "object") {
+          notifications.push({ keyId: r.id, ...item });
+        }
       }
-    })
-    .filter(Boolean);
+    } catch {
+      /* ignore */
+    }
+  }
 
   return c.json({ notifications });
+});
+
+/** Pending add-on Discord role grant/revoke jobs for the bot. */
+internal.get("/internal/addon-role-sync", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+
+  // Soft-expire: mark expired active assignments for revoke
+  const now = new Date();
+  const expired = await db
+    .select({ id: addonAssignments.id })
+    .from(addonAssignments)
+    .where(
+      and(
+        eq(addonAssignments.isActive, true),
+        sql`${addonAssignments.expiresAt} IS NOT NULL AND ${addonAssignments.expiresAt} <= ${now}`,
+      ),
+    );
+  for (const row of expired) {
+    await db
+      .update(addonAssignments)
+      .set({ isActive: false, roleSyncAction: "revoke" } as any)
+      .where(eq(addonAssignments.id, row.id));
+  }
+
+  const pending = await db
+    .select({
+      assignmentId: addonAssignments.id,
+      discordUserId: addonAssignments.discordUserId,
+      action: addonAssignments.roleSyncAction,
+      discordRoleId: addons.discordRoleId,
+      addonName: addons.name,
+      isActive: addonAssignments.isActive,
+    })
+    .from(addonAssignments)
+    .innerJoin(addons, eq(addonAssignments.addonId, addons.id))
+    .where(
+      and(
+        sql`${addonAssignments.roleSyncAction} IS NOT NULL`,
+        sql`${addonAssignments.discordUserId} IS NOT NULL`,
+        sql`${addons.discordRoleId} IS NOT NULL AND ${addons.discordRoleId} != ''`,
+      ),
+    );
+
+  return c.json({ jobs: pending });
+});
+
+internal.post("/internal/addon-role-sync/:assignmentId/clear", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+  const assignmentId = parseInt(c.req.param("assignmentId"));
+  if (!Number.isFinite(assignmentId)) return c.json({ error: "Invalid id" }, 400);
+  await db
+    .update(addonAssignments)
+    .set({ roleSyncAction: null } as any)
+    .where(eq(addonAssignments.id, assignmentId));
+  return c.json({ success: true });
+});
+
+/** Active add-on role IDs for a Discord user (guild rejoin re-grant). */
+internal.get("/internal/addon-roles/:discordUserId", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+  const discordUserId = c.req.param("discordUserId");
+  const now = new Date();
+  const rows = await db
+    .select({
+      discordRoleId: addons.discordRoleId,
+      addonName: addons.name,
+    })
+    .from(addonAssignments)
+    .innerJoin(addons, eq(addonAssignments.addonId, addons.id))
+    .where(
+      and(
+        eq(addonAssignments.discordUserId, discordUserId),
+        eq(addonAssignments.isActive, true),
+        eq(addons.isActive, true),
+        or(isNull(addonAssignments.expiresAt), gt(addonAssignments.expiresAt, now)),
+      ),
+    );
+  const roleIds = [
+    ...new Set(
+      rows
+        .map((r) => String(r.discordRoleId || "").trim())
+        .filter(Boolean),
+    ),
+  ];
+  return c.json({ roleIds, addons: rows });
 });
 
 internal.post("/internal/rotate-all-keys", async (c) => {
@@ -1211,8 +1303,29 @@ internal.post("/internal/rotate-all-keys", async (c) => {
 
 internal.post("/internal/clear-notification/:keyId", async (c) => {
   const keyId = parseInt(c.req.param("keyId"));
-  await db.update(apiKeys)
-    .set({ pendingNotification: null })
+  const [row] = await db
+    .select({ pendingNotification: apiKeys.pendingNotification })
+    .from(apiKeys)
+    .where(eq(apiKeys.id, keyId))
+    .limit(1);
+  if (!row?.pendingNotification) {
+    return c.json({ success: true });
+  }
+  let queue: any[] = [];
+  try {
+    const parsed = JSON.parse(row.pendingNotification);
+    queue = Array.isArray(parsed) ? parsed : [parsed];
+  } catch {
+    queue = [];
+  }
+  // Dequeue one (bot clears after each processed notification)
+  queue.shift();
+  await db
+    .update(apiKeys)
+    .set({
+      pendingNotification: queue.length > 0 ? JSON.stringify(queue) : null,
+      updatedAt: new Date(),
+    })
     .where(eq(apiKeys.id, keyId));
   return c.json({ success: true });
 });

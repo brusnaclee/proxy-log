@@ -134,6 +134,7 @@ import {
 	sumAddonDailyTokenBonus,
 	sumAddonMonthlyTokenBonus,
 } from '../utils/addons.js';
+import { isBlockedWithoutAddon } from '../utils/role-limit-gate.js';
 import {
 	accountApiKeyCondition,
 	resolveAccountKeyScope,
@@ -191,14 +192,24 @@ import {
 const proxy = new Hono();
 
 async function notifyTrialLimitIfNeeded(
-	keyRecord: { id: number; isTrial: boolean },
+	keyRecord: { id: number; isTrial: boolean; discordUserId?: string | null },
 	message: string,
 ): Promise<void> {
-	if (!keyRecord.isTrial) return;
 	try {
-		await queueTrialNotification(keyRecord.id, 'limit_reached', { message });
+		if (keyRecord.isTrial) {
+			await queueTrialNotification(keyRecord.id, 'limit_reached', { message });
+			return;
+		}
+		if (keyRecord.discordUserId) {
+			const { queueUserNotification } = await import('../utils/user-notify.js');
+			await queueUserNotification(keyRecord.id, {
+				type: 'limit_reached',
+				title: '⚠️ Limit Tercapai',
+				message,
+			});
+		}
 	} catch (err) {
-		console.error('[trial] Failed to queue limit notification:', err);
+		console.error('[notify] Failed to queue limit notification:', err);
 	}
 }
 
@@ -2439,6 +2450,19 @@ proxy.all('/*', async (c) => {
 					apiKeyId: keyRecord.id,
 				})
 			: [];
+		if (!keyRecord.isTrial && isBlockedWithoutAddon(keyRecord, autoActiveAddons.length)) {
+			return c.json(
+				{
+					error: {
+						message:
+							'This key has no usage until an add-on is assigned (Premium/Pro). Contact staff in Discord.',
+						type: 'rate_limit_error',
+						code: 'addon_required_for_quota',
+					},
+				},
+				403,
+			);
+		}
 
 		// When account shared daily/input/output is exhausted, auto must ONLY try
 		// dedicated-pool models (not burn hops on models that will always 429).
@@ -3467,6 +3491,20 @@ proxy.all('/*', async (c) => {
 				apiKeyId: keyRecord.id,
 			})
 		: [];
+	// Premium/Pro without add-on: no shared quota and no dedicated pools
+	if (!keyRecord.isTrial && isBlockedWithoutAddon(keyRecord, activeAddons.length)) {
+		return c.json(
+			{
+				error: {
+					message:
+						'This key has no usage until an add-on is assigned (Premium/Pro). Contact staff in Discord.',
+					type: 'rate_limit_error',
+					code: 'addon_required_for_quota',
+				},
+			},
+			403,
+		);
+	}
 	if (!keyRecord.isTrial) {
 		const addonAccess = await checkAddonModelAccess({
 			model,

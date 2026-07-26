@@ -186,6 +186,17 @@ monitor.get("/settings/bot", async (c) => {
     verifiedRoleId: config.verifiedRoleId || "",
     proRoleId: (config as any).proRoleId || "1354682701453725857",
     trialRequiredRoleId: config.trialRequiredRoleId || "1354682641961582632",
+    contributorRoleId: (config as any).contributorRoleId || "1354642624895778866",
+    troubleshooterRoleId: (config as any).troubleshooterRoleId || "1354683007427936366",
+    moderatorRoleId: (config as any).moderatorRoleId || "1354683043478110309",
+    roleLimitModes: (() => {
+      try {
+        const raw = (config as any).roleLimitModes;
+        return typeof raw === "string" ? JSON.parse(raw || "{}") : raw || {};
+      } catch {
+        return {};
+      }
+    })(),
     geminiApiKey: config.geminiApiKey || "",
     verifAutoEnabled: Boolean(config.verifAutoEnabled),
     tokitoApiKey: config.tokitoApiKey || "",
@@ -213,6 +224,15 @@ monitor.post("/settings/bot", async (c) => {
   if (body.verifiedRoleId !== undefined) updates.verifiedRoleId = body.verifiedRoleId;
   if (body.proRoleId !== undefined) updates.proRoleId = body.proRoleId;
   if (body.trialRequiredRoleId !== undefined) updates.trialRequiredRoleId = body.trialRequiredRoleId;
+  if (body.contributorRoleId !== undefined) updates.contributorRoleId = body.contributorRoleId;
+  if (body.troubleshooterRoleId !== undefined) updates.troubleshooterRoleId = body.troubleshooterRoleId;
+  if (body.moderatorRoleId !== undefined) updates.moderatorRoleId = body.moderatorRoleId;
+  if (body.roleLimitModes !== undefined) {
+    updates.roleLimitModes =
+      typeof body.roleLimitModes === "string"
+        ? body.roleLimitModes
+        : JSON.stringify(body.roleLimitModes || {});
+  }
   if (body.geminiApiKey !== undefined) updates.geminiApiKey = body.geminiApiKey;
   if (body.verifAutoEnabled !== undefined) updates.verifAutoEnabled = Boolean(body.verifAutoEnabled);
   if (body.tokitoApiKey !== undefined) updates.tokitoApiKey = body.tokitoApiKey;

@@ -413,6 +413,7 @@ export async function ensureVibecodeCatalog(): Promise<void> {
     days: number;
     slotsNote: number;
     active: boolean;
+    discordRoleId: string | null;
   }> = [
     {
       name: "vibecode-5m",
@@ -422,6 +423,7 @@ export async function ensureVibecodeCatalog(): Promise<void> {
       days: 15,
       slotsNote: 20,
       active: true,
+      discordRoleId: "1530923797220167710",
     },
     {
       name: "vibecode-10m",
@@ -431,6 +433,7 @@ export async function ensureVibecodeCatalog(): Promise<void> {
       days: 30,
       slotsNote: 10,
       active: true,
+      discordRoleId: "1530923797220167710",
     },
     {
       name: "vibecode-3m",
@@ -439,6 +442,7 @@ export async function ensureVibecodeCatalog(): Promise<void> {
       days: 7,
       slotsNote: 0,
       active: false,
+      discordRoleId: null as string | null,
     },
   ];
 
@@ -455,6 +459,7 @@ export async function ensureVibecodeCatalog(): Promise<void> {
       maxDevices: 1,
       defaultDurationDays: p.days,
       isActive: p.active,
+      discordRoleId: p.discordRoleId,
       updatedAt: new Date(),
     };
     if (existing) {

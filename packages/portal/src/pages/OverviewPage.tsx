@@ -12,6 +12,7 @@ import { PeriodSelector, type PeriodKey } from "@/components/PeriodSelector";
 import { ChartBox } from "@/components/ChartBox";
 import { api, type MeResponse, type TopError } from "@/lib/api";
 import { formatNumber, formatCost, formatInputBreakdown } from "@/lib/utils";
+import { badgeClass, badgeLabel, resolveDisplayBadges } from "@/lib/account-badge";
 import { useI18n } from "@/lib/i18n";
 
 const CHART_COLORS = {
@@ -166,14 +167,17 @@ export default function OverviewPage() {
 
   const renderAccountBadge = () => {
     if (!user) return null;
-    const isPhantom = user.accountType === "phantom";
+    const badges = resolveDisplayBadges(user.accountType, user.accountBadges);
     return (
-      <span className={`px-2.5 py-0.5 text-xs font-medium rounded-full ${
-        isPhantom
-          ? "bg-primary/15 text-primary border border-primary/30"
-          : "bg-yellow-400/15 text-yellow-400 border border-yellow-400/30"
-      }`}>
-        {isPhantom ? t("Phantom") : t("Trial")}
+      <span className="inline-flex flex-wrap gap-1">
+        {badges.map((b) => (
+          <span
+            key={b}
+            className={`px-2.5 py-0.5 text-xs font-medium rounded-full ${badgeClass(b)}`}
+          >
+            {t(badgeLabel(b))}
+          </span>
+        ))}
       </span>
     );
   };
