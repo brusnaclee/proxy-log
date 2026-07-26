@@ -488,8 +488,20 @@ keys.post("/keys/override-discord", async (c) => {
 
 keys.get("/keys/:id", async (c) => {
   const id = parseInt(c.req.param("id"));
-  const key = (await db.select().from(apiKeys).where(eq(apiKeys.id, id)))[0];
+  let key = (await db.select().from(apiKeys).where(eq(apiKeys.id, id)))[0];
   if (!key) return c.json({ error: "API key not found" }, 404);
+
+  // Refresh Discord badges / tier into DB before responding (non-trial linked keys)
+  if (key.discordUserId && !key.isTrial) {
+    try {
+      const { syncUserKeyAccess } = await import("../../utils/key-access-lifecycle.js");
+      await syncUserKeyAccess(key.discordUserId, { reason: "admin key detail" });
+      key = (await db.select().from(apiKeys).where(eq(apiKeys.id, id)))[0] || key;
+    } catch (err) {
+      console.warn("[keys/:id] role sync failed:", (err as Error)?.message || err);
+    }
+  }
+
   const config = (await db.select().from(adminConfig))[0];
 
   // Period start timestamps
@@ -682,6 +694,16 @@ keys.get("/keys/:id", async (c) => {
   const accountTier =
     tierRaw && tierRaw !== "none" && tierRaw !== "admin_override" ? tierRaw : null;
 
+  let addonHistory: Awaited<ReturnType<typeof import("../../utils/addons.js").listAddonHistoryForUser>> = [];
+  if (key.discordUserId) {
+    try {
+      const { listAddonHistoryForUser } = await import("../../utils/addons.js");
+      addonHistory = await listAddonHistoryForUser(key.discordUserId, 40);
+    } catch (err) {
+      console.warn("[keys/:id] addon history failed:", (err as Error)?.message || err);
+    }
+  }
+
   return c.json({
     id: key.id, name: key.name, keyPrefix: key.keyPrefix, keyMasked: maskKey(key.key),
     discordUserId: key.discordUserId,
@@ -701,6 +723,7 @@ keys.get("/keys/:id", async (c) => {
     accountTier,
     roleLimitMode: (key as any).roleLimitMode || null,
     activeAddons,
+    addonHistory,
     liveUsage,
     stats: {
       today:   { ...todayStats },
@@ -882,6 +905,21 @@ keys.post("/keys/:id/reveal", async (c) => {
     keyPrefix: key.keyPrefix,
     keyMasked: maskKey(key.key),
   });
+});
+
+/** Refresh Discord badges/tier for a user (Keys list expand / manual). */
+keys.post("/keys/sync-roles", async (c) => {
+  const body = await c.req.json<{ discordUserId?: string }>().catch(() => ({} as any));
+  const discordUserId = String(body?.discordUserId || "").trim();
+  if (!/^\d{15,25}$/.test(discordUserId)) {
+    return c.json({ error: "Valid discordUserId required" }, 400);
+  }
+  const { syncUserKeyAccess } = await import("../../utils/key-access-lifecycle.js");
+  const result = await syncUserKeyAccess(discordUserId, { reason: "admin sync-roles" });
+  statsCache.invalidate("keys-list");
+  statsCache.invalidate("keys-list-fast");
+  statsCache.invalidate("keys-list-fast-v4");
+  return c.json({ success: true, ...result });
 });
 
 keys.get("/keys/:id/devices", async (c) => {

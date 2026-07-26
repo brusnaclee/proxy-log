@@ -111,6 +111,18 @@ export interface MeResponse {
     expiresAt: string | null;
     dailyTokenLimit: number;
   }>;
+  addonHistory?: Array<{
+    id: number;
+    addonId: number;
+    addonName: string;
+    startsAt: string;
+    expiresAt?: string | null;
+    endedAt?: string | null;
+    isActive: boolean;
+    status: "active" | "expired" | "revoked";
+    assignedBy: string;
+    dailyTokenLimit: number;
+  }>;
   addonModelTokenCaps?: Array<{ pattern: string; dailyLimit: number }>;
   perModelPromptsBypassedByAddon?: boolean;
   blockedWithoutAddon?: boolean;

@@ -444,6 +444,66 @@ export default function OverviewPage() {
     );
   };
 
+  const renderAddonHistory = () => {
+    const history = user?.addonHistory || [];
+    if (!history.length) return null;
+    return (
+      <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+        <div>
+          <h3 className="text-sm font-medium text-foreground">{t("Add-on history")}</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {t("Past and active pack assignments")}
+          </p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border/40 text-xs text-muted-foreground">
+                <th className="text-left py-2 pr-3 font-medium">{t("Add-on")}</th>
+                <th className="text-left py-2 pr-3 font-medium">{t("Started")}</th>
+                <th className="text-left py-2 pr-3 font-medium">{t("Expires")}</th>
+                <th className="text-left py-2 font-medium">{t("Status")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.map((h) => (
+                <tr key={h.id} className="border-b border-border/20">
+                  <td className="py-2 pr-3">
+                    <span className="font-mono text-xs text-foreground">{h.addonName}</span>
+                    {(h.dailyTokenLimit || 0) > 0 && (
+                      <span className="text-[10px] text-muted-foreground ml-1.5">
+                        +{(h.dailyTokenLimit / 1e6).toFixed(0)}M/day
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-2 pr-3 text-xs text-muted-foreground">
+                    {formatAddonExpiry(h.startsAt)}
+                  </td>
+                  <td className="py-2 pr-3 text-xs text-muted-foreground">
+                    {h.expiresAt ? formatAddonExpiry(h.expiresAt) : t("no expiry")}
+                  </td>
+                  <td className="py-2">
+                    <span
+                      className={`px-1.5 py-0.5 text-[10px] rounded-full border ${
+                        h.status === "active"
+                          ? "bg-emerald-400/15 text-emerald-300 border-emerald-400/30"
+                          : h.status === "expired"
+                            ? "bg-muted text-muted-foreground border-border"
+                            : "bg-amber-400/10 text-amber-300 border-amber-400/30"
+                      }`}
+                    >
+                      {h.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
   const renderCompareStrip = () => {
     if (!compare) return null;
     const { today, yesterday } = compare;
@@ -884,6 +944,9 @@ export default function OverviewPage() {
         <div className={`space-y-6${refreshing ? " opacity-70 transition-opacity" : ""}`}>
           {/* Limits card */}
           {renderLimitsCard()}
+
+          {/* Add-on history */}
+          {renderAddonHistory()}
 
           {/* Stat cards */}
           {renderStatCards()}

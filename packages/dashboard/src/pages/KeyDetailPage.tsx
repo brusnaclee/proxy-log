@@ -62,6 +62,7 @@ export default function KeyDetailPage() {
   const notify = useNotify();
   const [rotatedKey, setRotatedKey] = useState<string | null>(null);
   const [copiedReveal, setCopiedReveal] = useState(false);
+  const [showSetupHint, setShowSetupHint] = useState(false);
   const [copied, setCopied] = useState(false);
   const [statusText, setStatusText] = useState<string>("");
   const [accessTargetType, setAccessTargetType] = useState<"fingerprint" | "ip">("fingerprint");
@@ -747,7 +748,11 @@ export default function KeyDetailPage() {
 
       {keyData.isActive && (
         <Card className="border-blue-500/30 bg-blue-500/5">
-          <CardHeader className="pb-2">
+          <button
+            type="button"
+            className="w-full flex items-center justify-between gap-3 px-6 py-4 text-left"
+            onClick={() => setShowSetupHint((v) => !v)}
+          >
             <CardTitle className="text-base flex items-center gap-2 text-blue-400">
               <Info className="h-4 w-4" /> Setup di IDE / CLI
               {keyData.isTrial ? (
@@ -756,8 +761,14 @@ export default function KeyDetailPage() {
                 <Badge variant="outline" className="text-[10px] border-emerald-500/50 text-emerald-400">Phantom template</Badge>
               )}
             </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4 text-sm">
+            {showSetupHint ? (
+              <ChevronDown className="h-4 w-4 text-blue-400 shrink-0" />
+            ) : (
+              <ChevronRight className="h-4 w-4 text-blue-400 shrink-0" />
+            )}
+          </button>
+          {showSetupHint && (
+          <CardContent className="space-y-4 text-sm pt-0">
             <div>
               <div className="font-medium mb-1 flex items-center gap-2">
                 <span className="text-emerald-400">A.</span> OpenAI-compatible clients
@@ -793,6 +804,59 @@ export API_TIMEOUT_MS=500000`}
                 Trial: pakai endpoint OpenAI-compatible di atas. Model mengikuti aturan trial (lihat Trial Mode). Bukan template Phantom penuh.
               </p>
             )}
+          </CardContent>
+          )}
+        </Card>
+      )}
+
+      {(keyData.addonHistory?.length || 0) > 0 && (
+        <Card className="border-border/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Add-on history</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Assignments for Discord {keyData.discordUsername || keyData.discordUserId || "—"}
+            </p>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border/40 text-xs text-muted-foreground">
+                    <th className="text-left py-2 pr-3 font-medium">Add-on</th>
+                    <th className="text-left py-2 pr-3 font-medium">Started</th>
+                    <th className="text-left py-2 pr-3 font-medium">Expires / ended</th>
+                    <th className="text-left py-2 pr-3 font-medium">Status</th>
+                    <th className="text-left py-2 pr-3 font-medium">By</th>
+                    <th className="text-right py-2 font-medium">Pack</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {keyData.addonHistory!.map((h) => (
+                    <tr key={h.id} className="border-b border-border/20">
+                      <td className="py-2 pr-3 font-mono text-xs">{h.addonName}</td>
+                      <td className="py-2 pr-3 text-xs">{formatDate(h.startsAt)}</td>
+                      <td className="py-2 pr-3 text-xs">
+                        {h.expiresAt ? formatDate(h.expiresAt) : "no expiry"}
+                      </td>
+                      <td className="py-2 pr-3">
+                        <Badge
+                          variant={h.status === "active" ? "success" : "secondary"}
+                          className="text-[10px]"
+                        >
+                          {h.status}
+                        </Badge>
+                      </td>
+                      <td className="py-2 pr-3 text-xs text-muted-foreground">{h.assignedBy}</td>
+                      <td className="py-2 text-right text-xs tabular-nums">
+                        {(h.dailyTokenLimit || 0) > 0
+                          ? `+${formatNumber(h.dailyTokenLimit)}/day`
+                          : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </CardContent>
         </Card>
       )}

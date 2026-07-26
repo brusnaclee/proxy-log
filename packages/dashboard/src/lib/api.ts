@@ -254,6 +254,18 @@ export interface ApiKeyDetail extends ApiKeyListItem {
   accountTier?: string | null;
   roleLimitMode?: string | null;
   activeAddons?: Array<{ name: string; expiresAt?: string | null; dailyTokenLimit?: number }>;
+  addonHistory?: Array<{
+    id: number;
+    addonId: number;
+    addonName: string;
+    startsAt: string;
+    expiresAt?: string | null;
+    endedAt?: string | null;
+    isActive: boolean;
+    status: "active" | "expired" | "revoked";
+    assignedBy: string;
+    dailyTokenLimit: number;
+  }>;
   liveUsage?: LiveUsagePayload | null;
   stats: {
     today:   KeyPeriodStats;
@@ -406,6 +418,11 @@ export const keys = {
       `/keys/${id}/reveal`,
       { method: "POST" },
     ),
+  syncRoles: (discordUserId: string) =>
+    request<{ success: boolean; action?: string; accountBadges?: string[] }>(`/keys/sync-roles`, {
+      method: "POST",
+      body: JSON.stringify({ discordUserId }),
+    }),
   getDevices: (id: number) =>
     request<any[]>(`/keys/${id}/devices`),
   blockDevice: (keyId: number, fingerprint: string) =>

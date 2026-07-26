@@ -686,6 +686,15 @@ portal.get("/me", async (c) => {
       expiresAt: a.expiresAt ? new Date(a.expiresAt).toISOString() : null,
       dailyTokenLimit: a.dailyTokenLimit || 0,
     })),
+    addonHistory: await (async () => {
+      if (isTrial || !discordUserId) return [];
+      try {
+        const { listAddonHistoryForUser } = await import("../../utils/addons.js");
+        return await listAddonHistoryForUser(discordUserId, 30);
+      } catch {
+        return [];
+      }
+    })(),
     addonModelTokenCaps: (() => {
       const out: Array<{ pattern: string; dailyLimit: number }> = [];
       const seen = new Set<string>();

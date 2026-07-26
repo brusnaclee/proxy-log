@@ -86,6 +86,8 @@ export default function KeysPage() {
   const [overrideError, setOverrideError] = useState<string | null>(null);
   const navigate = useNavigate();
 
+  const [syncedRoles, setSyncedRoles] = useState<Record<string, boolean>>({});
+
   const groups = useMemo(() => groupKeysByDiscord(allKeys), [allKeys]);
 
   useEffect(() => {
@@ -102,6 +104,20 @@ export default function KeysPage() {
       return next;
     });
   }, [groups]);
+
+  const toggleGroup = async (gid: string, discordUserId: string | null, currentlyOpen: boolean) => {
+    const willOpen = !currentlyOpen;
+    setExpanded((p) => ({ ...p, [gid]: willOpen }));
+    if (willOpen && discordUserId && !syncedRoles[discordUserId]) {
+      try {
+        await keys.syncRoles(discordUserId);
+        setSyncedRoles((p) => ({ ...p, [discordUserId]: true }));
+        await loadKeys();
+      } catch (e) {
+        console.warn("[keys] sync-roles failed", e);
+      }
+    }
+  };
 
   const handleSSEMessage = useCallback(() => {
     void loadKeys();
@@ -274,7 +290,7 @@ export default function KeysPage() {
               <button
                 type="button"
                 className="w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-accent/30 transition-colors"
-                onClick={() => setExpanded((p) => ({ ...p, [gid]: !isOpen }))}
+                onClick={() => void toggleGroup(gid, g.discordUserId, isOpen)}
               >
                 {isOpen ? (
                   <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />

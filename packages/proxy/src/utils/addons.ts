@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { addonAssignments, addons, adminConfig, type Addon } from "../db/schema.js";
 import { normalizeModelForLimit } from "./rate-limit.js";
@@ -108,6 +108,73 @@ export async function getActiveAddonsForUser(opts: {
     }
   }
   return Array.from(byId.values());
+}
+
+export type AddonHistoryRow = {
+  id: number;
+  addonId: number;
+  addonName: string;
+  startsAt: string;
+  expiresAt: string | null;
+  endedAt: string | null;
+  isActive: boolean;
+  status: "active" | "expired" | "revoked";
+  assignedBy: string;
+  dailyTokenLimit: number;
+};
+
+/** All assignments for a Discord user (active + past) — admin/portal history. */
+export async function listAddonHistoryForUser(
+  discordUserId: string,
+  limit = 50,
+): Promise<AddonHistoryRow[]> {
+  const uid = String(discordUserId || "").trim();
+  if (!uid) return [];
+  const now = new Date();
+  const rows = await db
+    .select({
+      id: addonAssignments.id,
+      addonId: addonAssignments.addonId,
+      addonName: addons.name,
+      startsAt: addonAssignments.startsAt,
+      expiresAt: addonAssignments.expiresAt,
+      isActive: addonAssignments.isActive,
+      assignedBy: addonAssignments.assignedBy,
+      dailyTokenLimit: addons.dailyTokenLimit,
+    })
+    .from(addonAssignments)
+    .innerJoin(addons, eq(addonAssignments.addonId, addons.id))
+    .where(eq(addonAssignments.discordUserId, uid))
+    .orderBy(desc(addonAssignments.startsAt))
+    .limit(limit);
+
+  return rows.map((r) => {
+    const expired =
+      r.expiresAt != null && new Date(r.expiresAt).getTime() <= now.getTime();
+    const active = !!r.isActive && !expired;
+    const status: AddonHistoryRow["status"] = active
+      ? "active"
+      : expired
+        ? "expired"
+        : "revoked";
+
+    return {
+      id: r.id,
+      addonId: r.addonId,
+      addonName: r.addonName,
+      startsAt: new Date(r.startsAt).toISOString(),
+      expiresAt: r.expiresAt ? new Date(r.expiresAt).toISOString() : null,
+      endedAt: active
+        ? null
+        : r.expiresAt
+          ? new Date(r.expiresAt).toISOString()
+          : null,
+      isActive: active,
+      status,
+      assignedBy: r.assignedBy || "dashboard",
+      dailyTokenLimit: r.dailyTokenLimit || 0,
+    };
+  });
 }
 
 /** Global Settings → models that hard-require an add-on (empty = nothing locked). */
