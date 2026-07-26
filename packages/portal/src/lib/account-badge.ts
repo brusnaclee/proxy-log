@@ -1,4 +1,4 @@
-/** Display helpers for portal account badges (override / roles / trial). */
+/** Portal account badges: Premium / Pro / Phantom / Staff (+ Add-on). No Admin Override. */
 
 export type BadgeKey =
 	| "trial"
@@ -6,7 +6,7 @@ export type BadgeKey =
 	| "pro"
 	| "premium"
 	| "staff"
-	| "admin_override"
+	| "addon"
 	| "moderator"
 	| "troubleshooter"
 	| "contributor"
@@ -18,23 +18,26 @@ const LABEL: Record<string, string> = {
 	pro: "Pro",
 	premium: "Premium",
 	staff: "Staff",
-	admin_override: "Admin Override",
+	addon: "Add-on",
 	moderator: "Moderator",
 	troubleshooter: "Troubleshooter",
 	contributor: "Contributor",
 };
 
+/** Display order: staff first, then membership tiers, then add-on, trial last */
 const ORDER = [
-	"admin_override",
+	"staff",
 	"moderator",
 	"troubleshooter",
 	"contributor",
-	"staff",
 	"phantom",
 	"pro",
 	"premium",
+	"addon",
 	"trial",
 ];
+
+const HIDDEN = new Set(["admin_override", "none", ""]);
 
 export function badgeLabel(key: string): string {
 	return LABEL[key] || key;
@@ -42,8 +45,6 @@ export function badgeLabel(key: string): string {
 
 export function badgeClass(key: string): string {
 	switch (key) {
-		case "admin_override":
-			return "bg-sky-400/15 text-sky-300 border border-sky-400/30";
 		case "moderator":
 		case "troubleshooter":
 		case "contributor":
@@ -55,6 +56,8 @@ export function badgeClass(key: string): string {
 			return "bg-amber-400/15 text-amber-300 border border-amber-400/30";
 		case "phantom":
 			return "bg-primary/15 text-primary border border-primary/30";
+		case "addon":
+			return "bg-cyan-400/15 text-cyan-300 border border-cyan-400/30";
 		case "trial":
 			return "bg-yellow-400/15 text-yellow-400 border border-yellow-400/30";
 		default:
@@ -65,19 +68,40 @@ export function badgeClass(key: string): string {
 export function resolveDisplayBadges(
 	accountType?: string | null,
 	accountBadges?: string[] | null,
+	opts?: { hasAddon?: boolean },
 ): string[] {
 	const raw = Array.isArray(accountBadges) ? [...accountBadges] : [];
 	if (accountType && !raw.includes(accountType)) raw.unshift(accountType);
-	let uniq = [...new Set(raw.map((b) => String(b).trim()).filter(Boolean))];
-	// Paid / override accounts must never show Trial / Percobaan
+	if (opts?.hasAddon && !raw.includes("addon")) raw.push("addon");
+
+	let uniq = [
+		...new Set(
+			raw
+				.map((b) => String(b).trim())
+				.filter((b) => b && !HIDDEN.has(b)),
+		),
+	];
+
+	// Collapse staff role variants into one Staff badge
+	const hasStaffRole = uniq.some((b) =>
+		["staff", "moderator", "troubleshooter", "contributor"].includes(b),
+	);
+	if (hasStaffRole) {
+		uniq = uniq.filter(
+			(b) => !["moderator", "troubleshooter", "contributor"].includes(b),
+		);
+		if (!uniq.includes("staff")) uniq.push("staff");
+	}
+
 	const paid = uniq.some((b) =>
-		["admin_override", "phantom", "pro", "premium", "staff", "moderator", "troubleshooter", "contributor"].includes(b),
+		["phantom", "pro", "premium", "staff", "addon"].includes(b),
 	);
 	if (paid) uniq = uniq.filter((b) => b !== "trial");
+
 	uniq.sort((a, b) => {
 		const ia = ORDER.indexOf(a);
 		const ib = ORDER.indexOf(b);
 		return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
 	});
-	return uniq.slice(0, 4);
+	return uniq.slice(0, 5);
 }

@@ -15,6 +15,31 @@ import { ProvidersManager } from "@/components/ProvidersManager";
 import { useNotify } from "@/components/Notify";
 import { globalSettings, request, type ModelLimitEntry } from "@/lib/api";
 import { Switch } from "@/components/ui/switch";
+import { TOKEN_SAVER_INTRO, TOKEN_SAVER_PIPELINE, getTokenSaverFeature } from "@/lib/token-saver-copy";
+
+function TsFeatureHelp({ id }: { id: "rtk" | "groupyCompact" | "headroom" | "caveman" | "ponytail" | "batch" }) {
+  const f = getTokenSaverFeature(id);
+  return (
+    <div className="pr-4 space-y-1">
+      <Label className="font-medium">{f.label}</Label>
+      <p className="text-xs text-foreground/80">
+        <span className="font-medium">Effect: </span>{f.effectShort}
+      </p>
+      <p className="text-[11px] text-muted-foreground leading-relaxed">{f.effectLong}</p>
+      <p className="text-[11px] text-muted-foreground">
+        <span className="font-medium text-foreground/70">Example: </span>{f.exampleShort}
+        {" — "}{f.exampleLong}
+      </p>
+      <p className="text-[11px] text-amber-600/90 dark:text-amber-400/80">
+        <span className="font-medium">Risk: </span>{f.riskShort}
+        {" — "}{f.riskLong}
+      </p>
+      <p className="text-[10px] text-muted-foreground/70">
+        Recommended default: {f.defaultOn ? "ON" : "OFF"}
+      </p>
+    </div>
+  );
+}
 
 function bareModelId(id: string): string {
   const s = String(id || "");
@@ -416,33 +441,16 @@ export default function SettingsPage() {
         <CardHeader>
           <CardTitle className="text-base">Token Saver</CardTitle>
           <CardDescription className="space-y-2">
-            <p>
-              Global defaults for all users. Pipeline order:{" "}
-              <strong>RTK → Groupy Compact → Headroom → Caveman → Ponytail → Batch</strong>.
-              Users can override per-feature in the portal (Default / On / Off). One-shot kill switch: header{" "}
-              <code className="text-xs">X-Token-Saver: off</code>.
-            </p>
+            <p>{TOKEN_SAVER_INTRO.long}</p>
             <p className="text-xs">
-              RTK + Groupy Compact shrink <em>each hop&apos;s body</em> (tool dumps / history). Batch reduces the{" "}
-              <em>number of hops</em> by asking the model to act on more at once. Caveman/Ponytail touch{" "}
-              <em>style of output</em> via system prompts — keep them OFF unless you want terse agents.
-            </p>
-            <p className="text-xs">
-              See <code className="text-xs">docs/features/token_saver.md</code> for the full before/after case study of every feature.
+              Pipeline: <strong>{TOKEN_SAVER_PIPELINE}</strong>. See{" "}
+              <code className="text-xs">docs/features/token_saver.md</code>.
             </p>
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
-            <div className="pr-4">
-              <Label className="font-medium">RTK (compress tool output)</Label>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Truncates noisy tool_result content (git/grep/ls/read/shell). Keeps head+tail. Skips write/edit/apply tools and never mutates tool_calls JSON.
-              </p>
-              <p className="text-[11px] text-muted-foreground/80 mt-1">
-                Effect: biggest saver for Cline/Roo/Kilo. Risk: middle of a long dump is dropped. Recommended default: ON.
-              </p>
-            </div>
+            <TsFeatureHelp id="rtk" />
             <Switch checked={tokenSaverRtkEnabled} onCheckedChange={setTokenSaverRtkEnabled} />
           </div>
           {tokenSaverRtkEnabled && (
@@ -458,16 +466,7 @@ export default function SettingsPage() {
             </div>
           )}
           <div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
-            <div className="pr-4">
-              <Label className="font-medium">Groupy Compact</Label>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Smart trim for agent loops — keep the last tools full, stub older noisy tool dumps before upstream.
-                Does not delete messages or touch write/edit results.
-              </p>
-              <p className="text-[11px] text-muted-foreground/80 mt-1">
-                Effect: big savings on 10–200 hop Cline/OpenCode turns. Risk: model may re-read a stubbed file. Recommended default: ON (balanced).
-              </p>
-            </div>
+            <TsFeatureHelp id="groupyCompact" />
             <Switch
               checked={tokenSaverGroupyCompactEnabled}
               onCheckedChange={setTokenSaverGroupyCompactEnabled}
@@ -488,15 +487,7 @@ export default function SettingsPage() {
             </div>
           )}
           <div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
-            <div className="pr-4">
-              <Label className="font-medium">Headroom</Label>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Optional external POST /compress service. 3s timeout, fail-open (request continues if service is down).
-              </p>
-              <p className="text-[11px] text-muted-foreground/80 mt-1">
-                Effect: further shortens message history. Without a URL below, enabling does nothing. Recommended default: OFF.
-              </p>
-            </div>
+            <TsFeatureHelp id="headroom" />
             <Switch checked={tokenSaverHeadroomEnabled} onCheckedChange={setTokenSaverHeadroomEnabled} />
           </div>
           {tokenSaverHeadroomEnabled && (
@@ -511,15 +502,7 @@ export default function SettingsPage() {
             </div>
           )}
           <div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
-            <div className="pr-4">
-              <Label className="font-medium">Caveman</Label>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Injects a terse-reply system prompt (levels 1=light … 5=telegram). Does not alter tools — only reply style.
-              </p>
-              <p className="text-[11px] text-muted-foreground/80 mt-1">
-                Effect: fewer completion tokens. Risk: curt/odd prose; can confuse agents that need rich explanations. Recommended default: OFF.
-              </p>
-            </div>
+            <TsFeatureHelp id="caveman" />
             <Switch checked={tokenSaverCavemanEnabled} onCheckedChange={setTokenSaverCavemanEnabled} />
           </div>
           {tokenSaverCavemanEnabled && (
@@ -536,15 +519,7 @@ export default function SettingsPage() {
             </div>
           )}
           <div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
-            <div className="pr-4">
-              <Label className="font-medium">Ponytail</Label>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Injects anti-boilerplate for IDE agents: skip &quot;Sure!&quot;, skip plan restatements, act directly (lite / full / ultra).
-              </p>
-              <p className="text-[11px] text-muted-foreground/80 mt-1">
-                Effect: leaner agent loops (Cline/Roo). Risk: less narration. Recommended default: OFF.
-              </p>
-            </div>
+            <TsFeatureHelp id="ponytail" />
             <Switch checked={tokenSaverPonytailEnabled} onCheckedChange={setTokenSaverPonytailEnabled} />
           </div>
           {tokenSaverPonytailEnabled && (
@@ -562,21 +537,7 @@ export default function SettingsPage() {
             </div>
           )}
           <div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
-            <div className="pr-4">
-              <Label className="font-medium">Batch (fewer round-trips)</Label>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Injects a system prompt telling the model to request multiple reads or edits together in ONE response
-                (parallel tool_calls) instead of one file at a time. Does not change what the model can do — only how
-                many hits it takes to do it.
-              </p>
-              <p className="text-[11px] text-muted-foreground/80 mt-1">
-                Example: task needs 5 files → was 5 separate reads (5 upstream hits, full growing history resent each
-                time) → model asks for all 5 together (1 hit). Sequential steps that truly depend on seeing a prior
-                result (edit → run test → read error → fix) are not affected — this only helps the batchable
-                explore/edit portion of a session. Effect varies by model: some (e.g. Grok, Claude Opus) already
-                batch well; others (e.g. GLM, Gemini Flash) rarely do without this nudge. Recommended default: ON.
-              </p>
-            </div>
+            <TsFeatureHelp id="batch" />
             <Switch checked={tokenSaverBatchEnabled} onCheckedChange={setTokenSaverBatchEnabled} />
           </div>
         </CardContent>

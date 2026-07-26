@@ -11,7 +11,7 @@ import { apiKeyCache, statsCache } from "../../utils/cache.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
 import { enrichModelLimitsWithCatalog } from "../../utils/model-limits-enrich.js";
 import { isAuthenticated } from "../../middleware/session.js";
-import { isProtectedPrimaryApiKey } from "../../utils/api-key-primary.js";
+import { isProtectedPrimaryApiKey, isAdminDeleteBlocked } from "../../utils/api-key-primary.js";
 import { buildLiveUsageForKey } from "../../utils/live-usage.js";
 import { resolveAccountKeyScope } from "../../utils/api-key-account.js";
 import {
@@ -133,7 +133,7 @@ keys.get("/keys", async (c) => {
         discordUsername: key.discordUsername,
         provisionedBy: key.provisionedBy,
         isPrimary: isProtectedPrimaryApiKey(key),
-        canDelete: !isProtectedPrimaryApiKey(key),
+        canDelete: true,
         isActive: key.isActive,
         isTrial: key.isTrial || false,
         maxDevices: key.maxDevices,
@@ -307,8 +307,13 @@ keys.post("/keys/override-discord", async (c) => {
   // zero_unless_addon → hard 0 on I/O (and dedicated gated in proxy). follow_global → 0 = inherit global.
   const limitMode = resolved.limitMode;
   const accountTier =
-    resolved.primary === "none" ? "admin_override" : resolved.primary === "staff" ? "staff" : resolved.primary;
-  const badges = ["admin_override", ...resolved.badges.filter((b) => b !== "none")];
+    resolved.primary === "none"
+      ? "phantom"
+      : resolved.primary === "staff"
+        ? "staff"
+        : resolved.primary;
+  // Store real Discord roles only — never expose "admin_override" as a badge
+  const badges = resolved.badges.filter((b) => b && b !== "none" && b !== "admin_override");
 
   const key = generateApiKey();
   const safeUser = String(discordUsername || "user")
@@ -562,7 +567,7 @@ keys.get("/keys/:id", async (c) => {
     discordUsername: key.discordUsername,
     provisionedBy: key.provisionedBy,
     isPrimary: isProtectedPrimaryApiKey(key),
-    canDelete: !isProtectedPrimaryApiKey(key),
+    canDelete: !isAdminDeleteBlocked(key),
     isActive: key.isActive, isTrial: key.isTrial || false, maxDevices: key.maxDevices, devicePolicy: key.devicePolicy,
     ipPolicy: key.ipPolicy, idePolicy: key.idePolicy, 
     dailyTokenLimit: key.dailyTokenLimit || 0, monthlyTokenLimit: key.monthlyTokenLimit,
@@ -663,9 +668,9 @@ keys.delete("/keys/:id", async (c) => {
   const id = parseInt(c.req.param("id"));
   const key = (await db.select().from(apiKeys).where(eq(apiKeys.id, id)))[0];
   if (!key) return c.json({ error: "API key not found" }, 404);
-  if (isProtectedPrimaryApiKey(key)) {
+  if (isAdminDeleteBlocked(key)) {
     return c.json({
-      error: "Cannot delete the primary Discord/trial API key. Delete secondary portal keys only.",
+      error: "Cannot delete the primary Discord/trial API key. Delete secondary portal keys or override keys as needed.",
     }, 403);
   }
 

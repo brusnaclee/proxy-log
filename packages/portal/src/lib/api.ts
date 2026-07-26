@@ -36,7 +36,7 @@ export type LimitSource = "override" | "global" | "none" | "addon";
 export interface MeResponse {
   discordUserId: string;
   discordUsername: string | null;
-  accountType: "trial" | "phantom" | "pro" | "premium" | "staff" | "admin_override" | string;
+  accountType: "trial" | "phantom" | "pro" | "premium" | "staff" | string;
   accountBadges?: string[];
   trialExpiresAt: string | null;
   hasPassword: boolean;
@@ -421,6 +421,7 @@ export const recap = {
 
 export const notifications = {
   list: () => request<NotificationsResponse>("/notifications", "GET"),
+  dismiss: () => request<{ success: boolean; cleared: number }>("/notifications/dismiss", "POST"),
 };
 
 // ─── Settings ─────────────────────────────────────────────────────────────────

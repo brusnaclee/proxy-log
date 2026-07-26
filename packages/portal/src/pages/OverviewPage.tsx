@@ -5,7 +5,7 @@ import {
 } from "recharts";
 import {
   Activity, MessageSquare, Download, DollarSign, Users, Wrench, Zap,
-  Copy, Check, ChevronDown, ChevronUp, Bell, AlertTriangle, TrendingUp,
+  Copy, Check, ChevronDown, ChevronUp, AlertTriangle, TrendingUp,
   Info,
 } from "lucide-react";
 import { PeriodSelector, type PeriodKey } from "@/components/PeriodSelector";
@@ -165,23 +165,6 @@ export default function OverviewPage() {
 
   // ─── Render helpers ─────────────────────────────────────────────────────────
 
-  const renderAccountBadge = () => {
-    if (!user) return null;
-    const badges = resolveDisplayBadges(user.accountType, user.accountBadges);
-    return (
-      <span className="inline-flex flex-wrap gap-1">
-        {badges.map((b) => (
-          <span
-            key={b}
-            className={`px-2.5 py-0.5 text-xs font-medium rounded-full ${badgeClass(b)}`}
-          >
-            {t(badgeLabel(b))}
-          </span>
-        ))}
-      </span>
-    );
-  };
-
   const renderTrialCountdown = () => {
     if (!user || user.accountType !== "trial") return null;
     const limitsNote = (
@@ -220,17 +203,22 @@ export default function OverviewPage() {
     );
   };
 
-  const renderNotificationBanner = () => {
-    if (!user?.pendingNotifications?.length) return null;
+  const renderAccountBadge = () => {
+    if (!user) return null;
+    const badges = resolveDisplayBadges(user.accountType, user.accountBadges, {
+      hasAddon: (user.activeAddons || []).length > 0,
+    });
     return (
-      <div className="p-3 bg-primary/10 border border-primary/20 rounded-lg text-sm flex items-center gap-2">
-        <Bell className="w-4 h-4 text-primary flex-shrink-0" />
-        <span className="text-foreground">
-          {user.pendingNotifications.length} {t("Notifications")}:{" "}
-          {user.pendingNotifications[0]?.type?.replace(/_/g, " ")}
-          {user.pendingNotifications.length > 1 && ` +${user.pendingNotifications.length - 1} more`}
-        </span>
-      </div>
+      <span className="inline-flex flex-wrap gap-1">
+        {badges.map((b) => (
+          <span
+            key={b}
+            className={`px-2.5 py-0.5 text-xs font-medium rounded-full ${badgeClass(b)}`}
+          >
+            {t(badgeLabel(b))}
+          </span>
+        ))}
+      </span>
     );
   };
 
@@ -872,9 +860,7 @@ export default function OverviewPage() {
         </div>
       </div>
 
-      {/* Trial countdown + notifications */}
       {renderTrialCountdown()}
-      {renderNotificationBanner()}
 
       {/* Loading skeleton — only first load; keep previous charts while refreshing */}
       {loading && !stats ? (

@@ -8,6 +8,7 @@ import { useI18n, type Lang } from "@/lib/i18n";
 import { badgeClass, badgeLabel, resolveDisplayBadges } from "@/lib/account-badge";
 import { formatRelativeTime } from "@/lib/utils";
 import { useNotify } from "@/components/Notify";
+import { TOKEN_SAVER_FEATURES, TOKEN_SAVER_INTRO } from "@/lib/token-saver-copy";
 
 const REALTIME_KEY = "portal_realtime_enabled";
 
@@ -177,48 +178,88 @@ export default function SettingsPage() {
   };
 
   const TriState = ({
-    label, desc, effect, value, onChange, globalOn,
+    label,
+    effectShort,
+    effectLong,
+    exampleShort,
+    exampleLong,
+    riskShort,
+    riskLong,
+    value,
+    onChange,
+    globalOn,
   }: {
     label: string;
-    desc?: string;
-    effect?: string;
+    effectShort: string;
+    effectLong: string;
+    exampleShort: string;
+    exampleLong: string;
+    riskShort: string;
+    riskLong: string;
     value: boolean | null;
     onChange: (v: boolean | null) => void;
     globalOn: boolean;
-  }) => (
-    <div className="flex flex-col gap-2 py-4 border-b border-border/40 last:border-0">
-      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="text-sm text-foreground font-medium">{label}</div>
-          <div className="text-xs text-muted-foreground mt-0.5">
-            {t("Default")}: {globalOn ? t("On") : t("Off")}
+  }) => {
+    const [open, setOpen] = useState(false);
+    return (
+      <div className="flex flex-col gap-2 py-4 border-b border-border/40 last:border-0">
+        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-sm text-foreground font-medium">{label}</div>
+            <div className="text-xs text-muted-foreground mt-0.5">
+              {t("Default")}: {globalOn ? t("On") : t("Off")}
+            </div>
+            <p className="text-xs text-primary/90 mt-1.5 leading-relaxed">
+              <span className="font-medium text-foreground/80">{t("Effect")}: </span>
+              {effectShort}
+            </p>
+            <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
+              <span className="font-medium">{t("Example")}: </span>
+              {exampleShort}
+            </p>
+            <p className="text-[11px] text-amber-400/80 mt-1 leading-relaxed">
+              <span className="font-medium">{t("Risk")}: </span>
+              {riskShort}
+            </p>
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              className="text-[11px] text-primary hover:underline mt-1.5"
+            >
+              {open ? t("Show less") : t("Show more")}
+            </button>
+            {open && (
+              <div className="mt-2 space-y-2 text-[11px] text-muted-foreground leading-relaxed border border-border/50 rounded-lg p-2.5 bg-background/40">
+                <p><span className="text-foreground/80 font-medium">{t("Effect")} (detail): </span>{effectLong}</p>
+                <p><span className="text-foreground/80 font-medium">{t("Example")} (detail): </span>{exampleLong}</p>
+                <p><span className="text-amber-400/90 font-medium">{t("Risk")} (detail): </span>{riskLong}</p>
+              </div>
+            )}
           </div>
-          {desc && <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">{desc}</p>}
-          {effect && <p className="text-[11px] text-primary/80 mt-1 leading-relaxed">{effect}</p>}
-        </div>
-        <div className="flex gap-1 shrink-0">
-          {([null, true, false] as const).map((opt) => {
-            const active = value === opt;
-            const labelText = opt === null ? t("Default") : opt ? t("On") : t("Off");
-            return (
-              <button
-                key={String(opt)}
-                type="button"
-                onClick={() => onChange(opt)}
-                className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${
-                  active
-                    ? "bg-primary/15 border-primary/40 text-primary"
-                    : "border-border text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {labelText}
-              </button>
-            );
-          })}
+          <div className="flex gap-1 shrink-0">
+            {([null, true, false] as const).map((opt) => {
+              const active = value === opt;
+              const labelText = opt === null ? t("Default") : opt ? t("On") : t("Off");
+              return (
+                <button
+                  key={String(opt)}
+                  type="button"
+                  onClick={() => onChange(opt)}
+                  className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${
+                    active
+                      ? "bg-primary/15 border-primary/40 text-primary"
+                      : "border-border text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {labelText}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const handleRemoveWebhook = async () => {
     setWebhookError(""); setWebhookSuccess("");
@@ -286,7 +327,9 @@ export default function SettingsPage() {
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-foreground font-medium">{user?.discordUsername || "—"}</span>
-              {resolveDisplayBadges(user?.accountType, user?.accountBadges).map((b) => (
+              {resolveDisplayBadges(user?.accountType, user?.accountBadges, {
+                hasAddon: (user?.activeAddons || []).length > 0,
+              }).map((b) => (
                 <span key={b} className={`px-2 py-0.5 text-xs rounded-full ${badgeClass(b)}`}>
                   {t(badgeLabel(b))}
                 </span>
@@ -320,7 +363,7 @@ export default function SettingsPage() {
             Compact + RTK + Batch ON
           </span>
         </div>
-        <p className="text-xs text-muted-foreground mb-4">{t("Token Saver desc")}</p>
+        <p className="text-xs text-muted-foreground mb-4">{TOKEN_SAVER_INTRO.short}</p>
         {tsSuccess && (
           <div className="flex items-center gap-2 p-3 bg-green-400/10 border border-green-400/20 rounded-lg text-green-400 text-sm mb-3">
             <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
@@ -333,54 +376,44 @@ export default function SettingsPage() {
             {tsError}
           </div>
         )}
-        <TriState
-          label={t("RTK (tool compress)")}
-          desc={t("RTK desc")}
-          effect={t("RTK effect")}
-          value={tsRtk}
-          onChange={setTsRtk}
-          globalOn={!!tsGlobal?.rtk}
-        />
-        <TriState
-          label={t("Groupy Compact")}
-          desc={t("Groupy Compact desc")}
-          effect={t("Groupy Compact effect")}
-          value={tsGroupyCompact}
-          onChange={setTsGroupyCompact}
-          globalOn={tsGlobal?.groupyCompact !== false}
-        />
-        <TriState
-          label={t("Headroom")}
-          desc={t("Headroom desc")}
-          effect={t("Headroom effect")}
-          value={tsHeadroom}
-          onChange={setTsHeadroom}
-          globalOn={!!tsGlobal?.headroom}
-        />
-        <TriState
-          label={t("Caveman")}
-          desc={t("Caveman desc")}
-          effect={t("Caveman effect")}
-          value={tsCaveman}
-          onChange={setTsCaveman}
-          globalOn={!!tsGlobal?.caveman}
-        />
-        <TriState
-          label={t("Ponytail")}
-          desc={t("Ponytail desc")}
-          effect={t("Ponytail effect")}
-          value={tsPonytail}
-          onChange={setTsPonytail}
-          globalOn={!!tsGlobal?.ponytail}
-        />
-        <TriState
-          label={t("Batch")}
-          desc={t("Batch desc")}
-          effect={t("Batch effect")}
-          value={tsBatch}
-          onChange={setTsBatch}
-          globalOn={tsGlobal?.batch !== false}
-        />
+        {TOKEN_SAVER_FEATURES.map((f) => {
+          const value =
+            f.id === "rtk" ? tsRtk
+            : f.id === "groupyCompact" ? tsGroupyCompact
+            : f.id === "headroom" ? tsHeadroom
+            : f.id === "caveman" ? tsCaveman
+            : f.id === "ponytail" ? tsPonytail
+            : tsBatch;
+          const onChange =
+            f.id === "rtk" ? setTsRtk
+            : f.id === "groupyCompact" ? setTsGroupyCompact
+            : f.id === "headroom" ? setTsHeadroom
+            : f.id === "caveman" ? setTsCaveman
+            : f.id === "ponytail" ? setTsPonytail
+            : setTsBatch;
+          const globalOn =
+            f.id === "rtk" ? !!tsGlobal?.rtk
+            : f.id === "groupyCompact" ? tsGlobal?.groupyCompact !== false
+            : f.id === "headroom" ? !!tsGlobal?.headroom
+            : f.id === "caveman" ? !!tsGlobal?.caveman
+            : f.id === "ponytail" ? !!tsGlobal?.ponytail
+            : tsGlobal?.batch !== false;
+          return (
+            <TriState
+              key={f.id}
+              label={f.label}
+              effectShort={f.effectShort}
+              effectLong={f.effectLong}
+              exampleShort={f.exampleShort}
+              exampleLong={f.exampleLong}
+              riskShort={f.riskShort}
+              riskLong={f.riskLong}
+              value={value}
+              onChange={onChange}
+              globalOn={globalOn}
+            />
+          );
+        })}
         <button
           type="button"
           onClick={handleSaveTokenSaver}

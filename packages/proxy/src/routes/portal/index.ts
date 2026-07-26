@@ -27,7 +27,7 @@ import {
 } from "../../utils/rate-limit.js";
 import { logEmitter } from "../../utils/event-emitter.js";
 import { randomBytes } from "crypto";
-import { isProtectedPrimaryApiKey } from "../../utils/api-key-primary.js";
+import { isProtectedPrimaryApiKey, canUserDeleteApiKey, getPortalPrimaryKeyIds } from "../../utils/api-key-primary.js";
 
 const portal = new Hono();
 
@@ -260,9 +260,6 @@ portal.get("/me", async (c) => {
 
   const isTrial = await isTrialAccount(discordUserId);
   const primaryKey = userKeys.find(k => !k.isTrial && k.isActive) || userKeys.find(k => k.isActive) || userKeys[0];
-  const hasAdminOverride = userKeys.some(
-    (k) => k.isActive && !k.isTrial && String(k.provisionedBy || "") === "admin-override",
-  );
   const config = (await db.select().from(adminConfig).limit(1))[0] ?? null;
 
   const { getActiveAddonsForUser, sumAddonDailyTokenBonus, parseModelDailyLimits, resolveAddonQuotaStack, stackBaseDailyForKey } = await import("../../utils/addons.js");
@@ -566,32 +563,38 @@ portal.get("/me", async (c) => {
   } catch {
     accountBadges = [];
   }
-  // Never show trial badge when user has an active paid/override key
+  // Never expose Admin Override as a portal badge
+  accountBadges = accountBadges.filter((b) => b !== "admin_override" && b !== "none");
   if (!isTrial) {
     accountBadges = accountBadges.filter((b) => b !== "trial");
   }
   if (isTrial) {
     accountBadges = ["trial", ...accountBadges.filter((b) => b !== "trial")];
-  } else if (hasAdminOverride || (primaryKey as any)?.provisionedBy === "admin-override") {
-    if (!accountBadges.includes("admin_override")) {
-      accountBadges = ["admin_override", ...accountBadges];
-    }
   } else if (accountBadges.length === 0) {
-    accountBadges = ["phantom"];
+    const tierHint = String((primaryKey as any)?.accountTier || "").trim();
+    if (tierHint && tierHint !== "none" && tierHint !== "admin_override") {
+      accountBadges = [tierHint];
+    } else {
+      accountBadges = ["phantom"];
+    }
   }
+  if (!isTrial && activeAddons.length > 0 && !accountBadges.includes("addon")) {
+    accountBadges = [...accountBadges, "addon"];
+  }
+
   const tierRaw = String((primaryKey as any)?.accountTier || "").trim();
-  // Prefer Admin Override as the primary portal type (not Trial / not only Pro)
+  // Prefer real membership / staff tiers — never "admin_override"
   let accountType = isTrial
     ? "trial"
-    : hasAdminOverride || (primaryKey as any)?.provisionedBy === "admin-override"
-      ? "admin_override"
-      : tierRaw && tierRaw !== "none" && tierRaw !== "admin_override"
-        ? tierRaw
-        : accountBadges.includes("moderator") ||
-            accountBadges.includes("troubleshooter") ||
-            accountBadges.includes("contributor") ||
-            accountBadges.includes("staff")
-          ? "staff"
+    : tierRaw && tierRaw !== "none" && tierRaw !== "admin_override"
+      ? tierRaw
+      : accountBadges.includes("moderator") ||
+          accountBadges.includes("troubleshooter") ||
+          accountBadges.includes("contributor") ||
+          accountBadges.includes("staff")
+        ? "staff"
+        : accountBadges.includes("phantom")
+          ? "phantom"
           : accountBadges.includes("pro")
             ? "pro"
             : accountBadges.includes("premium")
@@ -1116,13 +1119,8 @@ portal.get("/keys", async (c) => {
   const result = [];
   const todayStart = wibTodayStartDate();
 
-  // Primary = Discord/trial-issued key; else oldest non-trial
-  const primary =
-    userKeys.find((k) => !k.isTrial && isProtectedPrimaryApiKey(k)) ||
-    userKeys.find((k) => isProtectedPrimaryApiKey(k)) ||
-    [...userKeys].filter((k) => !k.isTrial).sort((a, b) => Number(a.id) - Number(b.id))[0] ||
-    userKeys[0];
-  const primaryId = primary?.id ?? null;
+  // Primary badges: trial (if any) + override/phantom/oldest non-trial
+  const primaryIds = new Set(getPortalPrimaryKeyIds(userKeys));
 
   for (const key of userKeys) {
     const todayPw = and(
@@ -1134,7 +1132,7 @@ portal.get("/keys", async (c) => {
       requests: turnCountSql(todayPw!),
     }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${todayStart}`)))[0];
 
-    const isPrimary = key.id === primaryId;
+    const isPrimary = primaryIds.has(key.id);
     result.push({
       id: key.id,
       name: key.name,
@@ -1144,7 +1142,7 @@ portal.get("/keys", async (c) => {
       isActive: key.isActive,
       isTrial: key.isTrial || false,
       isPrimary,
-      canDelete: !isProtectedPrimaryApiKey(key) && !isPrimary,
+      canDelete: canUserDeleteApiKey(key),
       provisionedBy: key.provisionedBy,
       createdAt: key.createdAt,
       requestsToday: todayStats?.requests || 0,
@@ -1207,8 +1205,8 @@ portal.delete("/keys/:id", async (c) => {
   const key = (await db.select().from(apiKeys).where(and(eq(apiKeys.id, keyId), eq(apiKeys.discordUserId, discordUserId)))).find(Boolean);
   if (!key) return c.json({ error: "Key not found" }, 404);
 
-  if (isProtectedPrimaryApiKey(key)) {
-    return c.json({ error: "Cannot delete your primary Discord API key. You can delete additional keys you created." }, 403);
+  if (isProtectedPrimaryApiKey(key) || !canUserDeleteApiKey(key)) {
+    return c.json({ error: "Cannot delete this API key. Only keys you created yourself can be deleted." }, 403);
   }
 
   // Also block deleting the sole remaining key for this Discord account
@@ -1605,6 +1603,23 @@ portal.get("/notifications", async (c) => {
   }
 
   return c.json({ notifications, count: notifications.length });
+});
+
+portal.post("/notifications/dismiss", async (c) => {
+  const discordUserId = getPortalDiscordUserId(c)!;
+  const userKeys = await db.select({ id: apiKeys.id })
+    .from(apiKeys)
+    .where(eq(apiKeys.discordUserId, discordUserId));
+
+  let cleared = 0;
+  for (const k of userKeys) {
+    await db.update(apiKeys)
+      .set({ pendingNotification: null, updatedAt: new Date() })
+      .where(eq(apiKeys.id, k.id));
+    cleared += 1;
+  }
+
+  return c.json({ success: true, cleared });
 });
 
 // ─── Settings ─────────────────────────────────────────────────────────────────

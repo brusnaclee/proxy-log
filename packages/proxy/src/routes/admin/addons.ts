@@ -282,14 +282,20 @@ addonsApi.post("/addon-assignments", async (c) => {
 
   if (body.discordUserId) {
     const { queueUserNotificationByDiscord } = await import("../../utils/user-notify.js");
+    const roleHint = addon.discordRoleId
+      ? `\nRole Discord add-on akan di-sync otomatis (<@&${addon.discordRoleId}>).`
+      : "";
     await queueUserNotificationByDiscord(body.discordUserId, {
       type: "addon_assigned",
       title: "✅ Add-on Aktif",
       message:
         `Add-on **${addon.name}** telah diaktifkan` +
         (expiresAt ? ` (berakhir <t:${Math.floor(expiresAt.getTime() / 1000)}:F>)` : "") +
-        `.\nKuota harian pack: ${(addon.dailyTokenLimit || 0).toLocaleString()} tokens.`,
+        `.\nKuota harian pack: ${(addon.dailyTokenLimit || 0).toLocaleString()} tokens.` +
+        roleHint,
     });
+    const { syncUserKeyAccessAfterAddonChange } = await import("../../utils/key-access-lifecycle.js");
+    await syncUserKeyAccessAfterAddonChange(body.discordUserId, `add-on assigned: ${addon.name}`);
   }
 
   return c.json({ success: true, assignment: row });
@@ -329,6 +335,18 @@ addonsApi.patch("/addon-assignments/:id", async (c) => {
     });
   }
 
+  if (existing.discordUserId) {
+    const { syncUserKeyAccessAfterAddonChange } = await import("../../utils/key-access-lifecycle.js");
+    await syncUserKeyAccessAfterAddonChange(
+      existing.discordUserId,
+      body.isActive === false
+        ? "add-on deactivated"
+        : body.isActive === true
+          ? "add-on reactivated"
+          : "add-on updated",
+    );
+  }
+
   return c.json({ success: true, assignment: row });
 });
 
@@ -341,9 +359,15 @@ addonsApi.delete("/addon-assignments/:id", async (c) => {
       .update(addonAssignments)
       .set({ isActive: false, roleSyncAction: "revoke" } as any)
       .where(eq(addonAssignments.id, id));
+    const { syncUserKeyAccessAfterAddonChange } = await import("../../utils/key-access-lifecycle.js");
+    await syncUserKeyAccessAfterAddonChange(existing.discordUserId, "add-on assignment removed");
     return c.json({ success: true, softDeleted: true });
   }
   await db.delete(addonAssignments).where(eq(addonAssignments.id, id));
+  if (existing?.discordUserId) {
+    const { syncUserKeyAccessAfterAddonChange } = await import("../../utils/key-access-lifecycle.js");
+    await syncUserKeyAccessAfterAddonChange(existing.discordUserId, "add-on assignment deleted");
+  }
   return c.json({ success: true });
 });
 

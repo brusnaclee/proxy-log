@@ -376,6 +376,19 @@ async function revokeApiKeyForUser(userId, reason = 'Policy violation') {
 	});
 }
 
+/** Keep key if Phantom/Staff OR active add-on; Pro/Premium alone do not. */
+async function syncUserKeyAccess(userId, memberOrNull, reason) {
+	const roleIds = memberOrNull
+		? [...(memberOrNull.roles?.cache?.keys?.() || [])].map(String)
+		: [];
+	return proxyInternal('/admin/internal/sync-user-access', 'POST', {
+		discordUserId: userId,
+		roleIds: memberOrNull ? roleIds : null,
+		rolesKnown: true,
+		reason: reason || undefined,
+	});
+}
+
 function extractUserId(raw) {
 	if (!raw) return null;
 	const mention = String(raw).match(/^<@!?(\d+)>$/);
@@ -3770,7 +3783,7 @@ async function sendHowToDm(userId, kind, ctx) {
 }
 
 async function runDailyInactiveMemberCleanup() {
-	console.log('[daily-cleanup] starting inactive-member sweep');
+	console.log('[daily-cleanup] starting access sync (Phantom/Staff OR add-on)');
 	const channel = await client.channels
 		.fetch(AGVERIF_CHANNEL_ID)
 		.catch(() => null);
@@ -3780,17 +3793,20 @@ async function runDailyInactiveMemberCleanup() {
 	}
 	const guild = channel.guild;
 
-	const keys = await fetchAllActiveNonTrialKeys();
-	const candidates = keys.filter(
-		(k) => k.discordUserId && k.provisionedBy === 'discord-bot', // excludes 'admin-override' keys (imun dari auto-revoke)
-	);
+	const keys = await proxyInternal('/admin/internal/keys');
+	const list = Array.isArray(keys) ? keys : [];
+	const byUser = new Map();
+	for (const k of list) {
+		if (!k.discordUserId || k.isTrial) continue;
+		if (!byUser.has(k.discordUserId)) byUser.set(k.discordUserId, k);
+	}
 	console.log(
-		`[daily-cleanup] scanning ${candidates.length} agverif-provisioned keys`,
+		`[daily-cleanup] syncing ${byUser.size} Discord-linked non-trial users`,
 	);
 
 	const cleaned = [];
-	for (const key of candidates) {
-		const userId = key.discordUserId;
+	const reenabled = [];
+	for (const [userId, key] of byUser) {
 		let member = null;
 		try {
 			member = await guild.members.fetch({ user: userId, force: true });
@@ -3798,10 +3814,23 @@ async function runDailyInactiveMemberCleanup() {
 			/* user left guild */
 		}
 
-		const isVerified = member?.roles.cache.has(VERIFIED_ROLE_ID);
-		const isPhantom = member?.roles.cache.has(REQUIRED_ROLE_ID);
+		const isPhantom = !!(member && REQUIRED_ROLE_ID && member.roles.cache.has(REQUIRED_ROLE_ID));
+		const isVerified = !!(member && VERIFIED_ROLE_ID && member.roles.cache.has(VERIFIED_ROLE_ID));
 
-		if (!member || !isPhantom) {
+		let sync;
+		try {
+			sync = await syncUserKeyAccess(
+				userId,
+				member,
+				member ? 'daily access recheck' : 'left guild — daily recheck',
+			);
+		} catch (err) {
+			console.error('[daily-cleanup] sync failed:', userId, err.message || err);
+			continue;
+		}
+
+		// Agverif thread cleanup only when Phantom gone (key may still live via add-on)
+		if ((!member || !isPhantom) && key.provisionedBy === 'discord-bot') {
 			const verifiedData = client.agverifData.verifiedUsers[userId];
 			if (verifiedData?.threadId) {
 				const thread = await client.channels
@@ -3826,34 +3855,38 @@ async function runDailyInactiveMemberCleanup() {
 						console.error('[daily-cleanup] role remove failed:', err);
 					});
 			}
+		}
 
-			try {
-				await revokeApiKeyForUser(
-					userId,
-					'Phantom role hilang — daily cleanup',
-				);
-			} catch (err) {
-				console.error('[daily-cleanup] revoke failed:', err);
-			}
-
-			await sendDMToUser(
-				userId,
-				'API Key Dinonaktifkan',
-				'API key Phantom Anda telah dinonaktifkan karena role Phantom sudah tidak ada di akun Anda.\n\n' +
-					'Thread verifikasi Anda juga telah dihapus. Jika ini kesalahan, hubungi admin.',
-				0xff6b6b,
-			).catch((err) => console.error('[daily-cleanup] DM failed:', err));
-
+		if (sync?.action === 'disabled') {
 			cleaned.push({
 				userId,
 				keyId: key.id,
 				username: key.discordUsername || userId,
 			});
+			await sendDMToUser(
+				userId,
+				'API Key Dinonaktifkan',
+				'API key Anda dinonaktifkan karena tidak ada role Phantom/Staff dan tidak ada add-on aktif.\n\n' +
+					'Pro/Premium saja tidak menjaga key tetap aktif. Key aktif lagi otomatis jika Phantom kembali atau add-on diperpanjang.',
+				0xff6b6b,
+			).catch((err) => console.error('[daily-cleanup] DM failed:', err));
+		} else if (sync?.action === 'enabled') {
+			reenabled.push({
+				userId,
+				username: key.discordUsername || userId,
+				reason: sync.reason,
+			});
+		} else if ((!member || !isPhantom) && sync?.hasActiveAddon) {
+			// Phantom gone but add-on keeps key — optional quiet log
+			console.log(
+				`[daily-cleanup] keep ${key.discordUsername || userId}: add-on active (no Phantom)`,
+			);
 		}
 	}
 
 	console.log(
-		`[daily-cleanup] done. cleaned ${cleaned.length} members: ${cleaned.map((c) => c.username).join(', ') || '(none)'}`,
+		`[daily-cleanup] done. disabled ${cleaned.length}, re-enabled ${reenabled.length}. ` +
+			`disabled: ${cleaned.map((c) => c.username).join(', ') || '(none)'}`,
 	);
 }
 
@@ -6219,6 +6252,41 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 
 	const trialUser = isTrial || trial?.isTrial;
 	const bd = data.dailyTokenBreakdown;
+	const badgeLabels = (() => {
+		const order = ['staff', 'phantom', 'pro', 'premium', 'addon', 'trial'];
+		const hidden = new Set(['admin_override', 'none', '']);
+		let raw = Array.isArray(data.accountBadges) ? [...data.accountBadges] : [];
+		if (data.accountTier) raw.unshift(data.accountTier);
+		if (Array.isArray(data.activeAddons) && data.activeAddons.length > 0) raw.push('addon');
+		let uniq = [...new Set(raw.map((b) => String(b || '').trim()).filter((b) => b && !hidden.has(b)))];
+		const staffish = uniq.some((b) =>
+			['staff', 'moderator', 'troubleshooter', 'contributor'].includes(b),
+		);
+		if (staffish) {
+			uniq = uniq.filter((b) => !['moderator', 'troubleshooter', 'contributor'].includes(b));
+			if (!uniq.includes('staff')) uniq.push('staff');
+		}
+		const paid = uniq.some((b) => ['phantom', 'pro', 'premium', 'staff', 'addon'].includes(b));
+		if (paid) uniq = uniq.filter((b) => b !== 'trial');
+		uniq.sort((a, b) => {
+			const ia = order.indexOf(a);
+			const ib = order.indexOf(b);
+			return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+		});
+		const labelMap = {
+			staff: 'Staff',
+			phantom: 'Phantom',
+			pro: 'Pro',
+			premium: 'Premium',
+			addon: 'Add-on',
+			trial: 'Trial',
+		};
+		return uniq
+			.slice(0, 5)
+			.map((b) => labelMap[b] || b)
+			.join(' · ');
+	})();
+	const badgesLine = badgeLabels ? `\nBadges: **${badgeLabels}**` : '';
 	const stackNote =
 		bd && bd.addonBonus > 0
 			? (bd.inputBase || 0) > 0 || (bd.outputBase || 0) > 0
@@ -6301,7 +6369,7 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 	const embed = new EmbedBuilder()
 		.setTitle(`📊 Usage: ${displayName}`)
 		.setDescription(
-			`Discord ID: \`${discordUserId}\`\nAPI Key: \`${keyDisplay}\`\nStatus: ${isActive ? '🟢 Active' : '🔴 Inactive'}${trialBlock}\n\n` +
+			`Discord ID: \`${discordUserId}\`\nAPI Key: \`${keyDisplay}\`\nStatus: ${isActive ? '🟢 Active' : '🔴 Inactive'}${badgesLine}${trialBlock}\n\n` +
 				limitSection +
 				tokenSaverHint,
 		)
@@ -6337,27 +6405,62 @@ function tsGlobalOn(feature, g) {
 function buildTokenSaverPanel(data, headerNote) {
 	const g = data.global || {};
 	const o = data.overrides || {};
+	const blurbs = {
+		rtk: {
+			effect: 'Perkecil dump tool besar → input lebih ringan.',
+			example: 'git status 50KB → ~2KB head+tail.',
+			risk: 'Tengah dump panjang bisa hilang.',
+		},
+		groupyCompact: {
+			effect: 'Stub tool lama; yang baru tetap penuh.',
+			example: 'Hop 120 tak kirim ulang file hop 5–30.',
+			risk: 'Kadang minta re-read file di-stub.',
+		},
+		batch: {
+			effect: 'Beberapa read/edit sekaligus → lebih sedikit hop.',
+			example: '5 file: 5 hit → ideal 1 hit parallel.',
+			risk: 'Hanya nudge; langkah sequential tidak dihemat.',
+		},
+		headroom: {
+			effect: 'Compress history via service eksternal.',
+			example: '40 pesan → ~15 (jika URL admin ada).',
+			risk: 'Tanpa URL = no-op; depend pihak ketiga.',
+		},
+		caveman: {
+			effect: 'Jawaban lebih singkat → hemat output.',
+			example: 'Paragraf → 2–3 kalimat.',
+			risk: 'Gaya kasar; ganggu agent yang butuh narasi.',
+		},
+		ponytail: {
+			effect: 'Skip basa-basi IDE agent.',
+			example: 'Skip “I’ll read…” → langsung tool call.',
+			risk: 'Kurang status/narasi di chat.',
+		},
+	};
+	const field = (key, title) => {
+		const b = blurbs[key];
+		const state = fmtTriState(o[key], tsGlobalOn(key, g));
+		return {
+			name: `${title} · ${state.replace(/\*\*/g, '')}`,
+			value: `**Efek:** ${b.effect}\n**Contoh:** ${b.example}\n**Risiko:** ${b.risk}`,
+			inline: false,
+		};
+	};
 	const embed = new EmbedBuilder()
 		.setTitle('💾 Token Saver')
 		.setDescription(
 			(headerNote ? `${headerNote}\n\n` : '') +
-				'Pipeline: **RTK → Groupy Compact → Headroom → Caveman → Ponytail → Batch** (sebelum upstream).\n\n' +
-				'• **RTK** — potong tool dump besar (git/grep/read). Hemat input. Default ON.\n' +
-				'• **Groupy Compact** — stub tool result lama di agent loop; recent tetap penuh. Default ON.\n' +
-				'• **Batch** — minta AI baca/edit beberapa file sekaligus dalam 1 balasan, bukan satu-satu. Lebih sedikit hit ke upstream = hemat token. Default ON.\n' +
-				'• **Headroom** — compress eksternal (butuh URL admin). Default OFF.\n' +
-				'• **Caveman** — jawaban lebih singkat (system prompt). Bisa ubah gaya. Default OFF.\n' +
-				'• **Ponytail** — skip basa-basi agent IDE. Default OFF.\n\n' +
-				'Tri-state: **Default** (ikut admin) / **ON** / **OFF**. Klik tombol Headroom/Caveman/Ponytail untuk gonta-ganti state.\n' +
+				'Pipeline: **RTK → Groupy Compact → Headroom → Caveman → Ponytail → Batch**.\n' +
+				'Tri-state: **Default** (ikut admin) / **ON** / **OFF**. Detail lengkap: portal Settings.\n' +
 				`Portal: ${PORTAL_DASHBOARD_URL}/settings`,
 		)
 		.addFields(
-			{ name: 'RTK', value: fmtTriState(o.rtk, tsGlobalOn('rtk', g)), inline: true },
-			{ name: 'Groupy Compact', value: fmtTriState(o.groupyCompact, tsGlobalOn('groupyCompact', g)), inline: true },
-			{ name: 'Batch', value: fmtTriState(o.batch, tsGlobalOn('batch', g)), inline: true },
-			{ name: 'Headroom', value: fmtTriState(o.headroom, tsGlobalOn('headroom', g)), inline: true },
-			{ name: 'Caveman', value: fmtTriState(o.caveman, tsGlobalOn('caveman', g)), inline: true },
-			{ name: 'Ponytail', value: fmtTriState(o.ponytail, tsGlobalOn('ponytail', g)), inline: true },
+			field('rtk', 'RTK'),
+			field('groupyCompact', 'Groupy Compact'),
+			field('batch', 'Batch'),
+			field('headroom', 'Headroom'),
+			field('caveman', 'Caveman'),
+			field('ponytail', 'Ponytail'),
 		)
 		.setColor(headerNote ? 0x57f287 : 0x5865f2)
 		.setTimestamp();
@@ -7219,6 +7322,9 @@ client.on('guildMemberAdd', async (member) => {
 					),
 				);
 		}
+		await syncUserKeyAccess(member.id, member, 'guild rejoin').catch((err) =>
+			console.error('[access] rejoin sync failed:', err.message),
+		);
 	} catch (err) {
 		console.error('[addon-role] guildMemberAdd sync failed:', err.message);
 	}
@@ -8599,15 +8705,19 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 				} catch (_) {}
 
 				await removeVerifiedUser(newMember.id);
-				await revokeApiKeyForUser(
+				const sync = await syncUserKeyAccess(
 					newMember.id,
-					'Verification role removed',
+					newMember,
+					'Phantom role removed',
 				).catch((err) => {
 					console.error(
-						'[agverif] failed to revoke proxy key on role removal:',
+						'[agverif] failed to sync proxy key on role removal:',
 						err,
 					);
+					return null;
 				});
+				const keyDisabled = sync?.action === 'disabled';
+				const keptByAddon = sync?.hasActiveAddon && sync?.action !== 'disabled';
 
 				if (!threadExists) {
 					await removeThreadFromData(threadId);
@@ -8642,31 +8752,43 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 					}
 					await removeThreadFromData(threadId);
 
-					await sendDMToUser(
-						newMember.id,
-						'⚠️ Phantom Kadaluarsa',
-						`Paket Phantom anda sudah habis atau role telah dicabut.\n\n` +
-							`API key Antigravity anda telah dinonaktifkan.\n\n` +
-							`**Untuk melanjutkan:**\n` +
-							`1. Perpanjang paket Phantom anda\n` +
-							`2. Setelah dapat role Phantom baru, claim ulang API key di ${claimChannelMention}\n\n` +
-							`Jika ada pertanyaan, silakan hubungi admin.`,
-						0xff6b6b,
-					);
+					if (keptByAddon) {
+						await sendDMToUser(
+							newMember.id,
+							'⚠️ Phantom Kadaluarsa — Key Tetap Aktif',
+							`Paket Phantom anda sudah habis atau role telah dicabut.\n\n` +
+								`API key **tetap aktif** karena add-on Anda masih berjalan.\n` +
+								`Key akan dinonaktifkan otomatis saat add-on habis (kecuali Phantom/Staff kembali).`,
+							0xf59e0b,
+						);
+					} else if (keyDisabled) {
+						await sendDMToUser(
+							newMember.id,
+							'⚠️ Phantom Kadaluarsa',
+							`Paket Phantom anda sudah habis atau role telah dicabut.\n\n` +
+								`API key anda telah dinonaktifkan.\n\n` +
+								`**Untuk melanjutkan:**\n` +
+								`1. Perpanjang paket Phantom anda, atau aktifkan/perpanjang add-on\n` +
+								`2. Setelah dapat role Phantom baru, claim ulang API key di ${claimChannelMention}\n\n` +
+								`Jika ada pertanyaan, silakan hubungi admin.`,
+							0xff6b6b,
+						);
+					}
 				}
 			} else if (!AGVERIF_ENABLED) {
-				// Auto-claim mode: Phantom role was removed, revoke/disable API key
-				await revokeApiKeyForUser(
+				// Auto-claim mode: Phantom removed — keep key if add-on/staff still valid
+				const sync = await syncUserKeyAccess(
 					newMember.id,
+					newMember,
 					'Phantom role removed - auto-claim mode',
 				).catch((err) => {
 					console.error(
-						'[auto-claim] failed to revoke proxy key on Phantom role removal:',
+						'[auto-claim] failed to sync proxy key on Phantom role removal:',
 						err,
 					);
+					return null;
 				});
 
-				// Get channel name for claim instructions
 				let claimChannelMention = 'channel verifikasi';
 				try {
 					const claimChannel = await client.channels.fetch(AGVERIF_CHANNEL_ID);
@@ -8675,18 +8797,36 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 					}
 				} catch (_) {}
 
-				await sendDMToUser(
-					newMember.id,
-					'⚠️ Phantom Kadaluarsa',
-					`Paket Phantom anda sudah habis atau role telah dicabut.\n\n` +
-						`API key Antigravity anda telah dinonaktifkan.\n\n` +
-						`**Untuk melanjutkan:**\n` +
-						`1. Perpanjang paket Phantom anda\n` +
-						`2. Setelah dapat role Phantom baru, claim ulang API key di ${claimChannelMention}\n\n` +
-						`Jika ada pertanyaan, silakan hubungi admin.`,
-					0xff6b6b,
-				);
+				if (sync?.hasActiveAddon && sync?.action !== 'disabled') {
+					await sendDMToUser(
+						newMember.id,
+						'⚠️ Phantom Kadaluarsa — Key Tetap Aktif',
+						`Paket Phantom anda sudah habis atau role telah dicabut.\n\n` +
+							`API key **tetap aktif** karena add-on Anda masih berjalan.\n` +
+							`Key akan dinonaktifkan otomatis saat add-on habis (kecuali Phantom/Staff kembali).`,
+						0xf59e0b,
+					);
+				} else if (sync?.action === 'disabled') {
+					await sendDMToUser(
+						newMember.id,
+						'⚠️ Phantom Kadaluarsa',
+						`Paket Phantom anda sudah habis atau role telah dicabut.\n\n` +
+							`API key anda telah dinonaktifkan.\n\n` +
+							`**Untuk melanjutkan:**\n` +
+							`1. Perpanjang paket Phantom anda, atau aktifkan/perpanjang add-on\n` +
+							`2. Setelah dapat role Phantom baru, claim ulang API key di ${claimChannelMention}\n\n` +
+							`Jika ada pertanyaan, silakan hubungi admin.`,
+						0xff6b6b,
+					);
+				}
 			}
+		}
+
+		// Phantom (re)gained → re-enable key if it was disabled
+		if (!oldHasRole && newHasRole) {
+			await syncUserKeyAccess(newMember.id, newMember, 'Phantom role gained').catch(
+				(err) => console.error('[access] sync on Phantom gain failed:', err),
+			);
 		}
 	} catch (err) {
 		console.error('Error handling guild member update:', err);
@@ -8764,10 +8904,10 @@ client.on('guildMemberRemove', async (member) => {
 
 		// Bersihkan state verifikasi user
 		await removeVerifiedUser(userId);
-		await revokeApiKeyForUser(userId, 'User left Discord server').catch(
+		await syncUserKeyAccess(userId, null, 'User left Discord server').catch(
 			(err) => {
 				console.error(
-					'[agverif] failed to revoke proxy key on guild leave:',
+					'[agverif] failed to sync proxy key on guild leave:',
 					err,
 				);
 			},

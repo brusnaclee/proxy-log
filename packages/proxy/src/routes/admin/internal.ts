@@ -335,6 +335,8 @@ internal.get("/internal/keys", async (c) => {
     discordUsername: k.discordUsername,
     keyMasked: `${k.keyPrefix}...${k.key.slice(-4)}`,
     isActive: k.isActive,
+    isTrial: !!k.isTrial,
+    provisionedBy: k.provisionedBy || null,
     createdAt: k.createdAt,
   })));
 });
@@ -1040,6 +1042,24 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
       return out;
     })(),
     perModelPromptsBypassedByAddon: quotaStack.bypassPerModelPrompts,
+    accountTier: (() => {
+      const raw = String((key as any).accountTier || "").trim();
+      if (raw && raw !== "none" && raw !== "admin_override") return raw;
+      return key.isTrial ? "trial" : "phantom";
+    })(),
+    accountBadges: (() => {
+      let badges: string[] = [];
+      try {
+        badges = JSON.parse((key as any).accountBadges || "[]");
+        if (!Array.isArray(badges)) badges = [];
+      } catch {
+        badges = [];
+      }
+      badges = badges.filter((b) => b && b !== "admin_override" && b !== "none");
+      if (hasActiveAddon && !badges.includes("addon")) badges.push("addon");
+      if (key.isTrial && !badges.includes("trial")) badges.unshift("trial");
+      return badges;
+    })(),
     monthlyTokenLimit: key.isTrial ? 0 : (config?.globalMonthlyTokenLimit || 0),
     dailyInputTokenLimit: quotaStack.bypassIo
       ? quotaStack.inputBase
@@ -1175,10 +1195,14 @@ internal.get("/internal/addon-role-sync", async (c) => {
   const authErr = checkInternal(c);
   if (authErr) return authErr;
 
-  // Soft-expire: mark expired active assignments for revoke
+  // Soft-expire: mark expired active assignments for revoke + key lifecycle
   const now = new Date();
   const expired = await db
-    .select({ id: addonAssignments.id })
+    .select({
+      id: addonAssignments.id,
+      discordUserId: addonAssignments.discordUserId,
+      addonId: addonAssignments.addonId,
+    })
     .from(addonAssignments)
     .where(
       and(
@@ -1186,11 +1210,32 @@ internal.get("/internal/addon-role-sync", async (c) => {
         sql`${addonAssignments.expiresAt} IS NOT NULL AND ${addonAssignments.expiresAt} <= ${now}`,
       ),
     );
+
+  const expiredUsers: string[] = [];
+  const { syncUserKeyAccessAfterAddonChange } = await import("../../utils/key-access-lifecycle.js");
+  const { queueUserNotificationByDiscord } = await import("../../utils/user-notify.js");
+
   for (const row of expired) {
+    const [addon] = await db.select().from(addons).where(eq(addons.id, row.addonId)).limit(1);
     await db
       .update(addonAssignments)
       .set({ isActive: false, roleSyncAction: "revoke" } as any)
       .where(eq(addonAssignments.id, row.id));
+
+    if (row.discordUserId) {
+      expiredUsers.push(row.discordUserId);
+      await queueUserNotificationByDiscord(row.discordUserId, {
+        type: "addon_expired",
+        title: "⏰ Add-on Habis",
+        message:
+          `Add-on **${addon?.name || "pack"}** telah expired.\n` +
+          `Jika Anda tidak punya role Phantom/Staff, API key akan dinonaktifkan otomatis.`,
+      });
+      await syncUserKeyAccessAfterAddonChange(
+        row.discordUserId,
+        `add-on expired: ${addon?.name || row.addonId}`,
+      );
+    }
   }
 
   const pending = await db
@@ -1212,7 +1257,26 @@ internal.get("/internal/addon-role-sync", async (c) => {
       ),
     );
 
-  return c.json({ jobs: pending });
+  return c.json({ jobs: pending, expiredUsers: [...new Set(expiredUsers)] });
+});
+
+internal.post("/internal/sync-user-access", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+  const body = await c.req.json<{
+    discordUserId?: string;
+    roleIds?: string[] | null;
+    rolesKnown?: boolean;
+    reason?: string;
+  }>();
+  if (!body.discordUserId) return c.json({ error: "discordUserId is required" }, 400);
+  const { syncUserKeyAccess } = await import("../../utils/key-access-lifecycle.js");
+  const result = await syncUserKeyAccess(body.discordUserId, {
+    roleIds: body.roleIds,
+    rolesKnown: body.rolesKnown,
+    reason: body.reason,
+  });
+  return c.json({ success: true, ...result });
 });
 
 internal.post("/internal/addon-role-sync/:assignmentId/clear", async (c) => {
@@ -1225,6 +1289,41 @@ internal.post("/internal/addon-role-sync/:assignmentId/clear", async (c) => {
     .set({ roleSyncAction: null } as any)
     .where(eq(addonAssignments.id, assignmentId));
   return c.json({ success: true });
+});
+
+/** Queue Discord role grant for every active assignment that has a pack discordRoleId (backfill). */
+internal.post("/internal/addon-role-backfill", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+  const now = new Date();
+  const rows = await db
+    .select({
+      assignmentId: addonAssignments.id,
+      discordUserId: addonAssignments.discordUserId,
+      addonName: addons.name,
+      discordRoleId: addons.discordRoleId,
+    })
+    .from(addonAssignments)
+    .innerJoin(addons, eq(addonAssignments.addonId, addons.id))
+    .where(
+      and(
+        eq(addonAssignments.isActive, true),
+        eq(addons.isActive, true),
+        sql`${addonAssignments.discordUserId} IS NOT NULL`,
+        sql`${addons.discordRoleId} IS NOT NULL AND ${addons.discordRoleId} != ''`,
+        or(isNull(addonAssignments.expiresAt), gt(addonAssignments.expiresAt, now)),
+      ),
+    );
+
+  let queued = 0;
+  for (const row of rows) {
+    await db
+      .update(addonAssignments)
+      .set({ roleSyncAction: "grant" } as any)
+      .where(eq(addonAssignments.id, row.assignmentId));
+    queued += 1;
+  }
+  return c.json({ success: true, queued, jobs: rows });
 });
 
 /** Active add-on role IDs for a Discord user (guild rejoin re-grant). */

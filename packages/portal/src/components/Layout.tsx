@@ -1,10 +1,11 @@
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { LayoutDashboard, Key, Activity, Settings, LogOut, Menu, X, Zap, Boxes } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { badgeClass, badgeLabel, resolveDisplayBadges } from "@/lib/account-badge";
+import NotificationBell from "./NotificationBell";
 import RecapGate from "./RecapGate";
 
 export default function Layout() {
@@ -14,11 +15,14 @@ export default function Layout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
 
-  useEffect(() => {
+  const refreshUser = useCallback(() => {
     api.me().then((data: any) => setUser(data)).catch(() => navigate("/login"));
   }, [navigate]);
 
-  // Close mobile account menu on resize to desktop
+  useEffect(() => {
+    refreshUser();
+  }, [refreshUser]);
+
   useEffect(() => {
     const onResize = () => {
       if (window.innerWidth >= 1024) setMobileMenuOpen(false);
@@ -41,8 +45,13 @@ export default function Layout() {
     { to: "/settings", icon: Settings, label: t("Settings") },
   ];
 
+  const hasAddon = (user?.activeAddons || []).length > 0;
+  const notifCount = Array.isArray(user?.pendingNotifications)
+    ? user.pendingNotifications.length
+    : 0;
+
   const AccountBadge = () => {
-    const badges = resolveDisplayBadges(user?.accountType, user?.accountBadges);
+    const badges = resolveDisplayBadges(user?.accountType, user?.accountBadges, { hasAddon });
     if (!badges.length) return null;
     return (
       <span className="inline-flex flex-wrap gap-1">
@@ -60,7 +69,6 @@ export default function Layout() {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Desktop sidebar — fixed so it never scrolls with content */}
       <aside className="hidden lg:flex flex-col w-64 fixed inset-y-0 left-0 z-30 bg-card border-r border-border">
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border shrink-0">
           <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
@@ -72,7 +80,6 @@ export default function Layout() {
           </div>
         </div>
 
-        {/* User + logout near top (not stuck only at bottom) */}
         <div className="px-4 py-3 border-b border-border shrink-0 space-y-2">
           <div className="flex items-center gap-2 min-w-0">
             <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
@@ -81,7 +88,7 @@ export default function Layout() {
               </span>
             </div>
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="text-sm text-foreground truncate">
                   {user?.discordUsername || "..."}
                 </span>
@@ -121,8 +128,11 @@ export default function Layout() {
         </nav>
       </aside>
 
-      {/* Main — offset by sidebar width on desktop; alone scrolls */}
       <main className="lg:ml-64 min-h-screen flex flex-col pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-0">
+        <header className="hidden lg:flex sticky top-0 z-[45] items-center justify-end px-6 py-3 border-b border-border/60 bg-background/90 backdrop-blur-sm">
+          <NotificationBell initialCount={notifCount} onChanged={refreshUser} />
+        </header>
+
         <header className="lg:hidden sticky top-0 z-[45] flex items-center justify-between p-4 border-b border-border bg-card">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-md bg-primary/20 flex items-center justify-center">
@@ -130,7 +140,8 @@ export default function Layout() {
             </div>
             <span className="font-semibold text-foreground">Tokito</span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            <NotificationBell initialCount={notifCount} onChanged={refreshUser} />
             <AccountBadge />
             <span className="text-xs text-muted-foreground truncate max-w-[80px]">
               {user?.discordUsername}
@@ -146,7 +157,6 @@ export default function Layout() {
           </div>
         </header>
 
-        {/* Mobile account sheet — portal (not covering sidebar chrome incorrectly) */}
         {mobileMenuOpen && (
           <div className="lg:hidden fixed inset-0 z-[60]">
             <div

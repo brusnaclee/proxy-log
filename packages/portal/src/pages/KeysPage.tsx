@@ -321,21 +321,23 @@ export default function KeysPage() {
                       <span className={`px-2 py-0.5 text-xs rounded-full ${
                         key.isTrial
                           ? "bg-yellow-400/10 text-yellow-400"
-                          : user?.accountType === "admin_override"
-                            ? "bg-sky-400/10 text-sky-300"
-                            : "bg-primary/10 text-primary"
+                          : user?.accountType === "staff"
+                            ? "bg-violet-400/10 text-violet-300"
+                            : user?.accountType === "pro"
+                              ? "bg-emerald-400/10 text-emerald-300"
+                              : user?.accountType === "premium"
+                                ? "bg-amber-400/10 text-amber-300"
+                                : "bg-primary/10 text-primary"
                       }`}>
                         {key.isTrial
                           ? t("Trial")
-                          : user?.accountType === "admin_override"
-                            ? t("Admin Override")
+                          : user?.accountType === "staff"
+                            ? t("Staff")
                             : user?.accountType === "pro"
                               ? t("Pro")
                               : user?.accountType === "premium"
                                 ? t("Premium")
-                                : user?.accountType === "staff"
-                                  ? t("Staff")
-                                  : t("Phantom")}
+                                : t("Phantom")}
                       </span>
                     </div>
                     <div className="flex items-center gap-1">
