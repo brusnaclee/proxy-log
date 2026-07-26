@@ -65,74 +65,109 @@ function calculateBreakdownCosts(modelBreakdown: Array<{ model: string | null, p
 }
 
 keys.get("/keys", async (c) => {
-  const listBase = await statsCache.getOrFetch("keys-list", async () => {
-    const allKeys = await db.select().from(apiKeys);
+  // Default is fast list. Opt-in heavy per-key liveUsage with ?full=1 (never used by Keys page).
+  const wantFull =
+    c.req.query("full") === "1" ||
+    c.req.query("full") === "true" ||
+    c.req.query("live") === "1";
+
+  const listBase = await statsCache.getOrFetch("keys-list-fast", async () => {
+    const allKeys = await db.select().from(apiKeys).orderBy(desc(apiKeys.id));
     const config = (await db.select().from(adminConfig))[0];
-    const result = [];
 
-    for (const key of allKeys) {
-      const tmOpts = key.isTrial ? { isTrial: true as const } : undefined;
-      const _now = new Date();
-      const _wibOffset = 7 * 60 * 60 * 1000;
-      const _wibNow = new Date(_now.getTime() + _wibOffset);
-      _wibNow.setUTCHours(0, 0, 0, 0);
-      const _d = new Date(_wibNow.getTime() - _wibOffset);
-      const todayUtcDate = _d;
-      const todayWhere = and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${todayUtcDate}`, VALID_LOG_SQL)!;
-      const todayStats = (await db.select({
-        count: turnCountSql(todayWhere),
-        tokens: weightedHopTotalTokensSql(todayWhere, tmOpts),
-        cost: sql<number>`COALESCE(SUM(estimated_cost), 0)`,
-      })
-        .from(requestLogs).where(todayWhere))[0];
-      const todayBreakdown = applyTokenMultiplierRows(sanitizeRows((await db.execute(sql`
-        SELECT model, COALESCE(SUM(sum_delta), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
-        FROM (SELECT model, turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
-          FROM request_logs WHERE api_key_id = ${key.id} AND created_at >= ${todayUtcDate} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-          GROUP BY model, turn_id)
-        GROUP BY model
-      `)).rows as any[], ['promptTokens', 'completionTokens']), tmOpts);
-      const todayCost = calculateBreakdownCosts(todayBreakdown as any).totalCost;
-      const deviceCount = (await db.select({ count: sql<number>`count(*)` }).from(devices).where(eq(devices.apiKeyId, key.id)))[0];
-      const totalWhere = and(eq(requestLogs.apiKeyId, key.id), VALID_LOG_SQL)!;
-      const totalStats = (await db.select({
-        count: turnCountSql(totalWhere),
-        tokens: weightedHopTotalTokensSql(totalWhere, tmOpts),
-      })
-        .from(requestLogs).where(totalWhere))[0];
+    const _now = new Date();
+    const _wibOffset = 7 * 60 * 60 * 1000;
+    const _wibNow = new Date(_now.getTime() + _wibOffset);
+    _wibNow.setUTCHours(0, 0, 0, 0);
+    const todayUtcDate = new Date(_wibNow.getTime() - _wibOffset);
 
-      result.push({
-        id: key.id, name: key.name, keyPrefix: key.keyPrefix, keyMasked: maskKey(key.key),
+    // Batch aggregates — avoid N+1 (was ~4 heavy queries × hundreds of keys)
+    const [deviceRows, todayRows] = await Promise.all([
+      db
+        .select({
+          apiKeyId: devices.apiKeyId,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(devices)
+        .groupBy(devices.apiKeyId),
+      db.execute(sql`
+        SELECT
+          api_key_id AS "apiKeyId",
+          COUNT(DISTINCT turn_id) FILTER (
+            WHERE status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+          )::int AS "requestsToday",
+          COALESCE(SUM(
+            CASE WHEN status_code BETWEEN 200 AND 299
+              THEN COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0)
+              ELSE 0 END
+          ), 0)::bigint AS "tokensToday",
+          COALESCE(SUM(
+            CASE WHEN status_code BETWEEN 200 AND 299 THEN COALESCE(estimated_cost, 0) ELSE 0 END
+          ), 0)::float AS "estimatedCostToday"
+        FROM request_logs
+        WHERE created_at >= ${todayUtcDate}
+        GROUP BY api_key_id
+      `),
+    ]);
+
+    const deviceByKey = new Map<number, number>();
+    for (const r of deviceRows) deviceByKey.set(r.apiKeyId, Number(r.count) || 0);
+
+    const todayByKey = new Map<number, { requestsToday: number; tokensToday: number; estimatedCostToday: number }>();
+    for (const r of (todayRows.rows || []) as any[]) {
+      todayByKey.set(Number(r.apiKeyId), {
+        requestsToday: Number(r.requestsToday) || 0,
+        tokensToday: Number(r.tokensToday) || 0,
+        estimatedCostToday: Number(r.estimatedCostToday) || 0,
+      });
+    }
+
+    return allKeys.map((key) => {
+      const today = todayByKey.get(key.id);
+      return {
+        id: key.id,
+        name: key.name,
+        keyPrefix: key.keyPrefix,
+        keyMasked: maskKey(key.key),
         discordUserId: key.discordUserId,
         discordUsername: key.discordUsername,
         provisionedBy: key.provisionedBy,
         isPrimary: isProtectedPrimaryApiKey(key),
         canDelete: !isProtectedPrimaryApiKey(key),
-        isActive: key.isActive, isTrial: key.isTrial || false, maxDevices: key.maxDevices, devicePolicy: key.devicePolicy,
-        ipPolicy: key.ipPolicy, idePolicy: key.idePolicy,
-        dailyTokenLimit: key.dailyTokenLimit || 0, monthlyTokenLimit: key.monthlyTokenLimit,
-        dailyInputTokenLimit: key.dailyInputTokenLimit || 0, dailyOutputTokenLimit: key.dailyOutputTokenLimit || 0,
-        rateLimit: key.rateLimit || 0, rateLimitWindow: key.rateLimitWindow || config?.globalRateLimitWindow || "1h",
-        promptLimit: key.promptLimit || 0, promptLimitWindow: key.promptLimitWindow || config?.globalPromptLimitWindow || "1d",
-        deviceCount: deviceCount?.count || 0, requestsToday: todayStats?.count || 0,
-        tokensToday: todayStats?.tokens || 0, estimatedCostToday: todayCost,
-        totalRequests: totalStats?.count || 0,
-        totalTokens: totalStats?.tokens || 0, createdAt: key.createdAt,
-      });
-    }
-    return result;
-  }, 30_000);
+        isActive: key.isActive,
+        isTrial: key.isTrial || false,
+        maxDevices: key.maxDevices,
+        devicePolicy: key.devicePolicy,
+        ipPolicy: key.ipPolicy,
+        idePolicy: key.idePolicy,
+        dailyTokenLimit: key.dailyTokenLimit || 0,
+        monthlyTokenLimit: key.monthlyTokenLimit,
+        dailyInputTokenLimit: key.dailyInputTokenLimit || 0,
+        dailyOutputTokenLimit: key.dailyOutputTokenLimit || 0,
+        rateLimit: key.rateLimit || 0,
+        rateLimitWindow: key.rateLimitWindow || config?.globalRateLimitWindow || "1h",
+        promptLimit: key.promptLimit || 0,
+        promptLimitWindow: key.promptLimitWindow || config?.globalPromptLimitWindow || "1d",
+        deviceCount: deviceByKey.get(key.id) || 0,
+        requestsToday: today?.requestsToday || 0,
+        tokensToday: today?.tokensToday || 0,
+        estimatedCostToday: today?.estimatedCostToday || 0,
+        totalRequests: 0,
+        totalTokens: 0,
+        createdAt: key.createdAt,
+      };
+    });
+  }, 15_000);
 
-  // lite=1 skips heavy liveUsage (fast list); default still loads meters with concurrency cap
-  const lite = c.req.query("lite") === "1" || c.req.query("lite") === "true";
-  if (lite) {
+  if (!wantFull) {
     return c.json((listBase as any[]).map((row) => ({ ...row, liveUsage: null })));
   }
 
+  // Opt-in only: expensive per-key meters (kept for debugging / rare full export)
   const allKeysFresh = await db.select().from(apiKeys);
   const configFresh = (await db.select().from(adminConfig))[0];
   const liveByKeyId = new Map<number, Awaited<ReturnType<typeof buildLiveUsageForKey>>>();
-  await mapWithConcurrency(allKeysFresh, 6, async (key) => {
+  await mapWithConcurrency(allKeysFresh, 4, async (key) => {
     try {
       liveByKeyId.set(key.id, await buildLiveUsageForKey(key, configFresh));
     } catch (err) {
@@ -591,6 +626,7 @@ keys.put("/keys/:id", async (c) => {
   await db.update(apiKeys).set(updates).where(eq(apiKeys.id, id));
   apiKeyCache.clear();
   statsCache.invalidate("keys-list");
+  statsCache.invalidate("keys-list-fast");
 
   if (key.discordUserId) {
     if (body.isActive !== undefined && body.isActive !== key.isActive) {
@@ -632,7 +668,7 @@ keys.delete("/keys/:id", async (c) => {
     }, 403);
   }
 
-  // Notify before delete (queue on a sibling key if possible, else this key then delete — bot may miss)
+  // Notify before delete (queue on a sibling key if possible — sole-key delete cannot DM after row gone)
   if (key.discordUserId) {
     const siblings = await db.select().from(apiKeys).where(eq(apiKeys.discordUserId, key.discordUserId));
     const other = siblings.find((k) => k.id !== id);
@@ -642,20 +678,24 @@ keys.delete("/keys/:id", async (c) => {
         title: "🗑️ API Key Dihapus",
         message: `API key **${key.name}** telah dihapus oleh admin.`,
       });
-    } else {
-      await queueUserNotification(id, {
-        type: "key_deleted",
-        title: "🗑️ API Key Dihapus",
-        message: `API key **${key.name}** telah dihapus oleh admin.`,
-      });
-      // Give bot a short window: leave pending on deleted row won't work — clear after brief wait is impossible.
-      // Instead keep a tombstone: update then delay delete is too heavy; notify via sibling-only is enough.
     }
   }
 
-  await db.delete(apiKeys).where(eq(apiKeys.id, id));
+  try {
+    // Orphan rows (no FK): per-key model limit overrides
+    await db
+      .delete(modelLimits)
+      .where(and(eq(modelLimits.scope, "key"), eq(modelLimits.scopeId, id)));
+    await db.delete(apiKeys).where(eq(apiKeys.id, id));
+  } catch (err: any) {
+    console.error(`[keys] delete ${id} failed:`, err?.message || err);
+    return c.json({
+      error: err?.message || "Failed to delete API key (database constraint).",
+    }, 500);
+  }
   apiKeyCache.clear();
   statsCache.invalidate("keys-list");
+  statsCache.invalidate("keys-list-fast");
   return c.json({ success: true, message: "API key deleted" });
 });
 
@@ -688,6 +728,7 @@ keys.post("/keys/:id/rotate", async (c) => {
 
   apiKeyCache.clear();
   statsCache.invalidate("keys-list");
+  statsCache.invalidate("keys-list-fast");
   return c.json({ success: true, key: newKey, keyPrefix: getKeyPrefix(newKey), message: "API key rotated." });
 });
 
@@ -1010,6 +1051,7 @@ keys.put("/keys/:id/day-override", async (c) => {
       .delete(keyDayOverrides)
       .where(and(eq(keyDayOverrides.apiKeyId, keyId), eq(keyDayOverrides.dayWib, dayWib)));
     statsCache.invalidate("keys-list");
+    statsCache.invalidate("keys-list-fast");
     return c.json({ success: true, cleared: true, dayWib, override: null });
   }
 
@@ -1032,6 +1074,7 @@ keys.put("/keys/:id/day-override", async (c) => {
 
   const saved = await getKeyDayOverride(keyId, dayWib);
   statsCache.invalidate("keys-list");
+  statsCache.invalidate("keys-list-fast");
 
   const [fullKey] = await db.select().from(apiKeys).where(eq(apiKeys.id, keyId)).limit(1);
   if (fullKey?.discordUserId && dayOverrideHasAny(bonuses)) {
@@ -1071,6 +1114,7 @@ keys.delete("/keys/:id/day-override", async (c) => {
     .delete(keyDayOverrides)
     .where(and(eq(keyDayOverrides.apiKeyId, keyId), eq(keyDayOverrides.dayWib, dayParam)));
   statsCache.invalidate("keys-list");
+  statsCache.invalidate("keys-list-fast");
   return c.json({ success: true, dayWib: dayParam });
 });
 
@@ -1100,6 +1144,7 @@ keys.post("/keys/:id/reset-today-usage", async (c) => {
   }
 
   statsCache.invalidate("keys-list");
+  statsCache.invalidate("keys-list-fast");
   return c.json({
     success: true,
     dayWib,

@@ -95,15 +95,14 @@ export default function KeysPage() {
   const handleSSEMessage = useCallback(() => {
     void loadKeys();
   }, []);
-  useRealtimeSSE(handleSSEMessage, 700);
+  // Soft refresh only — avoid hammering /keys on every proxy hop
+  useRealtimeSSE(handleSSEMessage, 8000);
 
   const loadKeys = async () => {
     try {
-      // Fast first paint without liveUsage, then full meters
-      const lite = await keys.list({ lite: true });
-      setAllKeys(lite);
-      const full = await keys.list();
-      setAllKeys(full);
+      // Fast list only (no per-key liveUsage). Meters live on Key Detail.
+      const data = await keys.list({ lite: true });
+      setAllKeys(data);
     } catch {}
   };
 

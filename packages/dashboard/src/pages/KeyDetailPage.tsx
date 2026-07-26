@@ -55,6 +55,7 @@ export default function KeyDetailPage() {
   const [editDailyInputTokenLimit, setEditDailyInputTokenLimit] = useState(0);
   const [editDailyOutputTokenLimit, setEditDailyOutputTokenLimit] = useState(0);
   const [showDelete, setShowDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [showRotate, setShowRotate] = useState(false);
   const [showDayOverride, setShowDayOverride] = useState(false);
   const notify = useNotify();
@@ -134,7 +135,8 @@ export default function KeyDetailPage() {
       void loadSessionDetail(selectedSessionId);
     }
   }, [id, selectedSessionId]);
-  useRealtimeSSE(handleSSEMessage, 500);
+  // Soft refresh only — avoid hammering /keys on every proxy hop
+  useRealtimeSSE(handleSSEMessage, 5000);
 
   // Load per-key model breakdown
   const loadModelData = useCallback(async () => {
@@ -321,12 +323,19 @@ export default function KeyDetailPage() {
 
   const handleDelete = async () => {
     if (!id) return;
+    setDeleting(true);
     try {
-      await keys.delete(parseInt(id));
+      await keys.delete(parseInt(id, 10));
+      notify.success(`Deleted key "${keyData?.name || id}"`);
+      setShowDelete(false);
       navigate("/keys");
     } catch (error: any) {
+      const msg = error?.message || "Failed to delete API key.";
       setShowDelete(false);
-      setStatusText(error?.message || "Failed to delete API key.");
+      setStatusText(msg);
+      notify.error(msg);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -2217,8 +2226,10 @@ export API_TIMEOUT_MS=500000`}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowDelete(false)}>Cancel</Button>
-            <Button variant="destructive" onClick={handleDelete}>Delete</Button>
+            <Button variant="outline" onClick={() => setShowDelete(false)} disabled={deleting}>Cancel</Button>
+            <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
+              {deleting ? "Deleting…" : "Delete"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
