@@ -24,6 +24,11 @@ import {
 	buildAntiWasteShortCircuitJson,
 	buildAntiWasteShortCircuitSse,
 } from '../utils/anti-waste.js';
+import {
+	createResponsesSseState,
+	finalizeResponsesSse,
+	responsesSseFromChatPayload,
+} from '../utils/responses-sse.js';
 import { sanitizeChatMessageRoles } from '../utils/sanitize-message-roles.js';
 import {
 	convertResponseToOpenAI,
@@ -2196,11 +2201,13 @@ proxy.all('/*', async (c) => {
 			}
 		}
 
-		// Build Chat Completions request body
+		// Build Chat Completions request body.
+		// Codex Responses clients almost always stream; default true when omitted
+		// so upstream returns SSE we can finalize with response.completed.
 		const chatBody: any = {
 			model: requestBody.model,
 			messages,
-			stream: requestBody.stream ?? false,
+			stream: requestBody.stream !== false,
 		};
 		if (requestBody.temperature !== undefined)
 			chatBody.temperature = requestBody.temperature;
@@ -5251,9 +5258,7 @@ proxy.all('/*', async (c) => {
 			let openaiPassthroughBuffer = '';
 			let responsesBuffer = ''; // for Responses API SSE conversion
 			let clientAnthropicBuffer = '';
-			let responsesResponseId = `resp-${Date.now()}`;
-			let responsesSentCreated = false;
-			let responsesItemId = `msg-${Date.now()}`;
+			const responsesSseState = createResponsesSseState();
 			// FIX: Track SSE done events to drop duplicates
 			let openaiSawDone = false;
 			let anthropicSawDone = false;
@@ -5308,67 +5313,41 @@ proxy.all('/*', async (c) => {
 							}
 						}
 					} else if (isResponsesApi) {
-						// Responses API streaming: convert Chat Completions SSE to Responses API SSE
+						// Codex wire_api=responses: must emit full lifecycle + response.completed
 						responsesBuffer += decoder.decode(chunk, { stream: true });
 						const lines = responsesBuffer.split('\n');
 						responsesBuffer = lines.pop() || '';
 
 						for (const line of lines) {
-							if (!line.startsWith('data: ') || line === 'data: [DONE]') {
-								if (line === 'data: [DONE]') {
-									// Send response.completed event
-									const completedEvent = `event: response.completed\ndata: ${JSON.stringify({ type: 'response.completed', response: { id: responsesResponseId, object: 'response', status: 'completed' } })}\n\n`;
-									controller.enqueue(new TextEncoder().encode(completedEvent));
+							const trimmed = line.trim();
+							if (!trimmed) continue;
+							if (trimmed === 'data: [DONE]' || trimmed === 'data:[DONE]') {
+								for (const ev of finalizeResponsesSse(responsesSseState)) {
+									controller.enqueue(new TextEncoder().encode(ev));
 								}
 								continue;
 							}
-
-							const payloadText = line.slice(6).trim();
-							if (!payloadText) continue;
-
+							if (!trimmed.startsWith('data:')) continue;
+							const payloadText = trimmed.replace(/^data:\s?/, '').trim();
+							if (!payloadText || payloadText === '[DONE]') {
+								if (payloadText === '[DONE]') {
+									for (const ev of finalizeResponsesSse(responsesSseState)) {
+										controller.enqueue(new TextEncoder().encode(ev));
+									}
+								}
+								continue;
+							}
 							try {
 								const data = JSON.parse(payloadText);
 								appendToolsFromPayload(data);
 								if (detectToolCallsInResponse(data)) hasActualToolCalls = true;
 								consumeStreamPayload(acc, data);
-
-								// Send response.created on first chunk
-								if (!responsesSentCreated) {
-									responsesSentCreated = true;
-									responsesResponseId =
-										data.id?.replace('chatcmpl', 'resp') || responsesResponseId;
-									const createdEvent = `event: response.created\ndata: ${JSON.stringify({ type: 'response.created', response: { id: responsesResponseId, object: 'response', status: 'in_progress' } })}\n\n`;
-									controller.enqueue(new TextEncoder().encode(createdEvent));
+								for (const ev of responsesSseFromChatPayload(responsesSseState, data)) {
+									controller.enqueue(new TextEncoder().encode(ev));
 								}
-
-								// Convert delta to Responses API format — content only
-								// (do not dump reasoning_content into output_text; same Grok bug).
-								const delta = data.choices?.[0]?.delta;
-								const textDelta = delta?.content;
-								if (textDelta) {
-									const deltaEvent = `event: response.output_text.delta\ndata: ${JSON.stringify({ type: 'response.output_text.delta', item_id: responsesItemId, output_index: 0, content_index: 0, delta: textDelta })}\n\n`;
-									controller.enqueue(new TextEncoder().encode(deltaEvent));
-								}
-								const toolDeltas = delta?.tool_calls;
-								if (Array.isArray(toolDeltas)) {
-									for (const tc of toolDeltas) {
-										if (tc?.id && tc?.function?.name) {
-											const toolEvent = `event: response.output_item.added\ndata: ${JSON.stringify({
-												type: 'response.output_item.added',
-												output_index: 0,
-												item: {
-													type: 'function_call',
-													id: tc.id,
-													name: tc.function.name,
-													arguments: tc.function.arguments || '',
-												},
-											})}\n\n`;
-											controller.enqueue(new TextEncoder().encode(toolEvent));
-											hasActualToolCalls = true;
-										}
-									}
-								}
-							} catch {}
+							} catch {
+								/* ignore bad chunk */
+							}
 						}
 					} else if (isAnthropicRequest && clientAnthropicStreamState) {
 						clientAnthropicBuffer += decoder.decode(chunk, { stream: true });
@@ -5467,7 +5446,28 @@ proxy.all('/*', async (c) => {
 					}
 				},
 				flush(controller) {
-					if (isAnthropicRequest && clientAnthropicStreamState && !clientAnthropicStreamState.streamTerminated) {
+					if (isResponsesApi) {
+						// Drain remainder + always close with response.completed (Codex requires it).
+						const rem = responsesBuffer.trim();
+						responsesBuffer = '';
+						if (rem.startsWith('data:')) {
+							const payloadText = rem.replace(/^data:\s?/, '').trim();
+							if (payloadText && payloadText !== '[DONE]') {
+								try {
+									const data = JSON.parse(payloadText);
+									appendToolsFromPayload(data);
+									if (detectToolCallsInResponse(data)) hasActualToolCalls = true;
+									consumeStreamPayload(acc, data);
+									for (const ev of responsesSseFromChatPayload(responsesSseState, data)) {
+										controller.enqueue(new TextEncoder().encode(ev));
+									}
+								} catch { /* ignore */ }
+							}
+						}
+						for (const ev of finalizeResponsesSse(responsesSseState)) {
+							controller.enqueue(new TextEncoder().encode(ev));
+						}
+					} else if (isAnthropicRequest && clientAnthropicStreamState && !clientAnthropicStreamState.streamTerminated) {
 						const flushed = flushAnthropicStream(clientAnthropicStreamState);
 						if (flushed) {
 							controller.enqueue(new TextEncoder().encode(flushed));
