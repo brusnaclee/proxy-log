@@ -12,7 +12,7 @@ import { PeriodSelector, type PeriodKey } from "@/components/PeriodSelector";
 import { ChartBox } from "@/components/ChartBox";
 import { api, type MeResponse, type TopError } from "@/lib/api";
 import { formatNumber, formatCost, formatInputBreakdown } from "@/lib/utils";
-import { badgeClass, badgeLabel, resolveDisplayBadges } from "@/lib/account-badge";
+import { badgeClass, badgeLabel, resolveDisplayBadges, formatAddonExpiry } from "@/lib/account-badge";
 import { useI18n } from "@/lib/i18n";
 
 const CHART_COLORS = {
@@ -205,8 +205,10 @@ export default function OverviewPage() {
 
   const renderAccountBadge = () => {
     if (!user) return null;
+    const addons = user.activeAddons || [];
     const badges = resolveDisplayBadges(user.accountType, user.accountBadges, {
-      hasAddon: (user.activeAddons || []).length > 0,
+      hasAddon: addons.length > 0,
+      addons,
     });
     return (
       <span className="inline-flex flex-wrap gap-1">
@@ -216,6 +218,9 @@ export default function OverviewPage() {
             className={`px-2.5 py-0.5 text-xs font-medium rounded-full ${badgeClass(b)}`}
           >
             {t(badgeLabel(b))}
+            {b === "addon" && addons[0]?.expiresAt
+              ? ` · ${formatAddonExpiry(addons[0].expiresAt)}`
+              : ""}
           </span>
         ))}
       </span>
@@ -241,10 +246,8 @@ export default function OverviewPage() {
       } catch { return ""; }
     };
 
-    const dailyCap = limits.dailyTokenLimit || 0;
     const dailyUsed =
       usageToday.totalTokens ?? usageToday.promptTokens + usageToday.completionTokens;
-    const dailyLeft = dailyCap > 0 ? Math.max(0, dailyCap - dailyUsed) : null;
     const bars: Array<{
       label: string;
       value: number;
@@ -255,84 +258,50 @@ export default function OverviewPage() {
       softMode?: boolean;
       footer?: string;
     }> = [];
-    if (
-      limits.dailyInputTokenLimit > 0 ||
-      (user.dailyTokenBreakdown?.bypassIo && (user.dailyTokenBreakdown.inputBase || 0) > 0)
-    ) {
-      const inputMax = user.dailyTokenBreakdown?.bypassIo
-        ? user.dailyTokenBreakdown.inputBase || limits.dailyInputTokenLimit
-        : limits.dailyInputTokenLimit;
+    if (limits.dailyInputTokenLimit > 0) {
       const used = usageToday.promptTokens;
-      const overSoft = !!(user.dailyTokenBreakdown?.bypassIo && inputMax > 0 && used > inputMax);
-      const softLeft = Math.max(0, inputMax - used);
+      const inputMax = limits.dailyInputTokenLimit;
       const ctx = Number(usageToday.cachedTokens) || 0;
       const inp = Number(usageToday.billablePromptTokens) || 0;
       const ctxIn =
         ctx > 0 || inp > 0
           ? `context ${formatNumber(ctx)} + input ${formatNumber(inp)}`
           : "limit credit";
+      const bd = user.dailyTokenBreakdown;
+      const stack =
+        bd && bd.addonBonus > 0
+          ? `base ${formatNumber(bd.inputBase || bd.base || 0)} + pack ${formatNumber(bd.addonBonus)}`
+          : ctxIn;
       bars.push({
         label: t("Input Tokens"),
         value: used,
         max: inputMax,
-        softMode: !!user.dailyTokenBreakdown?.bypassIo,
-        sublabel: user.dailyTokenBreakdown?.bypassIo
-          ? `until daily ${formatNumber(dailyCap)} · ${ctxIn}`
-          : ctxIn,
-        source: user.dailyTokenBreakdown?.bypassIo
-          ? "add-on extends past soft"
+        softMode: false,
+        sublabel: bd && bd.addonBonus > 0 ? `${stack} · ${ctxIn}` : ctxIn,
+        source: bd && bd.addonBonus > 0
+          ? "base + pack → input"
           : sourceLabel(limits.dailyInputTokenLimitSource),
-        footer: user.dailyTokenBreakdown?.bypassIo
-          ? overSoft
-            ? `Exceeding soft · Daily remaining: ${dailyLeft != null ? formatNumber(dailyLeft) : "—"} / ${formatNumber(dailyCap)}`
-            : `Soft left: ${formatNumber(softLeft)} · then exceed until daily ${formatNumber(dailyCap)}`
-          : undefined,
         reset: formatReset(user.dailyResetAt),
       });
     }
-    if (
-      limits.dailyOutputTokenLimit > 0 ||
-      (user.dailyTokenBreakdown?.bypassIo && (user.dailyTokenBreakdown.outputBase || 0) > 0)
-    ) {
-      const outputMax = user.dailyTokenBreakdown?.bypassIo
-        ? user.dailyTokenBreakdown.outputBase || limits.dailyOutputTokenLimit
-        : limits.dailyOutputTokenLimit;
-      const used = usageToday.completionTokens;
-      const overSoft = !!(user.dailyTokenBreakdown?.bypassIo && outputMax > 0 && used > outputMax);
-      const softLeft = Math.max(0, outputMax - used);
+    if (limits.dailyOutputTokenLimit > 0) {
       bars.push({
         label: t("Output Tokens"),
-        value: used,
-        max: outputMax,
-        softMode: !!user.dailyTokenBreakdown?.bypassIo,
-        sublabel: user.dailyTokenBreakdown?.bypassIo
-          ? `until daily ${formatNumber(dailyCap)}`
-          : "tokens",
-        source: user.dailyTokenBreakdown?.bypassIo
-          ? "add-on extends past soft"
-          : sourceLabel(limits.dailyOutputTokenLimitSource),
-        footer: user.dailyTokenBreakdown?.bypassIo
-          ? overSoft
-            ? `Exceeding soft · Daily remaining: ${dailyLeft != null ? formatNumber(dailyLeft) : "—"} / ${formatNumber(dailyCap)}`
-            : `Soft left: ${formatNumber(softLeft)} · then exceed until daily ${formatNumber(dailyCap)}`
-          : undefined,
+        value: usageToday.completionTokens,
+        max: limits.dailyOutputTokenLimit,
+        softMode: false,
+        sublabel: "tokens",
+        source: sourceLabel(limits.dailyOutputTokenLimitSource),
         reset: formatReset(user.dailyResetAt),
       });
     }
     if (limits.dailyTokenLimit > 0) {
-      const bd = user.dailyTokenBreakdown;
-      const stack =
-        bd && bd.addonBonus > 0
-          ? (bd.inputBase || 0) > 0 || (bd.outputBase || 0) > 0
-            ? `in ${(bd.inputBase! / 1e6).toFixed(1)}M + out ${(bd.outputBase! / 1e6).toFixed(1)}M + pack ${(bd.addonBonus / 1e6).toFixed(1)}M`
-            : `base ${(bd.base / 1e6).toFixed(1)}M + pack ${(bd.addonBonus / 1e6).toFixed(1)}M`
-          : "tokens";
       bars.push({
         label: t("Daily Limit"),
         value: dailyUsed,
         max: limits.dailyTokenLimit,
-        sublabel: stack,
-        source: bd && bd.addonBonus > 0 ? "base + add-on" : sourceLabel(limits.dailyTokenLimitSource),
+        sublabel: "custom key daily",
+        source: sourceLabel(limits.dailyTokenLimitSource),
         reset: formatReset(user.dailyResetAt),
       });
     }
@@ -369,7 +338,10 @@ export default function OverviewPage() {
 
     const modelLimits = (user.modelUsageLimits || []).filter((m) => m.limit > 0 || m.used > 0);
     const hasAddon = (user.activeAddons || []).length > 0;
-    const pools = (user.dedicatedPools || []).filter((p) => p.limit > 0);
+    const pools =
+      user.blockedWithoutAddon
+        ? []
+        : (user.dedicatedPools || []).filter((p) => p.limit > 0);
     if (!bars.length && !modelLimits.length && !hasAddon && !pools.length) return null;
 
     return (
@@ -411,7 +383,10 @@ export default function OverviewPage() {
             {(user.activeAddons || []).map((a) => (
               <div key={a.name} className="flex justify-between gap-2 text-muted-foreground">
                 <span className="font-mono text-foreground">{a.name}</span>
-                <span>+{(a.dailyTokenLimit / 1e6).toFixed(0)}M/day</span>
+                <span>
+                  +{(a.dailyTokenLimit / 1e6).toFixed(0)}M/day
+                  {a.expiresAt ? ` · sampai ${formatAddonExpiry(a.expiresAt)}` : ""}
+                </span>
               </div>
             ))}
             {user.perModelPromptsBypassedByAddon && (
@@ -704,11 +679,11 @@ export default function OverviewPage() {
       { key: "toolCalls", label: t("Tool Calls"), icon: Wrench, value: stats.toolCalls, format: formatNumber },
     ];
     return (
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {cards.map(({ key, label, icon: Icon, value, format }) => (
           <div
             key={key}
-            className="bg-card border border-border rounded-xl p-4 transition-all duration-200 hover:border-primary/30 hover:bg-accent/20"
+            className="bg-card border border-border rounded-xl p-4 sm:p-5 transition-all duration-200 hover:border-primary/30 hover:bg-accent/20"
           >
             <div className="flex items-center gap-2 mb-2">
               <Icon className="w-4 h-4 text-muted-foreground" />
@@ -865,9 +840,9 @@ export default function OverviewPage() {
       {/* Loading skeleton — only first load; keep previous charts while refreshing */}
       {loading && !stats ? (
         <div className="space-y-6">
-          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="bg-card border border-border rounded-xl p-4 animate-pulse">
+          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {Array.from({ length: 7 }).map((_, i) => (
+              <div key={i} className="bg-card border border-border rounded-xl p-4 sm:p-5 animate-pulse">
                 <div className="h-4 w-16 bg-muted rounded mb-2" />
                 <div className="h-6 w-20 bg-muted rounded" />
               </div>

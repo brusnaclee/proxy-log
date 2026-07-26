@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useI18n, type Lang } from "@/lib/i18n";
-import { badgeClass, badgeLabel, resolveDisplayBadges } from "@/lib/account-badge";
+import { badgeClass, badgeLabel, resolveDisplayBadges, formatAddonExpiry } from "@/lib/account-badge";
 import { formatRelativeTime } from "@/lib/utils";
 import { useNotify } from "@/components/Notify";
 import { TOKEN_SAVER_FEATURES, TOKEN_SAVER_INTRO } from "@/lib/token-saver-copy";
@@ -325,15 +325,21 @@ export default function SettingsPage() {
               <User className="w-4 h-4 text-muted-foreground" />
               <span className="text-sm text-muted-foreground">{t("Discord Username")}</span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap justify-end">
               <span className="text-sm text-foreground font-medium">{user?.discordUsername || "—"}</span>
               {resolveDisplayBadges(user?.accountType, user?.accountBadges, {
-                hasAddon: (user?.activeAddons || []).length > 0,
-              }).map((b) => (
-                <span key={b} className={`px-2 py-0.5 text-xs rounded-full ${badgeClass(b)}`}>
-                  {t(badgeLabel(b))}
-                </span>
-              ))}
+                addons: user?.activeAddons || [],
+              }).map((b) => {
+                const addons = user?.activeAddons || [];
+                return (
+                  <span key={b} className={`px-2 py-0.5 text-xs rounded-full ${badgeClass(b)}`}>
+                    {t(badgeLabel(b))}
+                    {b === "addon" && addons[0]?.expiresAt
+                      ? ` · ${formatAddonExpiry(addons[0].expiresAt)}`
+                      : ""}
+                  </span>
+                );
+              })}
             </div>
           </div>
           <div className="flex items-center justify-between py-2 border-b border-border/40">

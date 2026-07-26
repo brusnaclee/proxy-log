@@ -130,7 +130,6 @@ import {
 	isAddonTeaseModel,
 	resolveAddonModelDailyTokenLimit,
 	resolveAddonQuotaStack,
-	stackBaseDailyForKey,
 	sumAddonDailyTokenBonus,
 	sumAddonMonthlyTokenBonus,
 } from '../utils/addons.js';
@@ -158,7 +157,7 @@ import {
 	buildTrialModelsToTry,
 	isRetryableUpstreamStatus,
 } from '../utils/trial-routing.js';
-import { resolveKeyApiCallLimit, resolveKeyDailyTokenLimit, resolveKeyPromptLimit } from '../utils/trial-config.js';
+import { resolveKeyApiCallLimit, resolveKeyPromptLimit } from '../utils/trial-config.js';
 import {
 	applyDayOverrideToPromptLimit,
 	applyDayOverrideToQuotaStack,
@@ -2474,25 +2473,16 @@ proxy.all('/*', async (c) => {
 			dw.setUTCHours(0, 0, 0, 0);
 			const ds = new Date(dw.getTime() - wibOffset);
 			const excludeDedicated = sqlExcludeDedicatedModels(autoDedicatedRulesEarly);
-			const rawInAuto =
-				keyRecord.dailyInputTokenLimit && keyRecord.dailyInputTokenLimit > 0
-					? keyRecord.dailyInputTokenLimit
-					: config.globalDailyInputTokenLimit || 0;
-			const rawOutAuto =
-				keyRecord.dailyOutputTokenLimit && keyRecord.dailyOutputTokenLimit > 0
-					? keyRecord.dailyOutputTokenLimit
-					: config.globalDailyOutputTokenLimit || 0;
 			const autoStackEarly = applyDayOverrideToQuotaStack(
 				resolveAddonQuotaStack({
 					hasActiveAddon: autoActiveAddons.length > 0,
-					keyOrGlobalDaily: stackBaseDailyForKey({
-						hasActiveAddon: autoActiveAddons.length > 0,
-						isTrial: !!keyRecord.isTrial,
-						keyDailyTokenLimit: keyRecord.dailyTokenLimit,
-						resolvedKeyOrGlobalDaily: resolveKeyDailyTokenLimit(keyRecord, config),
-					}),
-					dailyInput: Number(rawInAuto) || 0,
-					dailyOutput: Number(rawOutAuto) || 0,
+					isTrial: !!keyRecord.isTrial,
+					roleLimitMode: (keyRecord as any).roleLimitMode,
+					keyDailyInput: keyRecord.dailyInputTokenLimit,
+					keyDailyOutput: keyRecord.dailyOutputTokenLimit,
+					keyDailyTotal: keyRecord.dailyTokenLimit,
+					globalDailyInput: config.globalDailyInputTokenLimit,
+					globalDailyOutput: config.globalDailyOutputTokenLimit,
 					addonDailyBonus: sumAddonDailyTokenBonus(autoActiveAddons),
 				}),
 				dayBonuses,
@@ -2715,27 +2705,16 @@ proxy.all('/*', async (c) => {
 
 				// Dedicated pool: skip account daily/input/output; enforce model daily below
 				if (!autoDedicated) {
-				const rawInAuto =
-					!keyRecord.isTrial &&
-					(keyRecord.dailyInputTokenLimit && keyRecord.dailyInputTokenLimit > 0
-						? keyRecord.dailyInputTokenLimit
-						: config.globalDailyInputTokenLimit || 0);
-				const rawOutAuto =
-					!keyRecord.isTrial &&
-					(keyRecord.dailyOutputTokenLimit && keyRecord.dailyOutputTokenLimit > 0
-						? keyRecord.dailyOutputTokenLimit
-						: config.globalDailyOutputTokenLimit || 0);
 				const autoStack = applyDayOverrideToQuotaStack(
 					resolveAddonQuotaStack({
 					hasActiveAddon: autoActiveAddons.length > 0,
-					keyOrGlobalDaily: stackBaseDailyForKey({
-						hasActiveAddon: autoActiveAddons.length > 0,
-						isTrial: !!keyRecord.isTrial,
-						keyDailyTokenLimit: keyRecord.dailyTokenLimit,
-						resolvedKeyOrGlobalDaily: resolveKeyDailyTokenLimit(keyRecord, config),
-					}),
-					dailyInput: Number(rawInAuto) || 0,
-					dailyOutput: Number(rawOutAuto) || 0,
+					isTrial: !!keyRecord.isTrial,
+					roleLimitMode: (keyRecord as any).roleLimitMode,
+					keyDailyInput: keyRecord.isTrial ? 0 : keyRecord.dailyInputTokenLimit,
+					keyDailyOutput: keyRecord.isTrial ? 0 : keyRecord.dailyOutputTokenLimit,
+					keyDailyTotal: keyRecord.dailyTokenLimit,
+					globalDailyInput: config.globalDailyInputTokenLimit,
+					globalDailyOutput: config.globalDailyOutputTokenLimit,
 					addonDailyBonus: sumAddonDailyTokenBonus(autoActiveAddons),
 				}),
 					dayBonuses,
@@ -3968,27 +3947,16 @@ proxy.all('/*', async (c) => {
 
 		// Dedicated pool request: skip account daily/input/output (still count monthly).
 		// Shared-pool sums exclude dedicated models so they do not burn account daily.
-		const rawIn =
-			!keyRecord.isTrial &&
-			(keyRecord.dailyInputTokenLimit && keyRecord.dailyInputTokenLimit > 0
-				? keyRecord.dailyInputTokenLimit
-				: config.globalDailyInputTokenLimit || 0);
-		const rawOut =
-			!keyRecord.isTrial &&
-			(keyRecord.dailyOutputTokenLimit && keyRecord.dailyOutputTokenLimit > 0
-				? keyRecord.dailyOutputTokenLimit
-				: config.globalDailyOutputTokenLimit || 0);
 		const quotaStack = applyDayOverrideToQuotaStack(
 			resolveAddonQuotaStack({
 			hasActiveAddon: activeAddons.length > 0,
-			keyOrGlobalDaily: stackBaseDailyForKey({
-				hasActiveAddon: activeAddons.length > 0,
-				isTrial: !!keyRecord.isTrial,
-				keyDailyTokenLimit: keyRecord.dailyTokenLimit,
-				resolvedKeyOrGlobalDaily: resolveKeyDailyTokenLimit(keyRecord, config),
-			}),
-			dailyInput: Number(rawIn) || 0,
-			dailyOutput: Number(rawOut) || 0,
+			isTrial: !!keyRecord.isTrial,
+			roleLimitMode: (keyRecord as any).roleLimitMode,
+			keyDailyInput: keyRecord.isTrial ? 0 : keyRecord.dailyInputTokenLimit,
+			keyDailyOutput: keyRecord.isTrial ? 0 : keyRecord.dailyOutputTokenLimit,
+			keyDailyTotal: keyRecord.dailyTokenLimit,
+			globalDailyInput: config.globalDailyInputTokenLimit,
+			globalDailyOutput: config.globalDailyOutputTokenLimit,
 			addonDailyBonus: sumAddonDailyTokenBonus(activeAddons),
 		}),
 			dayBonuses,

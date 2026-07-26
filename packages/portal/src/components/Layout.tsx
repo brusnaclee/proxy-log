@@ -4,7 +4,7 @@ import { LayoutDashboard, Key, Activity, Settings, LogOut, Menu, X, Zap, Boxes }
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
-import { badgeClass, badgeLabel, resolveDisplayBadges } from "@/lib/account-badge";
+import { badgeClass, badgeLabel, resolveDisplayBadges, formatAddonExpiry } from "@/lib/account-badge";
 import NotificationBell from "./NotificationBell";
 import RecapGate from "./RecapGate";
 
@@ -49,9 +49,13 @@ export default function Layout() {
   const notifCount = Array.isArray(user?.pendingNotifications)
     ? user.pendingNotifications.length
     : 0;
+  const activeAddons = user?.activeAddons || [];
 
   const AccountBadge = () => {
-    const badges = resolveDisplayBadges(user?.accountType, user?.accountBadges, { hasAddon });
+    const badges = resolveDisplayBadges(user?.accountType, user?.accountBadges, {
+      hasAddon,
+      addons: activeAddons,
+    });
     if (!badges.length) return null;
     return (
       <span className="inline-flex flex-wrap gap-1">
@@ -59,8 +63,16 @@ export default function Layout() {
           <span
             key={b}
             className={`px-1.5 py-0.5 text-[10px] font-medium rounded-full ${badgeClass(b)}`}
+            title={
+              b === "addon" && activeAddons[0]?.expiresAt
+                ? `Until ${formatAddonExpiry(activeAddons[0].expiresAt)}`
+                : undefined
+            }
           >
             {t(badgeLabel(b))}
+            {b === "addon" && activeAddons[0]?.expiresAt
+              ? ` · ${formatAddonExpiry(activeAddons[0].expiresAt)}`
+              : ""}
           </span>
         ))}
       </span>

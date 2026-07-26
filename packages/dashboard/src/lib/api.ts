@@ -151,6 +151,7 @@ export interface LiveUsagePayload {
     bypassIo?: boolean;
     inputBase?: number;
     outputBase?: number;
+    dailyTotal?: number;
   };
   activeAddons?: Array<{
     name: string;
@@ -159,6 +160,7 @@ export interface LiveUsagePayload {
   }>;
   addonModelTokenCaps?: Array<{ pattern: string; dailyLimit: number }>;
   perModelPromptsBypassedByAddon?: boolean;
+  blockedWithoutAddon?: boolean;
   dedicatedPools?: Array<{
     model: string;
     isPattern: boolean;
@@ -205,6 +207,21 @@ export interface ApiKeyListItem {
   provisionedBy?: string | null;
   isPrimary?: boolean;
   canDelete?: boolean;
+  accountBadges?: string[];
+  accountTier?: string | null;
+  roleLimitMode?: string | null;
+  activeAddons?: Array<{ name: string; expiresAt?: string | null; dailyTokenLimit?: number }>;
+  /** Soft remaining for list (always filled on fast list — not null like liveUsage) */
+  quotaHint?: {
+    bypassIo?: boolean;
+    dailyLeft?: number | null;
+    inputLeft?: number | null;
+    outputLeft?: number | null;
+    promptsLeftToday?: number | null;
+    inputUsed?: number;
+    outputUsed?: number;
+    dailyUsed?: number;
+  } | null;
   liveUsage?: LiveUsagePayload | null;
 }
 
@@ -233,6 +250,10 @@ export interface ApiKeyDetail extends ApiKeyListItem {
   perModelPromptLimit: number;
   perModelPromptLimitWindow: string;
   updatedAt: string;
+  accountBadges?: string[];
+  accountTier?: string | null;
+  roleLimitMode?: string | null;
+  activeAddons?: Array<{ name: string; expiresAt?: string | null; dailyTokenLimit?: number }>;
   liveUsage?: LiveUsagePayload | null;
   stats: {
     today:   KeyPeriodStats;
@@ -380,6 +401,11 @@ export const keys = {
     request<{ success: boolean }>(`/keys/${id}`, { method: "DELETE" }),
   rotate: (id: number) =>
     request<{ success: boolean; key: string; keyPrefix: string }>(`/keys/${id}/rotate`, { method: "POST" }),
+  reveal: (id: number) =>
+    request<{ id: number; name: string; key: string; keyPrefix: string; keyMasked: string }>(
+      `/keys/${id}/reveal`,
+      { method: "POST" },
+    ),
   getDevices: (id: number) =>
     request<any[]>(`/keys/${id}/devices`),
   blockDevice: (keyId: number, fingerprint: string) =>

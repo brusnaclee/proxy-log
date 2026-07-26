@@ -21,7 +21,7 @@ import { configCache } from "../../utils/cache.js";
 import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, peakPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, inputHopWeightSqlExpr, getTokenLimitWeightModeSync, weightedHopInputTokensSql, weightedHopTotalTokensSql, modelLimitCreditBreakdownSql } from "../../utils/counting.js";
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
-import { resolveKeyDailyTokenLimit, resolveKeyPromptLimit, resolveKeyApiCallLimit } from "../../utils/trial-config.js";
+import { resolveKeyPromptLimit, resolveKeyApiCallLimit } from "../../utils/trial-config.js";
 import { listGpyCatalogModels } from "../../utils/trial-routing.js";
 
 const internal = new Hono();
@@ -834,7 +834,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   const [config] = await db.select().from(adminConfig);
 
   const isTrialKey = key.isTrial;
-  const { getActiveAddonsForUser, sumAddonDailyTokenBonus, parseModelDailyLimits, resolveAddonQuotaStack, stackBaseDailyForKey } = await import("../../utils/addons.js");
+  const { getActiveAddonsForUser, sumAddonDailyTokenBonus, parseModelDailyLimits, resolveAddonQuotaStack } = await import("../../utils/addons.js");
   const activeAddons = !isTrialKey
     ? await getActiveAddonsForUser({
         discordUserId: key.discordUserId,
@@ -965,20 +965,16 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     trialInfo = { isTrial: false };
   }
 
-  const baseDailyTokenLimit = resolveKeyDailyTokenLimit(key, config);
-  const rawIn = key.isTrial ? 0 : ((key.dailyInputTokenLimit && key.dailyInputTokenLimit > 0) ? key.dailyInputTokenLimit : (config?.globalDailyInputTokenLimit || 0));
-  const rawOut = key.isTrial ? 0 : ((key.dailyOutputTokenLimit && key.dailyOutputTokenLimit > 0) ? key.dailyOutputTokenLimit : (config?.globalDailyOutputTokenLimit || 0));
   const hasActiveAddon = activeAddons.length > 0;
   const quotaStack = resolveAddonQuotaStack({
     hasActiveAddon,
-    keyOrGlobalDaily: stackBaseDailyForKey({
-      hasActiveAddon,
-      isTrial: !!key.isTrial,
-      keyDailyTokenLimit: key.dailyTokenLimit,
-      resolvedKeyOrGlobalDaily: baseDailyTokenLimit,
-    }),
-    dailyInput: rawIn,
-    dailyOutput: rawOut,
+    isTrial: !!key.isTrial,
+    roleLimitMode: (key as any).roleLimitMode,
+    keyDailyInput: key.isTrial ? 0 : key.dailyInputTokenLimit,
+    keyDailyOutput: key.isTrial ? 0 : key.dailyOutputTokenLimit,
+    keyDailyTotal: key.dailyTokenLimit,
+    globalDailyInput: config?.globalDailyInputTokenLimit,
+    globalDailyOutput: config?.globalDailyOutputTokenLimit,
     addonDailyBonus,
   });
   const effectiveDailyTokenLimit = quotaStack.effectiveDaily;
@@ -1016,12 +1012,13 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     perModelPromptLimitWindow: perModelWindowFallback,
     dailyTokenLimit: effectiveDailyTokenLimit,
     dailyTokenBreakdown: {
-      base: quotaStack.baseDaily,
+      base: quotaStack.inputBase,
       addonBonus: quotaStack.addonBonus,
-      effective: quotaStack.effectiveDaily,
-      bypassIo: quotaStack.bypassIo,
+      effective: quotaStack.dailyInputLimit,
+      bypassIo: false,
       inputBase: quotaStack.inputBase,
       outputBase: quotaStack.outputBase,
+      dailyTotal: quotaStack.effectiveDaily,
     },
     activeAddons: activeAddons.map((a) => ({
       name: a.name,
@@ -1061,12 +1058,8 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
       return badges;
     })(),
     monthlyTokenLimit: key.isTrial ? 0 : (config?.globalMonthlyTokenLimit || 0),
-    dailyInputTokenLimit: quotaStack.bypassIo
-      ? quotaStack.inputBase
-      : quotaStack.dailyInputLimit,
-    dailyOutputTokenLimit: quotaStack.bypassIo
-      ? quotaStack.outputBase
-      : quotaStack.dailyOutputLimit,
+    dailyInputTokenLimit: quotaStack.dailyInputLimit,
+    dailyOutputTokenLimit: quotaStack.dailyOutputLimit,
     dailyTokensUsed: todaySharedStats?.tokens || 0,
     monthlyTokensUsed: monthStats?.tokens || 0,
     dailyInputUsed: todaySharedStats?.promptTokens || 0,

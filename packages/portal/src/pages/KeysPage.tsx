@@ -279,9 +279,9 @@ export default function KeysPage() {
 
       {/* Keys list */}
       {loading ? (
-        <div className="space-y-3">
+        <div className="space-y-4">
           {Array.from({ length: 2 }).map((_, i) => (
-            <div key={i} className="bg-card border border-border rounded-xl p-4 animate-pulse">
+            <div key={i} className="bg-card border border-border rounded-xl p-4 sm:p-5 animate-pulse">
               <div className="h-5 w-32 bg-muted rounded mb-2" />
               <div className="h-4 w-48 bg-muted rounded" />
             </div>
@@ -300,10 +300,10 @@ export default function KeysPage() {
           )}
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-4">
           {keys.map((key) => (
             <div key={key.id} className="bg-card border border-border rounded-xl overflow-hidden">
-              <div className="p-4">
+              <div className="p-4 sm:p-5">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">

@@ -116,7 +116,9 @@ export function LiveUsageCard({
     perModelPromptsBypassedByAddon,
     dedicatedPools,
   } = live;
-  const pools = (dedicatedPools || []).filter((p) => p.limit > 0);
+  const pools = live.blockedWithoutAddon
+    ? []
+    : (dedicatedPools || []).filter((p) => p.limit > 0);
 
   const bars: Array<{
     label: string;
@@ -129,9 +131,6 @@ export function LiveUsageCard({
     softMode?: boolean;
     footerLeft?: string;
   }> = [];
-
-  const dailyCap = limits.dailyTokenLimit || 0;
-  const dailyLeft = remaining.daily;
 
   if (limits.promptLimit > 0) {
     bars.push({
@@ -158,13 +157,9 @@ export function LiveUsageCard({
       reset: formatReset(apiCallResetAt),
     });
   }
-  if (limits.dailyInputTokenLimit > 0 || (dailyTokenBreakdown?.bypassIo && (dailyTokenBreakdown.inputBase || 0) > 0)) {
-    const softMax = dailyTokenBreakdown?.bypassIo
-      ? dailyTokenBreakdown.inputBase || limits.dailyInputTokenLimit
-      : limits.dailyInputTokenLimit;
+  if (limits.dailyInputTokenLimit > 0) {
     const used = usageToday.promptTokens;
-    const overSoft = !!(dailyTokenBreakdown?.bypassIo && softMax > 0 && used > softMax);
-    const softLeft = Math.max(0, softMax - used);
+    const max = limits.dailyInputTokenLimit;
     const ctx = Number(usageToday.cachedTokens) || 0;
     const inp = Number(usageToday.billablePromptTokens) || 0;
     const full = Number(usageToday.fullInputTokens) || 0;
@@ -179,75 +174,46 @@ export function LiveUsageCard({
     if (full > 0) {
       parts.push(`full ${formatNumber(full)} (amanai)`);
     }
-    const ctxInNote = parts.length > 0 ? parts.join(" · ") : "limit credit";
+    const bd = dailyTokenBreakdown;
+    let stackNote = parts.length > 0 ? parts.join(" · ") : "limit credit";
+    if (bd && bd.addonBonus > 0) {
+      stackNote = `base ${formatNumber(bd.inputBase || bd.base || 0)} + pack ${formatNumber(bd.addonBonus)} · ${stackNote}`;
+    }
     bars.push({
       label: "Input Tokens (limit)",
       value: used,
-      max: softMax,
-      remaining: dailyTokenBreakdown?.bypassIo ? null : remaining.input,
-      softMode: !!dailyTokenBreakdown?.bypassIo,
-      sublabel:
-        (dailyTokenBreakdown?.bypassIo
-          ? `exceed OK until daily ${formatNumber(dailyCap)} · `
-          : "") + ctxInNote,
-      source: dailyTokenBreakdown?.bypassIo
-        ? "add-on extends past soft"
-        : sourceLabel(limits.dailyInputTokenLimitSource),
-      footerLeft: dailyTokenBreakdown?.bypassIo
-        ? overSoft
-          ? `Exceeding soft · Daily remaining: ${dailyLeft != null ? formatNumber(dailyLeft) : "—"} / ${formatNumber(dailyCap)}`
-          : `Soft left: ${formatNumber(softLeft)} · then exceed until daily ${formatNumber(dailyCap)}`
-        : undefined,
+      max,
+      remaining: remaining.input,
+      softMode: false,
+      sublabel: stackNote,
+      source:
+        bd && bd.addonBonus > 0
+          ? "base + pack → input"
+          : sourceLabel(limits.dailyInputTokenLimitSource),
       reset: formatReset(dailyResetAt),
     });
   }
-  if (limits.dailyOutputTokenLimit > 0 || (dailyTokenBreakdown?.bypassIo && (dailyTokenBreakdown.outputBase || 0) > 0)) {
-    const softMax = dailyTokenBreakdown?.bypassIo
-      ? dailyTokenBreakdown.outputBase || limits.dailyOutputTokenLimit
-      : limits.dailyOutputTokenLimit;
+  if (limits.dailyOutputTokenLimit > 0) {
     const used = usageToday.completionTokens;
-    const overSoft = !!(dailyTokenBreakdown?.bypassIo && softMax > 0 && used > softMax);
-    const softLeft = Math.max(0, softMax - used);
     bars.push({
       label: "Output Tokens",
       value: used,
-      max: softMax,
-      remaining: dailyTokenBreakdown?.bypassIo ? null : remaining.output,
-      softMode: !!dailyTokenBreakdown?.bypassIo,
-      sublabel: dailyTokenBreakdown?.bypassIo
-        ? `exceed OK until daily ${formatNumber(dailyCap)}`
-        : "always 100% (no hop weight)",
-      source: dailyTokenBreakdown?.bypassIo
-        ? "add-on extends past soft"
-        : sourceLabel(limits.dailyOutputTokenLimitSource),
-      footerLeft: dailyTokenBreakdown?.bypassIo
-        ? overSoft
-          ? `Exceeding soft · Daily remaining: ${dailyLeft != null ? formatNumber(dailyLeft) : "—"} / ${formatNumber(dailyCap)}`
-          : `Soft left: ${formatNumber(softLeft)} · then exceed until daily ${formatNumber(dailyCap)}`
-        : undefined,
+      max: limits.dailyOutputTokenLimit,
+      remaining: remaining.output,
+      softMode: false,
+      sublabel: "always 100% (no hop weight)",
+      source: sourceLabel(limits.dailyOutputTokenLimitSource),
       reset: formatReset(dailyResetAt),
     });
   }
   if (limits.dailyTokenLimit > 0) {
-    const bd = dailyTokenBreakdown;
-    let stack = "tokens";
-    if (bd && bd.addonBonus > 0) {
-      if ((bd.inputBase || 0) > 0 || (bd.outputBase || 0) > 0) {
-        stack = `in ${formatNumber(bd.inputBase || 0)} + out ${formatNumber(bd.outputBase || 0)} + pack ${formatNumber(bd.addonBonus)}`;
-      } else {
-        stack = `base ${formatNumber(bd.base)} + pack ${formatNumber(bd.addonBonus)}`;
-      }
-    }
     bars.push({
       label: "Daily Total",
       value: usageToday.totalTokens,
       max: limits.dailyTokenLimit,
       remaining: remaining.daily,
-      sublabel: stack,
-      source:
-        bd && bd.addonBonus > 0
-          ? "base + add-on"
-          : sourceLabel(limits.dailyTokenLimitSource),
+      sublabel: "custom key daily",
+      source: sourceLabel(limits.dailyTokenLimitSource),
       reset: formatReset(dailyResetAt),
     });
   }

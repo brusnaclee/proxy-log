@@ -25,6 +25,7 @@ import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, 
 } from "recharts";
 import { ChartBox } from "@/components/ChartBox";
+import { badgeClass, badgeLabel, resolveDisplayBadges, formatAddonExpiry } from "@/lib/account-badge";
 
 const TOOLTIP_STYLE  = { backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px", fontSize: "12px", color: "hsl(var(--foreground))" };
 const ITEM_STYLE     = { color: "hsl(var(--foreground))" };
@@ -60,6 +61,7 @@ export default function KeyDetailPage() {
   const [showDayOverride, setShowDayOverride] = useState(false);
   const notify = useNotify();
   const [rotatedKey, setRotatedKey] = useState<string | null>(null);
+  const [copiedReveal, setCopiedReveal] = useState(false);
   const [copied, setCopied] = useState(false);
   const [statusText, setStatusText] = useState<string>("");
   const [accessTargetType, setAccessTargetType] = useState<"fingerprint" | "ip">("fingerprint");
@@ -386,6 +388,18 @@ export default function KeyDetailPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleRevealCopy = async () => {
+    if (!keyData) return;
+    try {
+      const res = await keys.reveal(keyData.id);
+      await copyToClipboard(res.key);
+      setCopiedReveal(true);
+      setTimeout(() => setCopiedReveal(false), 2000);
+    } catch (e) {
+      console.warn("[key-detail] reveal failed", e);
+    }
+  };
+
   const handleAddDeviceRule = async () => {
     if (!id || !accessValue.trim()) return;
     try {
@@ -524,7 +538,7 @@ export default function KeyDetailPage() {
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <div className="flex-1">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <h1 className="text-2xl font-bold tracking-tight">{keyData.name}</h1>
             <Badge variant={keyData.isActive ? "success" : "secondary"}>
               {keyData.isActive ? "Active" : "Disabled"}
@@ -534,10 +548,51 @@ export default function KeyDetailPage() {
                 <Gift className="h-3 w-3" /> Trial
               </Badge>
             )}
+            {resolveDisplayBadges(keyData.accountTier, keyData.accountBadges, {
+              addons: keyData.activeAddons || keyData.liveUsage?.activeAddons,
+            }).map((b) => {
+              const addons = keyData.activeAddons || keyData.liveUsage?.activeAddons || [];
+              return (
+                <span key={b} className={`px-2 py-0.5 text-xs rounded-full ${badgeClass(b)}`}>
+                  {badgeLabel(b)}
+                  {b === "addon" && addons[0]?.expiresAt
+                    ? ` · until ${formatAddonExpiry(addons[0].expiresAt, "en-GB")}`
+                    : ""}
+                </span>
+              );
+            })}
           </div>
-          <p className="text-sm text-muted-foreground mt-1">
+          <p className="text-sm text-muted-foreground mt-1 flex items-center gap-2 flex-wrap">
             <code className="font-mono">{keyData.keyMasked}</code>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 px-2"
+              title="Copy full API key"
+              onClick={() => void handleRevealCopy()}
+            >
+              {copiedReveal ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+              <span className="ml-1 text-xs">Copy key</span>
+            </Button>
           </p>
+          {(keyData.activeAddons || keyData.liveUsage?.activeAddons || []).length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+              {(keyData.activeAddons || keyData.liveUsage?.activeAddons || []).map((a) => (
+                <span
+                  key={a.name}
+                  className="px-2 py-1 rounded-md border border-cyan-500/30 bg-cyan-500/10 text-cyan-300"
+                >
+                  Add-on <span className="font-mono">{a.name}</span>
+                  {a.expiresAt
+                    ? ` · until ${formatAddonExpiry(a.expiresAt, "en-GB")}`
+                    : " · no expiry"}
+                  {(a.dailyTokenLimit || 0) > 0
+                    ? ` · +${formatNumber(a.dailyTokenLimit || 0)}/day`
+                    : ""}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <Switch checked={keyData.isActive} onCheckedChange={handleToggleActive} />
@@ -781,7 +836,7 @@ export API_TIMEOUT_MS=500000`}
         {(() => {
           const s: KeyPeriodStats = keyData.stats[statsPeriod];
           return (
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-4 gap-5">
               {[
                 { label: "Prompts", value: formatNumber(s.requests), sub: "User turns" },
                 { label: "API Calls", value: formatNumber(s.hopCount || 0), sub: "Upstream hops" },
@@ -806,7 +861,7 @@ export API_TIMEOUT_MS=500000`}
                 { label: "Devices",       value: keyData.stats.deviceCount.toString() },
               ].map(c => (
                 <Card key={c.label} className="border-border/50 transition-all duration-200 hover:border-border hover:bg-accent/10">
-                  <CardContent className="p-3">
+                  <CardContent className="p-4">
                     <p className="text-[10px] text-muted-foreground">{c.label}</p>
                     <p className="text-lg font-bold mt-1 truncate tabular-nums">{c.value}</p>
                     {c.sub && <p className="text-[10px] text-muted-foreground mt-0.5 truncate">{c.sub}</p>}
@@ -957,7 +1012,7 @@ export API_TIMEOUT_MS=500000`}
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-5">
         {[
           { label: "Device Allowlist", value: keyData.policyStats?.deviceAllowCount || 0 },
           { label: "Device Blacklist", value: keyData.policyStats?.deviceBlockCount || 0 },
@@ -1074,7 +1129,7 @@ export API_TIMEOUT_MS=500000`}
                   </Select>
                 </div>
     <div>
-      <Label>Daily Token Limit (0 = use global)</Label>
+      <Label>Daily Token Limit (0 = unlimited / role default)</Label>
       <Input
         type="number"
         value={editDailyTokenLimit}
@@ -1094,7 +1149,7 @@ export API_TIMEOUT_MS=500000`}
       />
     </div>
     <div>
-      <Label>Daily Input Token Limit (0 = use global)</Label>
+      <Label>Daily Input Token Limit (0 = role default: global for Phantom/Staff)</Label>
       <Input
         type="number"
         value={editDailyInputTokenLimit}
@@ -1104,7 +1159,7 @@ export API_TIMEOUT_MS=500000`}
       />
     </div>
     <div>
-      <Label>Daily Output Token Limit (0 = use global)</Label>
+      <Label>Daily Output Token Limit (0 = role default: global for Phantom/Staff)</Label>
       <Input
         type="number"
         value={editDailyOutputTokenLimit}

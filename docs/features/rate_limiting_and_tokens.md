@@ -51,8 +51,10 @@ Rate limits and Token limits are evaluated in a specific hierarchy during the re
 2. **Per-Model Prompt Limits**: Checked when starting a new turn for a specific model (sliding window).
 3. **Global Prompt Limits**: 1 per `turn_id` (user turn). Key `prompt_limit` → else `global_prompt_limit` (default **50 / 5h**). Tool follow-ups on the same turn do not burn prompt quota. Window is **sliding**.
 4. **Daily / Monthly Token Limits**:
-   - **Without add-on**: hard caps are **Input + Output only**. Global daily does not apply (Daily Total unlimited unless key/trial sets one).
-   - **With add-on**: Input/Output become soft; hard cap = `(input + output) + pack` (or `daily + pack` if I/O unset).
+   - **Base In/Out**: key custom (>0) → else global for Phantom/Staff (`follow_global`); Premium/Pro (`zero_unless_addon`) baseIn = 0 until add-on; with add-on, Premium/Pro still get global Out as baseOut.
+   - **Without add-on**: hard caps = Input + Output only. Daily total unlimited unless key sets custom `daily_token_limit`.
+   - **With add-on**: pack **adds to Input only** (e.g. Phantom 2M + pack 10M = **12M In**, Out stays 5M). I/O remain **hard caps**. Daily stays unlimited unless key custom daily. Per-model prompt caps bypassed.
+   - Premium/Pro without add-on: blocked (`zero_unless_addon`) — no shared quota and no dedicated pools.
 5. **IDE Smart Anti-Waste** (optional, default on): see [`ide_anti_waste.md`](./ide_anti_waste.md) — stub duplicate tool dumps + soft nudge + SSE short-circuit after repeated identical noisy tools (does **not** hard-stop the IDE).
 
 ### Naming

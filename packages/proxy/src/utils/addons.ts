@@ -205,7 +205,7 @@ export async function checkAddonModelAccess(opts: {
   };
 }
 
-/** Extra daily tokens granted by active add-ons (stacked on base quota). */
+/** Extra daily tokens granted by active add-ons (stacked onto Input only). */
 export function sumAddonDailyTokenBonus(active: ActiveAddon[]): number {
   return active.reduce((sum, a) => sum + Math.max(0, a.dailyTokenLimit || 0), 0);
 }
@@ -215,92 +215,142 @@ export function sumAddonMonthlyTokenBonus(active: ActiveAddon[]): number {
 }
 
 /**
- * Daily base passed into resolveAddonQuotaStack.
- * Without add-on: only explicit key daily (or trial resolved limit) — never global Phantom daily.
- * With add-on: full resolveKeyDailyTokenLimit (global OK as Phantom fallback when I/O unset).
+ * Whether this role inherits global In/Out when key custom is unset.
+ * Premium/Pro (`zero_unless_addon`) do NOT inherit global Input.
+ * With add-on they still get global Output as baseOut (see resolveAddonQuotaStack).
  */
-export function stackBaseDailyForKey(opts: {
-  hasActiveAddon: boolean;
+export function roleInheritsGlobalIo(opts: {
+  roleLimitMode?: string | null;
   isTrial?: boolean;
-  keyDailyTokenLimit?: number | null;
-  resolvedKeyOrGlobalDaily: number;
-}): number {
-  if (opts.hasActiveAddon || opts.isTrial) {
-    return Math.max(0, opts.resolvedKeyOrGlobalDaily || 0);
-  }
-  return Math.max(0, Number(opts.keyDailyTokenLimit) || 0);
+}): boolean {
+  if (opts.isTrial) return true;
+  return String(opts.roleLimitMode || "").trim() !== "zero_unless_addon";
 }
 
 /**
- * Quota stacking rules:
+ * Custom key daily only — role default daily is always unlimited (never inherit global daily).
+ * Kept for callers that still pass resolvedKeyOrGlobalDaily; only keyDailyTokenLimit is used.
+ */
+export function stackBaseDailyForKey(opts: {
+  hasActiveAddon?: boolean;
+  isTrial?: boolean;
+  keyDailyTokenLimit?: number | null;
+  resolvedKeyOrGlobalDaily?: number;
+}): number {
+  return Math.max(0, Number(opts.keyDailyTokenLimit) || 0);
+}
+
+export type QuotaStackResult = {
+  /** Hard input cap (includes pack when addon) */
+  dailyInputLimit: number;
+  /** Hard output cap */
+  dailyOutputLimit: number;
+  /** Base input before pack (for UI breakdown) */
+  inputBase: number;
+  /** Base output (for UI breakdown) */
+  outputBase: number;
+  /** Custom key daily only (0 = unlimited) */
+  baseDaily: number;
+  addonBonus: number;
+  /** Hard daily total — custom key only (0 = unlimited). Pack does NOT add here. */
+  effectiveDaily: number;
+  /** Always false — I/O are hard caps */
+  bypassIo: boolean;
+  /** Add-on bypasses per-model prompt caps */
+  bypassPerModelPrompts: boolean;
+};
+
+/**
+ * Quota stacking (PM rules):
  *
- * Without add-on (Phantom / Premium / Pro):
- * - Hard caps = Input + Output only (or trial / explicit key daily)
- * - Do NOT apply global daily — Daily Total is unlimited unless key/trial sets one
+ * Base In / Out priority:
+ *   1. Key custom > 0
+ *   2. Else global — Phantom/Staff/trial (follow_global)
+ *   3. Else 0 for Premium/Pro baseIn; baseOut uses global when add-on active
  *
- * With any add-on active:
- * - Separate input/output hard caps are NOT enforced (soft / pooled into daily)
- * - Daily hard cap = (input + output if either set, else key/global daily) + pack
- *   e.g. In 2M + Out 5M + pack 10M → 17M
- *   e.g. only daily 2M + pack 10M → 12M
- * - UI still shows Input/Output as soft bases that can exceed until Daily Total
- *
- * Callers must pass keyOrGlobalDaily carefully:
- * - With add-on / trial → resolveKeyDailyTokenLimit (may include global)
- * - Without add-on → key.dailyTokenLimit only (never global)
+ * Without add-on: hard In/Out = bases; daily = custom key only (else unlimited).
+ * With add-on: hard In = baseIn + pack; hard Out = baseOut; daily unchanged (pack → input only).
+ * I/O are always hard caps (bypassIo = false).
  */
 export function resolveAddonQuotaStack(opts: {
   hasActiveAddon: boolean;
-  keyOrGlobalDaily: number;
-  dailyInput: number;
-  dailyOutput: number;
+  isTrial?: boolean;
+  roleLimitMode?: string | null;
+  keyDailyInput?: number | null;
+  keyDailyOutput?: number | null;
+  /** @deprecated Prefer keyDailyTotal — custom key daily only */
+  keyOrGlobalDaily?: number;
+  keyDailyTotal?: number | null;
+  globalDailyInput?: number | null;
+  globalDailyOutput?: number | null;
+  /** @deprecated Prefer keyDailyInput/globalDailyInput — pre-resolved bases */
+  dailyInput?: number;
+  dailyOutput?: number;
   addonDailyBonus: number;
-}): {
-  /** Enforced input cap (0 = unlimited when add-on) */
-  dailyInputLimit: number;
-  /** Enforced output cap (0 = unlimited when add-on) */
-  dailyOutputLimit: number;
-  /** Soft/display input base folded into daily */
-  inputBase: number;
-  /** Soft/display output base folded into daily */
-  outputBase: number;
-  baseDaily: number;
-  addonBonus: number;
-  effectiveDaily: number;
-  bypassIo: boolean;
-  bypassPerModelPrompts: boolean;
-} {
-  const keyDaily = Math.max(0, opts.keyOrGlobalDaily || 0);
-  const input = Math.max(0, opts.dailyInput || 0);
-  const output = Math.max(0, opts.dailyOutput || 0);
+}): QuotaStackResult {
   const bonus = Math.max(0, opts.addonDailyBonus || 0);
+  const hasAddon = !!opts.hasActiveAddon;
+  const inheritIo = roleInheritsGlobalIo({
+    roleLimitMode: opts.roleLimitMode,
+    isTrial: opts.isTrial,
+  });
 
-  if (!opts.hasActiveAddon) {
+  const keyIn = Math.max(0, Number(opts.keyDailyInput) || 0);
+  const keyOut = Math.max(0, Number(opts.keyDailyOutput) || 0);
+  const gIn = Math.max(0, Number(opts.globalDailyInput) || 0);
+  const gOut = Math.max(0, Number(opts.globalDailyOutput) || 0);
+
+  // Legacy path: callers that still pass pre-resolved dailyInput/dailyOutput without key/global split
+  const legacyResolved =
+    opts.keyDailyInput == null &&
+    opts.keyDailyOutput == null &&
+    opts.globalDailyInput == null &&
+    opts.globalDailyOutput == null &&
+    (opts.dailyInput != null || opts.dailyOutput != null);
+
+  let baseIn: number;
+  let baseOut: number;
+  if (legacyResolved) {
+    baseIn = Math.max(0, Number(opts.dailyInput) || 0);
+    baseOut = Math.max(0, Number(opts.dailyOutput) || 0);
+  } else {
+    if (keyIn > 0) baseIn = keyIn;
+    else if (inheritIo) baseIn = gIn;
+    else baseIn = 0;
+
+    if (keyOut > 0) baseOut = keyOut;
+    else if (inheritIo || hasAddon) baseOut = gOut;
+    else baseOut = 0;
+  }
+
+  const customDaily = Math.max(
+    0,
+    Number(opts.keyDailyTotal ?? opts.keyOrGlobalDaily) || 0,
+  );
+
+  if (!hasAddon) {
     return {
-      dailyInputLimit: input,
-      dailyOutputLimit: output,
-      inputBase: input,
-      outputBase: output,
-      baseDaily: keyDaily,
+      dailyInputLimit: baseIn,
+      dailyOutputLimit: baseOut,
+      inputBase: baseIn,
+      outputBase: baseOut,
+      baseDaily: customDaily,
       addonBonus: 0,
-      effectiveDaily: keyDaily,
+      effectiveDaily: customDaily,
       bypassIo: false,
       bypassPerModelPrompts: false,
     };
   }
 
-  const ioSum = input + output;
-  // Prefer input+output when either is configured; else pure daily base.
-  const baseDaily = ioSum > 0 ? ioSum : keyDaily;
   return {
-    dailyInputLimit: 0,
-    dailyOutputLimit: 0,
-    inputBase: input,
-    outputBase: output,
-    baseDaily,
+    dailyInputLimit: baseIn + bonus,
+    dailyOutputLimit: baseOut,
+    inputBase: baseIn,
+    outputBase: baseOut,
+    baseDaily: customDaily,
     addonBonus: bonus,
-    effectiveDaily: baseDaily + bonus,
-    bypassIo: true,
+    effectiveDaily: customDaily,
+    bypassIo: false,
     bypassPerModelPrompts: true,
   };
 }

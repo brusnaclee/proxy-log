@@ -71,7 +71,7 @@ keys.get("/keys", async (c) => {
     c.req.query("full") === "true" ||
     c.req.query("live") === "1";
 
-  const listBase = await statsCache.getOrFetch("keys-list-fast", async () => {
+  const listBase = await statsCache.getOrFetch("keys-list-fast-v4", async () => {
     const allKeys = await db.select().from(apiKeys).orderBy(desc(apiKeys.id));
     const config = (await db.select().from(adminConfig))[0];
 
@@ -81,7 +81,10 @@ keys.get("/keys", async (c) => {
     _wibNow.setUTCHours(0, 0, 0, 0);
     const todayUtcDate = new Date(_wibNow.getTime() - _wibOffset);
 
-    // Batch aggregates — avoid N+1 (was ~4 heavy queries × hundreds of keys)
+    const { getActiveAddonsForUser, sumAddonDailyTokenBonus, resolveAddonQuotaStack } =
+      await import("../../utils/addons.js");
+
+    // Batch aggregates — avoid N+1
     const [deviceRows, todayRows] = await Promise.all([
       db
         .select({
@@ -102,6 +105,12 @@ keys.get("/keys", async (c) => {
               ELSE 0 END
           ), 0)::bigint AS "tokensToday",
           COALESCE(SUM(
+            CASE WHEN status_code BETWEEN 200 AND 299 THEN COALESCE(prompt_tokens, 0) ELSE 0 END
+          ), 0)::bigint AS "inputToday",
+          COALESCE(SUM(
+            CASE WHEN status_code BETWEEN 200 AND 299 THEN COALESCE(completion_tokens, 0) ELSE 0 END
+          ), 0)::bigint AS "outputToday",
+          COALESCE(SUM(
             CASE WHEN status_code BETWEEN 200 AND 299 THEN COALESCE(estimated_cost, 0) ELSE 0 END
           ), 0)::float AS "estimatedCostToday"
         FROM request_logs
@@ -113,17 +122,99 @@ keys.get("/keys", async (c) => {
     const deviceByKey = new Map<number, number>();
     for (const r of deviceRows) deviceByKey.set(r.apiKeyId, Number(r.count) || 0);
 
-    const todayByKey = new Map<number, { requestsToday: number; tokensToday: number; estimatedCostToday: number }>();
+    const todayByKey = new Map<number, {
+      requestsToday: number;
+      tokensToday: number;
+      inputToday: number;
+      outputToday: number;
+      estimatedCostToday: number;
+    }>();
     for (const r of (todayRows.rows || []) as any[]) {
       todayByKey.set(Number(r.apiKeyId), {
         requestsToday: Number(r.requestsToday) || 0,
         tokensToday: Number(r.tokensToday) || 0,
+        inputToday: Number(r.inputToday) || 0,
+        outputToday: Number(r.outputToday) || 0,
         estimatedCostToday: Number(r.estimatedCostToday) || 0,
       });
     }
 
+    // Active add-ons keyed by discord user (and by apiKeyId for unlinked)
+    const addonByDiscord = new Map<string, Awaited<ReturnType<typeof getActiveAddonsForUser>>>();
+    const discordIds = [...new Set(allKeys.map((k) => k.discordUserId).filter(Boolean))] as string[];
+    await mapWithConcurrency(discordIds, 6, async (uid) => {
+      try {
+        addonByDiscord.set(uid, await getActiveAddonsForUser({ discordUserId: uid }));
+      } catch {
+        addonByDiscord.set(uid, []);
+      }
+    });
+
+    const softRem = (limit: number, used: number): number | null => {
+      if (!(limit > 0)) return null;
+      return Math.max(0, limit - used);
+    };
+
     return allKeys.map((key) => {
       const today = todayByKey.get(key.id);
+      const tokensToday = today?.tokensToday || 0;
+      const inputToday = today?.inputToday || 0;
+      const outputToday = today?.outputToday || 0;
+      const requestsToday = today?.requestsToday || 0;
+
+      let accountBadges: string[] = [];
+      try {
+        accountBadges = JSON.parse((key as any).accountBadges || "[]");
+        if (!Array.isArray(accountBadges)) accountBadges = [];
+      } catch {
+        accountBadges = [];
+      }
+      accountBadges = accountBadges
+        .map((b) => String(b || "").trim())
+        .filter((b) => {
+          const n = b.toLowerCase().replace(/[\s-]+/g, "_");
+          return n && n !== "admin_override" && n !== "none";
+        });
+
+      const accountTier = String((key as any).accountTier || "").trim();
+      const activeAddons = key.discordUserId
+        ? addonByDiscord.get(key.discordUserId) || []
+        : [];
+      const hasAddon = !key.isTrial && activeAddons.length > 0;
+      if (hasAddon && !accountBadges.includes("addon")) accountBadges = [...accountBadges, "addon"];
+
+      const addonBonus = sumAddonDailyTokenBonus(activeAddons);
+      const stack = resolveAddonQuotaStack({
+        hasActiveAddon: hasAddon,
+        isTrial: !!key.isTrial,
+        roleLimitMode: (key as any).roleLimitMode,
+        keyDailyInput: key.dailyInputTokenLimit,
+        keyDailyOutput: key.dailyOutputTokenLimit,
+        keyDailyTotal: key.dailyTokenLimit,
+        globalDailyInput: config?.globalDailyInputTokenLimit,
+        globalDailyOutput: config?.globalDailyOutputTokenLimit,
+        addonDailyBonus: addonBonus,
+      });
+
+      const promptCap = (key.promptLimit && key.promptLimit > 0)
+        ? key.promptLimit
+        : (key.isTrial ? 0 : (config?.globalPromptLimit || 0));
+
+      // Hard remaining for list (quotaHint — liveUsage is null on fast path)
+      const quotaHint = {
+        bypassIo: false,
+        dailyLeft: softRem(stack.effectiveDaily, tokensToday),
+        inputLeft: softRem(stack.dailyInputLimit, inputToday),
+        outputLeft: softRem(stack.dailyOutputLimit, outputToday),
+        promptsLeftToday: softRem(promptCap, requestsToday),
+        inputUsed: inputToday,
+        outputUsed: outputToday,
+        dailyUsed: tokensToday,
+        inputLimit: stack.dailyInputLimit,
+        outputLimit: stack.dailyOutputLimit,
+        dailyLimit: stack.effectiveDaily,
+      };
+
       return {
         id: key.id,
         name: key.name,
@@ -149,12 +240,21 @@ keys.get("/keys", async (c) => {
         promptLimit: key.promptLimit || 0,
         promptLimitWindow: key.promptLimitWindow || config?.globalPromptLimitWindow || "1d",
         deviceCount: deviceByKey.get(key.id) || 0,
-        requestsToday: today?.requestsToday || 0,
-        tokensToday: today?.tokensToday || 0,
+        requestsToday,
+        tokensToday,
         estimatedCostToday: today?.estimatedCostToday || 0,
         totalRequests: 0,
         totalTokens: 0,
         createdAt: key.createdAt,
+        accountBadges,
+        accountTier: accountTier && accountTier !== "admin_override" ? accountTier : null,
+        roleLimitMode: (key as any).roleLimitMode || null,
+        activeAddons: activeAddons.map((a) => ({
+          name: a.name,
+          expiresAt: a.expiresAt ? new Date(a.expiresAt).toISOString() : null,
+          dailyTokenLimit: a.dailyTokenLimit || 0,
+        })),
+        quotaHint,
       };
     });
   }, 15_000);
@@ -561,6 +661,27 @@ keys.get("/keys/:id", async (c) => {
 
   const liveUsage = await buildLiveUsageForKey(key, config);
 
+  let accountBadges: string[] = [];
+  try {
+    accountBadges = JSON.parse((key as any).accountBadges || "[]");
+    if (!Array.isArray(accountBadges)) accountBadges = [];
+  } catch {
+    accountBadges = [];
+  }
+  accountBadges = accountBadges
+    .map((b) => String(b || "").trim())
+    .filter((b) => {
+      const n = b.toLowerCase().replace(/[\s-]+/g, "_");
+      return n && n !== "admin_override" && n !== "none";
+    });
+  const activeAddons = liveUsage?.activeAddons || [];
+  if (activeAddons.length > 0 && !accountBadges.includes("addon")) {
+    accountBadges = [...accountBadges, "addon"];
+  }
+  const tierRaw = String((key as any).accountTier || "").trim();
+  const accountTier =
+    tierRaw && tierRaw !== "none" && tierRaw !== "admin_override" ? tierRaw : null;
+
   return c.json({
     id: key.id, name: key.name, keyPrefix: key.keyPrefix, keyMasked: maskKey(key.key),
     discordUserId: key.discordUserId,
@@ -576,6 +697,10 @@ keys.get("/keys/:id", async (c) => {
     promptLimit: key.promptLimit || 0, promptLimitWindow: key.promptLimitWindow || config?.globalPromptLimitWindow || "1d",
     perModelPromptLimit: key.perModelPromptLimit || 0, perModelPromptLimitWindow: key.perModelPromptLimitWindow || config?.globalPerModelPromptLimitWindow || "1d",
     createdAt: key.createdAt, updatedAt: key.updatedAt,
+    accountBadges,
+    accountTier,
+    roleLimitMode: (key as any).roleLimitMode || null,
+    activeAddons,
     liveUsage,
     stats: {
       today:   { ...todayStats },
@@ -633,6 +758,7 @@ keys.put("/keys/:id", async (c) => {
   apiKeyCache.clear();
   statsCache.invalidate("keys-list");
   statsCache.invalidate("keys-list-fast");
+  statsCache.invalidate("keys-list-fast-v4");
 
   if (key.discordUserId) {
     if (body.isActive !== undefined && body.isActive !== key.isActive) {
@@ -702,6 +828,7 @@ keys.delete("/keys/:id", async (c) => {
   apiKeyCache.clear();
   statsCache.invalidate("keys-list");
   statsCache.invalidate("keys-list-fast");
+  statsCache.invalidate("keys-list-fast-v4");
   return c.json({ success: true, message: "API key deleted" });
 });
 
@@ -738,7 +865,23 @@ keys.post("/keys/:id/rotate", async (c) => {
   apiKeyCache.clear();
   statsCache.invalidate("keys-list");
   statsCache.invalidate("keys-list-fast");
+  statsCache.invalidate("keys-list-fast-v4");
   return c.json({ success: true, key: newKey, keyPrefix: getKeyPrefix(newKey), message: "API key rotated." });
+});
+
+/** Reveal plaintext key for admin audit/debug (key already stored in DB). */
+keys.post("/keys/:id/reveal", async (c) => {
+  const id = parseInt(c.req.param("id"));
+  const key = (await db.select().from(apiKeys).where(eq(apiKeys.id, id)))[0];
+  if (!key) return c.json({ error: "API key not found" }, 404);
+  console.log(`[admin] reveal key id=${id} name=${key.name} by admin`);
+  return c.json({
+    id: key.id,
+    name: key.name,
+    key: key.key,
+    keyPrefix: key.keyPrefix,
+    keyMasked: maskKey(key.key),
+  });
 });
 
 keys.get("/keys/:id/devices", async (c) => {
@@ -1061,6 +1204,7 @@ keys.put("/keys/:id/day-override", async (c) => {
       .where(and(eq(keyDayOverrides.apiKeyId, keyId), eq(keyDayOverrides.dayWib, dayWib)));
     statsCache.invalidate("keys-list");
     statsCache.invalidate("keys-list-fast");
+    statsCache.invalidate("keys-list-fast-v4");
     return c.json({ success: true, cleared: true, dayWib, override: null });
   }
 
@@ -1084,6 +1228,7 @@ keys.put("/keys/:id/day-override", async (c) => {
   const saved = await getKeyDayOverride(keyId, dayWib);
   statsCache.invalidate("keys-list");
   statsCache.invalidate("keys-list-fast");
+  statsCache.invalidate("keys-list-fast-v4");
 
   const [fullKey] = await db.select().from(apiKeys).where(eq(apiKeys.id, keyId)).limit(1);
   if (fullKey?.discordUserId && dayOverrideHasAny(bonuses)) {
@@ -1124,6 +1269,7 @@ keys.delete("/keys/:id/day-override", async (c) => {
     .where(and(eq(keyDayOverrides.apiKeyId, keyId), eq(keyDayOverrides.dayWib, dayParam)));
   statsCache.invalidate("keys-list");
   statsCache.invalidate("keys-list-fast");
+  statsCache.invalidate("keys-list-fast-v4");
   return c.json({ success: true, dayWib: dayParam });
 });
 
@@ -1154,6 +1300,7 @@ keys.post("/keys/:id/reset-today-usage", async (c) => {
 
   statsCache.invalidate("keys-list");
   statsCache.invalidate("keys-list-fast");
+  statsCache.invalidate("keys-list-fast-v4");
   return c.json({
     success: true,
     dayWib,

@@ -113,6 +113,8 @@ export interface MeResponse {
   }>;
   addonModelTokenCaps?: Array<{ pattern: string; dailyLimit: number }>;
   perModelPromptsBypassedByAddon?: boolean;
+  blockedWithoutAddon?: boolean;
+  roleLimitMode?: string | null;
   dedicatedPools?: Array<{
     model: string;
     isPattern: boolean;

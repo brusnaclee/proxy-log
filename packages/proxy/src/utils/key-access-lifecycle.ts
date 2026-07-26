@@ -86,7 +86,8 @@ async function resolveRolesForUser(
 }
 
 /**
- * Sync isActive for all non-trial keys linked to this Discord user.
+ * Sync isActive + accountBadges / accountTier / roleLimitMode for all non-trial
+ * keys linked to this Discord user.
  */
 export async function syncUserKeyAccess(
 	discordUserId: string,
@@ -132,21 +133,63 @@ export async function syncUserKeyAccess(
 	const activeAddons = await getActiveAddonsForUser({ discordUserId: uid });
 	const hasActiveAddon = activeAddons.length > 0;
 
+	const cfg = (await db.select().from(adminConfig).limit(1))[0] ?? null;
+	const roleCfg = {
+		phantomRoleId: cfg?.requiredRoleId,
+		premiumRoleId: (cfg as any)?.premiumRoleId || cfg?.trialRequiredRoleId,
+		proRoleId: cfg?.proRoleId,
+		contributorRoleId: cfg?.contributorRoleId,
+		troubleshooterRoleId: cfg?.troubleshooterRoleId,
+		moderatorRoleId: cfg?.moderatorRoleId,
+		roleLimitModes: parseRoleLimitModes((cfg as any)?.roleLimitModes),
+	};
+
+	let roleIds: string[] = [];
 	let hasPhantom = false;
 	let hasStaff = false;
+	let resolved = resolveDiscordRoles([], roleCfg);
+
 	if (opts?.rolesKnown && Array.isArray(opts.roleIds)) {
-		const r = await resolveRolesForUser(uid, opts.roleIds);
-		hasPhantom = r.hasPhantom;
-		hasStaff = r.hasStaff;
+		roleIds = opts.roleIds;
+		resolved = resolveDiscordRoles(roleIds, roleCfg);
+		hasPhantom = resolved.hasPhantom;
+		hasStaff = resolved.hasStaff;
 	} else if (opts?.rolesKnown && opts.roleIds === null) {
-		// Explicitly not in guild / no roles
 		hasPhantom = false;
 		hasStaff = false;
+		resolved = resolveDiscordRoles([], roleCfg);
 	} else {
 		const r = await resolveRolesForUser(uid, opts?.roleIds);
-		hasPhantom = r.hasPhantom;
-		hasStaff = r.hasStaff;
+		roleIds = r.roleIds;
+		resolved = resolveDiscordRoles(roleIds, roleCfg);
+		hasPhantom = resolved.hasPhantom;
+		hasStaff = resolved.hasStaff;
 	}
+
+	const accountTier =
+		resolved.primary === "none"
+			? hasActiveAddon
+				? "premium"
+				: ""
+			: resolved.primary === "staff"
+				? "staff"
+				: resolved.primary;
+	const badges = resolved.badges.filter(
+		(b) => b && b !== "none" && b !== "admin_override",
+	);
+	const limitMode = resolved.limitMode;
+	const badgesJson = JSON.stringify(badges);
+
+	// Always refresh tier/badges/limit mode from live Discord roles
+	await db
+		.update(apiKeys)
+		.set({
+			accountBadges: badgesJson,
+			accountTier: accountTier || "",
+			roleLimitMode: limitMode,
+			updatedAt: new Date(),
+		})
+		.where(and(eq(apiKeys.discordUserId, uid), eq(apiKeys.isTrial, false)));
 
 	const shouldKeep = shouldKeepKeyAccess({ hasPhantom, hasStaff, hasActiveAddon });
 	const reason =

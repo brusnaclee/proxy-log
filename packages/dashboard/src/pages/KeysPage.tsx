@@ -15,7 +15,17 @@ import { Plus, Copy, Check, Key, Download, Zap, ChevronDown, ChevronRight } from
 import { useRealtimeSSE } from "@/lib/use-realtime-sse";
 import { exportCsvSimple } from "@/lib/export-csv";
 import { Label } from "@/components/ui/label";
-import { LiveUsageCard } from "@/components/LiveUsageCard";
+import { badgeClass, badgeLabel, resolveDisplayBadges, formatAddonExpiry } from "@/lib/account-badge";
+
+function remCell(v: number | null | undefined, soft?: boolean) {
+  if (v == null) return <span className="text-muted-foreground">—</span>;
+  return (
+    <span title={soft ? "Soft base — may exceed via add-on until Daily Total" : undefined}>
+      {formatNumber(v)}
+      {soft ? <span className="text-cyan-400/80 ml-0.5 text-[10px]">soft</span> : null}
+    </span>
+  );
+}
 
 type KeyGroup = {
   discordUserId: string | null;
@@ -54,6 +64,7 @@ export default function KeysPage() {
   const [newKeyName, setNewKeyName] = useState("");
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copiedId, setCopiedId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [showOverride, setShowOverride] = useState(false);
   const [overrideDiscordId, setOverrideDiscordId] = useState("");
@@ -132,6 +143,17 @@ export default function KeysPage() {
     await copyToClipboard(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleRevealCopy = async (id: number) => {
+    try {
+      const res = await keys.reveal(id);
+      await copyToClipboard(res.key);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2000);
+    } catch (e) {
+      console.warn("[keys] reveal failed", e);
+    }
   };
 
   const handlePreviewOverride = async () => {
@@ -235,18 +257,23 @@ export default function KeysPage() {
         </div>
       </div>
 
-      <div className="space-y-3">
+      <div className="space-y-4">
         {groups.map((g) => {
           const gid = g.discordUserId || `unlinked-${g.keys[0]?.id}`;
           const isOpen = expanded[gid] !== false;
           const title = g.discordUsername
             ? `${g.discordUsername}${g.discordUserId ? ` · ${g.discordUserId}` : ""}`
             : g.discordUserId || "Unlinked keys";
+          const primary = g.keys.find((k) => k.isPrimary) || g.keys[0];
+          const headerBadges = resolveDisplayBadges(primary?.accountTier, primary?.accountBadges, {
+            addons: primary?.activeAddons,
+          });
+          const headerAddons = primary?.activeAddons || [];
           return (
             <Card key={gid} className="border-border/50 overflow-hidden">
               <button
                 type="button"
-                className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-accent/30 transition-colors"
+                className="w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-accent/30 transition-colors"
                 onClick={() => setExpanded((p) => ({ ...p, [gid]: !isOpen }))}
               >
                 {isOpen ? (
@@ -254,14 +281,23 @@ export default function KeysPage() {
                 ) : (
                   <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
                 )}
-                <div className="flex-1 min-w-0">
+                <div className="flex-1 min-w-0 space-y-1.5">
                   <div className="font-medium text-sm truncate">{title}</div>
                   {!g.discordUserId && (
                     <div className="text-[10px] text-muted-foreground">No Discord link on these keys</div>
                   )}
-                  <div className="mt-1">
-                    <LiveUsageCard live={g.keys[0]?.liveUsage} compact />
-                  </div>
+                  {(headerBadges.length > 0 || headerAddons.length > 0) && (
+                    <div className="flex flex-wrap gap-1">
+                      {headerBadges.map((b) => (
+                        <span key={b} className={`px-1.5 py-0.5 text-[10px] rounded-full ${badgeClass(b)}`}>
+                          {badgeLabel(b)}
+                          {b === "addon" && headerAddons[0]?.expiresAt
+                            ? ` · ${formatAddonExpiry(headerAddons[0].expiresAt, "en-GB")}`
+                            : ""}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <Badge variant="secondary" className="shrink-0 gap-1">
                   <Key className="h-3 w-3" />
@@ -283,18 +319,25 @@ export default function KeysPage() {
                           <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs hide-mobile">In left</th>
                           <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs hide-mobile">Out left</th>
                           <th className="text-right py-2 px-4 text-muted-foreground font-medium text-xs hide-mobile">Prompts left</th>
+                          <th className="text-center py-2 px-4 text-muted-foreground font-medium text-xs">Copy</th>
                           <th className="text-center py-2 px-4 text-muted-foreground font-medium text-xs">Active</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {g.keys.map((k) => (
+                        {g.keys.map((k) => {
+                          const q = k.quotaHint;
+                          const inLeft = k.liveUsage?.remaining?.input ?? q?.inputLeft;
+                          const outLeft = k.liveUsage?.remaining?.output ?? q?.outputLeft;
+                          const promptsLeft =
+                            k.liveUsage?.remaining?.prompt ?? q?.promptsLeftToday;
+                          return (
                           <tr
                             key={k.id}
                             className="border-b border-border/30 hover:bg-accent/30 cursor-pointer transition-colors"
                             onClick={() => navigate(keySlug(k))}
                           >
-                            <td className="py-2.5 px-4 font-medium text-sm">
-                              <span className="inline-flex items-center gap-2">
+                            <td className="py-3 px-4 font-medium text-sm">
+                              <span className="inline-flex items-center gap-2 flex-wrap">
                                 {k.name}
                                 {k.isPrimary && (
                                   <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-sky-500/50 text-sky-400">
@@ -306,53 +349,66 @@ export default function KeysPage() {
                                     Trial
                                   </Badge>
                                 )}
+                                {(k.activeAddons || []).slice(0, 1).map((a) => (
+                                  <Badge
+                                    key={a.name}
+                                    variant="outline"
+                                    className="text-[10px] px-1.5 py-0 border-cyan-500/50 text-cyan-400"
+                                  >
+                                    {a.name}
+                                    {a.expiresAt ? ` · ${formatAddonExpiry(a.expiresAt, "en-GB")}` : ""}
+                                  </Badge>
+                                ))}
                               </span>
                             </td>
-                            <td className="py-2.5 px-4 hide-mobile">
+                            <td className="py-3 px-4 hide-mobile">
                               <code className="text-xs bg-accent/50 px-2 py-1 rounded font-mono">
                                 {k.keyMasked}
                               </code>
                             </td>
-                            <td className="py-2.5 px-4 text-xs text-muted-foreground">
-                              {k.provisionedBy || "—"}
+                            <td className="py-3 px-4 text-xs text-muted-foreground">
+                              {k.provisionedBy === "admin-override" ? "override" : (k.provisionedBy || "—")}
                             </td>
-                            <td className="py-2.5 px-4 text-center">
+                            <td className="py-3 px-4 text-center">
                               <Badge variant={k.isActive ? "success" : "secondary"}>
                                 {k.isActive ? "Active" : "Disabled"}
                               </Badge>
                             </td>
-                            <td className="py-2.5 px-4 text-right font-mono text-xs">{formatNumber(k.requestsToday)}</td>
-                            <td className="py-2.5 px-4 text-right font-mono text-xs hide-mobile">{formatNumber(k.tokensToday)}</td>
-                            <td className="py-2.5 px-4 text-right font-mono text-xs hide-mobile text-muted-foreground">
-                              {k.liveUsage?.remaining.input != null
-                                ? formatNumber(k.liveUsage.remaining.input)
-                                : "—"}
+                            <td className="py-3 px-4 text-right font-mono text-xs">{formatNumber(k.requestsToday)}</td>
+                            <td className="py-3 px-4 text-right font-mono text-xs hide-mobile">{formatNumber(k.tokensToday)}</td>
+                            <td className="py-3 px-4 text-right font-mono text-xs hide-mobile text-muted-foreground">
+                              {remCell(inLeft)}
                             </td>
-                            <td className="py-2.5 px-4 text-right font-mono text-xs hide-mobile text-muted-foreground">
-                              {k.liveUsage?.remaining.output != null
-                                ? formatNumber(k.liveUsage.remaining.output)
-                                : "—"}
+                            <td className="py-3 px-4 text-right font-mono text-xs hide-mobile text-muted-foreground">
+                              {remCell(outLeft)}
                             </td>
-                            <td className="py-2.5 px-4 text-right font-mono text-xs hide-mobile text-muted-foreground">
-                              {k.liveUsage?.remaining.prompt != null ? (
-                                <span title={`${k.liveUsage.limits.promptLimitWindow} · ${k.liveUsage.limits.promptLimitSource}`}>
-                                  {formatNumber(k.liveUsage.remaining.prompt)}
-                                  {k.liveUsage.limits.promptLimitSource === "override" && (
-                                    <span className="text-sky-400 ml-0.5">*</span>
-                                  )}
-                                </span>
-                              ) : (
-                                "—"
-                              )}
+                            <td className="py-3 px-4 text-right font-mono text-xs hide-mobile text-muted-foreground">
+                              {remCell(promptsLeft)}
                             </td>
-                            <td className="py-2.5 px-4 text-center" onClick={(e) => e.stopPropagation()}>
+                            <td className="py-3 px-4 text-center" onClick={(e) => e.stopPropagation()}>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-8 w-8"
+                                title="Copy full API key"
+                                onClick={() => void handleRevealCopy(k.id)}
+                              >
+                                {copiedId === k.id ? (
+                                  <Check className="h-3.5 w-3.5 text-emerald-400" />
+                                ) : (
+                                  <Copy className="h-3.5 w-3.5" />
+                                )}
+                              </Button>
+                            </td>
+                            <td className="py-3 px-4 text-center" onClick={(e) => e.stopPropagation()}>
                               <Switch
                                 checked={k.isActive}
                                 onCheckedChange={() => handleToggleActive(k.id, k.isActive)}
                               />
                             </td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>

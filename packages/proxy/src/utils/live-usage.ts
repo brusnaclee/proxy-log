@@ -21,7 +21,7 @@ import {
 	wibMonthStartSql,
 	sanitizeRows,
 } from './counting.js';
-import { resolveKeyApiCallLimit, resolveKeyDailyTokenLimit, resolveKeyPromptLimit } from './trial-config.js';
+import { resolveKeyApiCallLimit, resolveKeyPromptLimit } from './trial-config.js';
 import {
 	applyDayOverrideToPromptLimit,
 	applyDayOverrideToQuotaStack,
@@ -46,7 +46,6 @@ import {
 	isAddonTeaseModel,
 	parseModelDailyLimits,
 	resolveAddonQuotaStack,
-	stackBaseDailyForKey,
 	sumAddonDailyTokenBonus,
 } from './addons.js';
 
@@ -122,7 +121,7 @@ export interface LiveUsagePayload {
 	apiCallResetAt: string | null;
 	apiCallResetMins: number;
 	modelUsageLimits: ModelPromptUsage[];
-	/** When add-on active: base + pack breakdown for UI */
+	/** When add-on active: input base + pack breakdown for UI */
 	dailyTokenBreakdown?: {
 		base: number;
 		addonBonus: number;
@@ -130,6 +129,7 @@ export interface LiveUsagePayload {
 		bypassIo?: boolean;
 		inputBase?: number;
 		outputBase?: number;
+		dailyTotal?: number;
 	};
 	activeAddons?: Array<{
 		name: string;
@@ -316,75 +316,75 @@ export async function buildLiveUsageForKey(
 		activeAddons.length <= 0;
 	const addonDailyBonus = sumAddonDailyTokenBonus(activeAddons);
 
-	const rawDailyInput = pickLimit(limitKey.dailyInputTokenLimit, cfg?.globalDailyInputTokenLimit);
-	const rawDailyOutput = pickLimit(limitKey.dailyOutputTokenLimit, cfg?.globalDailyOutputTokenLimit);
 	const monthly = pickLimit(limitKey.monthlyTokenLimit, cfg?.globalMonthlyTokenLimit);
-	const baseDailyTokenLimit = resolveKeyDailyTokenLimit(limitKey as any, cfg);
 	const hasActiveAddon = activeAddons.length > 0;
 	const dayBonuses = normalizeDayBonuses(await getKeyDayOverride(limitKey.id));
 	const stack = applyDayOverrideToQuotaStack(
 		resolveAddonQuotaStack({
-		hasActiveAddon,
-		keyOrGlobalDaily: stackBaseDailyForKey({
 			hasActiveAddon,
 			isTrial: !!limitKey.isTrial,
-			keyDailyTokenLimit: limitKey.dailyTokenLimit,
-			resolvedKeyOrGlobalDaily: baseDailyTokenLimit,
+			roleLimitMode: (limitKey as any).roleLimitMode,
+			keyDailyInput: limitKey.dailyInputTokenLimit,
+			keyDailyOutput: limitKey.dailyOutputTokenLimit,
+			keyDailyTotal: limitKey.dailyTokenLimit,
+			globalDailyInput: cfg?.globalDailyInputTokenLimit,
+			globalDailyOutput: cfg?.globalDailyOutputTokenLimit,
+			addonDailyBonus,
 		}),
-		dailyInput: rawDailyInput.value,
-		dailyOutput: rawDailyOutput.value,
-		addonDailyBonus,
-	}),
 		dayBonuses,
 	);
-	// Display: keep soft I/O bases visible when add-on (enforcement is daily-only).
-	const dailyInput = stack.bypassIo
-		? {
-				value: stack.inputBase > 0 ? stack.inputBase : rawDailyInput.value,
-				source: rawDailyInput.source === 'none' && stack.inputBase > 0 ? 'global' : rawDailyInput.source,
-			}
-		: {
-				value: rawDailyInput.value > 0
-					? rawDailyInput.value + dayBonuses.extraDailyInput
-					: rawDailyInput.value,
-				source: dayBonuses.extraDailyInput > 0 && rawDailyInput.value > 0 ? 'override' : rawDailyInput.source,
-			};
-	const dailyOutput = stack.bypassIo
-		? {
-				value: stack.outputBase > 0 ? stack.outputBase : rawDailyOutput.value,
-				source:
-					rawDailyOutput.source === 'none' && stack.outputBase > 0
-						? 'global'
-						: rawDailyOutput.source,
-			}
-		: {
-				value: rawDailyOutput.value > 0
-					? rawDailyOutput.value + dayBonuses.extraDailyOutput
-					: rawDailyOutput.value,
-				source: dayBonuses.extraDailyOutput > 0 && rawDailyOutput.value > 0 ? 'override' : rawDailyOutput.source,
-			};
+
+	const inputSource: LimitSource =
+		Number(limitKey.dailyInputTokenLimit) > 0
+			? "override"
+			: stack.dailyInputLimit > 0
+				? stack.addonBonus > 0 && stack.inputBase <= 0
+					? "addon"
+					: "global"
+				: "none";
+	const outputSource: LimitSource =
+		Number(limitKey.dailyOutputTokenLimit) > 0
+			? "override"
+			: stack.dailyOutputLimit > 0
+				? "global"
+				: "none";
+
+	const dailyInput = {
+		value: stack.dailyInputLimit,
+		source:
+			dayBonuses.extraDailyInput > 0 && stack.dailyInputLimit > 0
+				? ("override" as LimitSource)
+				: inputSource,
+	};
+	const dailyOutput = {
+		value: stack.dailyOutputLimit,
+		source:
+			dayBonuses.extraDailyOutput > 0 && stack.dailyOutputLimit > 0
+				? ("override" as LimitSource)
+				: outputSource,
+	};
 	const dailyTokenLimit = stack.effectiveDaily;
 	const dailyTok =
 		dailyTokenLimit > 0
 			? {
 					value: dailyTokenLimit,
-					source: (stack.addonBonus > 0
-						? 'addon'
-						: Number(limitKey.dailyTokenLimit) > 0
-							? 'override'
-							: limitKey.isTrial
-								? 'global'
-								: 'none') as LimitSource,
+					source: (Number(limitKey.dailyTokenLimit) > 0
+						? "override"
+						: limitKey.isTrial
+							? "global"
+							: "none") as LimitSource,
 				}
-			: { value: 0, source: 'none' as LimitSource };
+			: { value: 0, source: "none" as LimitSource };
 
 	const dailyTokenBreakdown = {
-		base: stack.baseDaily,
+		base: stack.inputBase,
 		addonBonus: stack.addonBonus,
-		effective: stack.effectiveDaily,
-		bypassIo: stack.bypassIo,
+		effective: stack.dailyInputLimit,
+		bypassIo: false,
 		inputBase: stack.inputBase,
 		outputBase: stack.outputBase,
+		/** Hard daily total (custom only); 0 = unlimited */
+		dailyTotal: stack.effectiveDaily,
 	};
 	const activeAddonsSummary = activeAddons.map((a) => ({
 		name: a.name,
@@ -694,8 +694,8 @@ export async function buildLiveUsageForKey(
 			perModelPromptLimitSource: perModelPick.source,
 		},
 		remaining: {
-			input: stack.bypassIo ? null : rem(dailyInput.value, promptTokens),
-			output: stack.bypassIo ? null : rem(dailyOutput.value, completionTokens),
+			input: rem(dailyInput.value, promptTokens),
+			output: rem(dailyOutput.value, completionTokens),
 			daily: rem(dailyTok.value, totalTokens),
 			monthly: rem(monthly.value, monthTokens),
 			prompt: rem(promptLimit, promptUsed),

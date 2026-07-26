@@ -8828,6 +8828,15 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 				(err) => console.error('[access] sync on Phantom gain failed:', err),
 			);
 		}
+
+		// Other Discord role changes (Premium/Pro/Staff) → refresh badges / tier / limits
+		const oldRoleIds = [...oldMember.roles.cache.keys()].map(String).sort().join(',');
+		const newRoleIds = [...newMember.roles.cache.keys()].map(String).sort().join(',');
+		if (oldRoleIds !== newRoleIds && oldHasRole === newHasRole) {
+			await syncUserKeyAccess(newMember.id, newMember, 'Discord roles changed').catch(
+				(err) => console.error('[access] sync on role change failed:', err),
+			);
+		}
 	} catch (err) {
 		console.error('Error handling guild member update:', err);
 	}

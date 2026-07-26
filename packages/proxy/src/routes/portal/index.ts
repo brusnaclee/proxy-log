@@ -13,7 +13,7 @@ import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { getRecapWindow } from "../../utils/recap-window.js";
 import { getModelCatalogResponse, getClientCatalogMonitorRows } from "../../utils/model-catalog.js";
-import { parseTrialModelWhitelist, resolveKeyDailyTokenLimit, resolveKeyPromptLimit, resolveKeyApiCallLimit } from "../../utils/trial-config.js";
+import { parseTrialModelWhitelist, resolveKeyPromptLimit, resolveKeyApiCallLimit } from "../../utils/trial-config.js";
 import {
   checkPromptLimit,
   checkModelPromptLimit,
@@ -262,7 +262,7 @@ portal.get("/me", async (c) => {
   const primaryKey = userKeys.find(k => !k.isTrial && k.isActive) || userKeys.find(k => k.isActive) || userKeys[0];
   const config = (await db.select().from(adminConfig).limit(1))[0] ?? null;
 
-  const { getActiveAddonsForUser, sumAddonDailyTokenBonus, parseModelDailyLimits, resolveAddonQuotaStack, stackBaseDailyForKey } = await import("../../utils/addons.js");
+  const { getActiveAddonsForUser, sumAddonDailyTokenBonus, parseModelDailyLimits, resolveAddonQuotaStack } = await import("../../utils/addons.js");
   const activeAddons = !isTrial && primaryKey
     ? await getActiveAddonsForUser({
         discordUserId,
@@ -270,6 +270,11 @@ portal.get("/me", async (c) => {
       })
     : [];
   const addonDailyBonus = sumAddonDailyTokenBonus(activeAddons);
+  const { isBlockedWithoutAddon } = await import("../../utils/role-limit-gate.js");
+  const blockedWithoutAddon =
+    !!primaryKey &&
+    !isTrial &&
+    isBlockedWithoutAddon(primaryKey as any, activeAddons.length);
 
   // Today's usage (WIB) — same token aggregation as Discord usage embed
   const todayStart = wibTodayStartDate();
@@ -319,9 +324,6 @@ portal.get("/me", async (c) => {
   const { limit: promptLimit, window: promptLimitWindow } = primaryKey
     ? resolveKeyPromptLimit(primaryKey as any, config)
     : { limit: 0, window: "1d" };
-  const baseDailyTokenLimit = primaryKey
-    ? resolveKeyDailyTokenLimit(primaryKey as any, config)
-    : 0;
   // Prompt used = shared across all Discord account keys
   let promptUsed = 0;
   let promptResetAt: string | null = null;
@@ -424,36 +426,35 @@ portal.get("/me", async (c) => {
     return { value: 0, source: "none" as const };
   };
 
-  const rawDailyInput = pickLimit(primaryKey?.dailyInputTokenLimit, config?.globalDailyInputTokenLimit);
-  const rawDailyOutput = pickLimit(primaryKey?.dailyOutputTokenLimit, config?.globalDailyOutputTokenLimit);
   const quotaStack = resolveAddonQuotaStack({
     hasActiveAddon: activeAddons.length > 0,
-    keyOrGlobalDaily: stackBaseDailyForKey({
-      hasActiveAddon: activeAddons.length > 0,
-      isTrial: !!isTrial || !!primaryKey?.isTrial,
-      keyDailyTokenLimit: primaryKey?.dailyTokenLimit,
-      resolvedKeyOrGlobalDaily: baseDailyTokenLimit,
-    }),
-    dailyInput: rawDailyInput.value,
-    dailyOutput: rawDailyOutput.value,
+    isTrial: !!isTrial || !!primaryKey?.isTrial,
+    roleLimitMode: (primaryKey as any)?.roleLimitMode,
+    keyDailyInput: primaryKey?.dailyInputTokenLimit,
+    keyDailyOutput: primaryKey?.dailyOutputTokenLimit,
+    keyDailyTotal: primaryKey?.dailyTokenLimit,
+    globalDailyInput: config?.globalDailyInputTokenLimit,
+    globalDailyOutput: config?.globalDailyOutputTokenLimit,
     addonDailyBonus,
   });
-  const dailyInput = quotaStack.bypassIo
-    ? {
-        value: quotaStack.inputBase > 0 ? quotaStack.inputBase : rawDailyInput.value,
-        source: (rawDailyInput.source === "none" && quotaStack.inputBase > 0
-          ? "global"
-          : rawDailyInput.source) as "override" | "global" | "none",
-      }
-    : rawDailyInput;
-  const dailyOutput = quotaStack.bypassIo
-    ? {
-        value: quotaStack.outputBase > 0 ? quotaStack.outputBase : rawDailyOutput.value,
-        source: (rawDailyOutput.source === "none" && quotaStack.outputBase > 0
-          ? "global"
-          : rawDailyOutput.source) as "override" | "global" | "none",
-      }
-    : rawDailyOutput;
+  const dailyInput = {
+    value: quotaStack.dailyInputLimit,
+    source: (Number(primaryKey?.dailyInputTokenLimit) > 0
+      ? "override"
+      : quotaStack.dailyInputLimit > 0
+        ? quotaStack.addonBonus > 0 && quotaStack.inputBase <= 0
+          ? "addon"
+          : "global"
+        : "none") as "override" | "global" | "none" | "addon",
+  };
+  const dailyOutput = {
+    value: quotaStack.dailyOutputLimit,
+    source: (Number(primaryKey?.dailyOutputTokenLimit) > 0
+      ? "override"
+      : quotaStack.dailyOutputLimit > 0
+        ? "global"
+        : "none") as "override" | "global" | "none",
+  };
   const dailyTokenLimit = quotaStack.effectiveDaily;
   // Match Discord: key override OR global monthly
   const monthly = pickLimit(primaryKey?.monthlyTokenLimit, config?.globalMonthlyTokenLimit);
@@ -461,13 +462,11 @@ portal.get("/me", async (c) => {
   const dailyTok = dailyTokenLimit > 0
     ? {
         value: dailyTokenLimit,
-        source: (quotaStack.addonBonus > 0
-          ? "addon"
-          : Number(primaryKey?.dailyTokenLimit) > 0
-            ? "override"
-            : primaryKey?.isTrial || isTrial
-              ? "global"
-              : "none") as "override" | "global" | "none" | "addon",
+        source: (Number(primaryKey?.dailyTokenLimit) > 0
+          ? "override"
+          : primaryKey?.isTrial || isTrial
+            ? "global"
+            : "none") as "override" | "global" | "none" | "addon",
       }
     : { value: 0, source: "none" as const };
   const prompt = promptLimit > 0
@@ -494,7 +493,7 @@ portal.get("/me", async (c) => {
     inputUsed?: number;
     outputUsed?: number;
   }> = [];
-  if (dedicatedRules.length > 0 && accountKeyIds.length > 0) {
+  if (!blockedWithoutAddon && dedicatedRules.length > 0 && accountKeyIds.length > 0) {
     for (const rule of dedicatedRules) {
       const wherePool = and(
         sql`api_key_id IN (${sql.join(accountKeyIds.map((id) => sql`${id}`), sql`, `)})`,
@@ -563,10 +562,15 @@ portal.get("/me", async (c) => {
   } catch {
     accountBadges = [];
   }
-  // Never expose Admin Override as a portal badge
-  accountBadges = accountBadges.filter((b) => b !== "admin_override" && b !== "none");
+  // Never expose Admin Override as a portal badge (any casing / spacing)
+  accountBadges = accountBadges
+    .map((b) => String(b || "").trim())
+    .filter((b) => {
+      const n = b.toLowerCase().replace(/[\s-]+/g, "_");
+      return n && n !== "admin_override" && n !== "none" && n !== "adminoverride";
+    });
   if (!isTrial) {
-    accountBadges = accountBadges.filter((b) => b !== "trial");
+    accountBadges = accountBadges.filter((b) => b.toLowerCase() !== "trial");
   }
   if (isTrial) {
     accountBadges = ["trial", ...accountBadges.filter((b) => b !== "trial")];
@@ -665,14 +669,17 @@ portal.get("/me", async (c) => {
     dailyResetAt,
     monthlyResetAt,
     dedicatedPools,
+    blockedWithoutAddon,
+    roleLimitMode: (primaryKey as any)?.roleLimitMode || null,
     modelUsageLimits,
     dailyTokenBreakdown: {
-      base: quotaStack.baseDaily,
+      base: quotaStack.inputBase,
       addonBonus: quotaStack.addonBonus,
-      effective: quotaStack.effectiveDaily,
-      bypassIo: quotaStack.bypassIo,
+      effective: quotaStack.dailyInputLimit,
+      bypassIo: false,
       inputBase: quotaStack.inputBase,
       outputBase: quotaStack.outputBase,
+      dailyTotal: quotaStack.effectiveDaily,
     },
     activeAddons: activeAddons.map((a) => ({
       name: a.name,
