@@ -7028,12 +7028,12 @@ client.once('clientReady', async () => {
 						(notif.newKey || notif.apiKey)
 					) {
 						const keyVal = notif.newKey || notif.apiKey;
-						if (notif.type === 'admin_override_created') {
-							title = notif.title || '🔑 API Key (Admin Override)';
+						const endpoint = notif.endpoint || '';
+						// Prefer full Phantom-style message from proxy; fallback to same template
+						if (notif.message && String(notif.message).includes('OpenAI-compatible')) {
+							title = notif.title || '🔑 API Key Proxy Anda';
 							color = 0x57f287;
-							dmText =
-								notif.message ||
-								`**Endpoint:** \`${notif.endpoint || ''}\`\n**Authorization:** \`Bearer ${keyVal}\``;
+							dmText = notif.message;
 						} else if (notif.type === 'portal_key_rotated') {
 							title = '🔑 API Key Diperbarui';
 							color = 0xf59e0b;
@@ -7041,11 +7041,26 @@ client.once('clientReady', async () => {
 								notif.message ||
 								`API key di-rotate via portal.\n**Key baru:** \`${keyVal}\``;
 						} else {
-							title = notif.title || '🔄 API Key Di-rotate (Admin)';
-							color = 0xf59e0b;
+							title = notif.title || '🔑 API Key Proxy Anda';
+							color = 0x57f287;
 							dmText =
-								notif.message ||
-								`**Endpoint:** \`${notif.endpoint || ''}\`\n**Authorization:** \`Bearer ${keyVal}\``;
+								`Berikut kredensial akses API proxy Anda:\n\n` +
+								`**A. Untuk OpenAI-compatible clients (Cline, Codex, OpenCode, Cursor):**\n` +
+								'```\n' +
+								`Endpoint:   ${endpoint}\n` +
+								`Authorization: Bearer ${keyVal}\n` +
+								'```\n' +
+								`Contoh: \`${endpoint}/chat/completions\`\n\n` +
+								`**B. Untuk Anthropic clients (Claude Code, Anthropic SDK):**\n` +
+								'```bash\n' +
+								`export ANTHROPIC_BASE_URL="${endpoint}"\n` +
+								`export ANTHROPIC_AUTH_TOKEN="${keyVal}"\n` +
+								`export ANTHROPIC_DEFAULT_SONNET_MODEL="<groupy-model-id>"\n` +
+								`export ANTHROPIC_DEFAULT_HAIKU_MODEL="<groupy-model-id>"\n` +
+								`export ANTHROPIC_DEFAULT_OPUS_MODEL="<groupy-model-id>"\n` +
+								`export API_TIMEOUT_MS=500000\n` +
+								'```\n' +
+								`Untuk bantuan setup: klik **How to Use** di DM bot ini.`;
 						}
 					} else if (
 						notif.type === 'device_limit_rotate' ||

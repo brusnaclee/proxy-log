@@ -260,6 +260,9 @@ portal.get("/me", async (c) => {
 
   const isTrial = await isTrialAccount(discordUserId);
   const primaryKey = userKeys.find(k => !k.isTrial && k.isActive) || userKeys.find(k => k.isActive) || userKeys[0];
+  const hasAdminOverride = userKeys.some(
+    (k) => k.isActive && !k.isTrial && String(k.provisionedBy || "") === "admin-override",
+  );
   const config = (await db.select().from(adminConfig).limit(1))[0] ?? null;
 
   const { getActiveAddonsForUser, sumAddonDailyTokenBonus, parseModelDailyLimits, resolveAddonQuotaStack, stackBaseDailyForKey } = await import("../../utils/addons.js");
@@ -563,23 +566,27 @@ portal.get("/me", async (c) => {
   } catch {
     accountBadges = [];
   }
+  // Never show trial badge when user has an active paid/override key
+  if (!isTrial) {
+    accountBadges = accountBadges.filter((b) => b !== "trial");
+  }
   if (isTrial) {
     accountBadges = ["trial", ...accountBadges.filter((b) => b !== "trial")];
-  } else if (
-    (primaryKey as any)?.provisionedBy === "admin-override" &&
-    !accountBadges.includes("admin_override")
-  ) {
-    accountBadges = ["admin_override", ...accountBadges];
+  } else if (hasAdminOverride || (primaryKey as any)?.provisionedBy === "admin-override") {
+    if (!accountBadges.includes("admin_override")) {
+      accountBadges = ["admin_override", ...accountBadges];
+    }
   } else if (accountBadges.length === 0) {
     accountBadges = ["phantom"];
   }
   const tierRaw = String((primaryKey as any)?.accountTier || "").trim();
+  // Prefer Admin Override as the primary portal type (not Trial / not only Pro)
   let accountType = isTrial
     ? "trial"
-    : tierRaw && tierRaw !== "none"
-      ? tierRaw
-      : accountBadges.includes("admin_override")
-        ? "admin_override"
+    : hasAdminOverride || (primaryKey as any)?.provisionedBy === "admin-override"
+      ? "admin_override"
+      : tierRaw && tierRaw !== "none" && tierRaw !== "admin_override"
+        ? tierRaw
         : accountBadges.includes("moderator") ||
             accountBadges.includes("troubleshooter") ||
             accountBadges.includes("contributor") ||

@@ -35,6 +35,44 @@ export interface UserNotificationPayload {
 	[key: string]: unknown;
 }
 
+/**
+ * Same credentials template as Phantom claim DM (OpenAI A + Anthropic B).
+ * Override / rotate / phantom all share this; only trial uses a different template.
+ */
+export function formatPhantomCredentialsMessage(opts: {
+	endpoint: string;
+	apiKey: string;
+	intro?: string;
+}): string {
+	const endpoint = opts.endpoint.replace(/\/$/, "");
+	const intro = opts.intro || "Berikut kredensial akses API proxy Anda:";
+	return (
+		`${intro}\n\n` +
+		`**A. Untuk OpenAI-compatible clients (Cline, Codex, OpenCode, Cursor):**\n` +
+		"```\n" +
+		`Endpoint:   ${endpoint}\n` +
+		`Authorization: Bearer ${opts.apiKey}\n` +
+		"```\n" +
+		`Contoh: \`${endpoint}/chat/completions\`\n\n` +
+		`**B. Untuk Anthropic clients (Claude Code, Anthropic SDK):**\n` +
+		`Proxy auto-translate \`/v1/messages\` (Anthropic) ↔ \`/v1/chat/completions\` (OpenAI). ` +
+		`Set env vars berikut:\n` +
+		"```bash\n" +
+		`export ANTHROPIC_BASE_URL="${endpoint}"\n` +
+		`export ANTHROPIC_AUTH_TOKEN="${opts.apiKey}"\n` +
+		`export ANTHROPIC_DEFAULT_SONNET_MODEL="<groupy-model-id>"\n` +
+		`export ANTHROPIC_DEFAULT_HAIKU_MODEL="<groupy-model-id>"\n` +
+		`export ANTHROPIC_DEFAULT_OPUS_MODEL="<groupy-model-id>"\n` +
+		`export API_TIMEOUT_MS=500000\n` +
+		"```\n" +
+		`Untuk bantuan setup di IDE: buka Discord DM bot ini dan klik "How to Use".\n\n` +
+		`**Peraturan Penggunaan:**\n` +
+		`• Maksimal device mengikuti setting key Anda\n` +
+		`• Jika key direvoke admin karena pelanggaran, hubungi admin\n\n` +
+		`Simpan key ini baik-baik. Jika bocor, hubungi admin untuk rotate key.`
+	);
+}
+
 function normalizeQueue(raw: string | null | undefined): any[] {
 	if (!raw) return [];
 	try {
@@ -91,7 +129,6 @@ export async function queueUserNotificationByDiscord(
 	const rows = await db.select().from(apiKeys).where(eq(apiKeys.discordUserId, discordUserId));
 	const key = rows.find((k) => k.isActive) || rows[0];
 	if (!key) {
-		// No key yet — stash is impossible; caller should notify after key create
 		return false;
 	}
 	return queueUserNotification(key.id, { ...payload, discordUserId });

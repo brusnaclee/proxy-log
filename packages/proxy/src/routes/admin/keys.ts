@@ -27,7 +27,7 @@ import {
   parseRoleLimitModes,
   resolveDiscordRoles,
 } from "../../utils/discord-roles.js";
-import { queueUserNotification } from "../../utils/user-notify.js";
+import { queueUserNotification, formatPhantomCredentialsMessage } from "../../utils/user-notify.js";
 
 async function mapWithConcurrency<T, R>(
   items: T[],
@@ -348,16 +348,13 @@ keys.post("/keys/override-discord", async (c) => {
   if (discordUserId) {
     await queueUserNotification(result.id, {
       type: "admin_override_created",
-      title: "🔑 API Key (Admin Override)",
-      message:
-        `Admin telah menerbitkan API key untuk akun Anda.\n\n` +
-        `**Endpoint:** \`${endpoint}\`\n` +
-        `**Authorization:** \`Bearer ${key}\`\n` +
-        `**Tier:** ${accountTier}` +
-        (resolved.badges.length ? ` (${resolved.badges.join(", ")})` : "") +
-        `\n**Limit mode:** ${limitMode}` +
-        (body.note ? `\n**Note:** ${body.note}` : "") +
-        `\n\nSimpan key ini — tidak ditampilkan ulang.`,
+      title: "🔑 API Key Proxy Anda",
+      message: formatPhantomCredentialsMessage({
+        endpoint,
+        apiKey: key,
+        intro:
+          "Admin Override aktif. Verifikasi/klaim tidak diperlukan — berikut kredensial akses API proxy:",
+      }),
       endpoint,
       apiKey: key,
       newKey: key,
@@ -716,14 +713,17 @@ keys.post("/keys/:id/rotate", async (c) => {
   }).where(eq(apiKeys.id, id));
 
   if (key.discordUserId) {
+    const isTrialKey = !!key.isTrial;
     await queueUserNotification(id, {
-      type: "key_rotated",
-      title: "🔄 API Key Di-rotate (Admin)",
-      message:
-        `Admin merotasi API key **${key.name}**.\n\n` +
-        `**Endpoint:** \`${endpoint}\`\n` +
-        `**Authorization:** \`Bearer ${newKey}\`\n\n` +
-        `Key lama sudah tidak valid. Update IDE/client Anda.`,
+      type: isTrialKey ? "trial_key_rotated" : "key_rotated",
+      title: isTrialKey ? "🔄 Trial Key Di-rotate" : "🔑 API Key Proxy Anda",
+      message: isTrialKey
+        ? `Admin merotasi key trial **${key.name}**.\n\n**Endpoint:** \`${endpoint}\`\n**Key baru:** \`${newKey}\``
+        : formatPhantomCredentialsMessage({
+            endpoint,
+            apiKey: newKey,
+            intro: `Admin merotasi API key **${key.name}**. Key lama sudah tidak valid. Kredensial baru:`,
+          }),
       endpoint,
       newKey,
       apiKey: newKey,

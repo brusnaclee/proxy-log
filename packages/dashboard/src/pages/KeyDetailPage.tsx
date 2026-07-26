@@ -690,11 +690,16 @@ export default function KeyDetailPage() {
         </Card>
       )}
 
-      {keyData.isActive && keyData.discordUserId && (
+      {keyData.isActive && (
         <Card className="border-blue-500/30 bg-blue-500/5">
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2 text-blue-400">
               <Info className="h-4 w-4" /> Setup di IDE / CLI
+              {keyData.isTrial ? (
+                <Badge variant="outline" className="text-[10px] border-amber-500/50 text-amber-400">Trial template</Badge>
+              ) : (
+                <Badge variant="outline" className="text-[10px] border-emerald-500/50 text-emerald-400">Phantom template</Badge>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4 text-sm">
@@ -708,6 +713,7 @@ export default function KeyDetailPage() {
 Authorization: Bearer ${keyData.keyMasked}`}
               </pre>
             </div>
+            {!keyData.isTrial && (
             <div>
               <div className="font-medium mb-1 flex items-center gap-2">
                 <span className="text-orange-400">B.</span> Anthropic clients
@@ -723,8 +729,15 @@ export API_TIMEOUT_MS=500000`}
               </pre>
               <p className="text-xs text-muted-foreground mt-2">
                 Setting <code className="font-mono">ANTHROPIC_BASE_URL</code> ke path di atas otomatis route ke <code className="font-mono">/v1/messages</code> di proxy dengan translation ke OpenAI Chat Completions. Tidak perlu install CCProxy / ccrouter lagi.
+                {" "}Sama seperti template Phantom — Override/Pro/Premium memakai template ini; Trial beda (model terbatas).
               </p>
             </div>
+            )}
+            {keyData.isTrial && (
+              <p className="text-xs text-muted-foreground">
+                Trial: pakai endpoint OpenAI-compatible di atas. Model mengikuti aturan trial (lihat Trial Mode). Bukan template Phantom penuh.
+              </p>
+            )}
           </CardContent>
         </Card>
       )}

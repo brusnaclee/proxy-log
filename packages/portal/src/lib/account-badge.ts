@@ -68,7 +68,12 @@ export function resolveDisplayBadges(
 ): string[] {
 	const raw = Array.isArray(accountBadges) ? [...accountBadges] : [];
 	if (accountType && !raw.includes(accountType)) raw.unshift(accountType);
-	const uniq = [...new Set(raw.map((b) => String(b).trim()).filter(Boolean))];
+	let uniq = [...new Set(raw.map((b) => String(b).trim()).filter(Boolean))];
+	// Paid / override accounts must never show Trial / Percobaan
+	const paid = uniq.some((b) =>
+		["admin_override", "phantom", "pro", "premium", "staff", "moderator", "troubleshooter", "contributor"].includes(b),
+	);
+	if (paid) uniq = uniq.filter((b) => b !== "trial");
 	uniq.sort((a, b) => {
 		const ia = ORDER.indexOf(a);
 		const ib = ORDER.indexOf(b);
