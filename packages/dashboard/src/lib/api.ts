@@ -135,7 +135,6 @@ export interface LiveUsagePayload {
   promptResetMins?: number;
   apiCallResetAt?: string | null;
   apiCallResetMins?: number;
-  promptResetMins: number;
   modelUsageLimits: Array<{
     model: string;
     used: number;

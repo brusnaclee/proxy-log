@@ -148,7 +148,7 @@ export function LiveUsageCard({
     bars.push({
       label: `API calls (${limits.apiCallLimitWindow || "5h"})`,
       value: usageToday.apiCallCount ?? 0,
-      max: limits.apiCallLimit,
+      max: limits.apiCallLimit || 0,
       remaining: remaining.apiCalls ?? null,
       sublabel:
         (usageToday.hopCount || 0) > 0

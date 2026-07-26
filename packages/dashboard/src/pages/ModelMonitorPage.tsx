@@ -655,7 +655,7 @@ export default function ModelMonitorPage() {
                         className={`text-xs ${d.probeOk ? "text-muted-foreground" : "text-amber-500 font-medium"}`}
                         title={d.errorMessage || undefined}
                       >
-                        {d.httpStatus > 0
+                        {(d.httpStatus ?? 0) > 0
                           ? d.httpStatus
                           : /timeout/i.test(d.errorMessage || "")
                             ? "timeout"

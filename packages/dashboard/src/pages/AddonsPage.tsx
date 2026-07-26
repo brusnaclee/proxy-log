@@ -251,9 +251,9 @@ export default function AddonsPage() {
     };
     try {
       if (editingId != null) {
-        await addonsApi.update(editingId, payload);
+        await addonsApi.update(editingId, payload as any);
       } else {
-        await addonsApi.create({ ...payload, isActive: true });
+        await addonsApi.create({ ...payload, isActive: true } as any);
       }
       resetForm();
       await load();
@@ -604,7 +604,7 @@ export default function AddonsPage() {
                   <p className="text-xs text-muted-foreground">
                     {(a.dailyTokenLimit / 1_000_000).toFixed(0)}M/day
                     {(a.defaultDurationDays || 0) > 0 ? ` · ${a.defaultDurationDays}d` : ""}
-                    {a.maxDevices > 0 ? ` · ${a.maxDevices} device` : ""}
+                    {a.maxDevices && a.maxDevices > 0 ? ` · ${a.maxDevices} device` : ""}
                     {" · "}
                     {asgCount} assigned
                   </p>
