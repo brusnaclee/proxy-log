@@ -423,10 +423,10 @@ async function sendApiCredentialsDm(userId, apiKey, endpoint) {
 			`\`\`\`\n` +
 			`Untuk bantuan setup di IDE: buka Discord DM bot ini dan klik "How to Use".\n\n` +
 			`**Peraturan Penggunaan:**\n` +
-			`• Maksimal **1 device** per API key\n` +
-			`• Jika terdeteksi >1 device, key akan di-revoke/rotate otomatis\n` +
-			`• Jika key direvoke admin karena pelanggaran, hubungi admin\n\n` +
-			`Simpan key ini baik-baik. Jika bocor, hubungi admin untuk rotate key.`,
+			`• Device limit mengikuti pengaturan akun (portal / admin)\n` +
+			`• Device baru berlebih → request **ditolak** (key Phantom **tidak** di-rotate otomatis)\n` +
+			`• Kalau key bocor / perlu ganti: portal Rotate atau minta admin\n\n` +
+			`Simpan key ini. **Pesan How to Use lama bisa berisi key usang** — salin Primary dari portal bila ragu.`;
 		0x57f287,
 	);
 	if (!result) {
@@ -7276,19 +7276,20 @@ client.once('clientReady', async () => {
 						}
 					} else if (
 						notif.type === 'device_limit_rotate' ||
+						notif.type === 'new_device_detected' ||
 						(!notif.type && notif.newKey)
 					) {
-						// Legacy auto device-rotate payload
-						title = '🔑 API Key Rotated — New Device Detected';
+						// Auto device-rotate (proxy emits new_device_detected / device_limit_rotate)
+						title = '🔑 API Key Di-rotate — Device Baru';
 						color = 0xf59e0b;
 						dmText =
-							`⚠️ **New Device Detected — API Key Rotated**\n\n` +
-							`A new device attempted to connect to your API key, but only **1 device** is allowed.\n\n` +
-							`Your key has been **automatically rotated**. Here are your new credentials:\n\n` +
-							`**Endpoint:** \`${notif.endpoint}\`\n` +
-							`**Authorization:** \`Bearer ${notif.newKey}\`\n\n` +
-							`Your old device has been removed. Configure your IDE with the new key above.\n\n` +
-							`If you need more than 1 device, please contact an admin.`;
+							`⚠️ **Device baru terdeteksi — API key di-rotate otomatis**\n\n` +
+							`Key kamu dibatasi **max device**. Device baru mencoba konek, jadi key lama diganti demi keamanan.\n\n` +
+							`**Endpoint:** \`${notif.endpoint || ''}\`\n` +
+							`**Authorization:** \`Bearer ${notif.newKey || ''}\`\n\n` +
+							`Device lama sudah di-reset. Update key di IDE/CLI sekarang.\n` +
+							`Portal (Kunci API → Primary) juga menampilkan key baru ini.\n\n` +
+							`Butuh lebih dari 1 device? Hubungi admin.`;
 					} else if (
 						[
 							'key_disabled',
@@ -7322,11 +7323,27 @@ client.once('clientReady', async () => {
 					}
 
 					if (dmText) {
-						await sendDMToUser(notif.discordUserId, title, dmText, color);
+						const sent = await sendDMToUser(
+							notif.discordUserId,
+							title,
+							dmText,
+							color,
+						);
 						await mirrorThread(title, dmText, color);
-					}
-
-					if (notif.keyId) {
+						// Only clear after a real attempt with content. If DM failed
+						// (null), keep pending so the next poll retries.
+						if (sent !== false && sent != null && notif.keyId) {
+							await proxyInternal(
+								`/admin/internal/clear-notification/${notif.keyId}`,
+								'POST',
+							);
+						} else if (!sent && notif.keyId) {
+							console.error(
+								`[notify] DM failed for ${notif.discordUserId} type=${notif.type}; keeping pending`,
+							);
+						}
+					} else if (notif.keyId && !notif.newKey) {
+						// Empty unknown — drop
 						await proxyInternal(
 							`/admin/internal/clear-notification/${notif.keyId}`,
 							'POST',

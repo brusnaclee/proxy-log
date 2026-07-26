@@ -396,8 +396,10 @@ export default function KeyDetailPage() {
       await copyToClipboard(res.key);
       setCopiedReveal(true);
       setTimeout(() => setCopiedReveal(false), 2000);
-    } catch (e) {
-      console.warn("[key-detail] reveal failed", e);
+      notify.success("Full API key copied");
+    } catch (e: any) {
+      console.warn("[key-detail] reveal/copy failed", e);
+      notify.error(e?.message || "Copy failed — try HTTPS or select the key manually");
     }
   };
 
@@ -592,6 +594,22 @@ export default function KeyDetailPage() {
                     : ""}
                 </span>
               ))}
+            </div>
+          )}
+          {keyData.pendingNotification && (
+            <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
+              <p className="font-medium">
+                {String(keyData.pendingNotification.title || "Pending Discord notification")}
+              </p>
+              <p className="text-xs text-amber-100/80 mt-1">
+                {String(keyData.pendingNotification.message || "Key was rotated — Discord DM queued.")}
+                {keyData.pendingNotification.rotatedAt
+                  ? ` · ${formatRelativeTime(String(keyData.pendingNotification.rotatedAt))}`
+                  : ""}
+                {keyData.pendingNotification.ideDetected
+                  ? ` · IDE: ${keyData.pendingNotification.ideDetected}`
+                  : ""}
+              </p>
             </div>
           )}
         </div>

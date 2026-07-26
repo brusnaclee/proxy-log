@@ -1920,8 +1920,18 @@ proxy.all('/*', async (c) => {
 		// accountKnownFingerprint below.
 
 		if (deviceCountNum >= keyRecord.maxDevices && !accountKnownFingerprint) {
-			if (keyRecord.provisionedBy === 'discord-bot' || keyRecord.isTrial || keyRecord.provisionedBy === 'trial-bot') {
-				const rotatedKey = keyRecord.isTrial ? generateTrialApiKey() : generateApiKey();
+			// Discord-provisioned + trial: auto-rotate on extra device, then queue DM.
+			// (Bot must handle type device_limit_rotate / new_device_detected — was a bug
+			// that cleared pending without sending Discord DM.)
+			const mayAutoRotate =
+				keyRecord.provisionedBy === 'discord-bot' ||
+				!!keyRecord.isTrial ||
+				keyRecord.provisionedBy === 'trial-bot';
+
+			if (mayAutoRotate) {
+				const rotatedKey = keyRecord.isTrial
+					? generateTrialApiKey()
+					: generateApiKey();
 				const newKeyPrefix = getKeyPrefix(rotatedKey);
 
 				if (keyRecord.discordUserId) {
@@ -1946,6 +1956,21 @@ proxy.all('/*', async (c) => {
 					requestCount: 0,
 				});
 
+				const proxyEndpoint = `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || '3000'}`}/v1`;
+				const notification = {
+					type: keyRecord.isTrial ? 'trial_key_rotated' : 'device_limit_rotate',
+					discordUserId: keyRecord.discordUserId,
+					newKey: rotatedKey,
+					endpoint: proxyEndpoint,
+					title: '🔑 API Key Di-rotate — Device Baru',
+					message:
+						`Device baru terdeteksi (max ${keyRecord.maxDevices}). Key diganti otomatis. ` +
+						`Cek Discord DM atau salin key baru dari portal/admin.`,
+					rotatedAt: new Date().toISOString(),
+					maxDevices: keyRecord.maxDevices,
+					ideDetected: ide || null,
+				};
+
 				await db
 					.update(apiKeys)
 					.set({
@@ -1953,23 +1978,15 @@ proxy.all('/*', async (c) => {
 						keyPrefix: newKeyPrefix,
 						keyHash: sha256(rotatedKey),
 						isActive: true,
+						pendingNotification: JSON.stringify(notification),
 						updatedAt: new Date(),
 					})
 					.where(eq(apiKeys.id, keyRecord.id));
 
-				const proxyEndpoint = `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || '3000'}`}/v1`;
-				const notification = {
-					type: keyRecord.isTrial ? 'trial_key_rotated' : 'new_device_detected',
-					discordUserId: keyRecord.discordUserId,
-					newKey: rotatedKey,
-					endpoint: proxyEndpoint,
-				};
-				await db
-					.update(apiKeys)
-					.set({
-						pendingNotification: JSON.stringify(notification),
-					})
-					.where(eq(apiKeys.id, keyRecord.id));
+				console.warn(
+					`[device-rotate] key=${keyRecord.id} user=${keyRecord.discordUserId || '-'} ` +
+						`max=${keyRecord.maxDevices} ide=${ide || '?'} ip=${clientIp}`,
+				);
 
 				return c.json(
 					{
@@ -1988,6 +2005,7 @@ proxy.all('/*', async (c) => {
 					error: {
 						message: `Maximum device limit (${keyRecord.maxDevices}) reached.`,
 						type: 'access_error',
+						code: 'device_limit_exceeded',
 					},
 				},
 				403,

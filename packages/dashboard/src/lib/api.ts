@@ -250,6 +250,15 @@ export interface ApiKeyDetail extends ApiKeyListItem {
   perModelPromptLimit: number;
   perModelPromptLimitWindow: string;
   updatedAt: string;
+  pendingNotification?: {
+    type?: string | null;
+    title?: string | null;
+    message?: string | null;
+    rotatedAt?: string | null;
+    hasNewKey?: boolean;
+    ideDetected?: string | null;
+    maxDevices?: number | null;
+  } | null;
   accountBadges?: string[];
   accountTier?: string | null;
   roleLimitMode?: string | null;

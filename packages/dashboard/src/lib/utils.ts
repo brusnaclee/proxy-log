@@ -95,8 +95,32 @@ function parseProxyDate(dateStr: string): Date {
   return new Date(dateStr);
 }
 
-export function copyToClipboard(text: string): Promise<void> {
-  return navigator.clipboard.writeText(text);
+/** Clipboard helper — works on HTTP admin (no secure-context clipboard API). */
+export async function copyToClipboard(text: string): Promise<void> {
+  const value = String(text || "");
+  if (!value) throw new Error("Nothing to copy");
+
+  try {
+    if (navigator.clipboard?.writeText && window.isSecureContext) {
+      await navigator.clipboard.writeText(value);
+      return;
+    }
+  } catch {
+    /* fall through */
+  }
+
+  const ta = document.createElement("textarea");
+  ta.value = value;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.left = "-9999px";
+  ta.style.top = "0";
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  const ok = document.execCommand("copy");
+  document.body.removeChild(ta);
+  if (!ok) throw new Error("Copy failed");
 }
 
 export function statusLabel(code: number): string {

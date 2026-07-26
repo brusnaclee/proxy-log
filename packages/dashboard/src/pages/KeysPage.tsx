@@ -169,7 +169,8 @@ export default function KeysPage() {
       setCopiedId(id);
       setTimeout(() => setCopiedId(null), 2000);
     } catch (e) {
-      console.warn("[keys] reveal failed", e);
+      console.warn("[keys] reveal/copy failed", e);
+      window.alert("Copy failed — dashboard is on HTTP; try again or use Key Detail.");
     }
   };
 

@@ -135,12 +135,14 @@ internal.post("/internal/verify-user", async (c) => {
   if (existingPhantom) {
     keyPlaintext = existingPhantom.key;
     keyId = existingPhantom.id;
+    // Never lower an admin/user-raised maxDevices back to global (was resetting to 1).
+    const nextMax = Math.max(Number(existingPhantom.maxDevices) || 0, maxDevices);
     await db.update(apiKeys)
       .set({
         name: displayName,
         isActive: true,
         discordUsername: body.discordUsername || existingPhantom.discordUsername,
-        maxDevices,
+        maxDevices: nextMax,
         updatedAt: new Date(),
       })
       .where(eq(apiKeys.id, existingPhantom.id));

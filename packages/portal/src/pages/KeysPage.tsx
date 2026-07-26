@@ -20,20 +20,49 @@ interface ConfirmModal {
   onConfirm: () => void;
 }
 
+async function copyText(text: string): Promise<void> {
+  const value = String(text || "");
+  if (!value) throw new Error("empty");
+  try {
+    if (navigator.clipboard?.writeText && window.isSecureContext) {
+      await navigator.clipboard.writeText(value);
+      return;
+    }
+  } catch { /* fall through */ }
+  const ta = document.createElement("textarea");
+  ta.value = value;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.left = "-9999px";
+  document.body.appendChild(ta);
+  ta.select();
+  const ok = document.execCommand("copy");
+  document.body.removeChild(ta);
+  if (!ok) throw new Error("copy failed");
+}
+
 function CopyInline({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
   const { t } = useI18n();
   return (
     <button
       onClick={() => {
-        navigator.clipboard.writeText(text).catch(() => {});
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1800);
+        void copyText(text)
+          .then(() => {
+            setFailed(false);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1800);
+          })
+          .catch(() => {
+            setFailed(true);
+            setTimeout(() => setFailed(false), 2500);
+          });
       }}
       className="inline-flex items-center gap-1 p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded transition-colors"
-      title={t("Copy")}
+      title={failed ? "Copy failed" : t("Copy")}
     >
-      {copied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+      {copied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className={`w-3.5 h-3.5 ${failed ? "text-red-400" : ""}`} />}
     </button>
   );
 }

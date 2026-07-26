@@ -711,6 +711,28 @@ keys.get("/keys/:id", async (c) => {
     console.warn("[keys/:id] addon history failed:", (err as Error)?.message || err);
   }
 
+  let pendingNotify: Record<string, unknown> | null = null;
+  try {
+    const raw = (key as any).pendingNotification;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const item = Array.isArray(parsed) ? parsed[0] : parsed;
+      if (item && typeof item === "object") {
+        pendingNotify = {
+          type: item.type || null,
+          title: item.title || null,
+          message: item.message || null,
+          rotatedAt: item.rotatedAt || null,
+          hasNewKey: !!(item.newKey || item.apiKey),
+          ideDetected: item.ideDetected || null,
+          maxDevices: item.maxDevices ?? null,
+        };
+      }
+    }
+  } catch {
+    pendingNotify = null;
+  }
+
   return c.json({
     id: key.id, name: key.name, keyPrefix: key.keyPrefix, keyMasked: maskKey(key.key),
     discordUserId: key.discordUserId,
@@ -718,6 +740,7 @@ keys.get("/keys/:id", async (c) => {
     provisionedBy: key.provisionedBy,
     isPrimary: isProtectedPrimaryApiKey(key),
     canDelete: !isAdminDeleteBlocked(key),
+    pendingNotification: pendingNotify,
     isActive: key.isActive, isTrial: key.isTrial || false, maxDevices: key.maxDevices, devicePolicy: key.devicePolicy,
     ipPolicy: key.ipPolicy, idePolicy: key.idePolicy, 
     dailyTokenLimit: key.dailyTokenLimit || 0, monthlyTokenLimit: key.monthlyTokenLimit,
