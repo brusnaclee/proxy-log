@@ -84,7 +84,10 @@ export interface LiveUsagePayload {
     requests: number;
     /** Every upstream API call (matches Logs rows). */
     hopCount?: number;
+    /** Hop-weighted input — same as daily input gate / bar. */
     promptTokens: number;
+    /** Per-turn peak In (informational). */
+    peakPromptTokens?: number;
     billablePromptTokens?: number;
     cachedTokens?: number;
     /** SUM(prompt+cache) every hop — amanai / provider In. */
@@ -167,8 +170,11 @@ export interface LiveUsagePayload {
     resetAt: string;
     inputLimit?: number;
     outputLimit?: number;
+    /** Hop-weighted input for this pool. */
     inputUsed?: number;
     outputUsed?: number;
+    /** SUM(prompt+cache) every hop — amanai / provider In for this pool. */
+    fullInputTokens?: number;
   }>;
 }
 

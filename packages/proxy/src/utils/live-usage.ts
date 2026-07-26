@@ -151,8 +151,11 @@ export interface LiveUsagePayload {
 		/** Optional per-pool I/O caps (0 = not set; total-only pool) */
 		inputLimit?: number;
 		outputLimit?: number;
+		/** Hop-weighted input (same schedule as account input gate). */
 		inputUsed?: number;
 		outputUsed?: number;
+		/** SUM(prompt+cache) every hop — amanai / provider In style for this pool. */
+		fullInputTokens?: number;
 	}>;
 }
 
@@ -551,6 +554,7 @@ export async function buildLiveUsageForKey(
 					total: weightedHopTotalTokensSql(wherePool, tmOpts),
 					input: weightedHopInputTokensSql(wherePool, tmOpts),
 					output: turnCompletionTokensSql(wherePool, tmOpts),
+					fullInput: hopFullInputTokensSql(wherePool, tmOpts),
 				})
 				.from(requestLogs)
 				.where(wherePool)
@@ -569,6 +573,7 @@ export async function buildLiveUsageForKey(
 				outputLimit: rule.dailyOutputTokenLimit || 0,
 				inputUsed: Number(usedRow?.input) || 0,
 				outputUsed: Number(usedRow?.output) || 0,
+				fullInputTokens: Number(usedRow?.fullInput) || 0,
 			});
 		}
 	}

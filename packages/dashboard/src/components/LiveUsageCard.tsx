@@ -167,10 +167,19 @@ export function LiveUsageCard({
     const softLeft = Math.max(0, softMax - used);
     const ctx = Number(usageToday.cachedTokens) || 0;
     const inp = Number(usageToday.billablePromptTokens) || 0;
-    const ctxInNote =
-      ctx > 0 || inp > 0
-        ? `context ${formatNumber(ctx)} + input ${formatNumber(inp)}`
-        : "limit credit";
+    const full = Number(usageToday.fullInputTokens) || 0;
+    const peak = Number(usageToday.peakPromptTokens) || 0;
+    const parts: string[] = [];
+    if (ctx > 0 || inp > 0) {
+      parts.push(`context ${formatNumber(ctx)} + input ${formatNumber(inp)}`);
+    }
+    if (peak > 0 && Math.abs(peak - used) > used * 0.05) {
+      parts.push(`peak-view ${formatNumber(peak)}`);
+    }
+    if (full > 0) {
+      parts.push(`full ${formatNumber(full)} (amanai)`);
+    }
+    const ctxInNote = parts.length > 0 ? parts.join(" · ") : "limit credit";
     bars.push({
       label: "Input Tokens (limit)",
       value: used,
@@ -207,7 +216,7 @@ export function LiveUsageCard({
       softMode: !!dailyTokenBreakdown?.bypassIo,
       sublabel: dailyTokenBreakdown?.bypassIo
         ? `exceed OK until daily ${formatNumber(dailyCap)}`
-        : "tokens",
+        : "always 100% (no hop weight)",
       source: dailyTokenBreakdown?.bypassIo
         ? "add-on extends past soft"
         : sourceLabel(limits.dailyOutputTokenLimitSource),
@@ -367,9 +376,16 @@ export function LiveUsageCard({
             const ioBits: string[] = [];
             if ((p.inputLimit || 0) > 0) {
               ioBits.push(`In ${formatNumber(p.inputUsed || 0)}/${formatNumber(p.inputLimit || 0)}`);
+            } else if ((p.inputUsed || 0) > 0) {
+              ioBits.push(`In (limit) ${formatNumber(p.inputUsed || 0)}`);
             }
             if ((p.outputLimit || 0) > 0) {
               ioBits.push(`Out ${formatNumber(p.outputUsed || 0)}/${formatNumber(p.outputLimit || 0)}`);
+            } else if ((p.outputUsed || 0) > 0) {
+              ioBits.push(`Out ${formatNumber(p.outputUsed || 0)}`);
+            }
+            if ((p.fullInputTokens || 0) > 0) {
+              ioBits.push(`full In ${formatNumber(p.fullInputTokens || 0)} (amanai)`);
             }
             return (
               <ProgressBar
@@ -432,14 +448,17 @@ export function LiveUsageCard({
           )}
         </div>
       )}
-      {(usageToday.fullInputTokens || 0) > (usageToday.promptTokens || 0) * 1.5 && (
+      {(usageToday.fullInputTokens || 0) > 0 && (
         <p className="text-[10px] text-muted-foreground leading-relaxed border-t border-border/40 pt-2">
-          Daily token limit: input bar = hop schedule from Settings (default hop1=100%, later=flat %). Output always 100%.
-          Limit In {formatNumber(usageToday.promptTokens)}
-          {(usageToday as any).peakPromptTokens
-            ? `; peak-view ${formatNumber((usageToday as any).peakPromptTokens)}`
-            : ""}
-          ; amanai-style full In {formatNumber(usageToday.fullInputTokens || 0)} (admin only). Prompts/API bars = sliding last{" "}
+          Admin note — Input bar = hop-weighted <span className="text-foreground">limit credit</span>{" "}
+          ({formatNumber(usageToday.promptTokens)}; Settings schedule, default hop1=100% later=flat %).
+          Output always 100%.{" "}
+          <span className="text-foreground">Amanai-style full In</span>{" "}
+          {formatNumber(usageToday.fullInputTokens || 0)} = SUM(prompt+cache) every hop (provider In; not used for the gate).
+          {usageToday.peakPromptTokens
+            ? ` Peak-view ${formatNumber(usageToday.peakPromptTokens)}.`
+            : ""}{" "}
+          Dedicated pools use the same schedule; their full In is shown per pool. Prompts/API bars = sliding last{" "}
           {limits.promptLimitWindow || "5h"} (not calendar day). Today:{" "}
           {formatNumber(usageToday.requests)} prompts · {formatNumber(usageToday.hopCount || 0)} API hops.
         </p>

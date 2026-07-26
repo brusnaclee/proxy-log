@@ -771,12 +771,12 @@ export API_TIMEOUT_MS=500000`}
                     (s as any).peakPromptTokens
                       ? `peak ${formatNumber((s as any).peakPromptTokens)}`
                       : null,
-                    (s.fullInputTokens || 0) > (s.promptTokens || 0) * 1.2
+                    (s.fullInputTokens || 0) > 0
                       ? `full ${formatNumber(s.fullInputTokens || 0)} (amanai)`
                       : null,
                   ]
                     .filter(Boolean)
-                    .join(" ? ") || undefined,
+                    .join(" · ") || undefined,
                 },
                 { label: "Output Tokens", value: formatNumber(s.completionTokens) },
                 { label: "Context Tokens",value: formatNumber(s.contextTokens) },
