@@ -608,4 +608,16 @@ export async function ensureVibecodeCatalog(): Promise<void> {
       await db.insert(addons).values({ name: p.name, ...payload });
     }
   }
+
+  // Any active pack still missing a Discord role → default Vibecode add-on role
+  const DEFAULT_ADDON_DISCORD_ROLE = "1530923797220167710";
+  await db
+    .update(addons)
+    .set({ discordRoleId: DEFAULT_ADDON_DISCORD_ROLE, updatedAt: new Date() })
+    .where(
+      and(
+        eq(addons.isActive, true),
+        or(isNull(addons.discordRoleId), eq(addons.discordRoleId, "")),
+      ),
+    );
 }

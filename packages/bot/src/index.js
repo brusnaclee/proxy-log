@@ -7238,6 +7238,26 @@ client.once('clientReady', async () => {
 		}
 	}
 
+	async function findGuildMember(discordUserId) {
+		const uid = String(discordUserId || '').trim();
+		if (!uid) return null;
+		for (const guild of client.guilds.cache.values()) {
+			const member = await guild.members.fetch(uid).catch(() => null);
+			if (member) return member;
+		}
+		try {
+			const fetched = await client.guilds.fetch();
+			for (const [, gRef] of fetched) {
+				const guild = client.guilds.cache.get(gRef.id) || (await gRef.fetch());
+				const member = await guild.members.fetch(uid).catch(() => null);
+				if (member) return member;
+			}
+		} catch (err) {
+			console.warn('[addon-role] guild fetch failed:', err.message);
+		}
+		return null;
+	}
+
 	async function processAddonRoleSync() {
 		try {
 			const data = await proxyInternal('/admin/internal/addon-role-sync');
@@ -7245,15 +7265,11 @@ client.once('clientReady', async () => {
 			for (const job of jobs) {
 				if (!job.discordUserId || !job.discordRoleId || !job.assignmentId) continue;
 				try {
-					const guild =
-						client.guilds.cache.first() ||
-						(await client.guilds.fetch().then((c) => c.first()));
-					if (!guild) continue;
-					const g = await client.guilds.fetch(guild.id);
-					const member = await g.members.fetch(job.discordUserId).catch(() => null);
+					const member = await findGuildMember(job.discordUserId);
 					if (!member) {
-						// Still clear grant if member left; keep revoke pending briefly
-						if (job.action === 'grant') {
+						// Member not in guild: clear revoke (nothing to remove).
+						// Keep grant pending so we retry when they rejoin / next poll.
+						if (job.action === 'revoke') {
 							await proxyInternal(
 								`/admin/internal/addon-role-sync/${job.assignmentId}/clear`,
 								'POST',
@@ -7266,6 +7282,9 @@ client.once('clientReady', async () => {
 							job.discordRoleId,
 							`Add-on ${job.addonName || ''} assigned`,
 						);
+						console.log(
+							`[addon-role] Granted ${job.discordRoleId} → ${job.discordUserId} (${job.addonName || ''})`,
+						);
 					} else if (job.action === 'revoke') {
 						await member.roles
 							.remove(
@@ -7273,6 +7292,9 @@ client.once('clientReady', async () => {
 								`Add-on ${job.addonName || ''} expired/deactivated`,
 							)
 							.catch(() => {});
+						console.log(
+							`[addon-role] Revoked ${job.discordRoleId} ← ${job.discordUserId} (${job.addonName || ''})`,
+						);
 					}
 					await proxyInternal(
 						`/admin/internal/addon-role-sync/${job.assignmentId}/clear`,
@@ -7283,6 +7305,7 @@ client.once('clientReady', async () => {
 						`[addon-role] Failed ${job.action} for ${job.discordUserId}:`,
 						err.message,
 					);
+					// Leave roleSyncAction set so the next poll retries (permissions/hierarchy/etc).
 				}
 			}
 		} catch (err) {
@@ -7290,9 +7313,24 @@ client.once('clientReady', async () => {
 		}
 	}
 
+	async function queueAddonRoleBackfill(reason) {
+		try {
+			const data = await proxyInternal(
+				'/admin/internal/addon-role-backfill',
+				'POST',
+			);
+			console.log(
+				`[addon-role] Backfill (${reason}): queued=${data?.queued ?? 0}`,
+			);
+			await processAddonRoleSync();
+		} catch (err) {
+			console.error(`[addon-role] Backfill (${reason}) failed:`, err.message);
+		}
+	}
+
 	// Run immediately then every 30 seconds
 	void processPendingNotifications();
-	void processAddonRoleSync();
+	void queueAddonRoleBackfill('bot ready');
 	setInterval(() => {
 		processPendingNotifications().catch((err) =>
 			console.error('[notify] Poll error:', err.message),
@@ -7303,6 +7341,12 @@ client.once('clientReady', async () => {
 			console.error('[addon-role] Poll error:', err.message),
 		);
 	}, 30000);
+	// Re-queue grants hourly so missed/failed grants (incl. firek + others) catch up
+	setInterval(() => {
+		queueAddonRoleBackfill('hourly').catch((err) =>
+			console.error('[addon-role] Hourly backfill error:', err.message),
+		);
+	}, 60 * 60 * 1000);
 });
 
 // Re-grant add-on Discord roles when a member rejoins with an active assignment
@@ -7321,6 +7365,11 @@ client.on('guildMemberAdd', async (member) => {
 						err.message,
 					),
 				);
+		}
+		if (roleIds.length) {
+			console.log(
+				`[addon-role] Rejoin granted ${roleIds.length} role(s) → ${member.id}`,
+			);
 		}
 		await syncUserKeyAccess(member.id, member, 'guild rejoin').catch((err) =>
 			console.error('[access] rejoin sync failed:', err.message),
