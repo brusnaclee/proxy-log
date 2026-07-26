@@ -311,8 +311,12 @@ keys.post("/keys/override-discord", async (c) => {
   const badges = ["admin_override", ...resolved.badges.filter((b) => b !== "none")];
 
   const key = generateApiKey();
+  const safeUser = String(discordUsername || "user")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32) || "user";
   const keyName = discordUserId
-    ? `Override-${discordUsername}-${discordUserId.slice(-6)}`
+    ? `Override-${safeUser}-${discordUserId}`
     : `Override-custom-${Date.now().toString(36).slice(-6)}`;
 
   const [result] = await db.insert(apiKeys).values({
