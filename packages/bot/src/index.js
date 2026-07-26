@@ -3808,10 +3808,21 @@ async function runDailyInactiveMemberCleanup() {
 	const reenabled = [];
 	for (const [userId, key] of byUser) {
 		let member = null;
+		let leftGuild = false;
 		try {
 			member = await guild.members.fetch({ user: userId, force: true });
-		} catch (_) {
-			/* user left guild */
+		} catch (err) {
+			// 10007 Unknown Member = left. Anything else (rate-limit/network) → skip, do NOT disable.
+			const code = err?.code ?? err?.rawError?.code;
+			if (code === 10007 || err?.status === 404) {
+				leftGuild = true;
+			} else {
+				console.warn(
+					`[daily-cleanup] member fetch uncertain for ${userId}, skipping:`,
+					err?.message || err,
+				);
+				continue;
+			}
 		}
 
 		const isPhantom = !!(member && REQUIRED_ROLE_ID && member.roles.cache.has(REQUIRED_ROLE_ID));
@@ -3822,7 +3833,11 @@ async function runDailyInactiveMemberCleanup() {
 			sync = await syncUserKeyAccess(
 				userId,
 				member,
-				member ? 'daily access recheck' : 'left guild — daily recheck',
+				member
+					? 'daily access recheck'
+					: leftGuild
+						? 'left guild — daily recheck'
+						: 'daily access recheck',
 			);
 		} catch (err) {
 			console.error('[daily-cleanup] sync failed:', userId, err.message || err);
@@ -3863,13 +3878,7 @@ async function runDailyInactiveMemberCleanup() {
 				keyId: key.id,
 				username: key.discordUsername || userId,
 			});
-			await sendDMToUser(
-				userId,
-				'API Key Dinonaktifkan',
-				'API key Anda dinonaktifkan karena tidak ada role Phantom/Staff dan tidak ada add-on aktif.\n\n' +
-					'Pro/Premium saja tidak menjaga key tetap aktif. Key aktif lagi otomatis jika Phantom kembali atau add-on diperpanjang.',
-				0xff6b6b,
-			).catch((err) => console.error('[daily-cleanup] DM failed:', err));
+			// DM is queued by proxy syncUserKeyAccess — do not send a second copy here
 		} else if (sync?.action === 'enabled') {
 			reenabled.push({
 				userId,

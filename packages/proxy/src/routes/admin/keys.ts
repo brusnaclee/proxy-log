@@ -314,12 +314,15 @@ keys.get("/keys/override-preview", async (c) => {
   }
   const [config] = await db.select().from(adminConfig).limit(1);
   const member = await fetchDiscordMemberRoleIds(config?.discordBotToken || "", discordUserId);
-  if (!member) {
+  if (member.status !== "found") {
     return c.json({
       discordUserId,
       found: false,
       resolved: null,
-      message: "Member not found in bot guilds (or bot token missing)",
+      message:
+        member.status === "error"
+          ? `Discord lookup failed (${member.detail || "error"}) — try again`
+          : "Member not found in bot guilds (or bot token missing)",
     });
   }
   const resolved = resolveDiscordRoles(member.roleIds, {
@@ -366,7 +369,7 @@ keys.post("/keys/override-discord", async (c) => {
 
   if (discordUserId) {
     const member = await fetchDiscordMemberRoleIds(config?.discordBotToken || "", discordUserId);
-    if (member) {
+    if (member.status === "found") {
       if (!body.discordUsername?.trim() && member.username) discordUsername = member.username;
       resolved = resolveDiscordRoles(member.roleIds, {
         phantomRoleId: config?.requiredRoleId,
@@ -930,8 +933,9 @@ keys.post("/keys/sync-roles", async (c) => {
 keys.post("/keys/sync-all-roles", async (c) => {
   const { syncAllDiscordLinkedKeyRoles } = await import("../../utils/key-access-lifecycle.js");
   const result = await syncAllDiscordLinkedKeyRoles({
-    concurrency: 2,
+    concurrency: 1,
     reason: "admin sync-all-roles",
+    allowDisable: true, // still fail-open inside syncUserKeyAccess when Discord is uncertain
   });
   statsCache.invalidate("keys-list");
   statsCache.invalidate("keys-list-fast");

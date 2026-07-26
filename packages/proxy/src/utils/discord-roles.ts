@@ -122,13 +122,30 @@ export function resolveDiscordRoles(
 	};
 }
 
-/** Fetch a guild member's role IDs via Discord REST (bot token). */
+export type DiscordMemberRolesResult =
+	| {
+			status: "found";
+			guildId: string;
+			roleIds: string[];
+			username?: string;
+	  }
+	/** Confirmed: member 404 in every guild the bot can see. */
+	| { status: "not_found" }
+	/** Rate-limit / network / API error — do NOT treat as “no roles”. */
+	| { status: "error"; detail?: string };
+
+/**
+ * Fetch a guild member's role IDs via Discord REST (bot token).
+ * Unions roles across all mutual guilds (bot may be in multiple Groupy servers).
+ */
 export async function fetchDiscordMemberRoleIds(
 	botToken: string,
 	discordUserId: string,
-): Promise<{ guildId: string; roleIds: string[]; username?: string } | null> {
+): Promise<DiscordMemberRolesResult> {
 	const token = String(botToken || "").trim();
-	if (!token || !/^\d{15,25}$/.test(discordUserId)) return null;
+	if (!token || !/^\d{15,25}$/.test(discordUserId)) {
+		return { status: "error", detail: "invalid token or discordUserId" };
+	}
 
 	const headers = {
 		Authorization: `Bot ${token}`,
@@ -138,10 +155,18 @@ export async function fetchDiscordMemberRoleIds(
 	const guildsRes = await fetch("https://discord.com/api/v10/users/@me/guilds", { headers });
 	if (!guildsRes.ok) {
 		console.warn("[discord-roles] guilds fetch failed:", guildsRes.status);
-		return null;
+		return { status: "error", detail: `guilds ${guildsRes.status}` };
 	}
 	const guilds = (await guildsRes.json()) as Array<{ id: string }>;
-	if (!Array.isArray(guilds) || guilds.length === 0) return null;
+	if (!Array.isArray(guilds) || guilds.length === 0) {
+		return { status: "error", detail: "no guilds" };
+	}
+
+	const roleIds = new Set<string>();
+	let primaryGuildId = "";
+	let username: string | undefined;
+	let foundAny = false;
+	let hadTransientError = false;
 
 	for (const g of guilds) {
 		const memRes = await fetch(
@@ -149,7 +174,8 @@ export async function fetchDiscordMemberRoleIds(
 			{ headers },
 		);
 		if (memRes.status === 404) continue;
-		if (!memRes.ok) {
+		if (memRes.status === 429 || memRes.status >= 500 || !memRes.ok) {
+			hadTransientError = true;
 			console.warn(`[discord-roles] member fetch ${g.id}/${discordUserId}:`, memRes.status);
 			continue;
 		}
@@ -157,13 +183,27 @@ export async function fetchDiscordMemberRoleIds(
 			roles?: string[];
 			user?: { username?: string; global_name?: string };
 		};
+		foundAny = true;
+		if (!primaryGuildId) primaryGuildId = g.id;
+		if (!username) username = mem.user?.global_name || mem.user?.username;
+		for (const r of Array.isArray(mem.roles) ? mem.roles : []) {
+			const id = String(r || "").trim();
+			if (id) roleIds.add(id);
+		}
+	}
+
+	if (foundAny) {
 		return {
-			guildId: g.id,
-			roleIds: Array.isArray(mem.roles) ? mem.roles.map(String) : [],
-			username: mem.user?.global_name || mem.user?.username,
+			status: "found",
+			guildId: primaryGuildId,
+			roleIds: [...roleIds],
+			username,
 		};
 	}
-	return null;
+	if (hadTransientError) {
+		return { status: "error", detail: "member fetch transient failure" };
+	}
+	return { status: "not_found" };
 }
 
 export function parseRoleLimitModes(raw: unknown): RoleIdConfig["roleLimitModes"] {

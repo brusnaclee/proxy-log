@@ -4,6 +4,10 @@
  *   Pro / Premium alone do NOT keep the key alive
  *   when add-on expires and no Phantom/Staff → disable
  *   when add-on assigned/extended on a disabled key → re-enable
+ *
+ * CRITICAL: never disable when Discord role lookup is unconfirmed
+ * (rate-limit / network / partial failure). That caused mass false
+ * disables on deploy restart + bulk sync.
  */
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
@@ -13,6 +17,7 @@ import {
 	fetchDiscordMemberRoleIds,
 	parseRoleLimitModes,
 	resolveDiscordRoles,
+	type ResolvedDiscordRoles,
 } from "./discord-roles.js";
 import { queueUserNotification } from "./user-notify.js";
 
@@ -22,12 +27,13 @@ export type KeyAccessSyncResult = {
 	hasPhantom: boolean;
 	hasStaff: boolean;
 	hasActiveAddon: boolean;
+	rolesConfirmed: boolean;
 	action: "enabled" | "disabled" | "unchanged" | "skipped";
 	keyIds: number[];
 	reason: string;
 };
 
-function shouldKeepKeyAccess(opts: {
+export function shouldKeepKeyAccess(opts: {
 	hasPhantom: boolean;
 	hasStaff: boolean;
 	hasActiveAddon: boolean;
@@ -35,54 +41,125 @@ function shouldKeepKeyAccess(opts: {
 	return !!(opts.hasPhantom || opts.hasStaff || opts.hasActiveAddon);
 }
 
+/** Only disable when Discord membership/roles are confirmed empty of keep-roles. */
+export function canDisableKeyAccess(opts: {
+	rolesConfirmed: boolean;
+	shouldKeep: boolean;
+}): boolean {
+	return opts.rolesConfirmed && !opts.shouldKeep;
+}
+
+type ResolvedAccessRoles = {
+	roleIds: string[];
+	hasPhantom: boolean;
+	hasStaff: boolean;
+	resolved: ResolvedDiscordRoles;
+	/** true = safe to disable if shouldKeep is false */
+	rolesConfirmed: boolean;
+};
+
+function roleCfgFromAdmin(cfg: typeof adminConfig.$inferSelect | null) {
+	return {
+		phantomRoleId: cfg?.requiredRoleId,
+		premiumRoleId: (cfg as any)?.premiumRoleId || cfg?.trialRequiredRoleId,
+		proRoleId: cfg?.proRoleId,
+		contributorRoleId: cfg?.contributorRoleId,
+		troubleshooterRoleId: cfg?.troubleshooterRoleId,
+		moderatorRoleId: cfg?.moderatorRoleId,
+		roleLimitModes: parseRoleLimitModes((cfg as any)?.roleLimitModes),
+	};
+}
+
 async function resolveRolesForUser(
 	discordUserId: string,
 	hintRoleIds?: string[] | null,
-): Promise<{ hasPhantom: boolean; hasStaff: boolean; roleIds: string[] }> {
-	if (Array.isArray(hintRoleIds)) {
-		const cfg = (await db.select().from(adminConfig).limit(1))[0] ?? null;
-		const resolved = resolveDiscordRoles(hintRoleIds, {
-			phantomRoleId: cfg?.requiredRoleId,
-			premiumRoleId: (cfg as any)?.premiumRoleId || cfg?.trialRequiredRoleId,
-			proRoleId: cfg?.proRoleId,
-			contributorRoleId: cfg?.contributorRoleId,
-			troubleshooterRoleId: cfg?.troubleshooterRoleId,
-			moderatorRoleId: cfg?.moderatorRoleId,
-			roleLimitModes: parseRoleLimitModes((cfg as any)?.roleLimitModes),
-		});
-		return {
-			hasPhantom: resolved.hasPhantom,
-			hasStaff: resolved.hasStaff,
-			roleIds: hintRoleIds,
-		};
-	}
-
+	rolesKnown?: boolean,
+): Promise<ResolvedAccessRoles> {
 	const cfg = (await db.select().from(adminConfig).limit(1))[0] ?? null;
-	const botToken =
-		process.env.DISCORD_BOT_TOKEN ||
-		process.env.BOT_TOKEN ||
-		String(cfg?.discordBotToken || "").trim();
-	if (botToken) {
-		const mem = await fetchDiscordMemberRoleIds(botToken, discordUserId);
-		if (mem) {
-			const resolved = resolveDiscordRoles(mem.roleIds, {
-				phantomRoleId: cfg?.requiredRoleId,
-				premiumRoleId: (cfg as any)?.premiumRoleId || cfg?.trialRequiredRoleId,
-				proRoleId: cfg?.proRoleId,
-				contributorRoleId: cfg?.contributorRoleId,
-				troubleshooterRoleId: cfg?.troubleshooterRoleId,
-				moderatorRoleId: cfg?.moderatorRoleId,
-				roleLimitModes: parseRoleLimitModes((cfg as any)?.roleLimitModes),
-			});
+	const roleCfg = roleCfgFromAdmin(cfg);
+	const empty = resolveDiscordRoles([], roleCfg);
+
+	// Bot / caller already knows membership (incl. left-guild → roleIds null)
+	if (rolesKnown) {
+		if (hintRoleIds === null) {
 			return {
+				roleIds: [],
+				hasPhantom: false,
+				hasStaff: false,
+				resolved: empty,
+				rolesConfirmed: true,
+			};
+		}
+		if (Array.isArray(hintRoleIds)) {
+			const resolved = resolveDiscordRoles(hintRoleIds, roleCfg);
+			return {
+				roleIds: hintRoleIds,
 				hasPhantom: resolved.hasPhantom,
 				hasStaff: resolved.hasStaff,
-				roleIds: mem.roleIds,
+				resolved,
+				rolesConfirmed: true,
 			};
 		}
 	}
 
-	return { hasPhantom: false, hasStaff: false, roleIds: [] };
+	if (Array.isArray(hintRoleIds)) {
+		const resolved = resolveDiscordRoles(hintRoleIds, roleCfg);
+		return {
+			roleIds: hintRoleIds,
+			hasPhantom: resolved.hasPhantom,
+			hasStaff: resolved.hasStaff,
+			resolved,
+			rolesConfirmed: true,
+		};
+	}
+
+	const botToken =
+		process.env.DISCORD_BOT_TOKEN ||
+		process.env.BOT_TOKEN ||
+		String(cfg?.discordBotToken || "").trim();
+	if (!botToken) {
+		return {
+			roleIds: [],
+			hasPhantom: false,
+			hasStaff: false,
+			resolved: empty,
+			rolesConfirmed: false,
+		};
+	}
+
+	const mem = await fetchDiscordMemberRoleIds(botToken, discordUserId);
+	if (mem.status === "found") {
+		const resolved = resolveDiscordRoles(mem.roleIds, roleCfg);
+		return {
+			roleIds: mem.roleIds,
+			hasPhantom: resolved.hasPhantom,
+			hasStaff: resolved.hasStaff,
+			resolved,
+			rolesConfirmed: true,
+		};
+	}
+	if (mem.status === "not_found") {
+		// Left every mutual guild — confirmed no Discord keep-roles
+		return {
+			roleIds: [],
+			hasPhantom: false,
+			hasStaff: false,
+			resolved: empty,
+			rolesConfirmed: true,
+		};
+	}
+
+	// error / rate-limit — do not treat as no roles
+	console.warn(
+		`[key-access] Discord roles unconfirmed for ${discordUserId}: ${mem.detail || "error"}`,
+	);
+	return {
+		roleIds: [],
+		hasPhantom: false,
+		hasStaff: false,
+		resolved: empty,
+		rolesConfirmed: false,
+	};
 }
 
 /**
@@ -96,9 +173,13 @@ export async function syncUserKeyAccess(
 		reason?: string;
 		/** Skip Discord fetch; use only hint + addons (empty roles if no hint). */
 		rolesKnown?: boolean;
+		/** If true, never disable (badge refresh / safe bulk). */
+		allowDisable?: boolean;
 	},
 ): Promise<KeyAccessSyncResult> {
 	const uid = String(discordUserId || "").trim();
+	const allowDisable = opts?.allowDisable !== false;
+
 	if (!/^\d{15,25}$/.test(uid)) {
 		return {
 			discordUserId: uid,
@@ -106,6 +187,7 @@ export async function syncUserKeyAccess(
 			hasPhantom: false,
 			hasStaff: false,
 			hasActiveAddon: false,
+			rolesConfirmed: false,
 			action: "skipped",
 			keyIds: [],
 			reason: "invalid discordUserId",
@@ -124,6 +206,7 @@ export async function syncUserKeyAccess(
 			hasPhantom: false,
 			hasStaff: false,
 			hasActiveAddon: false,
+			rolesConfirmed: false,
 			action: "skipped",
 			keyIds: [],
 			reason: "no non-trial keys",
@@ -133,38 +216,8 @@ export async function syncUserKeyAccess(
 	const activeAddons = await getActiveAddonsForUser({ discordUserId: uid });
 	const hasActiveAddon = activeAddons.length > 0;
 
-	const cfg = (await db.select().from(adminConfig).limit(1))[0] ?? null;
-	const roleCfg = {
-		phantomRoleId: cfg?.requiredRoleId,
-		premiumRoleId: (cfg as any)?.premiumRoleId || cfg?.trialRequiredRoleId,
-		proRoleId: cfg?.proRoleId,
-		contributorRoleId: cfg?.contributorRoleId,
-		troubleshooterRoleId: cfg?.troubleshooterRoleId,
-		moderatorRoleId: cfg?.moderatorRoleId,
-		roleLimitModes: parseRoleLimitModes((cfg as any)?.roleLimitModes),
-	};
-
-	let roleIds: string[] = [];
-	let hasPhantom = false;
-	let hasStaff = false;
-	let resolved = resolveDiscordRoles([], roleCfg);
-
-	if (opts?.rolesKnown && Array.isArray(opts.roleIds)) {
-		roleIds = opts.roleIds;
-		resolved = resolveDiscordRoles(roleIds, roleCfg);
-		hasPhantom = resolved.hasPhantom;
-		hasStaff = resolved.hasStaff;
-	} else if (opts?.rolesKnown && opts.roleIds === null) {
-		hasPhantom = false;
-		hasStaff = false;
-		resolved = resolveDiscordRoles([], roleCfg);
-	} else {
-		const r = await resolveRolesForUser(uid, opts?.roleIds);
-		roleIds = r.roleIds;
-		resolved = resolveDiscordRoles(roleIds, roleCfg);
-		hasPhantom = resolved.hasPhantom;
-		hasStaff = resolved.hasStaff;
-	}
+	const r = await resolveRolesForUser(uid, opts?.roleIds, opts?.rolesKnown);
+	const { hasPhantom, hasStaff, rolesConfirmed, resolved } = r;
 
 	const accountTier =
 		resolved.primary === "none"
@@ -177,19 +230,42 @@ export async function syncUserKeyAccess(
 	const badges = resolved.badges.filter(
 		(b) => b && b !== "none" && b !== "admin_override",
 	);
+	if (hasActiveAddon && !badges.includes("addon")) badges.push("addon");
 	const limitMode = resolved.limitMode;
 	const badgesJson = JSON.stringify(badges);
 
-	// Always refresh tier/badges/limit mode from live Discord roles
-	await db
-		.update(apiKeys)
-		.set({
-			accountBadges: badgesJson,
-			accountTier: accountTier || "",
-			roleLimitMode: limitMode,
-			updatedAt: new Date(),
-		})
-		.where(and(eq(apiKeys.discordUserId, uid), eq(apiKeys.isTrial, false)));
+	// Only rewrite badges/tier when Discord roles are confirmed — never wipe on fetch failure
+	if (rolesConfirmed) {
+		await db
+			.update(apiKeys)
+			.set({
+				accountBadges: badgesJson,
+				accountTier: accountTier || "",
+				roleLimitMode: limitMode,
+				updatedAt: new Date(),
+			})
+			.where(and(eq(apiKeys.discordUserId, uid), eq(apiKeys.isTrial, false)));
+	} else if (hasActiveAddon) {
+		// Still stamp addon badge without clobbering existing role badges
+		for (const key of keys) {
+			let existing: string[] = [];
+			try {
+				existing = JSON.parse((key as any).accountBadges || "[]");
+				if (!Array.isArray(existing)) existing = [];
+			} catch {
+				existing = [];
+			}
+			if (!existing.includes("addon")) {
+				await db
+					.update(apiKeys)
+					.set({
+						accountBadges: JSON.stringify([...existing, "addon"]),
+						updatedAt: new Date(),
+					})
+					.where(eq(apiKeys.id, key.id));
+			}
+		}
+	}
 
 	const shouldKeep = shouldKeepKeyAccess({ hasPhantom, hasStaff, hasActiveAddon });
 	const reason =
@@ -202,7 +278,9 @@ export async function syncUserKeyAccess(
 					: hasStaff
 						? "Staff role"
 						: "access retained"
-			: "no Phantom/Staff and no active add-on");
+			: rolesConfirmed
+				? "no Phantom/Staff and no active add-on"
+				: "discord roles unconfirmed");
 
 	const keyIds = keys.map((k) => k.id);
 	const anyActive = keys.some((k) => k.isActive);
@@ -231,13 +309,18 @@ export async function syncUserKeyAccess(
 			hasPhantom,
 			hasStaff,
 			hasActiveAddon,
+			rolesConfirmed,
 			action: "enabled",
 			keyIds,
 			reason,
 		};
 	}
 
-	if (!shouldKeep && anyActive) {
+	if (
+		allowDisable &&
+		canDisableKeyAccess({ rolesConfirmed, shouldKeep }) &&
+		anyActive
+	) {
 		await db
 			.update(apiKeys)
 			.set({ isActive: false, updatedAt: new Date() })
@@ -259,9 +342,24 @@ export async function syncUserKeyAccess(
 			hasPhantom,
 			hasStaff,
 			hasActiveAddon,
+			rolesConfirmed,
 			action: "disabled",
 			keyIds,
 			reason,
+		};
+	}
+
+	if (!rolesConfirmed && !shouldKeep && anyActive) {
+		return {
+			discordUserId: uid,
+			shouldKeep,
+			hasPhantom,
+			hasStaff,
+			hasActiveAddon,
+			rolesConfirmed,
+			action: "skipped",
+			keyIds,
+			reason: "discord roles unconfirmed — not disabling",
 		};
 	}
 
@@ -271,6 +369,7 @@ export async function syncUserKeyAccess(
 		hasPhantom,
 		hasStaff,
 		hasActiveAddon,
+		rolesConfirmed,
 		action: "unchanged",
 		keyIds,
 		reason,
@@ -299,6 +398,8 @@ async function mapWithConcurrency<T, R>(
 			const i = next++;
 			if (i >= items.length) return;
 			results[i] = await fn(items[i]);
+			// Soft pacing against Discord REST rate limits
+			await new Promise((r) => setTimeout(r, 150));
 		}
 	});
 	await Promise.all(workers);
@@ -316,11 +417,13 @@ export type SyncAllDiscordKeyRolesResult = {
 
 /**
  * Refresh Discord roles/badges for every distinct Discord user linked to a non-trial key.
- * Used for one-shot backfill + daily refresh. Keep concurrency low for Discord rate limits.
+ * Daily job only — never run aggressively on every process restart.
  */
 export async function syncAllDiscordLinkedKeyRoles(opts?: {
 	concurrency?: number;
 	reason?: string;
+	/** Default true. Set false for badge-only safe pass. */
+	allowDisable?: boolean;
 }): Promise<SyncAllDiscordKeyRolesResult> {
 	const rows = await db.execute(sql`
 		SELECT DISTINCT discord_user_id AS id
@@ -338,7 +441,8 @@ export async function syncAllDiscordLinkedKeyRoles(opts?: {
 	];
 
 	const reason = opts?.reason || "bulk discord role sync";
-	const concurrency = Math.max(1, Math.min(4, opts?.concurrency ?? 2));
+	const concurrency = Math.max(1, Math.min(2, opts?.concurrency ?? 1));
+	const allowDisable = opts?.allowDisable !== false;
 	let synced = 0;
 	let skipped = 0;
 	let errors = 0;
@@ -347,7 +451,7 @@ export async function syncAllDiscordLinkedKeyRoles(opts?: {
 
 	await mapWithConcurrency(ids, concurrency, async (uid) => {
 		try {
-			const result = await syncUserKeyAccess(uid, { reason });
+			const result = await syncUserKeyAccess(uid, { reason, allowDisable });
 			if (result.action === "skipped") skipped += 1;
 			else {
 				synced += 1;

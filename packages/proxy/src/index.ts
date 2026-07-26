@@ -196,21 +196,22 @@ async function main() {
     await run3MonthCleanup();
   }, 24 * 60 * 60 * 1000); // 24 hours
 
-  // Discord role/badge backfill for all linked non-trial keys (startup + daily)
-  const runDiscordRoleSync = async (reason: string) => {
+  // Discord role/badge refresh once per day ONLY (never on every restart — that
+  // caused mass false disables when Discord rate-limited the bulk fetch).
+  setInterval(async () => {
     try {
       const { syncAllDiscordLinkedKeyRoles } = await import("./utils/key-access-lifecycle.js");
-      const result = await syncAllDiscordLinkedKeyRoles({ concurrency: 2, reason });
-      console.log(`[key-access] ${reason}:`, result);
+      const result = await syncAllDiscordLinkedKeyRoles({
+        concurrency: 1,
+        reason: "daily discord role sync",
+      });
+      console.log("[key-access] daily discord role sync:", result);
     } catch (err) {
-      console.warn(`[key-access] ${reason} failed:`, (err as Error)?.message || err);
+      console.warn(
+        "[key-access] daily discord role sync failed:",
+        (err as Error)?.message || err,
+      );
     }
-  };
-  setTimeout(() => {
-    void runDiscordRoleSync("startup discord role sync");
-  }, 90_000);
-  setInterval(() => {
-    void runDiscordRoleSync("daily discord role sync");
   }, 24 * 60 * 60 * 1000);
 
   serve({
