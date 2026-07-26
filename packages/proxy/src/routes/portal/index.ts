@@ -12,7 +12,7 @@ import { resolvePeriodRange, chartDaysForPeriod, type PeriodKey, turnCountSql, h
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { getRecapWindow } from "../../utils/recap-window.js";
-import { getModelCatalogResponse, getClientCatalogMonitorRows } from "../../utils/model-catalog.js";
+import { getModelCatalogResponse } from "../../utils/model-catalog.js";
 import { parseTrialModelWhitelist, resolveKeyPromptLimit, resolveKeyApiCallLimit } from "../../utils/trial-config.js";
 import {
   checkPromptLimit,
@@ -1440,66 +1440,48 @@ portal.get("/models", async (c) => {
       })));
     }
 
-    // Same matrix as Discord /v1/models: visible = Published ON; online label = both
-    const monitorRows = await getClientCatalogMonitorRows();
+    // Same matrix as Discord /v1/models — provider-strict (no bare-ID Online borrow)
+    const { getAllClientCatalogMonitorRows, buildProviderStrictStatusLookup } = await import(
+      "../../utils/model-catalog.js"
+    );
+    const monitorRows = await getAllClientCatalogMonitorRows();
+    const { lookup } = buildProviderStrictStatusLookup(monitorRows);
 
-    const statusMap = new Map<
-      string,
-      { clientOnline: boolean; latencyMs: number; checkedAt: Date | null }
-    >();
-    for (const m of monitorRows) {
-      const bare = m.modelId.includes("/")
-        ? m.modelId.slice(m.modelId.indexOf("/") + 1)
-        : m.modelId;
-      const payload = {
-        clientOnline: m.clientOnline,
-        latencyMs: m.latencyMs,
-        checkedAt: null as Date | null,
-      };
-      statusMap.set(m.modelId, payload);
-      statusMap.set(bare, payload);
-      statusMap.set(`${m.provider}/${bare}`, payload);
-    }
-
-    // Attach checkedAt from raw table for display
+    // checkedAt by provider/model for display
+    const checkedAtByKey = new Map<string, Date>();
     const checkedRows = await db
       .select({
         modelId: modelMonitor.modelId,
+        provider: modelMonitor.provider,
         checkedAt: modelMonitor.checkedAt,
       })
       .from(modelMonitor)
       .orderBy(desc(modelMonitor.checkedAt));
     for (const row of checkedRows) {
-      const existing = statusMap.get(row.modelId);
-      if (existing && !existing.checkedAt) {
-        existing.checkedAt = row.checkedAt;
+      if (!row.checkedAt || !row.provider) continue;
+      const k = `${row.provider}/${row.modelId}`;
+      if (!checkedAtByKey.has(k)) checkedAtByKey.set(k, row.checkedAt);
+      if (row.modelId.includes("/") && !checkedAtByKey.has(row.modelId)) {
+        checkedAtByKey.set(row.modelId, row.checkedAt);
       }
     }
-
-    const lookup = (id: string) => {
-      if (statusMap.has(id)) return statusMap.get(id)!;
-      const parts = id.split("/");
-      for (let i = 1; i < parts.length; i++) {
-        const suffix = parts.slice(i).join("/");
-        if (statusMap.has(suffix)) return statusMap.get(suffix)!;
-      }
-      for (const [mid, val] of statusMap) {
-        if (mid.endsWith("/" + id) || id.endsWith("/" + mid)) return val;
-      }
-      return null;
-    };
 
     return c.json(
       allModels
         .map((m) => {
           const st = lookup(m.id);
           if (!st) return null;
+          // Unpublished / force-off: still list as Offline (not borrow Online from siblings)
+          const checkedAt =
+            checkedAtByKey.get(m.id) ||
+            checkedAtByKey.get(`${st.provider}/${m.id}`) ||
+            null;
           return {
             id: m.id,
             allowed: true,
-            online: st.clientOnline,
-            checkedAt: st.checkedAt?.toISOString() ?? null,
-            lastCheckedMinutes: st.checkedAt ? minutesAgo(st.checkedAt) : null,
+            online: Boolean(st.visible && st.clientOnline),
+            checkedAt: checkedAt?.toISOString() ?? null,
+            lastCheckedMinutes: checkedAt ? minutesAgo(checkedAt) : null,
             latencyMs: st.latencyMs ?? null,
           };
         })

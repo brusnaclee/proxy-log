@@ -1124,12 +1124,7 @@ export function isAutoCompatible(modelId: string): boolean {
   return !AUTO_MODEL_EXCLUDE_PATTERNS.some(p => p.test(modelId));
 }
 
-/**
- * Latest monitor row per model+provider with Published×Probe client flags.
- * visible / requestable = Published ON (admin catalog intent)
- * clientOnline = Published AND Probe OK (status label only)
- */
-export async function getClientCatalogMonitorRows(): Promise<Array<{
+export type ClientCatalogMonitorRow = {
   modelId: string;
   provider: string;
   latencyMs: number;
@@ -1140,7 +1135,22 @@ export async function getClientCatalogMonitorRows(): Promise<Array<{
   visible: boolean;
   clientOnline: boolean;
   requestable: boolean;
-}>> {
+};
+
+export type CatalogStatusMatch = {
+  visible: boolean;
+  clientOnline: boolean;
+  latencyMs: number;
+  provider: string;
+};
+
+/**
+ * Latest monitor row per model+provider with Published×Probe client flags.
+ * By default only Published (visible) rows — use includeUnpublished for force-off lookups.
+ */
+async function loadClientCatalogMonitorRows(opts?: {
+  includeUnpublished?: boolean;
+}): Promise<ClientCatalogMonitorRow[]> {
   const latestSubquery = db
     .select({
       modelId: modelMonitor.modelId,
@@ -1175,7 +1185,7 @@ export async function getClientCatalogMonitorRows(): Promise<Array<{
     return false;
   };
 
-  return rows
+  const mapped = rows
     .map((r) => r.model_monitor)
     .filter((d) => d.provider && isResolvable(d.modelId, d.provider))
     .map((d) => {
@@ -1191,8 +1201,75 @@ export async function getClientCatalogMonitorRows(): Promise<Array<{
         httpStatus: d.httpStatus ?? 0,
         ...flags,
       };
-    })
-    .filter((d) => d.visible);
+    });
+
+  if (opts?.includeUnpublished) return mapped;
+  return mapped.filter((d) => d.visible);
+}
+
+/** Published rows only (client catalog / routing). */
+export async function getClientCatalogMonitorRows(): Promise<ClientCatalogMonitorRow[]> {
+  return loadClientCatalogMonitorRows({ includeUnpublished: false });
+}
+
+/** All resolvable rows including admin force-off / Unpublished (for strict status lookup). */
+export async function getAllClientCatalogMonitorRows(): Promise<ClientCatalogMonitorRow[]> {
+  return loadClientCatalogMonitorRows({ includeUnpublished: true });
+}
+
+/**
+ * Provider-strict status index. Never OR Online across bare leaf IDs like `claude-sonnet-5`
+ * (that made force-off tokito/amanai/sonnet inherit Online from another provider).
+ */
+export function buildProviderStrictStatusLookup(rows: ClientCatalogMonitorRow[]) {
+  const byKey = new Map<string, CatalogStatusMatch>();
+
+  for (const row of rows) {
+    const match: CatalogStatusMatch = {
+      visible: row.visible,
+      clientOnline: row.clientOnline,
+      latencyMs: row.latencyMs,
+      provider: row.provider,
+    };
+    const keys = new Set<string>([`${row.provider}/${row.modelId}`]);
+    // modelId may already be fully qualified (provider/...)
+    if (row.modelId.includes("/")) keys.add(row.modelId);
+    for (const k of keys) {
+      const prev = byKey.get(k);
+      if (!prev) {
+        byKey.set(k, match);
+        continue;
+      }
+      // Same key twice: prefer Published+Online; never let a false Online win over Offline
+      if (prev.clientOnline && !match.clientOnline) continue;
+      byKey.set(k, match);
+    }
+  }
+
+  const lookup = (id: string): CatalogStatusMatch | null => {
+    const modelId = String(id || "").trim();
+    if (!modelId) return null;
+    if (modelId === "auto") {
+      const vals = [...byKey.values()];
+      return {
+        visible: vals.some((v) => v.visible),
+        clientOnline: vals.some((v) => v.clientOnline),
+        latencyMs: 0,
+        provider: "proxy",
+      };
+    }
+    if (byKey.has(modelId)) return byKey.get(modelId)!;
+    const slash = modelId.indexOf("/");
+    if (slash > 0) {
+      const provider = modelId.slice(0, slash);
+      const rest = modelId.slice(slash + 1);
+      const scoped = `${provider}/${rest}`;
+      if (byKey.has(scoped)) return byKey.get(scoped)!;
+    }
+    return null;
+  };
+
+  return { lookup, size: byKey.size };
 }
 
 /** Requestable models (Published ON), sorted by latency — for auto routing. */

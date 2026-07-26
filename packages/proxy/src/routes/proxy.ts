@@ -90,7 +90,6 @@ import {
 	getFilteredModelCatalogResponse,
 	getNextApiKey,
 	getOnlineModelsByLatency,
-	getClientCatalogMonitorRows,
 	getProviderForModel,
 	isAutoCompatible,
 	stripProviderPrefix,
@@ -1438,47 +1437,12 @@ proxy.all('/*', async (c) => {
 		// Client catalog: visible/requestable = Published ON; is_online label = Published AND Probe OK.
 		// Admin Model Monitor still lists all models.
 		try {
-			const monitorRows = await getClientCatalogMonitorRows();
-			type Match = { visible: boolean; clientOnline: boolean };
-			const byKey = new Map<string, Match>();
-			const addKeys = (row: (typeof monitorRows)[0]) => {
-				const match = { visible: row.visible, clientOnline: row.clientOnline };
-				const bare = row.modelId.includes('/')
-					? row.modelId.slice(row.modelId.indexOf('/') + 1)
-					: row.modelId;
-				const keys = [
-					row.modelId,
-					bare,
-					`${row.provider}/${bare}`,
-					`${row.provider}/${row.modelId}`,
-				];
-				for (const k of keys) {
-					const prev = byKey.get(k);
-					// Prefer clientOnline=true if any match is fully online
-					byKey.set(k, {
-						visible: true,
-						clientOnline: Boolean(prev?.clientOnline || match.clientOnline),
-					});
-				}
-			};
-			for (const row of monitorRows) addKeys(row);
-
-			const lookup = (id: string): Match | null => {
-				if (id === 'auto') {
-					const anyOnline = [...byKey.values()].some((v) => v.clientOnline);
-					return { visible: byKey.size > 0, clientOnline: anyOnline };
-				}
-				if (byKey.has(id)) return byKey.get(id)!;
-				const parts = id.split('/');
-				for (let i = 1; i < parts.length; i++) {
-					const suffix = parts.slice(i).join('/');
-					if (byKey.has(suffix)) return byKey.get(suffix)!;
-				}
-				for (const [mid, val] of byKey) {
-					if (mid.endsWith('/' + id) || id.endsWith('/' + mid)) return val;
-				}
-				return null;
-			};
+			const {
+				getAllClientCatalogMonitorRows,
+				buildProviderStrictStatusLookup,
+			} = await import('../utils/model-catalog.js');
+			const monitorRows = await getAllClientCatalogMonitorRows();
+			const { lookup } = buildProviderStrictStatusLookup(monitorRows);
 
 			if (Array.isArray((catalog as any)?.data)) {
 				(catalog as any).data = (catalog as any).data
@@ -1492,7 +1456,7 @@ proxy.all('/*', async (c) => {
 						const match = lookup(id);
 						return {
 							...m,
-							is_online: id === 'auto' ? Boolean(match?.clientOnline) : Boolean(match?.clientOnline),
+							is_online: Boolean(match?.clientOnline),
 							context_length: m.context_length ?? m.max_context_length ?? null,
 							max_tokens: m.max_output_tokens ?? m.max_tokens ?? null,
 						};

@@ -584,37 +584,23 @@ monitor.post("/monitor/models/bulk-override", async (c) => {
 
 // ─── Enriched Model Details (catalog + metadata + monitor status) ────────────
 monitor.get("/monitor/models/details", async (c) => {
-  const { getModelCatalogResponse, getClientCatalogMonitorRows } = await import("../../utils/model-catalog.js");
+  const {
+    getModelCatalogResponse,
+    getAllClientCatalogMonitorRows,
+    buildProviderStrictStatusLookup,
+  } = await import("../../utils/model-catalog.js");
 
   const [catalog, monitorRows] = await Promise.all([
     getModelCatalogResponse(),
-    getClientCatalogMonitorRows(),
+    getAllClientCatalogMonitorRows(),
   ]);
-
-  const statusMap = new Map<string, { latencyMs: number; provider: string; clientOnline: boolean }>();
-  for (const m of monitorRows) {
-    statusMap.set(m.modelId, {
-      latencyMs: m.latencyMs,
-      provider: m.provider,
-      clientOnline: m.clientOnline,
-    });
-    const bare = m.modelId.includes("/") ? m.modelId.slice(m.modelId.indexOf("/") + 1) : m.modelId;
-    statusMap.set(`${m.provider}/${bare}`, {
-      latencyMs: m.latencyMs,
-      provider: m.provider,
-      clientOnline: m.clientOnline,
-    });
-  }
+  const { lookup } = buildProviderStrictStatusLookup(monitorRows);
 
   const enriched = catalog.data
     .map((model: any) => {
       const id = String(model.id || "");
-      const monitor =
-        statusMap.get(id) ||
-        [...statusMap.entries()].find(
-          ([mid]) => mid.endsWith("/" + id) || id.endsWith("/" + mid),
-        )?.[1];
-      if (!monitor) return null;
+      const monitor = lookup(id);
+      if (!monitor?.visible) return null;
       return {
         ...model,
         is_online: monitor.clientOnline,

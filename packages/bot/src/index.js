@@ -1879,10 +1879,8 @@ async function refreshLatencyFromProxy() {
 				newLatency.set(key, {
 					// clientOnline = published AND probe OK (green / requestable)
 					ok: Boolean(row.isOnline) && Number(row.httpStatus) >= 200 && Number(row.httpStatus) < 300,
-					// visible on Discord = published OR probe OK
-					visible:
-						Boolean(row.isOnline) ||
-						(Number(row.httpStatus) >= 200 && Number(row.httpStatus) < 300),
+					// Discord list = Published ON only (admin force-off stays hidden)
+					visible: Boolean(row.isOnline),
 					ms: row.latencyMs || 0,
 					checkedAt: row.checkedAt
 						? new Date(row.checkedAt).getTime()
@@ -1969,7 +1967,8 @@ async function runLatencyTest() {
 		const probeOk = Boolean(result.ok);
 		runtime.latency.set(key, {
 			ok: published && probeOk,
-			visible: published || probeOk,
+			// Admin Published OFF (force-off) must stay hidden even if probe is 2xx
+			visible: published,
 			published,
 			ms,
 			checkedAt: now,
@@ -2261,7 +2260,8 @@ async function sweepModelsParallel(entries, label) {
 				const merged = {
 					...latency,
 					ok: published && probeOk,
-					visible: published || probeOk,
+					// Admin Published OFF (force-off) must stay hidden even if probe is 2xx
+					visible: published,
 					published,
 					// Keep raw probe success for pushSingleModelStatus / retry state
 					probeOk,
@@ -2727,12 +2727,11 @@ function listModels(
 			apiKey: '',
 		};
 		items.unshift(autoEntry);
-		// Public Discord: show visible models (published OR probeOk).
-		// Green/online only when both (latency.ok). Natural offline stays hidden.
+		// Public Discord: Published ON only (matches portal /v1/models). Force-off stays hidden.
 		items = items.filter((e) => {
 			if (e.modelId === 'auto') return true;
 			const lt = runtime.latency.get(entryKey(e));
-			return Boolean(lt?.visible ?? lt?.ok);
+			return Boolean(lt?.visible);
 		});
 	}
 
