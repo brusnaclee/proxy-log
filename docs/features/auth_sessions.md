@@ -7,7 +7,7 @@ Admin dashboard and client portal share the same session model.
 - Sessions are stored in PostgreSQL (`auth_sessions`), so they **survive PM2 / process restarts**.
 - Hard max lifetime: **3 days** from login (`created_at`). Cookie `maxAge` is refreshed to the remaining TTL on each valid request (does not extend past 3 days).
 - Cookie holds only an opaque id; the DB stores a **SHA-256 hash** of that id.
-- Cookie flags: `httpOnly`, `SameSite=Lax`. Set `COOKIE_SECURE=1` when the site is served over HTTPS (required on production `api.tokito.xyz`). Do not infer Secure from `NODE_ENV=production` alone — plain HTTP dashboards would drop the cookie and look like a failed login.
+- Cookie flags: `httpOnly`, `SameSite=Lax`. **Secure** follows the client-facing protocol (`X-Forwarded-Proto` / HTTPS). The admin Vite dashboard on plain HTTP (`:5173`) must not receive `Secure` cookies or the browser drops the session (login loop). Portal on HTTPS still gets Secure cookies. Set `COOKIE_SECURE=0` to force never-Secure; `COOKIE_SECURE=1` only forces Secure when the request protocol is unknown.
 - Changing or removing a password **invalidates all sessions** for that principal (admin: all admin sessions; portal: all sessions for that Discord user).
 - Logout clears the DB row and the cookie (admin logout is allowed even if the session is already gone).
 - Login rate limit (admin and portal): 10 attempts / 15 minutes / IP.

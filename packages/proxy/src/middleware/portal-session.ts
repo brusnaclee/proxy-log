@@ -10,19 +10,16 @@ import {
   touchAuthSession,
 } from "../utils/auth-sessions.js";
 import { parseSessionClientMeta } from "../utils/session-client-meta.js";
+import { shouldUseSecureCookies } from "../utils/cookie-secure.js";
 
 const COOKIE_NAME = "portal_session";
 
 startAuthSessionPurgeJob();
 
-function cookieSecure(): boolean {
-  return process.env.COOKIE_SECURE === "1";
-}
-
 function setPortalCookie(c: Context, sessionId: string, maxAgeSec: number): void {
   setCookie(c, COOKIE_NAME, sessionId, {
     httpOnly: true,
-    secure: cookieSecure(),
+    secure: shouldUseSecureCookies(c),
     sameSite: "Lax",
     maxAge: maxAgeSec,
     path: "/",
@@ -63,7 +60,11 @@ export async function destroyPortalSession(c: Context): Promise<void> {
       // still clear cookie
     }
   }
-  deleteCookie(c, COOKIE_NAME, { path: "/" });
+  deleteCookie(c, COOKIE_NAME, {
+    path: "/",
+    secure: shouldUseSecureCookies(c),
+    sameSite: "Lax",
+  });
 }
 
 /**
