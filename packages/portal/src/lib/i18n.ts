@@ -280,8 +280,6 @@ const dict: Record<string, Record<Lang, string>> = {
   "Unknown device": { id: "Perangkat tidak dikenal", en: "Unknown device" },
   Current: { id: "Saat ini", en: "Current" },
   "Last seen": { id: "Terakhir terlihat", en: "Last seen" },
-  Expires: { id: "Kedaluwarsa", en: "Expires" },
-  Revoke: { id: "Cabut", en: "Revoke" },
 };
 
 let _lang: Lang = (() => {
