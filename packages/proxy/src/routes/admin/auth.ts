@@ -5,7 +5,6 @@ import { createSession, destroySession, isAuthenticated } from "../../middleware
 
 const auth = new Hono();
 
-// Simple login rate limit: IP -> { count, resetAt } (same shape as portal)
 const loginAttempts = new Map<string, { count: number; resetAt: number }>();
 const LOGIN_MAX = 10;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
@@ -31,22 +30,32 @@ auth.post("/login", async (c) => {
     return c.json({ error: "Too many login attempts. Try again later." }, 429);
   }
 
-  const { password } = await c.req.json<{ password: string }>();
-  if (!password) return c.json({ error: "Password is required" }, 400);
+  const body = await c.req.json<{
+    password: string;
+    clientHint?: { platform?: string; mobile?: boolean; label?: string };
+  }>();
+  if (!body.password) return c.json({ error: "Password is required" }, 400);
 
   const config = (await db.select().from(adminConfig))[0];
   if (!config) return c.json({ error: "Admin not configured" }, 500);
 
   const { verify } = await import("@node-rs/argon2");
-  const isValid = await verify(config.passwordHash, password);
-  if (!isValid) return c.json({ error: "Invalid password" }, 401);
+  const isValid = await verify(config.passwordHash, body.password);
+  if (!isValid) {
+    (c as any).set("auditAction", "auth.login");
+    (c as any).set("auditDetails", { ok: false });
+    return c.json({ error: "Invalid password" }, 401);
+  }
 
-  await createSession(c);
+  await createSession(c, body.clientHint ?? null);
+  (c as any).set("auditAction", "auth.login");
+  (c as any).set("auditDetails", { ok: true });
   return c.json({ success: true, message: "Logged in successfully" });
 });
 
 auth.post("/logout", async (c) => {
   await destroySession(c);
+  (c as any).set("auditAction", "auth.logout");
   return c.json({ success: true, message: "Logged out" });
 });
 

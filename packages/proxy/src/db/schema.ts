@@ -614,6 +614,12 @@ export const authSessions = pgTable('auth_sessions', {
 	lastSeenAt: timestamp('last_seen_at').notNull().defaultNow(),
 	ip: text('ip'),
 	userAgent: text('user_agent'),
+	country: text('country'),
+	deviceClass: text('device_class'),
+	osName: text('os_name'),
+	clientName: text('client_name'),
+	fingerprint: text('fingerprint'),
+	clientLabel: text('client_label'),
 }, (table) => ({
 	hashIdx: uniqueIndex('idx_auth_sessions_hash').on(table.sessionHash),
 	kindUserIdx: index('idx_auth_sessions_kind_user').on(table.kind, table.discordUserId),
@@ -622,6 +628,27 @@ export const authSessions = pgTable('auth_sessions', {
 
 export type AuthSession = typeof authSessions.$inferSelect;
 export type NewAuthSession = typeof authSessions.$inferInsert;
+
+// ─── Admin audit log (append-only; no delete API) ─────────────────────────────
+export const adminAuditLogs = pgTable('admin_audit_logs', {
+	id: serial('id').primaryKey(),
+	createdAt: timestamp('created_at').notNull().defaultNow(),
+	actor: text('actor').notNull().default('admin'),
+	action: text('action').notNull(),
+	ip: text('ip'),
+	userAgent: text('user_agent'),
+	country: text('country'),
+	method: text('method'),
+	path: text('path'),
+	statusCode: integer('status_code'),
+	details: text('details').notNull().default('null'),
+}, (table) => ({
+	createdIdx: index('idx_admin_audit_created').on(table.createdAt),
+	actionIdx: index('idx_admin_audit_action').on(table.action),
+}));
+
+export type AdminAuditLog = typeof adminAuditLogs.$inferSelect;
+export type NewAdminAuditLog = typeof adminAuditLogs.$inferInsert;
 
 // ─── Per-key calendar-day overrides (WIB date; additive bonuses until midnight) ─
 export const keyDayOverrides = pgTable('key_day_overrides', {

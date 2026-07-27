@@ -1566,13 +1566,7 @@ proxy.all('/*', async (c) => {
 	const authHeader = c.req.header('Authorization');
 	if (!authHeader || !authHeader.startsWith('Bearer ')) {
 		return c.json(
-			{
-				error: {
-					message:
-						'Missing or invalid Authorization header. Use: Bearer <api_key>',
-					type: 'auth_error',
-				},
-			},
+			{ error: { message: 'Invalid API key.', type: 'auth_error' } },
 			401,
 		);
 	}

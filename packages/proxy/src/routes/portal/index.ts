@@ -6,8 +6,8 @@ import {
 } from "../../db/schema.js";
 import { eq, sql, and, desc } from "drizzle-orm";
 import { generateApiKey, getKeyPrefix, sha256, maskKey } from "../../utils/crypto.js";
-import { createPortalSession, destroyPortalSession, getPortalDiscordUserId, resolvePortalDiscordUserId } from "../../middleware/portal-session.js";
-import { destroyAllAuthSessions } from "../../utils/auth-sessions.js";
+import { createPortalSession, destroyPortalSession, getPortalDiscordUserId, resolvePortalDiscordUserId, getPortalSessionRawId } from "../../middleware/portal-session.js";
+import { destroyAllAuthSessions, destroyAuthSessionById, destroyOtherAuthSessions, listAuthSessions } from "../../utils/auth-sessions.js";
 import { resolvePeriodRange, chartDaysForPeriod, type PeriodKey, turnCountSql, hopCountSql, peakPromptTokensSql, turnCompletionTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, hopFullInputTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, modelLimitCreditBreakdownSql, BILLABLE_LOG_SQL } from "../../utils/counting.js";
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
@@ -179,7 +179,10 @@ portal.post("/auth/login", async (c) => {
     return c.json({ error: "Too many login attempts. Try again later." }, 429);
   }
 
-  const { apiKey } = await c.req.json<{ apiKey: string }>();
+  const { apiKey, clientHint } = await c.req.json<{
+    apiKey: string;
+    clientHint?: { platform?: string; mobile?: boolean; label?: string };
+  }>();
   if (!apiKey) return c.json({ error: "API key required" }, 400);
 
   let key = (await db.select().from(apiKeys).where(eq(apiKeys.key, apiKey)))[0];
@@ -198,7 +201,7 @@ portal.post("/auth/login", async (c) => {
     return c.json({ requiresPassword: true, discordUserId });
   }
 
-  await createPortalSession(c, discordUserId);
+  await createPortalSession(c, discordUserId, clientHint ?? null);
 
   // Update lastLoginAt
   if (settings) {
@@ -213,7 +216,11 @@ portal.post("/auth/login", async (c) => {
 });
 
 portal.post("/auth/verify-password", async (c) => {
-  const { discordUserId, password } = await c.req.json<{ discordUserId: string; password: string }>();
+  const { discordUserId, password, clientHint } = await c.req.json<{
+    discordUserId: string;
+    password: string;
+    clientHint?: { platform?: string; mobile?: boolean; label?: string };
+  }>();
   if (!discordUserId || !password) return c.json({ error: "Missing fields" }, 400);
 
   const settings = (await db.select().from(userPortalSettings).where(eq(userPortalSettings.discordUserId, discordUserId)))[0];
@@ -223,7 +230,7 @@ portal.post("/auth/verify-password", async (c) => {
   const isValid = await verify(settings.passwordHash, password);
   if (!isValid) return c.json({ error: "Invalid password" }, 401);
 
-  await createPortalSession(c, discordUserId);
+  await createPortalSession(c, discordUserId, clientHint ?? null);
   await db.update(userPortalSettings)
     .set({ lastLoginAt: new Date(), updatedAt: new Date() })
     .where(eq(userPortalSettings.discordUserId, discordUserId));
@@ -253,6 +260,37 @@ portal.use("/*", async (c, next) => {
     return c.json({ error: "Unauthorized" }, 401);
   }
   return next();
+});
+
+// ─── Active sessions ───────────────────────────────────────────────────────────
+
+portal.get("/sessions", async (c) => {
+  const discordUserId = getPortalDiscordUserId(c)!;
+  const rawId = getPortalSessionRawId(c);
+  const rows = await listAuthSessions({
+    kind: "portal",
+    discordUserId,
+    currentRawId: rawId,
+    limit: 50,
+  });
+  return c.json({ sessions: rows });
+});
+
+portal.delete("/sessions/:id", async (c) => {
+  const discordUserId = getPortalDiscordUserId(c)!;
+  const id = Number(c.req.param("id"));
+  if (!Number.isFinite(id)) return c.json({ error: "Invalid id" }, 400);
+  const ok = await destroyAuthSessionById(id, "portal", discordUserId);
+  if (!ok) return c.json({ error: "Session not found" }, 404);
+  return c.json({ success: true });
+});
+
+portal.post("/sessions/revoke-others", async (c) => {
+  const discordUserId = getPortalDiscordUserId(c)!;
+  const rawId = getPortalSessionRawId(c);
+  if (!rawId) return c.json({ error: "No current session" }, 400);
+  const n = await destroyOtherAuthSessions("portal", rawId, discordUserId);
+  return c.json({ success: true, revoked: n });
 });
 
 // ─── Me ───────────────────────────────────────────────────────────────────────

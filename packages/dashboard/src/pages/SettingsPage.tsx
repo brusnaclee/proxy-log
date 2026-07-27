@@ -12,6 +12,8 @@ import {
 
 import { useRealtime } from "@/lib/realtime-context";
 import { ProvidersManager } from "@/components/ProvidersManager";
+import { ActiveSessionsPanel } from "@/components/ActiveSessionsPanel";
+import { AdminAuditLogPanel } from "@/components/AdminAuditLogPanel";
 import { useNotify } from "@/components/Notify";
 import { globalSettings, request, type ModelLimitEntry } from "@/lib/api";
 import { Switch } from "@/components/ui/switch";
@@ -1561,6 +1563,18 @@ export default function SettingsPage() {
           {loading ? "Saving..." : "Save Settings"}
         </Button>
       </div>
+
+      <ActiveSessionsPanel
+        kind="admin"
+        title="Active admin sessions"
+        description="Browser sessions for this dashboard. Revoke any device that should no longer have access. Sessions expire after 3 days."
+      />
+      <ActiveSessionsPanel
+        kind="portal"
+        title="Portal sessions"
+        description="Active client-portal logins. Revoke to force a user to sign in again."
+      />
+      <AdminAuditLogPanel />
 
       {/* Change Password */}
       <Card className="border-border/50">

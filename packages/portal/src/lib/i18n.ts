@@ -264,6 +264,24 @@ const dict: Record<string, Record<Lang, string>> = {
     id: "Yakin ingin mencabut perangkat ini? Perangkat tidak bisa lagi menggunakan kunci ini.",
     en: "Are you sure you want to revoke this device? It will no longer be able to use this key.",
   },
+  "Active sessions": { id: "Sesi aktif", en: "Active sessions" },
+  "Devices signed into your portal. Sessions expire after 3 days.": {
+    id: "Perangkat yang masuk ke portal. Sesi berakhir setelah 3 hari.",
+    en: "Devices signed into your portal. Sessions expire after 3 days.",
+  },
+  "Sign out other devices": { id: "Keluar dari perangkat lain", en: "Sign out other devices" },
+  "Failed to load sessions": { id: "Gagal memuat sesi", en: "Failed to load sessions" },
+  "Session revoked": { id: "Sesi dicabut", en: "Session revoked" },
+  "Revoke failed": { id: "Gagal mencabut", en: "Revoke failed" },
+  Revoked: { id: "Dicabut", en: "Revoked" },
+  "other session(s)": { id: "sesi lain", en: "other session(s)" },
+  "Loading…": { id: "Memuat…", en: "Loading…" },
+  "No active sessions.": { id: "Tidak ada sesi aktif.", en: "No active sessions." },
+  "Unknown device": { id: "Perangkat tidak dikenal", en: "Unknown device" },
+  Current: { id: "Saat ini", en: "Current" },
+  "Last seen": { id: "Terakhir terlihat", en: "Last seen" },
+  Expires: { id: "Kedaluwarsa", en: "Expires" },
+  Revoke: { id: "Cabut", en: "Revoke" },
 };
 
 let _lang: Lang = (() => {

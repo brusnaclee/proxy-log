@@ -9,6 +9,7 @@ import { badgeClass, badgeLabel, resolveDisplayBadges, formatAddonExpiry } from 
 import { formatRelativeTime } from "@/lib/utils";
 import { useNotify } from "@/components/Notify";
 import { TOKEN_SAVER_FEATURES, TOKEN_SAVER_INTRO } from "@/lib/token-saver-copy";
+import { ActiveSessionsPanel } from "@/components/ActiveSessionsPanel";
 
 const REALTIME_KEY = "portal_realtime_enabled";
 
@@ -360,6 +361,8 @@ export default function SettingsPage() {
           )}
         </div>
       </div>
+
+      <ActiveSessionsPanel />
 
       {/* Token Saver — placed right under Account so it's visible without scrolling */}
       <div className="bg-card border border-border rounded-xl p-4 border-primary/20">

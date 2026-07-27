@@ -44,17 +44,90 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return (data ?? {}) as T;
 }
 
+function clientHintPayload() {
+  try {
+    const ua = navigator.userAgentData as
+      | { platform?: string; mobile?: boolean }
+      | undefined;
+    return {
+      platform: ua?.platform || navigator.platform || undefined,
+      mobile: ua?.mobile,
+      label: ua?.platform || undefined,
+    };
+  } catch {
+    return { platform: navigator.platform || undefined };
+  }
+}
+
 // ─── Auth ──────────────────────────────────────────────────────────────────────
 export const auth = {
   login: (password: string) =>
     request<{ success: boolean }>("/login", {
       method: "POST",
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({ password, clientHint: clientHintPayload() }),
     }),
   logout: () =>
     request<{ success: boolean }>("/logout", { method: "POST" }),
   me: () =>
     request<{ authenticated: boolean }>("/me"),
+};
+
+export type AuthSessionRow = {
+  id: number;
+  kind: string;
+  discordUserId?: string | null;
+  discordUsername?: string | null;
+  createdAt: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  ip?: string | null;
+  userAgent?: string | null;
+  country?: string | null;
+  deviceClass?: string | null;
+  osName?: string | null;
+  clientName?: string | null;
+  fingerprint?: string | null;
+  clientLabel?: string | null;
+  isCurrent?: boolean;
+};
+
+export const sessionsApi = {
+  list: (kind: "admin" | "portal" = "admin") =>
+    request<{ sessions: AuthSessionRow[] }>(`/sessions?kind=${kind}`),
+  revoke: (id: number, kind: "admin" | "portal" = "admin") =>
+    request<{ success: boolean }>(`/sessions/${id}?kind=${kind}`, { method: "DELETE" }),
+  revokeOthers: () =>
+    request<{ success: boolean; revoked: number }>("/sessions/revoke-others", {
+      method: "POST",
+      body: JSON.stringify({ kind: "admin" }),
+    }),
+};
+
+export type AdminAuditRow = {
+  id: number;
+  createdAt: string;
+  actor: string;
+  action: string;
+  ip?: string | null;
+  userAgent?: string | null;
+  country?: string | null;
+  method?: string | null;
+  path?: string | null;
+  statusCode?: number | null;
+  details?: unknown;
+};
+
+export const auditLogsApi = {
+  list: (opts?: { limit?: number; offset?: number; action?: string }) => {
+    const q = new URLSearchParams();
+    if (opts?.limit) q.set("limit", String(opts.limit));
+    if (opts?.offset) q.set("offset", String(opts.offset));
+    if (opts?.action) q.set("action", opts.action);
+    const qs = q.toString();
+    return request<{ total: number; logs: AdminAuditRow[] }>(
+      `/audit-logs${qs ? `?${qs}` : ""}`,
+    );
+  },
 };
 
 // ─── Settings ──────────────────────────────────────────────────────────────────

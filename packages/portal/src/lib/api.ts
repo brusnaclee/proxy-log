@@ -343,14 +343,55 @@ export interface NotificationsResponse {
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
+function clientHintPayload() {
+  try {
+    const ua = (navigator as any).userAgentData as
+      | { platform?: string; mobile?: boolean }
+      | undefined;
+    return {
+      platform: ua?.platform || navigator.platform || undefined,
+      mobile: ua?.mobile,
+      label: ua?.platform || undefined,
+    };
+  } catch {
+    return { platform: navigator.platform || undefined };
+  }
+}
+
 export const auth = {
   login: (apiKey: string) =>
     request<{ requiresPassword: boolean; discordUserId?: string; success?: boolean; autoLogin?: boolean }>(
-      "/auth/login", "POST", { apiKey }
+      "/auth/login", "POST", { apiKey, clientHint: clientHintPayload() }
     ),
   verifyPassword: (discordUserId: string, password: string) =>
-    request<{ success: boolean }>("/auth/verify-password", "POST", { discordUserId, password }),
+    request<{ success: boolean }>("/auth/verify-password", "POST", {
+      discordUserId,
+      password,
+      clientHint: clientHintPayload(),
+    }),
   logout: () => request<{ success: boolean }>("/auth/logout", "POST"),
+};
+
+export type PortalSessionRow = {
+  id: number;
+  createdAt: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  ip?: string | null;
+  userAgent?: string | null;
+  country?: string | null;
+  deviceClass?: string | null;
+  osName?: string | null;
+  clientName?: string | null;
+  clientLabel?: string | null;
+  isCurrent?: boolean;
+};
+
+export const sessions = {
+  list: () => request<{ sessions: PortalSessionRow[] }>("/sessions", "GET"),
+  revoke: (id: number) => request<{ success: boolean }>(`/sessions/${id}`, "DELETE"),
+  revokeOthers: () =>
+    request<{ success: boolean; revoked: number }>("/sessions/revoke-others", "POST", {}),
 };
 
 // ─── Me ───────────────────────────────────────────────────────────────────────
@@ -504,4 +545,4 @@ export const settings = {
 
 // ─── Root export ──────────────────────────────────────────────────────────────
 
-export const api = { me, auth, stats, keys, logs, models, recap, notifications, settings };
+export const api = { me, auth, stats, keys, logs, models, recap, notifications, settings, sessions };

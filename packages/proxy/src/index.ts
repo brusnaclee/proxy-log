@@ -21,6 +21,7 @@ import buglogRoutes from "./routes/admin/buglog.js";
 import quotaGuardRoutes from "./routes/admin/quota-guard.js";
 import trialRoutes from "./routes/admin/trial.js";
 import addonsRoutes from "./routes/admin/addons.js";
+import sessionsRoutes from "./routes/admin/sessions.js";
 import recapRoutes from "./routes/admin/recap.js";
 import recapWebRoutes from "./routes/recap-web.js";
 import portalRoutes from "./routes/portal/index.js";
@@ -29,6 +30,7 @@ import { initializeModelCatalogScheduler, initializeMetadataEnrichmentScheduler 
 import { initializeQuotaGuardScheduler } from "./utils/quota-guard.js";
 import { initializeTrialScheduler } from "./utils/trial-scheduler.js";
 import { runTranscriptCleanup, run3MonthCleanup } from "./utils/cleanup.js";
+import { adminAuditMiddleware } from "./utils/admin-audit.js";
 
 // Load environment from root .env regardless of current working directory.
 const envCandidates = [
@@ -60,7 +62,6 @@ app.use("*", cors({
   credentials: true,
   allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
   allowHeaders: ["Content-Type", "Authorization", "Cookie"],
-  exposeHeaders: ["Set-Cookie"],
 }));
 
 // ─── Health Check ───────────────────────────────────────────────────────────────
@@ -68,7 +69,9 @@ app.get("/health", (c) => c.json({ status: "ok", timestamp: new Date().toISOStri
 
 // ─── Admin Routes (protected by auth middleware) ────────────────────────────────
 app.use("/admin/*", authMiddleware);
+app.use("/admin/*", adminAuditMiddleware);
 app.route("/admin", authRoutes);
+app.route("/admin", sessionsRoutes);
 app.route("/admin", settingsRoutes);
 app.route("/admin", providersRoutes);
 app.route("/admin", keysRoutes);
@@ -114,6 +117,23 @@ function isApiOrAssetPath(pathname: string): boolean {
   );
 }
 
+/** Probe paths that must not look like a successful SPA page (scanner false positives). */
+function isSensitiveProbePath(pathname: string): boolean {
+  const p = pathname.toLowerCase();
+  return (
+    /(^|\/)\.env($|\.)/i.test(p) ||
+    /(^|\/)\.git(\/|$)/i.test(p) ||
+    /(^|\/)\.svn(\/|$)/i.test(p) ||
+    /(^|\/)\.htaccess$/i.test(p) ||
+    /(^|\/)\.DS_Store$/i.test(p) ||
+    /\/wp-admin(\/|$)/i.test(p) ||
+    /\/wp-login\.php$/i.test(p) ||
+    /(^|\/)config\.json$/i.test(p) ||
+    /(^|\/)credentials\.json$/i.test(p) ||
+    /(^|\/)\.aws(\/|$)/i.test(p)
+  );
+}
+
 function servePortalIndex(c: any) {
   try {
     const html = readFileSync(PORTAL_INDEX_PATH, "utf8");
@@ -138,6 +158,9 @@ app.get("*", (c, next) => {
   if (isApiOrAssetPath(pathname)) {
     return next();
   }
+  if (isSensitiveProbePath(pathname)) {
+    return next();
+  }
   // Only serve SPA for navigation-style GETs (not API-ish Accept headers)
   const accept = c.req.header("Accept") || "";
   if (accept.includes("application/json") && !accept.includes("text/html")) {
@@ -150,12 +173,12 @@ app.get("*", (c, next) => {
 app.notFound((c) => {
   const pathname = new URL(c.req.url).pathname;
   // Browser navigations that somehow missed the SPA handler still get index.html
-  if (!isApiOrAssetPath(pathname) && c.req.method === "GET") {
+  if (!isApiOrAssetPath(pathname) && !isSensitiveProbePath(pathname) && c.req.method === "GET") {
     return servePortalIndex(c);
   }
   return c.json({
     error: {
-      message: "Not found. Use /v1/* for API proxy or /admin/* for dashboard API.",
+      message: "Not found",
       type: "not_found",
     }
   }, 404);

@@ -503,6 +503,14 @@ export async function initializeDatabase() {
 	}
 
 	try {
+		const { ensureAdminAuditLogsTable } = await import('../utils/admin-audit.js');
+		await ensureAdminAuditLogsTable();
+		console.log('✅ admin_audit_logs table ensured');
+	} catch (err) {
+		console.warn('⚠️  Could not ensure admin_audit_logs table:', err);
+	}
+
+	try {
 		const { ensureVibecodeCatalog } = await import('../utils/addons.js');
 		await ensureVibecodeCatalog();
 		console.log('✅ Vibecode add-on catalog ensured');

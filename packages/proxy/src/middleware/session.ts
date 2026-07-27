@@ -1,4 +1,4 @@
-import { Context, Next } from "hono";
+import { Context } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import {
   AUTH_SESSION_TTL_MS,
@@ -9,24 +9,14 @@ import {
   startAuthSessionPurgeJob,
   touchAuthSession,
 } from "../utils/auth-sessions.js";
+import { parseSessionClientMeta } from "../utils/session-client-meta.js";
 
 const COOKIE_NAME = "session";
 
 startAuthSessionPurgeJob();
 
 function cookieSecure(): boolean {
-  // Only Secure when explicitly enabled. NODE_ENV=production alone is NOT enough —
-  // admin (:5173) and portal often run over plain HTTP; Secure cookies are dropped by the browser.
   return process.env.COOKIE_SECURE === "1";
-}
-
-function clientMeta(c: Context): { ip: string; userAgent: string } {
-  const ip =
-    c.req.header("cf-connecting-ip") ||
-    c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
-    "unknown";
-  const userAgent = c.req.header("user-agent") || "";
-  return { ip, userAgent };
 }
 
 function setSessionCookie(c: Context, sessionId: string, maxAgeSec: number): void {
@@ -39,24 +29,26 @@ function setSessionCookie(c: Context, sessionId: string, maxAgeSec: number): voi
   });
 }
 
+export function getAdminSessionRawId(c: Context): string | undefined {
+  return getCookie(c, COOKIE_NAME);
+}
+
 /**
  * Create a new admin session and set the cookie.
  */
-export async function createSession(c: Context): Promise<string> {
-  const { ip, userAgent } = clientMeta(c);
+export async function createSession(
+  c: Context,
+  clientHint?: { platform?: string; mobile?: boolean; label?: string } | null,
+): Promise<string> {
+  const meta = parseSessionClientMeta(c, clientHint);
   const sessionId = await createAuthSession({
     kind: "admin",
-    ip,
-    userAgent,
+    meta,
   });
   setSessionCookie(c, sessionId, Math.floor(AUTH_SESSION_TTL_MS / 1000));
   return sessionId;
 }
 
-/**
- * Destroy the current admin session (DB row + cookie).
- * Safe to call when session is missing/expired — still clears cookie.
- */
 export async function destroySession(c: Context): Promise<void> {
   const sessionId = getCookie(c, COOKIE_NAME);
   if (sessionId) {
@@ -69,10 +61,6 @@ export async function destroySession(c: Context): Promise<void> {
   deleteCookie(c, COOKIE_NAME, { path: "/" });
 }
 
-/**
- * Check if the current request has a valid admin session.
- * On success, refreshes cookie maxAge to remaining TTL and lightly touches last_seen.
- */
 export async function isAuthenticated(c: Context): Promise<boolean> {
   const sessionId = getCookie(c, COOKIE_NAME);
   if (!sessionId) return false;
@@ -88,16 +76,15 @@ export async function isAuthenticated(c: Context): Promise<boolean> {
     }
 
     setSessionCookie(c, sessionId, maxAge);
-    void touchAuthSession(session.id, session.lastSeenAt);
+    void touchAuthSession(session.id, session.lastSeenAt, {
+      ip: parseSessionClientMeta(c).ip,
+    });
     return true;
   } catch {
     return false;
   }
 }
 
-/**
- * Internal service-to-service auth for bot -> proxy requests.
- */
 export function isInternalRequest(c: Context): boolean {
   const expected = process.env.INTERNAL_API_SECRET;
   if (!expected) return false;
@@ -105,10 +92,7 @@ export function isInternalRequest(c: Context): boolean {
   return provided === expected;
 }
 
-/**
- * Auth middleware — blocks unauthenticated requests to admin routes
- */
-export async function authMiddleware(c: Context, next: Next) {
+export async function authMiddleware(c: Context, next: () => Promise<void>) {
   const path = c.req.path;
   if (
     path === "/admin/login" ||
@@ -120,6 +104,7 @@ export async function authMiddleware(c: Context, next: Next) {
   }
 
   if (isInternalRequest(c)) {
+    (c as any).set("auditActor", "internal");
     return next();
   }
 

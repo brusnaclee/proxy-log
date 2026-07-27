@@ -10,6 +10,38 @@ import { statsCache } from "../../utils/cache.js";
 
 const logs = new Hono();
 
+function sanitizeSecretText(msg: string | null | undefined): string {
+  if (!msg) return "";
+  return String(msg)
+    .replace(/sk-[A-Za-z0-9_\-]{6,}/g, "sk-***")
+    .replace(/Bearer\s+\S{6,}/gi, "Bearer ***")
+    .replace(/api[_-]?key["']?\s*[:=]\s*["']?[^\s"',}{]{8,}/gi, "api_key=***");
+}
+
+function sanitizePreviewField(text: string | null | undefined, maxLen = 2500): string {
+  if (!text) return "";
+  const cleaned = sanitizeSecretText(text);
+  return cleaned.length > maxLen ? cleaned.slice(0, maxLen) + "…" : cleaned;
+}
+
+function sanitizeLogPayload<T extends Record<string, any>>(row: T): T {
+  const out: any = { ...row };
+  if ("errorMessage" in out) out.errorMessage = sanitizeSecretText(out.errorMessage) || null;
+  if ("requestPreview" in out) out.requestPreview = sanitizePreviewField(out.requestPreview) || null;
+  if ("responsePreview" in out) out.responsePreview = sanitizePreviewField(out.responsePreview) || null;
+  if ("transcriptSnapshot" in out) out.transcriptSnapshot = sanitizePreviewField(out.transcriptSnapshot, 8000) || null;
+  if (Array.isArray(out.errorMessages)) {
+    out.errorMessages = out.errorMessages.map((m: string) => sanitizeSecretText(m));
+  }
+  if (Array.isArray(out.transcript)) {
+    out.transcript = out.transcript.map((t: any) => ({
+      ...t,
+      content: sanitizePreviewField(t?.content, 4000),
+    }));
+  }
+  return out;
+}
+
 function parseTranscriptSnapshot(value: string | null | undefined): Array<{ role: string; content: string }> {
   if (!value) return [];
   return String(value)
@@ -42,7 +74,7 @@ function mapTimelineRow(row: any) {
   const cached = Number(row.cachedTokens) || 0;
   const completion = Number(row.completionTokens) || 0;
   const inputTokens = billable + cached;
-  return {
+  return sanitizeLogPayload({
     ...row,
     billablePromptTokens: billable,
     cachedTokens: cached,
@@ -54,7 +86,7 @@ function mapTimelineRow(row: any) {
     isTrial: row.apiKeyIsTrial ?? false,
     toolsUsed: parseToolJson(row.toolsUsed),
     transcript: parseTranscriptSnapshot(row.transcriptSnapshot),
-  };
+  });
 }
 
 function collapseTimelineRows(rows: any[]) {
@@ -330,8 +362,13 @@ logs.get("/logs/stream", (c) => {
       }, 30000);
 
       const unsubscribe = logEmitter.on((logEntry) => {
-        try { controller.enqueue(encoder.encode(`data: ${JSON.stringify(logEntry)}\n\n`)); }
-        catch { unsubscribe(); clearInterval(keepalive); }
+        try {
+          const safe = sanitizeLogPayload({ ...(logEntry as any) });
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(safe)}\n\n`));
+        } catch {
+          unsubscribe();
+          clearInterval(keepalive);
+        }
       });
 
       c.req.raw.signal?.addEventListener("abort", () => {
@@ -342,7 +379,11 @@ logs.get("/logs/stream", (c) => {
   });
 
   return new Response(stream, {
-    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive", "Access-Control-Allow-Origin": "*" },
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
   });
 });
 
