@@ -146,7 +146,7 @@ export async function writeAdminAuditFromContext(
 }
 
 const SKIP_AUDIT_PATH =
-  /^\/admin\/(health|audit-logs|logs\/stream|me|login|logout)(\/|$)/i;
+  /^\/admin\/(health|audit-logs|logs\/stream|me)(\/|$)/i;
 
 export function shouldSkipAdminAudit(path: string, method: string): boolean {
   if (!["POST", "PUT", "PATCH", "DELETE"].includes(method.toUpperCase())) return true;
@@ -178,8 +178,9 @@ export async function adminAuditMiddleware(c: Context, next: () => Promise<void>
 
   if (shouldSkipAdminAudit(path, method)) return;
   const status = c.res.status;
-  // Mutations only: skip 4xx/5xx noise (auth failures on login are not audited)
-  if (status >= 400) return;
+  // Log successes and auth failures on login; skip other 4xx/5xx noise
+  if (status >= 500) return;
+  if (status >= 400 && path !== "/admin/login") return;
 
   const extra = (c as any).get("auditDetails");
   const action =
