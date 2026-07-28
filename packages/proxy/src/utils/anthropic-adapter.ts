@@ -225,7 +225,12 @@ interface AnthropicResponse {
   content: Array<{ type: "text"; text: string } | { type: "tool_use"; id: string; name: string; input: any }>;
   model: string;
   stop_reason: string;
-  usage: { input_tokens: number; output_tokens: number };
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+  };
 }
 
 interface OpenAIResponse {
@@ -238,7 +243,25 @@ interface OpenAIResponse {
     message: { role: "assistant"; content: string | null; tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }> };
     finish_reason: string;
   }>;
-  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+  usage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    prompt_tokens_details?: { cached_tokens?: number };
+  };
+}
+
+/** Map Anthropic cache_read into OpenAI cached_tokens (Continue / OpenAI clients). */
+export function anthropicUsageToOpenAI(usage: AnthropicResponse["usage"] | null | undefined): OpenAIResponse["usage"] {
+  const input = Number(usage?.input_tokens) || 0;
+  const output = Number(usage?.output_tokens) || 0;
+  const cached = Number(usage?.cache_read_input_tokens) || 0;
+  return {
+    prompt_tokens: input,
+    completion_tokens: output,
+    total_tokens: input + output,
+    ...(cached > 0 ? { prompt_tokens_details: { cached_tokens: cached } } : {}),
+  };
 }
 
 export function convertResponseToOpenAI(anthropic: AnthropicResponse): OpenAIResponse {
@@ -296,11 +319,7 @@ export function convertResponseToOpenAI(anthropic: AnthropicResponse): OpenAIRes
       message,
       finish_reason: finishReasonMap[anthropic.stop_reason] || "stop",
     }],
-    usage: {
-      prompt_tokens: anthropic.usage?.input_tokens || 0,
-      completion_tokens: anthropic.usage?.output_tokens || 0,
-      total_tokens: (anthropic.usage?.input_tokens || 0) + (anthropic.usage?.output_tokens || 0),
-    },
+    usage: anthropicUsageToOpenAI(anthropic.usage),
   };
 }
 
@@ -492,11 +511,7 @@ export function convertStreamEvent(line: string, state: StreamState): string[] {
           delta: {},
           finish_reason: finishReasonMap[data.delta?.stop_reason] || "stop",
         }],
-        usage: data.usage ? {
-          prompt_tokens: data.usage.input_tokens || 0,
-          completion_tokens: data.usage.output_tokens || 0,
-          total_tokens: (data.usage.input_tokens || 0) + (data.usage.output_tokens || 0),
-        } : undefined,
+        usage: data.usage ? anthropicUsageToOpenAI(data.usage) : undefined,
       };
       lines_out.push(`data: ${JSON.stringify(chunk)}`);
       break;

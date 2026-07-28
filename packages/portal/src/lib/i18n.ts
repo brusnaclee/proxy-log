@@ -143,12 +143,12 @@ const dict: Record<string, Record<Lang, string>> = {
   },
   Batch: { id: "Batch", en: "Batch" },
   "Batch desc": {
-    id: "Menyisipkan system prompt agar model minta beberapa read/edit sekaligus dalam 1 balasan (parallel tool_calls), bukan satu file per giliran. Tidak mengubah kemampuan model, cuma mengurangi jumlah kali hit ke upstream.",
-    en: "Injects a system prompt telling the model to request several reads/edits together in ONE reply (parallel tool_calls) instead of one file per turn. Does not change what the model can do — only how many hits it takes.",
+    id: "Mendorong batch read/search dalam 1 respons. Write/edit hanya kalau semua param lengkap (content wajib). Untuk Cline/Roo/Zoo teksnya lebih ketat agar content tidak hilang.",
+    en: "Nudge batching independent reads/searches in one response. Writes/edits only when every required param is present (especially content). Cline/Roo/Zoo get a stricter prompt so content is never omitted.",
   },
   "Batch effect": {
-    id: "Efek: lebih sedikit hop → history yang dikirim ulang lebih jarang → hemat token & biaya. Contoh: butuh 5 file → sebelumnya 5x baca terpisah (5 hit) → sesudah: diminta sekaligus (1 hit). Langkah yang memang harus lihat hasil dulu (edit → run test → baca error → perbaiki) tidak berubah — itu bukan hal yang bisa dihemat lewat prompt. Beda model beda hasil: Grok/Claude Opus sudah sering batch sendiri; GLM/Gemini Flash biasanya butuh dorongan ini. Default ON.",
-    en: "Effect: fewer hops → growing history resent less often → real token & cost savings. Example: task needs 5 files → was 5 separate reads (5 hits) → now requested together (1 hit). Steps that genuinely need to see a result first (edit → run test → read error → fix) are unaffected — that can't be shortcut by a prompt. Impact varies by model: Grok/Claude Opus already batch a lot on their own; GLM/Gemini Flash usually need this nudge. Default ON.",
+    id: "Efek: lebih sedikit hop → history yang dikirim ulang lebih jarang → hemat token & biaya. Write besar harus lengkap (content wajib) — Cline/Roo/Zoo dapat versi lebih ketat. Default ON.",
+    en: "Effect: fewer hops → growing history resent less often → real token & cost savings. Large writes must be complete (content required) — Cline/Roo/Zoo get a stricter variant. Default ON.",
   },
   "Live Updates": { id: "Pembaruan Langsung", en: "Live Updates" },
   "Portal Password": { id: "Kata Sandi Portal", en: "Portal Password" },
@@ -287,7 +287,7 @@ let _lang: Lang = (() => {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored === "id" || stored === "en") return stored;
   } catch { /* ignore */ }
-  return "id";
+  return "en";
 })();
 
 const listeners = new Set<() => void>();
@@ -297,6 +297,24 @@ export function getLang(): Lang {
 }
 
 export function setLang(lang: Lang): void {
+  _lang = lang;
+  try { localStorage.setItem(STORAGE_KEY, lang); } catch { /* ignore */ }
+  listeners.forEach((fn) => fn());
+  // Persist to server so Discord embeds follow the same preference
+  try {
+    void fetch("/portal/api/settings/lang", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ lang }),
+    }).catch(() => {});
+  } catch { /* ignore */ }
+}
+
+/** Apply language from /me without writing back to the server. */
+export function hydrateLangFromServer(lang: string | null | undefined): void {
+  if (lang !== "id" && lang !== "en") return;
+  if (_lang === lang) return;
   _lang = lang;
   try { localStorage.setItem(STORAGE_KEY, lang); } catch { /* ignore */ }
   listeners.forEach((fn) => fn());

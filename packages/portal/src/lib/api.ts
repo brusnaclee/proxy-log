@@ -40,6 +40,7 @@ export interface MeResponse {
   accountBadges?: string[];
   trialExpiresAt: string | null;
   hasPassword: boolean;
+  preferredLang?: "en" | "id";
   webhookUrl: string | null;
   hasWebhook: boolean;
   keyCount: number;
@@ -91,6 +92,20 @@ export interface MeResponse {
   apiCallResetMins?: number;
   dailyResetAt?: string | null;
   monthlyResetAt?: string | null;
+  inputBreakdown?: {
+    promptCount: number;
+    apiCallCount: number;
+    followUpCount: number;
+    avgInPerPrompt: number;
+    avgInPerFollowUp: number;
+    creditPrompts: number;
+    creditFollowUps: number;
+    inputTowardLimit: number;
+    weightPercent: number;
+    peakBillable: number;
+    peakCached: number;
+    peakFullIn: number;
+  };
   modelUsageLimits?: Array<{
     model: string;
     used: number;

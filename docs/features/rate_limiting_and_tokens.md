@@ -47,9 +47,9 @@ The analyzer specifically scans for `<tool_response>` tags to convert these faux
 ## 3. Limit Hierarchy
 Rate limits and Token limits are evaluated in a specific hierarchy during the request lifecycle in `proxy.ts`:
 
-1. **API call (hop) limit**: Every successful upstream hop counts. Key `rate_limit` → else `global_rate_limit` (default **500 / 5h**). Checked on every hop before upstream. Window is **sliding** (last N hours from now).
-2. **Per-Model Prompt Limits**: Checked when starting a new turn for a specific model (sliding window).
-3. **Global Prompt Limits**: 1 per `turn_id` (user turn). Key `prompt_limit` → else `global_prompt_limit` (default **50 / 5h**). Tool follow-ups on the same turn do not burn prompt quota. Window is **sliding**.
+1. **API call (hop) limit**: Every successful upstream hop counts. Key `rate_limit` → else `global_rate_limit` (default **500 / 5h**). Checked on every hop before upstream. Window is **fixed** from `rate_window_start` (starts on first hop in a fresh window; cliffs to 0 at start+windowMs).
+2. **Per-Model Prompt Limits**: Checked when starting a new turn for a specific model. Override rows use fixed `prompt_window_start`; defaults without a stored start use a sliding fallback.
+3. **Global Prompt Limits**: 1 per `turn_id` (user turn). Key `prompt_limit` → else `global_prompt_limit` (default **50 / 5h**). Tool follow-ups on the same turn do not burn prompt quota. Window is **fixed** from `prompt_window_start` (first prompt opens the window; reset clock is stable until cliff).
 4. **Daily / Monthly Token Limits**:
    - **Base In/Out**: key custom (>0) → else global for Phantom/Staff (`follow_global`); Premium/Pro (`zero_unless_addon`) baseIn = 0 until add-on; with add-on, Premium/Pro still get global Out as baseOut.
    - **Without add-on**: hard caps = Input + Output only. Daily total unlimited unless key sets custom `daily_token_limit`.
@@ -61,8 +61,8 @@ Rate limits and Token limits are evaluated in a specific hierarchy during the re
 
 | Concept | EN | ID | What counts |
 |---------|----|----|-------------|
-| Prompt | Prompts | Prompt | Distinct `turn_id` in rolling window |
-| API call | API calls | Panggilan API | Each 2xx hop |
+| Prompt | Prompts | Prompt | Distinct `turn_id` in fixed window from first request |
+| API call | API calls | Panggilan API | Each 2xx hop in fixed window from first hop |
 | Turn (stats) | Turns | Turns | Same as prompts for period stats (`requests` field kept for API compat) |
 
 ### 3.1 Daily Reset Timezone Logic

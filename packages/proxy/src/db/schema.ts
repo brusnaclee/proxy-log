@@ -597,6 +597,8 @@ export const userPortalSettings = pgTable('user_portal_settings', {
   tokenSaverPonytailOverride: boolean('token_saver_ponytail_override'),
   tokenSaverGroupyCompactOverride: boolean('token_saver_groupy_compact_override'),
   tokenSaverBatchOverride: boolean('token_saver_batch_override'),
+  /** Portal + Discord UI language: 'en' (default) | 'id' */
+  preferredLang: text('preferred_lang').notNull().default('en'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });

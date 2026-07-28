@@ -1,6 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { applyBatch, getBatchPrompt, usesLegacyFunctionsOnly } from "./batch.js";
+import {
+	applyBatch,
+	getBatchPrompt,
+	isClineFamilyIde,
+	usesLegacyFunctionsOnly,
+} from "./batch.js";
 
 function toolsBody(overrides: any = {}) {
 	return {
@@ -28,14 +33,35 @@ describe("usesLegacyFunctionsOnly", () => {
 	});
 });
 
+describe("isClineFamilyIde", () => {
+	it("matches Cline / Roo / Zoo / Kilo", () => {
+		assert.equal(isClineFamilyIde("Cline"), true);
+		assert.equal(isClineFamilyIde("Cline (VS Code)"), true);
+		assert.equal(isClineFamilyIde("Roo Code"), true);
+		assert.equal(isClineFamilyIde("Zoo Code"), true);
+		assert.equal(isClineFamilyIde("Kilo"), true);
+		assert.equal(isClineFamilyIde("Continue"), false);
+		assert.equal(isClineFamilyIde("Cursor"), false);
+	});
+});
+
 describe("applyBatch", () => {
-	it("injects a single tagged system message at the top", () => {
+	it("injects soft default prompt", () => {
 		const body = toolsBody();
-		const applied = applyBatch(body);
+		const applied = applyBatch(body, "Continue");
 		assert.equal(applied, true);
 		assert.equal(body.messages[0].role, "system");
 		assert.match(body.messages[0].content, /^\[token-saver:batch\]/);
-		assert.equal(body.messages[0].content.includes(getBatchPrompt()), true);
+		assert.equal(body.messages[0].content.includes(getBatchPrompt("Continue")), true);
+		assert.match(body.messages[0].content, /every required parameter/i);
+	});
+
+	it("injects safer Cline-family prompt for Zoo", () => {
+		const body = toolsBody();
+		applyBatch(body, "Zoo Code");
+		assert.match(body.messages[0].content, /NEVER omit required fields/i);
+		assert.match(body.messages[0].content, /content/i);
+		assert.equal(body.messages[0].content.includes(getBatchPrompt("Zoo Code")), true);
 	});
 
 	it("preserves original message order after the injected system message", () => {

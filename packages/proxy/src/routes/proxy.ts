@@ -2274,6 +2274,16 @@ proxy.all('/*', async (c) => {
 		}
 	}
 
+	// ─── 7b-early. Content-based IDE fallback (before Token Saver) ───────────
+	// Soft Batch needs Cline/Roo/Zoo detection; many of those send generic UAs.
+	if (requestBody && GENERIC_IDE_LABELS.has(normalizedIde)) {
+		const contentIdeEarly = detectIdeFromContent(requestBody, transcriptSnapshot);
+		if (contentIdeEarly) {
+			ide = contentIdeEarly;
+			normalizedIde = normalizeIdeName(ide);
+		}
+	}
+
 	// ─── 7d. Token Saver (RTK → Groupy Compact → Headroom → Caveman → Ponytail) ─
 	// Runs after Anthropic→OpenAI convert so both formats share one path.
 	// Header X-Token-Saver: off disables all; else user override > global default.
@@ -2305,7 +2315,7 @@ proxy.all('/*', async (c) => {
 					)[0] ?? null;
 			}
 			const tsFlags = resolveTokenSaverFlags(config as any, userOverrides, c.req.raw.headers);
-			const tsResult = await applyTokenSavers(requestBody, tsFlags);
+			const tsResult = await applyTokenSavers(requestBody, tsFlags, { ide });
 			if (
 				tsResult.rtk?.charsSaved ||
 				tsResult.groupyCompact?.charsSaved ||

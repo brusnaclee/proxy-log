@@ -3,16 +3,39 @@
 // session needs fewer round-trips (hops) and resends its growing history
 // fewer times.
 //
+// Soft wording: never push incomplete writes (missing `content`). Cline/Roo/Zoo
+// get a stricter variant because those clients reject partial write_to_file.
+//
 // This only injects a system-prompt directive; it cannot force compliance.
 // Skips requests that use the legacy singular OpenAI `functions`/`function_call`
 // schema, since that format structurally allows only one call per response —
 // nudging batching there would just confuse the model.
 
 const BATCH_PROMPT =
-	'Before calling tools, plan every read/search you will need this turn and request them together as multiple tool_calls in ONE response — do not read one file, wait, then read the next. When making multiple edits, emit all edit/write tool_calls for every file together in one response instead of one file at a time. Only do a separate round-trip when you truly cannot know what is needed until you see a prior result.';
+	'When you need several independent reads/searches this turn, prefer requesting them together as multiple tool_calls in ONE response instead of one-at-a-time. For edits/writes: only emit a tool_call when every required parameter is present and complete (especially file content/body). Prefer batching small independent edits; for large rewrites, one careful write with full content is better than parallel incomplete writes. Separate round-trips are fine when a later step depends on an earlier result.';
 
-export function getBatchPrompt(): string {
-	return BATCH_PROMPT;
+/** Safer for Cline / Roo / Zoo / Kilo — incomplete write_to_file content hard-fails. */
+const BATCH_PROMPT_CLINE_FAMILY =
+	'Batch independent read_file/search_files/list_files in ONE response when you already know the paths. For write_to_file / write / apply_diff / edit tools: NEVER omit required fields — especially `content`, `diff`, or the full file body. Do not fire large parallel writes; finish one complete write (all params filled) before the next big write. Incomplete tool arguments cause hard client failures. Separate hops are OK when you must see a prior result first.';
+
+export function isClineFamilyIde(ideName?: string | null): boolean {
+	const k = String(ideName || '')
+		.trim()
+		.toLowerCase();
+	if (!k || k === 'unknown') return false;
+	return (
+		k === 'cline' ||
+		k.startsWith('cline ') ||
+		k === 'roo code' ||
+		k === 'zoo code' ||
+		k === 'zoo' ||
+		k === 'kilo' ||
+		k.startsWith('kilo ')
+	);
+}
+
+export function getBatchPrompt(ideName?: string | null): string {
+	return isClineFamilyIde(ideName) ? BATCH_PROMPT_CLINE_FAMILY : BATCH_PROMPT;
 }
 
 /** True if the request only supports the legacy single function_call schema (no `tools` array). */
@@ -23,9 +46,10 @@ export function usesLegacyFunctionsOnly(body: any): boolean {
 }
 
 /** Inject the batch directive as an additional system message at the top. */
-export function applyBatch(body: any): boolean {
+export function applyBatch(body: any, ideName?: string | null): boolean {
 	if (!body || !Array.isArray(body.messages)) return false;
 	if (usesLegacyFunctionsOnly(body)) return false;
-	body.messages.unshift({ role: 'system', content: `[token-saver:batch] ${BATCH_PROMPT}` });
+	const prompt = getBatchPrompt(ideName);
+	body.messages.unshift({ role: 'system', content: `[token-saver:batch] ${prompt}` });
 	return true;
 }

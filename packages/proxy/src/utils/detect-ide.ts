@@ -19,6 +19,7 @@ interface IdeInfo {
 
 const IDE_PATTERNS: [RegExp, string][] = [
 	// --- AI coding IDE/extensions (specific first) ---
+	[/zoocode|zoo[\s_-]?code/i, "Zoo Code"],
 	[/roocode|roo[\s_-]?code|roo[\s-]?cline/i, "Roo Code"],
 	[/cline.*vscode/i, "Cline (VS Code)"],
 	[/cline/i, "Cline"],
@@ -228,6 +229,12 @@ export function detectIdeFromContent(requestBody: any, transcriptSnapshot?: stri
 	// === Continue extension (MCP-based IDE) ===
 	if (searchText.includes("continue") && searchText.includes("mcp")) return "Continue";
 	if (searchText.includes("continue extension")) return "Continue";
+
+	// === ZOO CODE (Cline fork) ===
+	if (searchText.includes("zoo code") || searchText.includes("zoocode")) return "Zoo Code";
+	if (searchText.includes("extension version:") && searchText.includes("write_to_file") && searchText.includes("zoo")) {
+		return "Zoo Code";
+	}
 
 	// === ROO CODE patterns ===
 	if (searchText.includes("attempt_completion")) return "Roo Code";

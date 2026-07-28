@@ -35,11 +35,16 @@ import {
 	checkModelPromptLimit,
 	parseRateLimitWindow,
 	getWindowResetMs,
-	getApiCallWindowResetMs,
 	listDedicatedQuotaRules,
 	sqlExcludeDedicatedModels,
 	sqlMatchDedicatedRule,
+	resolveFixedWindow,
 } from './rate-limit.js';
+import {
+	emptyInputLimitBreakdown,
+	fetchInputLimitBreakdown,
+	type InputLimitBreakdown,
+} from './usage-input-breakdown.js';
 import {
 	getAddonTeaseDefaultLimit,
 	getActiveAddonsForUser,
@@ -118,8 +123,13 @@ export interface LiveUsagePayload {
 	monthlyResetAt: string;
 	promptResetAt: string | null;
 	promptResetMins: number;
+	/** Fixed window start (ISO) when active; null if unused/expired. */
+	promptWindowStart: string | null;
 	apiCallResetAt: string | null;
 	apiCallResetMins: number;
+	rateWindowStart: string | null;
+	/** Hop-weighted input math from today's logs (shared Discord/portal/admin). */
+	inputBreakdown: import('./usage-input-breakdown.js').InputLimitBreakdown;
 	modelUsageLimits: ModelPromptUsage[];
 	/** When add-on active: input base + pack breakdown for UI */
 	dailyTokenBreakdown?: {
@@ -442,25 +452,55 @@ export async function buildLiveUsageForKey(
 		windowKeyId,
 		...keyIds.filter((id) => id !== windowKeyId),
 	];
+	const promptWindowStartRaw = limitKey.promptWindowStart || null;
+	const rateWindowStartRaw = limitKey.rateWindowStart || null;
+	let promptWindowStart: string | null = null;
+	let rateWindowStart: string | null = null;
+
 	if (promptLimit > 0 && promptScopeIds.length > 0) {
-		const plCheck = await checkPromptLimit(promptScopeIds, promptLimit, promptLimitWindow);
+		const plCheck = await checkPromptLimit(
+			promptScopeIds,
+			promptLimit,
+			promptLimitWindow,
+			promptWindowStartRaw,
+		);
 		promptUsed = plCheck.used;
-		const windowMs = parseRateLimitWindow(promptLimitWindow);
-		const resetMs = await getWindowResetMs(promptScopeIds, windowMs);
-		promptResetMins = Math.ceil(resetMs / 60000);
-		promptResetAt = resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null;
+		promptResetMins = Math.ceil(plCheck.resetMs / 60000);
+		promptResetAt =
+			plCheck.resetMs > 0 ? new Date(Date.now() + plCheck.resetMs).toISOString() : null;
+		const pwMs = parseRateLimitWindow(promptLimitWindow);
+		const fixed = resolveFixedWindow(promptWindowStartRaw, pwMs);
+		if (fixed.active && fixed.windowStartMs) {
+			promptWindowStart = new Date(fixed.windowStartMs).toISOString();
+		}
 	}
 
 	let apiCallUsed = 0;
 	let apiCallResetAt: string | null = null;
 	let apiCallResetMins = 0;
 	if (apiCallLimit > 0 && promptScopeIds.length > 0) {
-		const acCheck = await checkApiCallLimit(promptScopeIds, apiCallLimit, apiCallLimitWindow);
+		const acCheck = await checkApiCallLimit(
+			promptScopeIds,
+			apiCallLimit,
+			apiCallLimitWindow,
+			rateWindowStartRaw,
+		);
 		apiCallUsed = acCheck.used;
-		const windowMs = parseRateLimitWindow(apiCallLimitWindow);
-		const resetMs = await getApiCallWindowResetMs(promptScopeIds, windowMs);
-		apiCallResetMins = Math.ceil(resetMs / 60000);
-		apiCallResetAt = resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null;
+		apiCallResetMins = Math.ceil(acCheck.resetMs / 60000);
+		apiCallResetAt =
+			acCheck.resetMs > 0 ? new Date(Date.now() + acCheck.resetMs).toISOString() : null;
+		const awMs = parseRateLimitWindow(apiCallLimitWindow);
+		const fixed = resolveFixedWindow(rateWindowStartRaw, awMs);
+		if (fixed.active && fixed.windowStartMs) {
+			rateWindowStart = new Date(fixed.windowStartMs).toISOString();
+		}
+	}
+
+	let inputBreakdown: InputLimitBreakdown = emptyInputLimitBreakdown();
+	try {
+		inputBreakdown = await fetchInputLimitBreakdown(whereTodayHopsShared);
+	} catch (err) {
+		console.warn('[live-usage] input breakdown failed:', (err as Error)?.message || err);
 	}
 
 	const modelUsageLimits: ModelPromptUsage[] = [];
@@ -635,8 +675,11 @@ export async function buildLiveUsageForKey(
 			monthlyResetAt,
 			promptResetAt: null,
 			promptResetMins: 0,
+			promptWindowStart: null,
 			apiCallResetAt: null,
 			apiCallResetMins: 0,
+			rateWindowStart: null,
+			inputBreakdown: emptyInputLimitBreakdown(),
 			modelUsageLimits: [],
 			dailyTokenBreakdown: {
 				base: 0,
@@ -705,8 +748,11 @@ export async function buildLiveUsageForKey(
 		monthlyResetAt,
 		promptResetAt,
 		promptResetMins,
+		promptWindowStart,
 		apiCallResetAt,
 		apiCallResetMins,
+		rateWindowStart,
+		inputBreakdown,
 		modelUsageLimits,
 		dailyTokenBreakdown,
 		activeAddons: activeAddonsSummary,

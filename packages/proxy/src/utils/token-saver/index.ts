@@ -180,6 +180,7 @@ function isTinyChat(body: any): boolean {
 export async function applyTokenSavers(
 	body: any,
 	flags: EffectiveTokenSaverFlags,
+	opts?: { ide?: string | null },
 ): Promise<TokenSaverResult> {
 	const result: TokenSaverResult = {
 		applied: flags,
@@ -215,7 +216,7 @@ export async function applyTokenSavers(
 	// agentic session is often a single short message, and that's exactly when
 	// nudging the model to plan/batch its upcoming tool calls matters most.
 	if (flags.batch && hasTools) {
-		result.batch = applyBatch(body);
+		result.batch = applyBatch(body, opts?.ide);
 	}
 	return result;
 }

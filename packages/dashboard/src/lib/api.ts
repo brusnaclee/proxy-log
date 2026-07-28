@@ -206,8 +206,25 @@ export interface LiveUsagePayload {
   monthlyResetAt: string;
   promptResetAt: string | null;
   promptResetMins?: number;
+  promptWindowStart?: string | null;
   apiCallResetAt?: string | null;
   apiCallResetMins?: number;
+  rateWindowStart?: string | null;
+  inputBreakdown?: {
+    promptCount: number;
+    apiCallCount: number;
+    followUpCount: number;
+    avgInPerPrompt: number;
+    avgInPerFollowUp: number;
+    creditPrompts: number;
+    creditFollowUps: number;
+    inputTowardLimit: number;
+    weightPercent: number;
+    weightMode?: string;
+    peakBillable: number;
+    peakCached: number;
+    peakFullIn: number;
+  };
   modelUsageLimits: Array<{
     model: string;
     used: number;

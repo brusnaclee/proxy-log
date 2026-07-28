@@ -13,7 +13,7 @@ import { ChartBox } from "@/components/ChartBox";
 import { api, type MeResponse, type TopError } from "@/lib/api";
 import { formatNumber, formatCost, formatInputBreakdown } from "@/lib/utils";
 import { badgeClass, badgeLabel, resolveDisplayBadges, formatAddonExpiry } from "@/lib/account-badge";
-import { useI18n } from "@/lib/i18n";
+import { useI18n, hydrateLangFromServer } from "@/lib/i18n";
 
 const CHART_COLORS = {
   primary: "#14b8a6",
@@ -96,7 +96,7 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
 }
 
 export default function OverviewPage() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const [period, setPeriod] = useState<PeriodKey>("7d");
 
   const [stats, setStats] = useState<any>(null);
@@ -145,6 +145,9 @@ export default function OverviewPage() {
         setModelUsage(modelRes);
         setIdeUsage(ideRes);
         setUser(userData as MeResponse | null);
+        if (userData && (userData as MeResponse).preferredLang) {
+          hydrateLangFromServer((userData as MeResponse).preferredLang);
+        }
         setTopErrors(errorsData as TopError[]);
         setCompare(compareData as any);
         setForecast(forecastData as any);
@@ -261,13 +264,21 @@ export default function OverviewPage() {
     if (limits.dailyInputTokenLimit > 0) {
       const used = usageToday.promptTokens;
       const inputMax = limits.dailyInputTokenLimit;
-      const ctx = Number(usageToday.cachedTokens) || 0;
-      const inp = Number(usageToday.billablePromptTokens) || 0;
-      const ctxIn =
-        ctx > 0 || inp > 0
-          ? `context ${formatNumber(ctx)} + input ${formatNumber(inp)}`
-          : "limit credit";
       const bd = user.dailyTokenBreakdown;
+      const ib = user.inputBreakdown;
+      let ctxIn = "toward daily limit";
+      if (ib && ib.apiCallCount > 0) {
+        ctxIn =
+          lang === "id"
+            ? `${ib.promptCount} prompt × ~${formatNumber(ib.avgInPerPrompt)} @100% + ${ib.followUpCount} lanjutan × ~${formatNumber(ib.avgInPerFollowUp)} @${ib.weightPercent}%`
+            : `${ib.promptCount} prompts × ~${formatNumber(ib.avgInPerPrompt)} @100% + ${ib.followUpCount} follow-ups × ~${formatNumber(ib.avgInPerFollowUp)} @${ib.weightPercent}%`;
+        if (ib.peakFullIn > 0) {
+          ctxIn +=
+            lang === "id"
+              ? ` · puncak chat ~${formatNumber(ib.peakFullIn)} (info)`
+              : ` · chat peak ~${formatNumber(ib.peakFullIn)} (info)`;
+        }
+      }
       const stack =
         bd && bd.addonBonus > 0
           ? `base ${formatNumber(bd.inputBase || bd.base || 0)} + pack ${formatNumber(bd.addonBonus)}`

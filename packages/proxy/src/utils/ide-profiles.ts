@@ -49,6 +49,8 @@ const PROFILE_BY_KEY: Record<string, AntiWasteProfile> = {
   cline: CLINE_FAMILY,
   "cline (vs code)": CLINE_FAMILY,
   "roo code": CLINE_FAMILY,
+  "zoo code": CLINE_FAMILY,
+  zoo: CLINE_FAMILY,
   kilo: CLINE_FAMILY,
   cursor: CURSOR_FAMILY,
   continue: CURSOR_FAMILY,

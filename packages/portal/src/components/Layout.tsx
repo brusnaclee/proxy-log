@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 import { LayoutDashboard, Key, Activity, Settings, LogOut, Menu, X, Zap, Boxes } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
-import { useI18n } from "@/lib/i18n";
+import { useI18n, hydrateLangFromServer } from "@/lib/i18n";
 import { badgeClass, badgeLabel, resolveDisplayBadges, formatAddonExpiry } from "@/lib/account-badge";
 import NotificationBell from "./NotificationBell";
 import RecapGate from "./RecapGate";
@@ -16,7 +16,10 @@ export default function Layout() {
   const [loggingOut, setLoggingOut] = useState(false);
 
   const refreshUser = useCallback(() => {
-    api.me().then((data: any) => setUser(data)).catch(() => navigate("/login"));
+    api.me().then((data: any) => {
+      setUser(data);
+      if (data?.preferredLang) hydrateLangFromServer(data.preferredLang);
+    }).catch(() => navigate("/login"));
   }, [navigate]);
 
   useEffect(() => {

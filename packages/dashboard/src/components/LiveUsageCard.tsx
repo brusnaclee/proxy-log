@@ -160,22 +160,15 @@ export function LiveUsageCard({
   if (limits.dailyInputTokenLimit > 0) {
     const used = usageToday.promptTokens;
     const max = limits.dailyInputTokenLimit;
-    const ctx = Number(usageToday.cachedTokens) || 0;
-    const inp = Number(usageToday.billablePromptTokens) || 0;
-    const full = Number(usageToday.fullInputTokens) || 0;
-    const peak = Number(usageToday.peakPromptTokens) || 0;
-    const parts: string[] = [];
-    if (ctx > 0 || inp > 0) {
-      parts.push(`context ${formatNumber(ctx)} + input ${formatNumber(inp)}`);
-    }
-    if (peak > 0 && Math.abs(peak - used) > used * 0.05) {
-      parts.push(`peak-view ${formatNumber(peak)}`);
-    }
-    if (full > 0) {
-      parts.push(`full ${formatNumber(full)} (amanai)`);
-    }
+    const ib = live.inputBreakdown;
     const bd = dailyTokenBreakdown;
-    let stackNote = parts.length > 0 ? parts.join(" · ") : "limit credit";
+    let stackNote = "toward daily limit (hop-weighted)";
+    if (ib && ib.apiCallCount > 0) {
+      stackNote =
+        `${ib.promptCount} prompts × ~${formatNumber(ib.avgInPerPrompt)} @100%` +
+        ` + ${ib.followUpCount} follow-ups × ~${formatNumber(ib.avgInPerFollowUp)} @${ib.weightPercent}%` +
+        (ib.peakFullIn > 0 ? ` · chat peak ~${formatNumber(ib.peakFullIn)} (info)` : "");
+    }
     if (bd && bd.addonBonus > 0) {
       stackNote = `base ${formatNumber(bd.inputBase || bd.base || 0)} + pack ${formatNumber(bd.addonBonus)} · ${stackNote}`;
     }
@@ -416,16 +409,15 @@ export function LiveUsageCard({
       )}
       {(usageToday.fullInputTokens || 0) > 0 && (
         <p className="text-[10px] text-muted-foreground leading-relaxed border-t border-border/40 pt-2">
-          Admin note — Input bar = hop-weighted <span className="text-foreground">limit credit</span>{" "}
-          ({formatNumber(usageToday.promptTokens)}; Settings schedule, default hop1=100% later=flat %).
+          Admin note — Input bar = hop-weighted <span className="text-foreground">toward limit</span>{" "}
+          ({formatNumber(usageToday.promptTokens)}; default hop1=100% later=flat %).
           Output always 100%.{" "}
-          <span className="text-foreground">Amanai-style full In</span>{" "}
-          {formatNumber(usageToday.fullInputTokens || 0)} = SUM(prompt+cache) every hop (provider In; not used for the gate).
-          {usageToday.peakPromptTokens
-            ? ` Peak-view ${formatNumber(usageToday.peakPromptTokens)}.`
+          Chat peak is informational and does <span className="text-foreground">not</span> sum into the limit number.
+          {live.inputBreakdown?.peakFullIn
+            ? ` Typical peak ~${formatNumber(live.inputBreakdown.peakFullIn)}.`
             : ""}{" "}
-          Dedicated pools use the same schedule; their full In is shown per pool. Prompts/API bars = sliding last{" "}
-          {limits.promptLimitWindow || "5h"} (not calendar day). Today:{" "}
+          Prompts/API bars = <span className="text-foreground">fixed window</span> from first request
+          (cliff reset to 0 after {limits.promptLimitWindow || "5h"}). Today:{" "}
           {formatNumber(usageToday.requests)} prompts · {formatNumber(usageToday.hopCount || 0)} API hops.
         </p>
       )}

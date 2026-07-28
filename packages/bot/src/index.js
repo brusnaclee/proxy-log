@@ -6170,12 +6170,7 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 		}
 		return ' _(soft · exceed OK until daily)_';
 	};
-	const dailyInputBreakdownNote = (() => {
-		const bill = Number(data.dailyInputBillable ?? data.today?.billablePromptTokens) || 0;
-		const cache = Number(data.dailyInputCached ?? data.today?.cachedTokens) || 0;
-		if (bill <= 0 && cache <= 0) return '';
-		return `\n-# context ${formatTokens(cache)} + input ${formatTokens(bill)}`;
-	})();
+	const lang = String(data.preferredLang || '').toLowerCase() === 'id' ? 'id' : 'en';
 	const dailyInputStr =
 		(dailyInputTokenLimit || 0) > 0
 			? `**${formatTokens(dailyInputUsed)} / ${formatTokens(dailyInputTokenLimit)}**` +
@@ -6184,11 +6179,9 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 					: dailyInputUsed >= dailyInputTokenLimit
 						? ' 🔴'
 						: '') +
-				formatResetTime(data.dailyResetAt) +
-				dailyInputBreakdownNote
+				formatResetTime(data.dailyResetAt)
 			: `**${formatTokens(dailyInputUsed)} / Unlimited**` +
-				formatResetTime(data.dailyResetAt) +
-				dailyInputBreakdownNote;
+				formatResetTime(data.dailyResetAt);
 	const dailyOutputStr =
 		(dailyOutputTokenLimit || 0) > 0
 			? `**${formatTokens(dailyOutputUsed)} / ${formatTokens(dailyOutputTokenLimit)}**` +
@@ -6209,27 +6202,34 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 		const exp = trial?.expiresAt
 			? `<t:${Math.floor(new Date(trial.expiresAt).getTime() / 1000)}:F>`
 			: '—';
-		trialBlock = `\n\n**🎁 Status Trial:** ${trial?.status || 'active'}\n**Berakhir:** ${exp}`;
+		trialBlock =
+			lang === 'id'
+				? `\n\n**🎁 Status Trial:** ${trial?.status || 'active'}\n**Berakhir:** ${exp}`
+				: `\n\n**🎁 Trial status:** ${trial?.status || 'active'}\n**Expires:** ${exp}`;
 	}
 
 	function periodField(p) {
-		const input = formatInputBreakdown(
-			p.billablePromptTokens,
-			p.cachedTokens,
-			p.promptTokens,
-		);
 		const lines = [
 			`📨 Prompts: **${p.requests.toLocaleString()}**`,
-			`🔢 Total Tokens (limit credit): **${formatTokens(p.tokens)}**`,
-			`📥 Input (limit credit): **${input.label}**`,
+			`🔢 Total (toward limit): **${formatTokens(p.tokens)}**`,
+			`📥 Input (toward limit): **${formatTokens(p.promptTokens)}**`,
 			`📤 Output: **${formatTokens(p.completionTokens)}**`,
 			`💰 Est. Cost: **${formatCostMicro(p.estimatedCost)}**`,
 		];
-		if (p.peakPromptTokens > 0 && p.peakPromptTokens !== p.promptTokens) {
-			lines.push(`-# Peak input (per-turn): ${formatTokens(p.peakPromptTokens)}`);
+		const peak = Number(p.peakPromptTokens) || 0;
+		if (peak > 0) {
+			lines.push(
+				lang === 'id'
+					? `-# Puncak chat/giliran ~${formatTokens(peak)} (info — bukan penjumlahan ke limit)`
+					: `-# Typical chat peak ~${formatTokens(peak)} (info — does not sum into the limit)`,
+			);
 		}
 		if (p.topModels && p.topModels.length > 0) {
-			lines.push('\n**Top Models** _(limit credit — jumlah ≈ Total)_:');
+			lines.push(
+				lang === 'id'
+					? '\n**Top Models** _(limit credit)_:'
+					: '\n**Top Models** _(toward limit)_:',
+			);
 			p.topModels.forEach((m) => {
 				const req = Number(m.requests ?? m.count ?? 0);
 				lines.push(
@@ -6336,25 +6336,46 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 					})
 					.join('\n')
 			: '';
+	const inputExplainBlock = data.inputExplanation
+		? `\n\n${data.inputExplanation}`
+		: '';
+
 	const limitSection = trialUser
-		? `**🎁 Trial Limits** _(all models + auto)_\nPrompt: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\n` +
-			`-# ℹ️ 1 prompt = 1 turn; tiap hop = 1 API call. Input/Total & Top Models = limit credit (hop-weighted).\n\n` +
-			`**🔢 Token Limits (Trial)**\nTotal Harian: ${dailyTokenStr}` +
-			dedicatedPoolsBlock
+		? (lang === 'id'
+				? `**🎁 Trial Limits** _(semua model + auto)_\nPrompt: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\n` +
+					`-# ℹ️ 1 prompt = 1 turn; tiap hop = 1 API call. Window tetap dari request pertama (cliff reset).\n\n` +
+					`**🔢 Token Limits (Trial)**\nTotal Harian: ${dailyTokenStr}`
+				: `**🎁 Trial Limits** _(all models + auto)_\nPrompts: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\n` +
+					`-# ℹ️ 1 prompt = 1 turn; each hop = 1 API call. Fixed window from first request (cliff reset).\n\n` +
+					`**🔢 Token Limits (Trial)**\nDaily Total: ${dailyTokenStr}`) +
+			dedicatedPoolsBlock +
+			inputExplainBlock
 		: data.dailyTokenBreakdown?.bypassIo
-			? `**🎯 Quotas**\nPrompts: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\n` +
-				`-# ℹ️ Per-model prompts bypassed · Input/Output soft; exceed via add-on until Daily Total. Input/Total & Top Models = limit credit.\n\n` +
-				`**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}${stackNote}\nBulanan: ${monthlyTokenStr}` +
+			? (lang === 'id'
+					? `**🎯 Kuota**\nPrompt: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\n` +
+						`-# ℹ️ Prompt per-model dilewati · Input/Output soft sampai Daily Total.\n\n` +
+						`**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}${stackNote}\nBulanan: ${monthlyTokenStr}`
+					: `**🎯 Quotas**\nPrompts: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\n` +
+						`-# ℹ️ Per-model prompts bypassed · Input/Output soft until Daily Total.\n\n` +
+						`**🔢 Token Limits**\nDaily Input: ${dailyInputStr}\nDaily Output: ${dailyOutputStr}\nDaily Total: ${dailyTokenStr}${stackNote}\nMonthly: ${monthlyTokenStr}`) +
 				addonBlock +
-				dedicatedPoolsBlock
-			: `**🎯 Quotas**\nPrompts: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\nPer-Model:\n${modelLimitStr}\n` +
-				`-# ℹ️ 1 prompt = 1 turn; tiap hop = 1 API call. Input/Total & Top Models = limit credit (hop-weighted).\n\n` +
-				`**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}${stackNote}\nBulanan: ${monthlyTokenStr}` +
+				dedicatedPoolsBlock +
+				inputExplainBlock
+			: (lang === 'id'
+					? `**🎯 Kuota**\nPrompt: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\nPer-Model:\n${modelLimitStr}\n` +
+						`-# ℹ️ 1 prompt = 1 turn; tiap hop = 1 API call. Window tetap (cliff reset).\n\n` +
+						`**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}${stackNote}\nBulanan: ${monthlyTokenStr}`
+					: `**🎯 Quotas**\nPrompts: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\nPer-Model:\n${modelLimitStr}\n` +
+						`-# ℹ️ 1 prompt = 1 turn; each hop = 1 API call. Fixed window (cliff reset).\n\n` +
+						`**🔢 Token Limits**\nDaily Input: ${dailyInputStr}\nDaily Output: ${dailyOutputStr}\nDaily Total: ${dailyTokenStr}${stackNote}\nMonthly: ${monthlyTokenStr}`) +
 				addonBlock +
-				dedicatedPoolsBlock;
+				dedicatedPoolsBlock +
+				inputExplainBlock;
 
 	const tokenSaverHint =
-		`\n\n💡 **Token Saver** — RTK + Groupy Compact + Batch hemat input & hop agent loop. Tekan tombol **Token Saver** di bawah, atau portal: ${PORTAL_DASHBOARD_URL}`;
+		lang === 'id'
+			? `\n\n💡 **Token Saver** — RTK + Groupy Compact + Batch hemat input & hop. Tombol **Token Saver** di bawah, atau portal: ${PORTAL_DASHBOARD_URL}`
+			: `\n\n💡 **Token Saver** — RTK + Groupy Compact + Batch saves input & hops. Use the **Token Saver** button below, or portal: ${PORTAL_DASHBOARD_URL}`;
 
 	const embed = new EmbedBuilder()
 		.setTitle(`📊 Usage: ${displayName}`)
@@ -6365,8 +6386,16 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 		)
 		.setColor(isActive ? 0x57f287 : 0xff6b6b)
 		.addFields(
-			{ name: '📅 Hari Ini', value: periodField(today), inline: true },
-			{ name: '📆 Bulan Ini', value: periodField(month), inline: true },
+			{
+				name: lang === 'id' ? '📅 Hari Ini' : '📅 Today',
+				value: periodField(today),
+				inline: true,
+			},
+			{
+				name: lang === 'id' ? '📆 Bulan Ini' : '📆 This Month',
+				value: periodField(month),
+				inline: true,
+			},
 		)
 		.setFooter({ text: `More detail → ${PORTAL_DASHBOARD_URL}` })
 		.setTimestamp();

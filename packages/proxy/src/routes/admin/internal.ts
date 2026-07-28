@@ -863,12 +863,10 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
       : [key.id];
 
   if (globalLimit > 0) {
-    const plCheck = await checkPromptLimit(promptScopeIds, globalLimit, globalWindow);
+    const plCheck = await checkPromptLimit(promptScopeIds, globalLimit, globalWindow, key.promptWindowStart);
     globalUsed = plCheck.used;
-    const windowMs = parseRateLimitWindow(globalWindow);
-    const resetMs = await getWindowResetMs(promptScopeIds, windowMs);
-    globalResetMins = Math.ceil(resetMs / 60000);
-    promptResetAt = resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null;
+    globalResetMins = Math.ceil(plCheck.resetMs / 60000);
+    promptResetAt = plCheck.resetMs > 0 ? new Date(Date.now() + plCheck.resetMs).toISOString() : null;
   }
 
   const { limit: apiCallLimit, window: apiCallLimitWindow } = resolveKeyApiCallLimit(key, config);
@@ -876,12 +874,10 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   let apiCallResetMins = 0;
   let apiCallResetAt: string | null = null;
   if (apiCallLimit > 0) {
-    const acCheck = await checkApiCallLimit(promptScopeIds, apiCallLimit, apiCallLimitWindow);
+    const acCheck = await checkApiCallLimit(promptScopeIds, apiCallLimit, apiCallLimitWindow, key.rateWindowStart);
     apiCallUsed = acCheck.used;
-    const windowMs = parseRateLimitWindow(apiCallLimitWindow);
-    const resetMs = await getApiCallWindowResetMs(promptScopeIds, windowMs);
-    apiCallResetMins = Math.ceil(resetMs / 60000);
-    apiCallResetAt = resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null;
+    apiCallResetMins = Math.ceil(acCheck.resetMs / 60000);
+    apiCallResetAt = acCheck.resetMs > 0 ? new Date(Date.now() + acCheck.resetMs).toISOString() : null;
   }
 
   const activeModelLimits = isTrialKey
@@ -992,6 +988,38 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     maxPerAccount: config.trialMaxPerAccount ?? 1,
   } : null;
 
+  const { emptyInputLimitBreakdown, fetchInputLimitBreakdown } = await import("../../utils/usage-input-breakdown.js");
+  let inputBreakdown = emptyInputLimitBreakdown();
+  try {
+    const whereTodayHopsAccount = and(
+      inArray(requestLogs.apiKeyId, promptScopeIds),
+      sql`created_at >= ${todayDate}`,
+      sql`status_code BETWEEN 200 AND 299`,
+      sqlExcludeDedicatedModels(dedicatedRulesForKey),
+    )!;
+    inputBreakdown = await fetchInputLimitBreakdown(whereTodayHopsAccount);
+  } catch (err) {
+    console.warn("[user-detail] input breakdown failed:", (err as Error)?.message || err);
+  }
+
+  const portalSettings = key.discordUserId
+    ? (
+        await db
+          .select({ preferredLang: userPortalSettings.preferredLang })
+          .from(userPortalSettings)
+          .where(eq(userPortalSettings.discordUserId, key.discordUserId))
+          .limit(1)
+      )[0]
+    : null;
+  const preferredLang =
+    String(portalSettings?.preferredLang || "").toLowerCase() === "id" ? "id" : "en";
+
+  const { formatInputLimitExplanation } = await import("../../utils/usage-input-breakdown.js");
+  const inputExplanation = formatInputLimitExplanation(inputBreakdown, {
+    lang: preferredLang,
+    dailyLimit: quotaStack.dailyInputLimit,
+  });
+
   return c.json({
     discordUserId: key.discordUserId,
     discordUsername: key.discordUsername || key.name,
@@ -1011,6 +1039,9 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     apiCallUsed,
     apiCallResetMins,
     apiCallResetAt,
+    preferredLang,
+    inputBreakdown,
+    inputExplanation,
     modelUsage,
     perModelPromptLimit: quotaStack.bypassPerModelPrompts ? 0 : perModelLimitFallback,
     perModelPromptLimitWindow: perModelWindowFallback,
@@ -1073,34 +1104,34 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     dedicatedPools: dedicatedPools.map((p) => ({ ...p, resetAt: dailyResetAt })),
     dailyResetAt,
     monthlyResetAt,
-      today: {
-        requests: todayStats?.requests || 0,
-        tokens: todayStats?.tokens || 0,
-        promptTokens: todayStats?.promptTokens || 0,
-        billablePromptTokens: todayStats?.billablePromptTokens || 0,
-        cachedTokens: todayStats?.cachedTokens || 0,
-        peakPromptTokens: todayStats?.peakPromptTokens || 0,
-        completionTokens: todayStats?.completionTokens || 0,
-        contextTokens: todayStats?.contextTokens || 0,
-        estimatedCost: todayStats?.estimatedCost || 0,
-        topModels: todayModels,
-        tokenAccountingNote:
-          "Input/Total = limit credit (hop-weighted). Top Models pakai credit yang sama.",
-      },
-      month: {
-        requests: monthStats?.requests || 0,
-        tokens: monthStats?.tokens || 0,
-        promptTokens: monthStats?.promptTokens || 0,
-        billablePromptTokens: monthStats?.billablePromptTokens || 0,
-        cachedTokens: monthStats?.cachedTokens || 0,
-        peakPromptTokens: monthStats?.peakPromptTokens || 0,
-        completionTokens: monthStats?.completionTokens || 0,
-        contextTokens: monthStats?.contextTokens || 0,
-        estimatedCost: monthStats?.estimatedCost || 0,
-        topModels: monthModels,
-        tokenAccountingNote:
-          "Input/Total = limit credit (hop-weighted). Top Models pakai credit yang sama.",
-      },
+    today: {
+      requests: todayStats?.requests || 0,
+      tokens: todayStats?.tokens || 0,
+      promptTokens: todayStats?.promptTokens || 0,
+      billablePromptTokens: todayStats?.billablePromptTokens || 0,
+      cachedTokens: todayStats?.cachedTokens || 0,
+      peakPromptTokens: todayStats?.peakPromptTokens || 0,
+      completionTokens: todayStats?.completionTokens || 0,
+      contextTokens: todayStats?.contextTokens || 0,
+      estimatedCost: todayStats?.estimatedCost || 0,
+      topModels: todayModels,
+      tokenAccountingNote:
+        "Input/Total = limit credit (hop-weighted). Top Models use the same credit.",
+    },
+    month: {
+      requests: monthStats?.requests || 0,
+      tokens: monthStats?.tokens || 0,
+      promptTokens: monthStats?.promptTokens || 0,
+      billablePromptTokens: monthStats?.billablePromptTokens || 0,
+      cachedTokens: monthStats?.cachedTokens || 0,
+      peakPromptTokens: monthStats?.peakPromptTokens || 0,
+      completionTokens: monthStats?.completionTokens || 0,
+      contextTokens: monthStats?.contextTokens || 0,
+      estimatedCost: monthStats?.estimatedCost || 0,
+      topModels: monthModels,
+      tokenAccountingNote:
+        "Input/Total = limit credit (hop-weighted). Top Models use the same credit.",
+    },
   });
 });
 

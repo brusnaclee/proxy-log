@@ -381,12 +381,15 @@ portal.get("/me", async (c) => {
     ? [windowKeyId, ...accountKeyIds.filter((id) => id !== windowKeyId)]
     : accountKeyIds;
   if (primaryKey && promptLimit > 0 && promptScopeIds.length > 0) {
-    const plCheck = await checkPromptLimit(promptScopeIds, promptLimit, promptLimitWindow);
+    const plCheck = await checkPromptLimit(
+      promptScopeIds,
+      promptLimit,
+      promptLimitWindow,
+      primaryKey.promptWindowStart,
+    );
     promptUsed = plCheck.used;
-    const windowMs = parseRateLimitWindow(promptLimitWindow);
-    const resetMs = await getWindowResetMs(promptScopeIds, windowMs);
-    promptResetMins = Math.ceil(resetMs / 60000);
-    promptResetAt = resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null;
+    promptResetMins = Math.ceil(plCheck.resetMs / 60000);
+    promptResetAt = plCheck.resetMs > 0 ? new Date(Date.now() + plCheck.resetMs).toISOString() : null;
   }
 
   const { limit: apiCallLimit, window: apiCallLimitWindow } = primaryKey
@@ -396,12 +399,15 @@ portal.get("/me", async (c) => {
   let apiCallResetAt: string | null = null;
   let apiCallResetMins = 0;
   if (primaryKey && apiCallLimit > 0 && promptScopeIds.length > 0) {
-    const acCheck = await checkApiCallLimit(promptScopeIds, apiCallLimit, apiCallLimitWindow);
+    const acCheck = await checkApiCallLimit(
+      promptScopeIds,
+      apiCallLimit,
+      apiCallLimitWindow,
+      primaryKey.rateWindowStart,
+    );
     apiCallUsed = acCheck.used;
-    const windowMs = parseRateLimitWindow(apiCallLimitWindow);
-    const resetMs = await getApiCallWindowResetMs(promptScopeIds, windowMs);
-    apiCallResetMins = Math.ceil(resetMs / 60000);
-    apiCallResetAt = resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null;
+    apiCallResetMins = Math.ceil(acCheck.resetMs / 60000);
+    apiCallResetAt = acCheck.resetMs > 0 ? new Date(Date.now() + acCheck.resetMs).toISOString() : null;
   }
 
   // Per-model prompt usage (same as Discord /usage) — account-scoped
@@ -580,6 +586,19 @@ portal.get("/me", async (c) => {
   nextMonthWib.setUTCHours(0, 0, 0, 0);
   const monthlyResetAt = new Date(nextMonthWib.getTime() - wibOffset).toISOString();
 
+  const { emptyInputLimitBreakdown, fetchInputLimitBreakdown } = await import("../../utils/usage-input-breakdown.js");
+  let inputBreakdown = emptyInputLimitBreakdown();
+  if (todayHops) {
+    try {
+      inputBreakdown = await fetchInputLimitBreakdown(todayHops);
+    } catch (err) {
+      console.warn("[portal/me] input breakdown failed:", (err as Error)?.message || err);
+    }
+  }
+
+  const preferredLang =
+    String((settings as any)?.preferredLang || "").toLowerCase() === "id" ? "id" : "en";
+
   // Trial expiry date
   let trialExpiresAt: string | null = null;
   if (isTrial && primaryKey) {
@@ -659,6 +678,7 @@ portal.get("/me", async (c) => {
     accountBadges,
     trialExpiresAt,
     hasPassword: !!settings?.passwordHash,
+    preferredLang,
     webhookUrl: settings?.webhookUrl ? maskWebhookUrl(settings.webhookUrl) : null,
     hasWebhook: !!(settings?.webhookUrl),
     lastLoginAt: settings?.lastLoginAt ?? null,
@@ -715,6 +735,7 @@ portal.get("/me", async (c) => {
     apiCallResetMins,
     dailyResetAt,
     monthlyResetAt,
+    inputBreakdown,
     dedicatedPools,
     blockedWithoutAddon,
     roleLimitMode: (primaryKey as any)?.roleLimitMode || null,
@@ -1775,6 +1796,25 @@ portal.put("/settings/webhook", async (c) => {
     webhookSecret,
     hasWebhook: true,
   });
+});
+
+// Preferred UI language (portal + Discord embeds)
+portal.put("/settings/lang", async (c) => {
+  const discordUserId = getPortalDiscordUserId(c)!;
+  const body = await c.req.json<{ lang?: string }>().catch(() => ({} as { lang?: string }));
+  const lang = String(body.lang || "").toLowerCase() === "id" ? "id" : "en";
+  const settings = (
+    await db.select().from(userPortalSettings).where(eq(userPortalSettings.discordUserId, discordUserId))
+  )[0];
+  if (settings) {
+    await db
+      .update(userPortalSettings)
+      .set({ preferredLang: lang, updatedAt: new Date() })
+      .where(eq(userPortalSettings.discordUserId, discordUserId));
+  } else {
+    await db.insert(userPortalSettings).values({ discordUserId, preferredLang: lang });
+  }
+  return c.json({ success: true, preferredLang: lang });
 });
 
 // Token Saver per-user overrides (tri-state: null=default, true=on, false=off)
