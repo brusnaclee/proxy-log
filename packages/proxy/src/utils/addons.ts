@@ -2,6 +2,7 @@ import { and, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { addonAssignments, addons, adminConfig, type Addon } from "../db/schema.js";
 import { normalizeModelForLimit } from "./rate-limit.js";
+import { getTeaseLimitForModel, isTeaseModelFromLimits } from "./tease-limits-cache.js";
 
 export type ActiveAddon = Addon & {
   assignmentId: number;
@@ -290,7 +291,7 @@ export async function checkAddonModelAccess(opts: {
 
   return {
     allowed: false,
-    reason: `Model "${opts.model}" requires an active add-on (${hint}). Upgrade to a Vibecode pack (vibecode-5m / 50M · vibecode-10m / 100M) for access — ask in Discord for payment.`,
+    reason: `Model "${opts.model}" requires an active add-on (${hint}). Upgrade to a Vibecode pack for access — ask in Discord for payment.`,
     requiredAddon: names[0] || "vibecode-10m",
   };
 }
@@ -471,33 +472,18 @@ export function resolveAddonModelDailyTokenLimit(
 }
 
 /**
- * Premium tease models: non-addon users get a small prompt allowance instead of hard lock.
- * Longer patterns win (e.g. chatgpt-5.5 over gpt-5.5). All tease families = 3 prompts.
+ * Premium tease: non-addon prompt caps come from global model_limits (Settings → overrides).
  */
-const ADDON_TEASE_RULES: Array<{ pattern: string; limit: number }> = [
-	{ pattern: "chatgpt-5.5", limit: 3 },
-	{ pattern: "gpt-5.5", limit: 3 },
-	{ pattern: "chatgpt-5.6", limit: 3 },
-	{ pattern: "gpt-5.6", limit: 3 },
-	{ pattern: "claude", limit: 3 },
-];
-
-/** Fallback when no model_limits row matches (legacy callers). Prefer getAddonTeaseDefaultLimit. */
-export const ADDON_TEASE_DEFAULT_PROMPT_LIMIT = 3;
-
 export function getAddonTeaseDefaultLimit(model: string): number {
-	const lower = (model || "").toLowerCase();
-	if (!lower) return 0;
-	const sorted = [...ADDON_TEASE_RULES].sort((a, b) => b.pattern.length - a.pattern.length);
-	for (const rule of sorted) {
-		if (lower.includes(rule.pattern)) return rule.limit;
-	}
-	return 0;
+	return getTeaseLimitForModel(model);
 }
 
 export function isAddonTeaseModel(model: string): boolean {
-	return getAddonTeaseDefaultLimit(model) > 0;
+	return isTeaseModelFromLimits(model);
 }
+
+/** @deprecated Tease limits live in model_limits; kept for imports only. */
+export const ADDON_TEASE_DEFAULT_PROMPT_LIMIT = 0;
 
 /** True if any active add-on grants access to this model (allowlist match or all_except). */
 export function addonGrantsModelAccess(active: ActiveAddon[], model: string): boolean {
@@ -538,49 +524,41 @@ const VIBECODE_ALLOWLIST = [
   "grok-4.5",
 ];
 
-const VIBECODE_SUBCAPS = {
-  "gpt-5.6-terra": 30_000_000,
-  "gpt-5.6-sol": 30_000_000,
-  "gpt-5.6-luna": 30_000_000,
-};
-
-/** Upsert Vibecode catalog packs to latest Discord post specs. */
+/** Upsert Vibecode catalog pack shells — limits/description/subcaps are admin-owned in Add-ons UI. */
 export async function ensureVibecodeCatalog(): Promise<void> {
   const packs: Array<{
     name: string;
-    description: string;
-    daily: number;
+    insertDescription: string;
+    insertDaily: number;
+    insertSubcaps: Record<string, number>;
     days: number;
-    slotsNote: number;
     active: boolean;
     discordRoleId: string | null;
   }> = [
     {
       name: "vibecode-5m",
-      description:
-        "Vibecode 50M · @300k · Requires Premium role · if Phantom, stacks with Phantom daily (20M + pack) · max 1 device · slots ~20 · no weekly limit",
-      daily: 50_000_000,
+      insertDescription: "Vibecode pack (edit daily limit & description in Admin → Add-ons)",
+      insertDaily: 0,
+      insertSubcaps: {},
       days: 15,
-      slotsNote: 20,
       active: true,
       discordRoleId: "1530923797220167710",
     },
     {
       name: "vibecode-10m",
-      description:
-        "Vibecode 100M · @459k · Requires Premium role · if Phantom, stacks with Phantom daily (20M + pack) · max 1 device · slots ~10 · no weekly limit",
-      daily: 100_000_000,
+      insertDescription: "Vibecode pack (edit daily limit & description in Admin → Add-ons)",
+      insertDaily: 0,
+      insertSubcaps: {},
       days: 30,
-      slotsNote: 10,
       active: true,
       discordRoleId: "1530923797220167710",
     },
     {
       name: "vibecode-3m",
-      description: "Deprecated — deactivated (not in current Discord post)",
-      daily: 3_000_000,
+      insertDescription: "Deprecated — deactivated",
+      insertDaily: 0,
+      insertSubcaps: {},
       days: 7,
-      slotsNote: 0,
       active: false,
       discordRoleId: null as string | null,
     },
@@ -588,24 +566,32 @@ export async function ensureVibecodeCatalog(): Promise<void> {
 
   for (const p of packs) {
     const [existing] = await db.select().from(addons).where(eq(addons.name, p.name)).limit(1);
-    const payload = {
-      description: p.description,
-      modelAllowlist: JSON.stringify(VIBECODE_ALLOWLIST),
-      accessMode: "allowlist" as const,
-      modelDenylist: "[]",
-      modelDailyLimits: JSON.stringify(VIBECODE_SUBCAPS),
-      dailyTokenLimit: p.daily,
-      monthlyTokenLimit: 0,
-      maxDevices: 1,
-      defaultDurationDays: p.days,
-      isActive: p.active,
-      discordRoleId: p.discordRoleId,
-      updatedAt: new Date(),
-    };
     if (existing) {
-      await db.update(addons).set(payload).where(eq(addons.id, existing.id));
+      // Preserve admin-edited limits/copy; only ensure role + duration metadata.
+      await db
+        .update(addons)
+        .set({
+          defaultDurationDays: p.days,
+          isActive: p.active,
+          discordRoleId: existing.discordRoleId || p.discordRoleId,
+          updatedAt: new Date(),
+        })
+        .where(eq(addons.id, existing.id));
     } else if (p.active) {
-      await db.insert(addons).values({ name: p.name, ...payload });
+      await db.insert(addons).values({
+        name: p.name,
+        description: p.insertDescription,
+        modelAllowlist: JSON.stringify(VIBECODE_ALLOWLIST),
+        accessMode: "allowlist",
+        modelDenylist: "[]",
+        modelDailyLimits: JSON.stringify(p.insertSubcaps),
+        dailyTokenLimit: p.insertDaily,
+        monthlyTokenLimit: 0,
+        maxDevices: 1,
+        defaultDurationDays: p.days,
+        isActive: p.active,
+        discordRoleId: p.discordRoleId,
+      });
     }
   }
 

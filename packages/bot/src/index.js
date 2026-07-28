@@ -717,7 +717,7 @@ async function handleAdminCommand(message) {
 					`Prompt Limit: ${globalLimitStr}\n` +
 					`API Call Limit: ${apiCallLimitStr}\n` +
 					(modelLimitStr ? `Model Limits:\n${modelLimitStr}\n` : '') +
-					`ℹ️ *1 prompt = 1 user turn. Tool hops = API calls. Token limit: hop pertama 100%, hop berikutnya % weight (default 100%).*\n` +
+					`ℹ️ *1 prompt = 1 user turn. Tool hops = API calls. Token limit: hop pertama 100%, hop berikutnya % weight (${data.hopWeightPercent ?? 100}%).*\n` +
 					`Daily Token Limits:\n` +
 					`  • Total: ${data.dailyTokenLimit > 0 ? `${formatTokens(data.dailyTokensUsed)} / ${formatTokens(data.dailyTokenLimit)}` : `${formatTokens(data.dailyTokensUsed)} / ∞`}${formatResetTime(data.dailyResetAt)}\n` +
 					`  • Input: ${data.dailyInputTokenLimit > 0 ? `${formatTokens(data.dailyInputUsed)} / ${formatTokens(data.dailyInputTokenLimit)}` : `${formatTokens(data.dailyInputUsed)} / ∞`}\n` +

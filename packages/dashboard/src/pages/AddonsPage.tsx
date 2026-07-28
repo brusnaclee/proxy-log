@@ -13,6 +13,7 @@ import {
   type AddonEntry,
 } from "@/lib/api";
 import { useNotify } from "@/components/Notify";
+import { formatNumber } from "@/lib/utils";
 
 type AccessMode = "allowlist" | "all_except";
 
@@ -146,6 +147,16 @@ export default function AddonsPage() {
   const [assignAddonId, setAssignAddonId] = useState<number | "">("");
   const [assignDiscordId, setAssignDiscordId] = useState("");
   const [assignExpires, setAssignExpires] = useState("");
+  const [phantomInputLimit, setPhantomInputLimit] = useState(0);
+
+  const activePackSummary = useMemo(
+    () =>
+      addons
+        .filter((a) => a.isActive && (a.dailyTokenLimit || 0) > 0)
+        .map((a) => `${a.name}: ${formatNumber(a.dailyTokenLimit)}/day`)
+        .join(" · ") || "—",
+    [addons],
+  );
 
   const formatLocalDatetime = (d: Date) => {
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -165,11 +176,13 @@ export default function AddonsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [a, asg, models] = await Promise.all([
+      const [a, asg, models, global] = await Promise.all([
         addonsApi.list(),
         addonsApi.listAssignments(),
         globalSettings.getModels().catch(() => ({ data: [] as string[] })),
+        globalSettings.get().catch(() => null),
       ]);
+      setPhantomInputLimit(global?.globalDailyInputTokenLimit || 0);
       setAddons(a.data || []);
       setAssignments(asg.data || []);
       setCatalog(models.data || []);
@@ -339,8 +352,9 @@ export default function AddonsPage() {
             <Package className="h-6 w-6" /> Add-ons
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Premium required to assign · Phantom stacks base daily (e.g. 20M) + pack · without Phantom = pack only.
-            Active pack bypasses per-model prompt caps; global Prompts still apply. Hard locks: Settings → Models requiring add-on.
+            Premium required to assign · Phantom stacks base daily (
+            {phantomInputLimit > 0 ? formatNumber(phantomInputLimit) : "off"}) + pack · Active packs:{" "}
+            {activePackSummary}. Without Phantom = pack only. Active pack bypasses per-model prompt caps.
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
@@ -425,7 +439,7 @@ export default function AddonsPage() {
             <div className="space-y-2 border border-border/50 rounded-lg p-3">
               <Label>Per-model daily token limits</Label>
               <p className="text-[10px] text-muted-foreground">
-                Pattern substring → cap harian. Contoh: chatgpt-5.6 / terra / sol / kimi-k3 = 30,000,000.
+                Pattern substring → cap harian. Contoh dari pack aktif di atas.
               </p>
               {Object.keys(modelDailyLimits).length > 0 && (
                 <div className="flex flex-wrap gap-1">
@@ -483,7 +497,9 @@ export default function AddonsPage() {
                 value={dailyTokenLimit}
                 onChange={(e) => setDailyTokenLimit(parseInt(e.target.value) || 0)}
               />
-              <p className="text-[10px] text-muted-foreground mt-1">Stacked on account daily limit. Vibecode tiers: 50M / 100M.</p>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Stacked on account daily limit. Active packs: {activePackSummary}.
+              </p>
             </div>
             <div>
               <Label>Max devices (0 = no change)</Label>

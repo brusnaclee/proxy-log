@@ -200,22 +200,8 @@ export async function initializeDatabase() {
 		);
 	} catch (_) {}
 	try {
-		// Weight 100% + limits ×10 + tease overrides → 3 (idempotent; only bumps legacy values)
-		await pool.query(
-			`UPDATE admin_config SET token_limit_weight_percent = 100 WHERE COALESCE(token_limit_weight_percent, 10) < 100`,
-		);
-		await pool.query(
-			`UPDATE admin_config SET global_daily_input_token_limit = 20000000 WHERE global_daily_input_token_limit = 2000000`,
-		);
-		await pool.query(
-			`UPDATE admin_config SET global_daily_output_token_limit = 50000000 WHERE global_daily_output_token_limit = 5000000`,
-		);
-		await pool.query(
-			`UPDATE admin_config SET global_per_model_prompt_limit = 3 WHERE global_per_model_prompt_limit IN (5, 10)`,
-		);
-		await pool.query(
-			`UPDATE model_limits SET prompt_limit = 3 WHERE prompt_limit IN (5, 10)`,
-		);
+		const { refreshTeaseLimitsCacheFromDb } = await import("../utils/tease-limits-cache.js");
+		await refreshTeaseLimitsCacheFromDb();
 	} catch (_) {}
 	try {
 		const { setTokenInputModeCache, setTokenLimitWeightConfigCache } = await import('../utils/counting.js');

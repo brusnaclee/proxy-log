@@ -410,7 +410,8 @@ export function LiveUsageCard({
       {(usageToday.fullInputTokens || 0) > 0 && (
         <p className="text-[10px] text-muted-foreground leading-relaxed border-t border-border/40 pt-2">
           Admin note — Input bar = hop-weighted <span className="text-foreground">toward limit</span>{" "}
-          ({formatNumber(usageToday.promptTokens)}; hop1=100%, hops 2+=flat % — default 100%).
+          ({formatNumber(usageToday.promptTokens)}; hop1=100%, hops 2+=
+          {live.inputBreakdown?.weightPercent ?? "—"}%).
           Output always 100%.{" "}
           Chat peak is informational and does <span className="text-foreground">not</span> sum into the limit number.
           {live.inputBreakdown?.peakFullIn

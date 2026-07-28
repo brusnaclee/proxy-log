@@ -14,6 +14,7 @@ import {
   packGlobalTokenSaver,
   applyAdminTokenSaverUpdates,
 } from "../../utils/token-saver-api.js";
+import { listTeaseLimitRows, refreshTeaseLimitsCacheFromDb } from "../../utils/tease-limits-cache.js";
 
 const settings = new Hono();
 
@@ -81,6 +82,7 @@ settings.get("/settings/global", async (c) => {
         tokenSaver: ts,
       };
     })(),
+    teaseModelLimits: listTeaseLimitRows(),
   });
 });
 
@@ -331,6 +333,8 @@ settings.put("/settings/model-limits", async (c) => {
     await pool.query(`DELETE FROM model_limits WHERE id = $1`, [existing.rows[0].id]);
   }
 
+  await refreshTeaseLimitsCacheFromDb();
+
   return c.json({
     success: true, model: modelName, isPattern, dedicatedQuota,
     promptLimit: limit, dailyTokenLimit, monthlyTokenLimit, dailyInputTokenLimit, dailyOutputTokenLimit,
@@ -353,6 +357,7 @@ settings.delete("/settings/model-limits/:model", async (c) => {
       eq(modelLimits.model, model),
     ));
   }
+  await refreshTeaseLimitsCacheFromDb();
   return c.json({ success: true, message: `Model limit for "${model}" removed` });
 });
 

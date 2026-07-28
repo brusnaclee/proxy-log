@@ -18,7 +18,7 @@ import {
 } from "../../utils/rate-limit.js";
 import { isInternalRequest } from "../../middleware/session.js";
 import { configCache } from "../../utils/cache.js";
-import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, peakPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, inputHopWeightSqlExpr, getTokenLimitWeightModeSync, weightedHopInputTokensSql, weightedHopTotalTokensSql, modelLimitCreditBreakdownSql } from "../../utils/counting.js";
+import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, peakPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, inputHopWeightSqlExpr, getTokenLimitWeightModeSync, weightedHopInputTokensSql, weightedHopTotalTokensSql, modelLimitCreditBreakdownSql, normalizeTokenLimitWeightPercent } from "../../utils/counting.js";
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
 import { resolveKeyPromptLimit, resolveKeyApiCallLimit } from "../../utils/trial-config.js";
@@ -1091,6 +1091,10 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     promptUsed: globalUsed,
     promptResetMins: globalResetMins,
     promptResetAt,
+    hopWeightPercent: normalizeTokenLimitWeightPercent((config as any)?.tokenLimitWeightPercent ?? 100),
+    hopWeightMode: String((config as any)?.tokenLimitWeightMode || "first_rest_flat"),
+    globalDailyInputTokenLimit: config?.globalDailyInputTokenLimit || 0,
+    globalDailyOutputTokenLimit: config?.globalDailyOutputTokenLimit || 0,
     rateLimit: apiCallLimit,
     rateLimitWindow: apiCallLimitWindow,
     apiCallUsed,

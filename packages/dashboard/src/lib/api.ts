@@ -867,6 +867,7 @@ export interface GlobalSettings {
   tokenSaverAntiWasteLevel?: string;
   tokenSaverAntiWasteCustom?: string;
   tokenSaver?: Record<string, unknown>;
+  teaseModelLimits?: Array<{ model: string; promptLimit: number; isPattern: boolean }>;
 }
 
 export interface ModelLimitEntry {

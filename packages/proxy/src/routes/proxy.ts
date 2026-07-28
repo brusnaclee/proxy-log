@@ -3835,7 +3835,7 @@ proxy.all('/*', async (c) => {
 								? `pattern "${mlCheck.overrideModel}"`
 								: `override "${mlCheck.overrideModel}"`
 							: mlCheck.source === 'tease_default'
-								? 'non-addon Claude/GPT-5.6 tease (3 prompts / 1d)'
+								? `non-addon tease (${mlCheck.effectiveLimit} prompts / 1d)`
 								: mlCheck.source === 'key_default'
 									? "your key's per-model default"
 									: 'global per-model default';

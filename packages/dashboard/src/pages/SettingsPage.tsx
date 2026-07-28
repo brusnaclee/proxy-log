@@ -671,7 +671,7 @@ export default function SettingsPage() {
                       />
                       <p className="text-[10px] text-muted-foreground mt-1">
                         {tokenLimitWeightMode === "first_rest_flat"
-                          ? "Hops 2+ use this % (default 100)."
+                          ? `Hops 2+ use this % (current: ${tokenLimitWeightPercent}).`
                           : "Every hop (including hop 1) uses this %."}
                       </p>
                     </div>
@@ -765,7 +765,14 @@ export default function SettingsPage() {
                 <Label>Models requiring add-on</Label>
                 <p className="text-[10px] text-muted-foreground">
                   Substring patterns that hard-lock without a pack. Empty = Phantom can use catalog models without add-on.
-                  Claude / GPT-5.6+ still get a 3-prompt tease for non-addon users (see model overrides / tease).
+                  Non-addon tease caps come from Model Limit Overrides below
+                  {globalModelLimits.filter((ml) => (ml.promptLimit || 0) > 0).length > 0
+                    ? `: ${globalModelLimits
+                        .filter((ml) => (ml.promptLimit || 0) > 0)
+                        .map((ml) => `${ml.model} @ ${ml.promptLimit}`)
+                        .join(", ")}`
+                    : " (add pattern rows with prompt limit)."}
+                  . Hard locks: patterns above in Models requiring add-on.
                 </p>
                 {addonRequiredModels.length > 0 && (
                   <div className="flex flex-wrap gap-1">
@@ -939,7 +946,7 @@ export default function SettingsPage() {
                     <Label className="text-sm font-medium">Model Limit Overrides</Label>
                     <p className="text-[10px] text-muted-foreground">
                       Override prompt and/or token caps per model (global). Token-only rows (daily/monthly without prompt limit) are enforced.
-                      Pattern rows (e.g. <span className="font-mono">claude</span> / <span className="font-mono">gpt-5.6</span> @ 3 prompts) share one family quota.
+                      Pattern rows with prompt limit share one family quota (values from table below).
                       Window for all overrides = <b>Default Per-Model Window</b> above (not per-row). Unlimited token users still get these prompt caps.
                     </p>
                   </div>
