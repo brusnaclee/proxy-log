@@ -273,6 +273,10 @@ export interface KeyInfo {
   provisionedBy?: string | null;
   createdAt: string;
   requestsToday: number;
+  apiCallsToday?: number;
+  tokensToday?: number;
+  inputToday?: number;
+  outputToday?: number;
 }
 
 export interface DeviceInfo {

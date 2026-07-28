@@ -717,13 +717,29 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   const todayDate = todayStart;
   const monthDate = monthStart;
 
+  // Account-scoped keys (shared pool) — fetch early for period stats
+  const accountKeysEarly = await db
+    .select({
+      id: apiKeys.id,
+      name: apiKeys.name,
+      provisionedBy: apiKeys.provisionedBy,
+      isTrial: apiKeys.isTrial,
+    })
+    .from(apiKeys)
+    .where(eq(apiKeys.discordUserId, discordUserId));
+  const accountKeyIds =
+    accountKeysEarly.length > 0
+      ? [key.id, ...accountKeysEarly.map((k) => k.id).filter((id) => id !== key.id)]
+      : [key.id];
+  const keyIdListSql = sql.join(accountKeyIds.map((id) => sql`${id}`), sql`, `);
+
   async function getTopModels(since: Date) {
     // Same limit-credit math as Hari Ini Total / Input — so model rows sum toward the period total.
     const rows = sanitizeRows(
       (
         await db.execute(
           modelLimitCreditBreakdownSql(
-            sql`api_key_id = ${keyId} AND created_at >= ${since} AND status_code BETWEEN 200 AND 299`,
+            sql`api_key_id IN (${keyIdListSql}) AND created_at >= ${since} AND status_code BETWEEN 200 AND 299`,
             { ...tmOpts, limit: 10 },
           ),
         )
@@ -741,13 +757,13 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
       ? sqlExcludeDedicatedModels(dedicatedRules)
       : undefined;
     const whereClause = and(
-      eq(requestLogs.apiKeyId, keyId),
+      inArray(requestLogs.apiKeyId, accountKeyIds),
       sql`created_at >= ${since}`,
       VALID_LOG_SQL,
       excludeDedicated,
     );
     const whereHops = and(
-      eq(requestLogs.apiKeyId, keyId),
+      inArray(requestLogs.apiKeyId, accountKeyIds),
       sql`created_at >= ${since}`,
       BILLABLE_LOG_SQL,
       excludeDedicated,
@@ -769,7 +785,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     const breakdown = sanitizeRows((await db.execute(sql`
       SELECT model, COALESCE(SUM(sum_delta) * ${umInput}, 0) as "promptTokens", COALESCE(SUM(sum_c) * ${umOutput}, 0) as "completionTokens"
       FROM (SELECT model, turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
-        FROM request_logs WHERE api_key_id = ${keyId} AND created_at >= ${since} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
+        FROM request_logs WHERE api_key_id IN (${keyIdListSql}) AND created_at >= ${since} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
         GROUP BY model, turn_id)
       GROUP BY model
     `)).rows as any[], ['promptTokens', 'completionTokens']);
@@ -804,7 +820,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   const dedicatedPools = [];
   for (const rule of dedicatedRulesForKey) {
     const wherePool = and(
-      eq(requestLogs.apiKeyId, keyId),
+      inArray(requestLogs.apiKeyId, accountKeyIds),
       sql`created_at >= ${todayDate}`,
       BILLABLE_LOG_SQL,
       sqlMatchDedicatedRule(rule),
@@ -835,6 +851,54 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     });
   }
 
+  // Per-key contribution today (when multi-key account)
+  let keysToday: Array<{
+    keyId: number;
+    name: string;
+    isPrimary: boolean;
+    requests: number;
+    tokens: number;
+    promptTokens: number;
+    completionTokens: number;
+  }> = [];
+  if (accountKeyIds.length >= 2) {
+    keysToday = await Promise.all(
+      accountKeysEarly.map(async (ak) => {
+        const whereClause = and(
+          eq(requestLogs.apiKeyId, ak.id),
+          sql`created_at >= ${todayDate}`,
+          VALID_LOG_SQL,
+        );
+        const whereHops = and(
+          eq(requestLogs.apiKeyId, ak.id),
+          sql`created_at >= ${todayDate}`,
+          BILLABLE_LOG_SQL,
+        );
+        const s = (
+          await db
+            .select({
+              requests: turnCountSql(whereClause!),
+              tokens: weightedHopTotalTokensSql(whereHops!, tmOpts),
+              promptTokens: weightedHopInputTokensSql(whereHops!, tmOpts),
+              completionTokens: turnCompletionTokensSql(whereHops!, tmOpts),
+            })
+            .from(requestLogs)
+            .where(whereClause!)
+        )[0];
+        return {
+          keyId: ak.id,
+          name: ak.name || `key-${ak.id}`,
+          isPrimary: ak.id === keyId || ak.provisionedBy === "discord",
+          requests: Number(s?.requests) || 0,
+          tokens: Number(s?.tokens) || 0,
+          promptTokens: Number(s?.promptTokens) || 0,
+          completionTokens: Number(s?.completionTokens) || 0,
+        };
+      }),
+    );
+    keysToday.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || b.requests - a.requests);
+  }
+
   const [config] = await db.select().from(adminConfig);
 
   const isTrialKey = key.isTrial;
@@ -853,14 +917,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   let promptResetAt: string | null = null;
 
   // Account-scoped prompt/API counts (same as portal / live-usage)
-  const accountKeys = key.discordUserId
-    ? await db.select({ id: apiKeys.id }).from(apiKeys).where(eq(apiKeys.discordUserId, key.discordUserId))
-    : [{ id: key.id }];
-  const accountKeyIds = accountKeys.map((k) => k.id);
-  const promptScopeIds =
-    accountKeyIds.length > 0
-      ? [key.id, ...accountKeyIds.filter((id) => id !== key.id)]
-      : [key.id];
+  const promptScopeIds = accountKeyIds;
 
   if (globalLimit > 0) {
     const plCheck = await checkPromptLimit(promptScopeIds, globalLimit, globalWindow, key.promptWindowStart);
@@ -1042,6 +1099,8 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     preferredLang,
     inputBreakdown,
     inputExplanation,
+    accountKeyCount: accountKeyIds.length,
+    keysToday,
     modelUsage,
     perModelPromptLimit: quotaStack.bypassPerModelPrompts ? 0 : perModelLimitFallback,
     perModelPromptLimitWindow: perModelWindowFallback,

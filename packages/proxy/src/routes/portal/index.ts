@@ -1222,14 +1222,22 @@ portal.get("/keys", async (c) => {
   const primaryIds = new Set(getPortalPrimaryKeyIds(userKeys));
 
   for (const key of userKeys) {
-    const todayPw = and(
+    const todayHops = and(
       eq(requestLogs.apiKeyId, key.id),
       sql`created_at >= ${todayStart}`,
-      sql`status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL`,
+      sql`status_code BETWEEN 200 AND 299`,
+    );
+    const todayPw = and(
+      todayHops,
+      sql`turn_id IS NOT NULL`,
     );
     const todayStats = (await db.select({
       requests: turnCountSql(todayPw!),
-    }).from(requestLogs).where(and(eq(requestLogs.apiKeyId, key.id), sql`created_at >= ${todayStart}`)))[0];
+      hops: hopCountSql(todayHops!),
+      tokens: weightedHopTotalTokensSql(todayHops!, { isTrial: !!key.isTrial }),
+      input: weightedHopInputTokensSql(todayHops!, { isTrial: !!key.isTrial }),
+      output: turnCompletionTokensSql(todayPw!, { isTrial: !!key.isTrial }),
+    }).from(requestLogs).where(todayHops))[0];
 
     const isPrimary = primaryIds.has(key.id);
     result.push({
@@ -1245,6 +1253,10 @@ portal.get("/keys", async (c) => {
       provisionedBy: key.provisionedBy,
       createdAt: key.createdAt,
       requestsToday: todayStats?.requests || 0,
+      apiCallsToday: todayStats?.hops || 0,
+      tokensToday: todayStats?.tokens || 0,
+      inputToday: todayStats?.input || 0,
+      outputToday: todayStats?.output || 0,
     });
   }
   return c.json(result);
@@ -1294,6 +1306,21 @@ portal.post("/keys", async (c) => {
     dailyOutputTokenLimit: primaryKey?.dailyOutputTokenLimit ?? null,
   }).returning();
 
+  const proxyEndpoint = `${process.env.PROXY_PUBLIC_BASE_URL || "https://api.tokito.xyz"}/v1`;
+  const notification = {
+    type: "portal_key_created",
+    discordUserId,
+    newKey,
+    endpoint: proxyEndpoint,
+    keyName: name.trim(),
+    keyId: result.id,
+    createdAt: new Date().toISOString(),
+  };
+  await db
+    .update(apiKeys)
+    .set({ pendingNotification: JSON.stringify(notification) })
+    .where(eq(apiKeys.id, result.id));
+
   return c.json({ ...result, key: newKey });
 });
 
@@ -1315,6 +1342,23 @@ portal.delete("/keys/:id", async (c) => {
   const hasProtectedPrimary = siblings.some((k) => isProtectedPrimaryApiKey(k));
   if (!hasProtectedPrimary && siblings.length <= 1) {
     return c.json({ error: "Cannot delete your only API key." }, 403);
+  }
+
+  // Queue DM on a remaining sibling before delete
+  const other = siblings.find((k) => k.id !== keyId);
+  if (other) {
+    const notification = {
+      type: "portal_key_deleted",
+      discordUserId,
+      keyName: key.name,
+      keyId: other.id,
+      deletedKeyId: key.id,
+      deletedAt: new Date().toISOString(),
+    };
+    await db
+      .update(apiKeys)
+      .set({ pendingNotification: JSON.stringify(notification) })
+      .where(eq(apiKeys.id, other.id));
   }
 
   await db.delete(devices).where(eq(devices.apiKeyId, keyId));

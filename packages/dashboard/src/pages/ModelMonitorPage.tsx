@@ -334,11 +334,23 @@ export default function ModelMonitorPage() {
                 <RefreshCw className={`h-4 w-4 mr-2 ${syncingCatalog ? "animate-spin" : ""}`} />
                 {syncingCatalog ? "Syncing /models..." : "Sync /models"}
               </Button>
-              <Button variant="destructive" size="sm" onClick={handleSweep} disabled={sweepState.running}>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleSweep}
+                disabled={sweepState.running || monitorAutoMode === "off"}
+                title={
+                  monitorAutoMode === "off"
+                    ? "Auto mode is Off — enable Notif only / On in Settings, or use Sync /models (listing only)"
+                    : undefined
+                }
+              >
                 <Zap className={`h-4 w-4 mr-2 ${sweepState.running ? "animate-pulse" : ""}`} />
                 {sweepState.running && sweepState.progress
                   ? `Sweeping... ${sweepState.progress.tested}/${sweepState.progress.total} (${Math.round((sweepState.progress.tested / Math.max(sweepState.progress.total, 1)) * 100)}%)`
-                  : "Test All Models"}
+                  : monitorAutoMode === "off"
+                    ? "Test All (disabled — mode Off)"
+                    : "Test All Models"}
               </Button>
               <Button variant="outline" size="sm" onClick={handleExport}>
                 <Download className="h-4 w-4 mr-2" />

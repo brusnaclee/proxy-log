@@ -50,6 +50,39 @@ export function accountApiKeyCondition(keyIds: number[]): SQL {
   return inArray(requestLogs.apiKeyId, keyIds);
 }
 
+/** Sync quota/limit columns across all Discord account keys. */
+export const ACCOUNT_QUOTA_SYNC_FIELDS = [
+  "dailyTokenLimit",
+  "monthlyTokenLimit",
+  "dailyInputTokenLimit",
+  "dailyOutputTokenLimit",
+  "rateLimit",
+  "rateLimitWindow",
+  "promptLimit",
+  "promptLimitWindow",
+  "perModelPromptLimit",
+  "perModelPromptLimitWindow",
+  "maxDevices",
+] as const;
+
+export type AccountQuotaSyncField = (typeof ACCOUNT_QUOTA_SYNC_FIELDS)[number];
+
+export async function syncAccountQuotaFields(
+  discordUserId: string,
+  updates: Partial<Record<AccountQuotaSyncField, unknown>> & { updatedAt?: Date },
+): Promise<number> {
+  const patch: Record<string, unknown> = { updatedAt: updates.updatedAt || new Date() };
+  for (const f of ACCOUNT_QUOTA_SYNC_FIELDS) {
+    if (updates[f] !== undefined) patch[f] = updates[f];
+  }
+  if (Object.keys(patch).length <= 1) return 0;
+  await db
+    .update(apiKeys)
+    .set(patch as any)
+    .where(eq(apiKeys.discordUserId, discordUserId));
+  return 1;
+}
+
 /** Sync prompt window start across all account keys so shared limits stay aligned. */
 export async function syncAccountPromptWindowStart(
   keyIds: number[],

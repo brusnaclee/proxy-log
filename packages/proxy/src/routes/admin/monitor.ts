@@ -629,6 +629,19 @@ monitor.post("/monitor/sweep", async (c) => {
   if (!(await isAuthenticated(c))) return c.json({ error: "Unauthorized" }, 401);
   if (sweepRunning) return c.json({ error: "Sweep already running", progress: sweepProgress });
 
+  const [cfgRow] = await db.select({ monitorAutoMode: adminConfig.monitorAutoMode }).from(adminConfig).limit(1);
+  const mode = normalizeMonitorAutoMode(cfgRow?.monitorAutoMode);
+  if (mode === "off") {
+    return c.json(
+      {
+        error:
+          "Model Monitor Auto Mode is Off — scheduled and manual completion probes are disabled (no upstream credit burn). Set Notif only or On in Settings to allow Test All, or use Sync /models for listing only.",
+        monitorAutoMode: mode,
+      },
+      403,
+    );
+  }
+
   sweepRunning = true;
   sweepProgress = { total: 0, tested: 0, online: 0, offline: 0, rateLimited: 0, startedAt: new Date().toISOString(), status: "running" };
 

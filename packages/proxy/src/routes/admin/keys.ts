@@ -13,7 +13,7 @@ import { enrichModelLimitsWithCatalog } from "../../utils/model-limits-enrich.js
 import { isAuthenticated } from "../../middleware/session.js";
 import { isProtectedPrimaryApiKey, isAdminDeleteBlocked } from "../../utils/api-key-primary.js";
 import { buildLiveUsageForKey } from "../../utils/live-usage.js";
-import { resolveAccountKeyScope } from "../../utils/api-key-account.js";
+import { resolveAccountKeyScope, syncAccountQuotaFields, ACCOUNT_QUOTA_SYNC_FIELDS } from "../../utils/api-key-account.js";
 import {
   dayOverrideHasAny,
   getKeyDayOverride,
@@ -71,7 +71,7 @@ keys.get("/keys", async (c) => {
     c.req.query("full") === "true" ||
     c.req.query("live") === "1";
 
-  const listBase = await statsCache.getOrFetch("keys-list-fast-v4", async () => {
+  const listBase = await statsCache.getOrFetch("keys-list-fast-v5", async () => {
     const allKeys = await db.select().from(apiKeys).orderBy(desc(apiKeys.id));
     const config = (await db.select().from(adminConfig))[0];
 
@@ -139,6 +139,34 @@ keys.get("/keys", async (c) => {
       });
     }
 
+    // Discord account → key ids (shared pool)
+    const keysByDiscord = new Map<string, number[]>();
+    for (const k of allKeys) {
+      if (!k.discordUserId) continue;
+      const arr = keysByDiscord.get(k.discordUserId) || [];
+      arr.push(k.id);
+      keysByDiscord.set(k.discordUserId, arr);
+    }
+    type DayAgg = {
+      requestsToday: number;
+      tokensToday: number;
+      inputToday: number;
+      outputToday: number;
+    };
+    const accountTodayByDiscord = new Map<string, DayAgg>();
+    for (const [uid, ids] of keysByDiscord) {
+      const agg: DayAgg = { requestsToday: 0, tokensToday: 0, inputToday: 0, outputToday: 0 };
+      for (const id of ids) {
+        const t = todayByKey.get(id);
+        if (!t) continue;
+        agg.requestsToday += t.requestsToday;
+        agg.tokensToday += t.tokensToday;
+        agg.inputToday += t.inputToday;
+        agg.outputToday += t.outputToday;
+      }
+      accountTodayByDiscord.set(uid, agg);
+    }
+
     // Active add-ons keyed by discord user (and by apiKeyId for unlinked)
     const addonByDiscord = new Map<string, Awaited<ReturnType<typeof getActiveAddonsForUser>>>();
     const discordIds = [...new Set(allKeys.map((k) => k.discordUserId).filter(Boolean))] as string[];
@@ -200,16 +228,32 @@ keys.get("/keys", async (c) => {
         ? key.promptLimit
         : (key.isTrial ? 0 : (config?.globalPromptLimit || 0));
 
+      // Remaining = account shared pool when Discord-linked (sibling keys share limits)
+      const acctIds = key.discordUserId ? keysByDiscord.get(key.discordUserId) : null;
+      const acctToday = key.discordUserId ? accountTodayByDiscord.get(key.discordUserId) : null;
+      const remInputUsed = acctToday?.inputToday ?? inputToday;
+      const remOutputUsed = acctToday?.outputToday ?? outputToday;
+      const remTokensUsed = acctToday?.tokensToday ?? tokensToday;
+      const remPromptsUsed = acctToday?.requestsToday ?? requestsToday;
+      const accountKeyCount = acctIds?.length || 1;
+
       // Hard remaining for list (quotaHint — liveUsage is null on fast path)
       const quotaHint = {
         bypassIo: false,
-        dailyLeft: softRem(stack.effectiveDaily, tokensToday),
-        inputLeft: softRem(stack.dailyInputLimit, inputToday),
-        outputLeft: softRem(stack.dailyOutputLimit, outputToday),
-        promptsLeftToday: softRem(promptCap, requestsToday),
-        inputUsed: inputToday,
-        outputUsed: outputToday,
-        dailyUsed: tokensToday,
+        sharedAccount: accountKeyCount > 1,
+        accountKeyCount,
+        dailyLeft: softRem(stack.effectiveDaily, remTokensUsed),
+        inputLeft: softRem(stack.dailyInputLimit, remInputUsed),
+        outputLeft: softRem(stack.dailyOutputLimit, remOutputUsed),
+        promptsLeftToday: softRem(promptCap, remPromptsUsed),
+        inputUsed: remInputUsed,
+        outputUsed: remOutputUsed,
+        dailyUsed: remTokensUsed,
+        /** This key's contribution today (not account). */
+        keyInputUsed: inputToday,
+        keyOutputUsed: outputToday,
+        keyDailyUsed: tokensToday,
+        keyPromptsUsed: requestsToday,
         inputLimit: stack.dailyInputLimit,
         outputLimit: stack.dailyOutputLimit,
         dailyLimit: stack.effectiveDaily,
@@ -808,10 +852,22 @@ keys.put("/keys/:id", async (c) => {
   if (body.perModelPromptLimitWindow !== undefined) updates.perModelPromptLimitWindow = body.perModelPromptLimitWindow || null;
 
   await db.update(apiKeys).set(updates).where(eq(apiKeys.id, id));
+
+  // Discord-linked keys share one quota pool — keep sibling limit columns in sync
+  if (key.discordUserId) {
+    const quotaPatch: Record<string, unknown> = {};
+    for (const f of ACCOUNT_QUOTA_SYNC_FIELDS) {
+      if (updates[f] !== undefined) quotaPatch[f] = updates[f];
+    }
+    if (Object.keys(quotaPatch).length > 0) {
+      await syncAccountQuotaFields(key.discordUserId, quotaPatch as any);
+    }
+  }
+
   apiKeyCache.clear();
   statsCache.invalidate("keys-list");
   statsCache.invalidate("keys-list-fast");
-  statsCache.invalidate("keys-list-fast-v4");
+  statsCache.invalidate("keys-list-fast-v5");
 
   if (key.discordUserId) {
     if (body.isActive !== undefined && body.isActive !== key.isActive) {
@@ -833,7 +889,7 @@ keys.put("/keys/:id", async (c) => {
         type: "limits_changed",
         title: "⚙️ Limit API Key Diubah",
         message:
-          `Admin mengubah konfigurasi limit untuk key **${key.name}**.\n` +
+          `Admin mengubah konfigurasi limit akun (shared semua key Discord Anda).\n` +
           `Field: ${changedLimits.join(", ")}.\n` +
           `Cek portal / Discord Usage untuk sisa kuota terbaru.`,
       });
@@ -881,7 +937,7 @@ keys.delete("/keys/:id", async (c) => {
   apiKeyCache.clear();
   statsCache.invalidate("keys-list");
   statsCache.invalidate("keys-list-fast");
-  statsCache.invalidate("keys-list-fast-v4");
+  statsCache.invalidate("keys-list-fast-v5");
   return c.json({ success: true, message: "API key deleted" });
 });
 
@@ -918,7 +974,7 @@ keys.post("/keys/:id/rotate", async (c) => {
   apiKeyCache.clear();
   statsCache.invalidate("keys-list");
   statsCache.invalidate("keys-list-fast");
-  statsCache.invalidate("keys-list-fast-v4");
+  statsCache.invalidate("keys-list-fast-v5");
   return c.json({ success: true, key: newKey, keyPrefix: getKeyPrefix(newKey), message: "API key rotated." });
 });
 
@@ -948,7 +1004,7 @@ keys.post("/keys/sync-roles", async (c) => {
   const result = await syncUserKeyAccess(discordUserId, { reason: "admin sync-roles" });
   statsCache.invalidate("keys-list");
   statsCache.invalidate("keys-list-fast");
-  statsCache.invalidate("keys-list-fast-v4");
+  statsCache.invalidate("keys-list-fast-v5");
   return c.json({ success: true, ...result });
 });
 
@@ -962,7 +1018,7 @@ keys.post("/keys/sync-all-roles", async (c) => {
   });
   statsCache.invalidate("keys-list");
   statsCache.invalidate("keys-list-fast");
-  statsCache.invalidate("keys-list-fast-v4");
+  statsCache.invalidate("keys-list-fast-v5");
   console.log("[admin] sync-all-roles:", result);
   return c.json({ success: true, ...result });
 });
@@ -1287,7 +1343,7 @@ keys.put("/keys/:id/day-override", async (c) => {
       .where(and(eq(keyDayOverrides.apiKeyId, keyId), eq(keyDayOverrides.dayWib, dayWib)));
     statsCache.invalidate("keys-list");
     statsCache.invalidate("keys-list-fast");
-    statsCache.invalidate("keys-list-fast-v4");
+    statsCache.invalidate("keys-list-fast-v5");
     return c.json({ success: true, cleared: true, dayWib, override: null });
   }
 
@@ -1308,18 +1364,45 @@ keys.put("/keys/:id/day-override", async (c) => {
     });
   }
 
+  const [fullKey] = await db.select().from(apiKeys).where(eq(apiKeys.id, keyId)).limit(1);
+  // Sync day override to all Discord account keys (shared pool)
+  if (fullKey?.discordUserId) {
+    const siblings = await db
+      .select({ id: apiKeys.id })
+      .from(apiKeys)
+      .where(eq(apiKeys.discordUserId, fullKey.discordUserId));
+    for (const s of siblings) {
+      if (s.id === keyId) continue;
+      const sibExisting = await getKeyDayOverride(s.id, dayWib);
+      if (sibExisting) {
+        await db
+          .update(keyDayOverrides)
+          .set({ ...bonuses, note, updatedAt: now })
+          .where(eq(keyDayOverrides.id, sibExisting.id));
+      } else {
+        await db.insert(keyDayOverrides).values({
+          apiKeyId: s.id,
+          dayWib,
+          ...bonuses,
+          note,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    }
+  }
+
   const saved = await getKeyDayOverride(keyId, dayWib);
   statsCache.invalidate("keys-list");
   statsCache.invalidate("keys-list-fast");
-  statsCache.invalidate("keys-list-fast-v4");
+  statsCache.invalidate("keys-list-fast-v5");
 
-  const [fullKey] = await db.select().from(apiKeys).where(eq(apiKeys.id, keyId)).limit(1);
   if (fullKey?.discordUserId && dayOverrideHasAny(bonuses)) {
     await queueUserNotification(keyId, {
       type: "limits_changed",
       title: "⚙️ Day Override Ditetapkan",
       message:
-        `Admin menambah kuota harian untuk **${fullKey.name}** (hari ${dayWib} WIB).\n` +
+        `Admin menambah kuota harian akun Anda (shared semua key) untuk hari ${dayWib} WIB.\n` +
         `Cek portal / Discord Usage untuk sisa kuota terbaru.`,
     });
   }
@@ -1352,7 +1435,7 @@ keys.delete("/keys/:id/day-override", async (c) => {
     .where(and(eq(keyDayOverrides.apiKeyId, keyId), eq(keyDayOverrides.dayWib, dayParam)));
   statsCache.invalidate("keys-list");
   statsCache.invalidate("keys-list-fast");
-  statsCache.invalidate("keys-list-fast-v4");
+  statsCache.invalidate("keys-list-fast-v5");
   return c.json({ success: true, dayWib: dayParam });
 });
 
@@ -1383,7 +1466,7 @@ keys.post("/keys/:id/reset-today-usage", async (c) => {
 
   statsCache.invalidate("keys-list");
   statsCache.invalidate("keys-list-fast");
-  statsCache.invalidate("keys-list-fast-v4");
+  statsCache.invalidate("keys-list-fast-v5");
   return c.json({
     success: true,
     dayWib,

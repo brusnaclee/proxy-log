@@ -1526,16 +1526,18 @@ export default function SettingsPage() {
             <div>
               <Label className="text-base">Model Monitor Auto Mode</Label>
               <p className="text-xs text-muted-foreground mt-1">
-                Controls whether 10-min probes publish Online/Offline to Discord &amp; client catalogs.
-                Default is Notif only (probe always runs; probe OK heals Online; fail does not auto-Offline; force-OFF stays sticky).
+                Scheduled every 10 minutes. <span className="text-foreground font-medium">Off</span> = no
+                completion probes (no upstream credit burn).{" "}
+                <span className="text-foreground font-medium">Notif only / On</span> still POST test
+                chat/completions each cycle — that burns provider credits.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
               {(
                 [
-                  { id: "off" as const, label: "Off", desc: "No auto 10-min test" },
-                  { id: "notif_only" as const, label: "Notif only", desc: "Probe always; heal Online on OK; fail keeps catalog" },
-                  { id: "auto" as const, label: "On (auto)", desc: "Probe auto publishes ON/OFF" },
+                  { id: "off" as const, label: "Off", desc: "No auto probe — zero test completions" },
+                  { id: "notif_only" as const, label: "Notif only", desc: "STILL probes every 10m (burns credits); heal Online on OK; fail keeps catalog" },
+                  { id: "auto" as const, label: "On (auto)", desc: "Probes every 10m + auto publish ON/OFF" },
                 ]
               ).map((opt) => (
                 <button

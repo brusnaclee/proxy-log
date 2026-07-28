@@ -4,7 +4,7 @@ import {
   ChevronDown, ChevronUp, AlertTriangle,
 } from "lucide-react";
 import { api, type KeyInfo, type DeviceInfo, type MeResponse } from "@/lib/api";
-import { formatRelativeTime } from "@/lib/utils";
+import { formatRelativeTime, formatNumber } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n";
 
 function getDeviceIcon(os: string) {
@@ -68,7 +68,7 @@ function CopyInline({ text }: { text: string }) {
 }
 
 export default function KeysPage() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const [keys, setKeys] = useState<KeyInfo[]>([]);
   const [user, setUser] = useState<MeResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -276,6 +276,48 @@ export default function KeysPage() {
         </div>
       )}
 
+      {/* Account shared remaining (same pool for all keys) */}
+      {user?.limits && (user.keyCount || 0) > 0 && (
+        <div className="rounded-xl border border-border/50 bg-card/40 px-4 py-3 space-y-1.5">
+          <p className="text-xs font-medium text-foreground">
+            {lang === "id" ? "Sisa kuota akun (shared semua key)" : "Account remaining (shared across all keys)"}
+            {(user.keyCount || 0) > 1 ? ` · ${user.keyCount} keys` : ""}
+          </p>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground font-mono">
+            {user.limits.dailyInputTokenLimit > 0 && (
+              <span>
+                In {formatNumber(Math.max(0, user.limits.dailyInputTokenLimit - (user.usageToday?.promptTokens || 0)))}
+                {" / "}{formatNumber(user.limits.dailyInputTokenLimit)}
+              </span>
+            )}
+            {user.limits.dailyOutputTokenLimit > 0 && (
+              <span>
+                Out {formatNumber(Math.max(0, user.limits.dailyOutputTokenLimit - (user.usageToday?.completionTokens || 0)))}
+                {" / "}{formatNumber(user.limits.dailyOutputTokenLimit)}
+              </span>
+            )}
+            {user.limits.promptLimit > 0 && (
+              <span>
+                Prompts {Math.max(0, user.limits.promptLimit - (user.usageToday?.promptCount || 0))}
+                {" / "}{user.limits.promptLimit}
+                {user.limits.promptLimitWindow ? ` (${user.limits.promptLimitWindow})` : ""}
+              </span>
+            )}
+            {(user.limits.rateLimit || 0) > 0 && (
+              <span>
+                API {Math.max(0, (user.limits.rateLimit || 0) - (user.usageToday?.apiCallCount || 0))}
+                {" / "}{user.limits.rateLimit}
+              </span>
+            )}
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            {lang === "id"
+              ? "Angka di tiap key = kontribusi key itu hari ini. Limit & sisa = satu pool akun."
+              : "Per-key numbers = that key's contribution today. Limits & remaining = one account pool."}
+          </p>
+        </div>
+      )}
+
       {/* Newly created key */}
       {newlyCreatedKey && (
         <RevealBanner
@@ -402,7 +444,14 @@ export default function KeysPage() {
 
                 <div className="flex flex-wrap items-center gap-4 mt-3 text-xs text-muted-foreground">
                   <span>Created {formatRelativeTime(key.createdAt)}</span>
-                  <span>{key.requestsToday.toLocaleString()} requests today</span>
+                  <span>
+                    {key.requestsToday.toLocaleString()} prompts
+                    {typeof key.apiCallsToday === "number" ? ` · ${key.apiCallsToday.toLocaleString()} API` : ""}
+                    {typeof key.tokensToday === "number" && key.tokensToday > 0
+                      ? ` · ${formatNumber(key.tokensToday)} tok`
+                      : ""}{" "}
+                    today
+                  </span>
                 </div>
 
                 {/* Devices toggle */}

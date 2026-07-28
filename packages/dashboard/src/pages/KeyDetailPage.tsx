@@ -883,9 +883,25 @@ export API_TIMEOUT_MS=500000`}
         </Card>
       )}
 
-      {/* Live usage ? same semantics as client portal */}
+      {/* Live usage — account-scoped remaining; strip shows this key's contribution */}
       <div className="flex flex-col sm:flex-row sm:items-start gap-3">
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 space-y-2">
+          {(keyData.liveUsage?.accountKeyCount || 0) > 1 && (
+            <div className="rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">This key today</span>
+              {" · "}
+              {formatNumber(keyData.stats.today.requests)} prompts
+              {" · "}
+              {formatNumber(keyData.stats.today.promptTokens)} in
+              {" · "}
+              {formatNumber(keyData.stats.today.completionTokens)} out
+              {" · "}
+              {formatNumber(keyData.stats.today.tokens)} total
+              <span className="block mt-0.5 text-[10px]">
+                Bars below = shared account remaining ({keyData.liveUsage?.accountKeyCount} keys)
+              </span>
+            </div>
+          )}
           <LiveUsageCard live={keyData.liveUsage} />
         </div>
         <Button

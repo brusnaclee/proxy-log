@@ -358,6 +358,13 @@ export default function OverviewPage() {
     return (
       <div className="bg-card border border-border rounded-xl p-4 space-y-3">
         <h3 className="text-sm font-medium text-foreground">{t("Usage Today")}</h3>
+        {(user.keyCount || 0) > 1 && (
+          <p className="text-[10px] text-muted-foreground">
+            {lang === "id"
+              ? `Shared akun · ${user.keyCount} keys — sisa di bawah = pool bersama. Rincian per key di halaman Keys.`
+              : `Shared account · ${user.keyCount} keys — bars below = shared pool. Per-key contribution on Keys page.`}
+          </p>
+        )}
         {pools.length > 0 && (
           <div className="rounded-lg border border-sky-500/30 bg-sky-500/5 p-2.5 space-y-2 text-xs">
             <p className="font-medium text-foreground">{t("Dedicated model pools")}</p>

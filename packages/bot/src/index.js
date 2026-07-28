@@ -6340,6 +6340,27 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 		? `\n\n${data.inputExplanation}`
 		: '';
 
+	const keysToday = Array.isArray(data.keysToday) ? data.keysToday : [];
+	const perKeyBlock =
+		keysToday.length >= 2
+			? (lang === 'id'
+					? `\n\n**🔑 Per key hari ini** _(kontribusi; sisa = shared akun)_\n`
+					: `\n\n**🔑 Per key today** _(contribution; remaining = shared account)_\n`) +
+				keysToday
+					.map((k) => {
+						const mark = k.isPrimary ? ' ★' : '';
+						return `- \`${k.name}\`${mark}: **${Number(k.requests || 0).toLocaleString()}** prompts · ${formatTokens(k.tokens || 0)} tok`;
+					})
+					.join('\n')
+			: '';
+
+	const sharedNote =
+		(data.accountKeyCount || 0) > 1
+			? lang === 'id'
+				? `\n-# Shared akun · ${data.accountKeyCount} keys — angka Remaining di atas = pool bersama.`
+				: `\n-# Shared account · ${data.accountKeyCount} keys — Remaining above = shared pool.`
+			: '';
+
 	const limitSection = trialUser
 		? (lang === 'id'
 				? `**🎁 Trial Limits** _(semua model + auto)_\nPrompt: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\n` +
@@ -6348,8 +6369,10 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 				: `**🎁 Trial Limits** _(all models + auto)_\nPrompts: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\n` +
 					`-# ℹ️ 1 prompt = 1 turn; each hop = 1 API call. Fixed window from first request (cliff reset).\n\n` +
 					`**🔢 Token Limits (Trial)**\nDaily Total: ${dailyTokenStr}`) +
+			sharedNote +
 			dedicatedPoolsBlock +
-			inputExplainBlock
+			inputExplainBlock +
+			perKeyBlock
 		: data.dailyTokenBreakdown?.bypassIo
 			? (lang === 'id'
 					? `**🎯 Kuota**\nPrompt: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\n` +
@@ -6358,9 +6381,11 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 					: `**🎯 Quotas**\nPrompts: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\n` +
 						`-# ℹ️ Per-model prompts bypassed · Input/Output soft until Daily Total.\n\n` +
 						`**🔢 Token Limits**\nDaily Input: ${dailyInputStr}\nDaily Output: ${dailyOutputStr}\nDaily Total: ${dailyTokenStr}${stackNote}\nMonthly: ${monthlyTokenStr}`) +
+				sharedNote +
 				addonBlock +
 				dedicatedPoolsBlock +
-				inputExplainBlock
+				inputExplainBlock +
+				perKeyBlock
 			: (lang === 'id'
 					? `**🎯 Kuota**\nPrompt: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\nPer-Model:\n${modelLimitStr}\n` +
 						`-# ℹ️ 1 prompt = 1 turn; tiap hop = 1 API call. Window tetap (cliff reset).\n\n` +
@@ -6368,9 +6393,11 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 					: `**🎯 Quotas**\nPrompts: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\nPer-Model:\n${modelLimitStr}\n` +
 						`-# ℹ️ 1 prompt = 1 turn; each hop = 1 API call. Fixed window (cliff reset).\n\n` +
 						`**🔢 Token Limits**\nDaily Input: ${dailyInputStr}\nDaily Output: ${dailyOutputStr}\nDaily Total: ${dailyTokenStr}${stackNote}\nMonthly: ${monthlyTokenStr}`) +
+				sharedNote +
 				addonBlock +
 				dedicatedPoolsBlock +
-				inputExplainBlock;
+				inputExplainBlock +
+				perKeyBlock;
 
 	const tokenSaverHint =
 		lang === 'id'
@@ -7080,7 +7107,7 @@ client.once('clientReady', async () => {
 			for (const notif of notifications) {
 				if (!notif.discordUserId) continue;
 				try {
-					if (notif.type?.startsWith('trial_')) {
+					if (notif.type?.startsWith('trial_') || notif.type?.startsWith('portal_key_')) {
 						let dmText = '';
 						let title = 'Trial Notification';
 						let color = 0xf59e0b;
@@ -7157,15 +7184,31 @@ client.once('clientReady', async () => {
 								: `Admin sudah memperpanjang trial +${notif.days} hari. Baru berakhir: ${discordTime(notif.expiresAt, 'F')}`;
 						} else if (notif.type === 'portal_key_rotated') {
 							// Portal user self-served key rotation via /portal/api
-							title = '🔑 API Key Diperbarui';
+							title = '🔑 API Key Updated';
 							color = 0xf59e0b;
 							dmText =
-								`⚠️ **API key Anda telah diperbarui melalui User Portal.**\n\n` +
-								`Jika ini bukan Anda, hubungi admin segera.\n\n` +
-								`**Key baru:** \`${notif.newKey || ''}\`\n` +
-								`**Nama key:** ${notif.keyName || 'N/A'}\n` +
+								`⚠️ **Your API key was rotated via the User Portal.**\n\n` +
+								`If this wasn't you, contact admin immediately.\n\n` +
+								`**New key:** \`${notif.newKey || ''}\`\n` +
+								`**Key name:** ${notif.keyName || 'N/A'}\n` +
 								`**Endpoint:** \`${notif.endpoint || ''}\`\n\n` +
-								`Pastikan perbarui API key di aplikasi/IDE Anda.`;
+								`Update the key in your IDE/app.`;
+						} else if (notif.type === 'portal_key_created') {
+							title = '🔑 New API Key Created';
+							color = 0x57f287;
+							dmText =
+								`A new API key was created via the User Portal.\n\n` +
+								`**Key name:** ${notif.keyName || 'N/A'}\n` +
+								`**New key:** \`${notif.newKey || ''}\`\n` +
+								`**Endpoint:** \`${notif.endpoint || ''}\`\n\n` +
+								`Limits are **shared** across all your keys (same Discord account pool).`;
+						} else if (notif.type === 'portal_key_deleted') {
+							title = '🗑️ API Key Deleted';
+							color = 0xff6b6b;
+							dmText =
+								`An API key was deleted via the User Portal.\n\n` +
+								`**Key name:** ${notif.keyName || 'N/A'}\n\n` +
+								`Remaining keys still share the same account limits.`;
 						}
 						if (dmText)
 							await sendDMToUser(notif.discordUserId, title, dmText, color);
