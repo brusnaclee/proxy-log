@@ -46,7 +46,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 function clientHintPayload() {
   try {
-    const ua = navigator.userAgentData as
+    const ua = (navigator as any).userAgentData as
       | { platform?: string; mobile?: boolean }
       | undefined;
     return {
