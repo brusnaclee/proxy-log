@@ -6401,8 +6401,8 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 
 	const tokenSaverHint =
 		lang === 'id'
-			? `\n\n💡 **Token Saver** — RTK + Groupy Compact + Batch hemat input & hop. Tombol **Token Saver** di bawah, atau portal: ${PORTAL_DASHBOARD_URL}`
-			: `\n\n💡 **Token Saver** — RTK + Groupy Compact + Batch saves input & hops. Use the **Token Saver** button below, or portal: ${PORTAL_DASHBOARD_URL}`;
+			? `\n\n💡 **Token Saver** — **Groupy** (Anti-Waste default ON + Compact + Batch) & klasik (RTK/Headroom/Caveman/Ponytail). Tombol **Token Saver** di bawah, atau portal: ${PORTAL_DASHBOARD_URL}`
+			: `\n\n💡 **Token Saver** — **Groupy** (Anti-Waste default ON + Compact + Batch) & classic (RTK/Headroom/Caveman/Ponytail). Use the **Token Saver** button below, or portal: ${PORTAL_DASHBOARD_URL}`;
 
 	const embed = new EmbedBuilder()
 		.setTitle(`📊 Usage: ${displayName}`)
@@ -6436,26 +6436,118 @@ function fmtTriState(override, globalOn) {
 	return globalOn ? '⚪ Default (ON)' : '⚪ Default (OFF)';
 }
 
-// Discord caps messages at 5 action rows. RTK/Groupy Compact/Batch (the three
-// features most worth tweaking, all default ON) get their own select dropdown;
-// Headroom/Caveman/Ponytail (niche, default OFF) share one row of cycle buttons.
-const TS_CYCLE_FEATURES = ['headroom', 'caveman', 'ponytail'];
-const TS_CYCLE_LABELS = { headroom: 'Headroom', caveman: 'Caveman', ponytail: 'Ponytail' };
+// Discord caps messages at 5 action rows. Panel shows both groups in the embed;
+// components focus one feature at a time (enable + intensity). Aggressive picks
+// confirm via ephemeral ts_cycle:confirm:* buttons before applying.
+const TS_FEATURES_ALL = [
+	'antiWaste',
+	'groupyCompact',
+	'batch',
+	'rtk',
+	'headroom',
+	'caveman',
+	'ponytail',
+];
+const TS_GROUPY_FEATURES = ['antiWaste', 'groupyCompact', 'batch'];
+const TS_CLASSIC_FEATURES = ['rtk', 'headroom', 'caveman', 'ponytail'];
+const TS_CYCLE_FEATURES = ['headroom', 'caveman', 'ponytail']; // legacy enable cycle
+const TS_LABELS = {
+	antiWaste: 'Anti-Waste',
+	groupyCompact: 'Groupy Compact',
+	batch: 'Soft Batch',
+	rtk: 'RTK',
+	headroom: 'Headroom',
+	caveman: 'Caveman',
+	ponytail: 'Ponytail',
+};
+const TS_DEFAULT_ON = new Set(['antiWaste', 'groupyCompact', 'batch', 'rtk']);
 
 function tsGlobalOn(feature, g) {
-	if (feature === 'groupyCompact') return g.groupyCompact !== false;
-	if (feature === 'batch') return g.batch !== false;
+	if (g[feature] === undefined || g[feature] === null) return TS_DEFAULT_ON.has(feature);
 	return !!g[feature];
 }
 
-function buildTokenSaverPanel(data, headerNote) {
+function tsDefaultLevel(feature) {
+	if (feature === 'caveman') return 2;
+	if (feature === 'ponytail') return 'lite';
+	return 'balanced';
+}
+
+function tsIntensityNeedsConfirm(feature, level) {
+	if (feature === 'caveman') return Number(level) >= 4;
+	if (feature === 'ponytail') return String(level) === 'ultra';
+	return String(level) === 'aggressive';
+}
+
+function fmtIntensity(feature, g, o) {
+	const modeKey = `${feature}Mode`;
+	const levelKey = `${feature}Level`;
+	const customKey = `${feature}Custom`;
+	const hasOverride =
+		o[modeKey] != null || o[levelKey] != null || o[customKey] != null;
+	const mode = o[modeKey] != null ? o[modeKey] : g[modeKey] || 'preset';
+	if (mode === 'custom') {
+		return hasOverride ? '🟠 Custom → portal' : '⚪ Default (custom → portal)';
+	}
+	const level =
+		o[levelKey] != null
+			? o[levelKey]
+			: g[levelKey] != null
+				? g[levelKey]
+				: tsDefaultLevel(feature);
+	return hasOverride ? `🟢 ${level}` : `⚪ Default (${level})`;
+}
+
+function tsIntensityOptions(feature) {
+	const label = TS_LABELS[feature] || feature;
+	const opts = [
+		{
+			label: `${label}: Default`,
+			value: 'default',
+			description: 'Ikuti intensity global admin',
+		},
+	];
+	if (feature === 'caveman') {
+		for (let n = 1; n <= 5; n++) {
+			opts.push({
+				label: `${label}: ${n}`,
+				value: String(n),
+				description: n >= 4 ? 'Agresif — perlu konfirmasi' : `Level ${n}`,
+			});
+		}
+		return opts;
+	}
+	if (feature === 'ponytail') {
+		for (const lv of ['lite', 'full', 'ultra']) {
+			opts.push({
+				label: `${label}: ${lv}`,
+				value: lv,
+				description: lv === 'ultra' ? 'Agresif — perlu konfirmasi' : lv,
+			});
+		}
+		return opts;
+	}
+	for (const lv of ['lite', 'balanced', 'aggressive']) {
+		const desc =
+			feature === 'antiWaste' && lv === 'aggressive'
+				? 'Agresif — custom penuh di portal'
+				: lv === 'aggressive'
+					? 'Agresif — perlu konfirmasi'
+					: lv;
+		opts.push({ label: `${label}: ${lv}`, value: lv, description: desc });
+	}
+	return opts;
+}
+
+function buildTokenSaverPanel(data, headerNote, focus = 'antiWaste') {
 	const g = data.global || {};
 	const o = data.overrides || {};
+	const focusFeature = TS_FEATURES_ALL.includes(focus) ? focus : 'antiWaste';
 	const blurbs = {
-		rtk: {
-			effect: 'Perkecil dump tool besar → input lebih ringan.',
-			example: 'git status 50KB → ~2KB head+tail.',
-			risk: 'Tengah dump panjang bisa hilang.',
+		antiWaste: {
+			effect: 'Stop loop baca tool yang sama (nudge → dedupe → short-circuit).',
+			example: 'Cline baca file sama 8× → short-circuit ramah (balanced).',
+			risk: 'Terlalu agresif bisa stop re-read yang sah. Custom penuh → portal.',
 		},
 		groupyCompact: {
 			effect: 'Stub tool lama; yang baru tetap penuh.',
@@ -6463,9 +6555,14 @@ function buildTokenSaverPanel(data, headerNote) {
 			risk: 'Kadang minta re-read file di-stub.',
 		},
 		batch: {
-			effect: 'Beberapa read/edit sekaligus → lebih sedikit hop.',
-			example: '5 file: 5 hit → ideal 1 hit parallel.',
-			risk: 'Hanya nudge; langkah sequential tidak dihemat.',
+			effect: 'Nudge parallel tool_calls → lebih sedikit hop.',
+			example: '5 file: idealnya 1 hit bersamaan.',
+			risk: 'Hanya nudge; strength tinggi bisa memaksa batch berlebihan.',
+		},
+		rtk: {
+			effect: 'Perkecil dump tool besar → input lebih ringan.',
+			example: 'git status 50KB → ~2KB head+tail.',
+			risk: 'Tengah dump panjang bisa hilang.',
 		},
 		headroom: {
 			effect: 'Compress history via service eksternal.',
@@ -6473,74 +6570,140 @@ function buildTokenSaverPanel(data, headerNote) {
 			risk: 'Tanpa URL = no-op; depend pihak ketiga.',
 		},
 		caveman: {
-			effect: 'Jawaban lebih singkat → hemat output.',
+			effect: 'Jawaban lebih singkat → hemat output (level 1–5).',
 			example: 'Paragraf → 2–3 kalimat.',
-			risk: 'Gaya kasar; ganggu agent yang butuh narasi.',
+			risk: 'Gaya kasar; level ≥4 agresif.',
 		},
 		ponytail: {
-			effect: 'Skip basa-basi IDE agent.',
+			effect: 'Skip basa-basi IDE agent (lite/full/ultra).',
 			example: 'Skip “I’ll read…” → langsung tool call.',
-			risk: 'Kurang status/narasi di chat.',
+			risk: 'Kurang status/narasi; ultra paling gelap.',
 		},
 	};
-	const field = (key, title) => {
+	const field = (key) => {
 		const b = blurbs[key];
+		const title = TS_LABELS[key];
 		const state = fmtTriState(o[key], tsGlobalOn(key, g));
+		const intensity = fmtIntensity(key, g, o);
+		const mark = key === focusFeature ? '▶ ' : '';
 		return {
-			name: `${title} · ${state.replace(/\*\*/g, '')}`,
+			name: `${mark}${title} · ${state.replace(/\*\*/g, '')} · ${intensity}`,
 			value: `**Efek:** ${b.effect}\n**Contoh:** ${b.example}\n**Risiko:** ${b.risk}`,
 			inline: false,
 		};
 	};
+	const focusLabel = TS_LABELS[focusFeature];
 	const embed = new EmbedBuilder()
 		.setTitle('💾 Token Saver')
 		.setDescription(
 			(headerNote ? `${headerNote}\n\n` : '') +
-				'Pipeline: **RTK → Groupy Compact → Headroom → Caveman → Ponytail → Batch**.\n' +
-				'Tri-state: **Default** (ikut admin) / **ON** / **OFF**. Detail lengkap: portal Settings.\n' +
+				'Pipeline: **RTK → Groupy Compact → Headroom → Caveman → Ponytail → Batch** (+ Anti-Waste parallel).\n' +
+				'**Groupy Token Saver** = Anti-Waste (default ON) + Compact + Batch. **Token Saver** = RTK / Headroom / Caveman / Ponytail.\n' +
+				'Enable: **Default** / **ON** / **OFF**. Intensity: preset (atau stepped). Custom angka penuh → User Portal.\n' +
 				`Portal: ${PORTAL_DASHBOARD_URL}/settings`,
 		)
 		.addFields(
-			field('rtk', 'RTK'),
-			field('groupyCompact', 'Groupy Compact'),
-			field('batch', 'Batch'),
-			field('headroom', 'Headroom'),
-			field('caveman', 'Caveman'),
-			field('ponytail', 'Ponytail'),
+			{
+				name: '🟣 Groupy Token Saver',
+				value: 'Anti-Waste · Groupy Compact · Soft Batch — default ON',
+				inline: false,
+			},
+			...TS_GROUPY_FEATURES.map(field),
+			{
+				name: '🔵 Token Saver',
+				value: 'RTK (default ON) · Headroom · Caveman · Ponytail',
+				inline: false,
+			},
+			...TS_CLASSIC_FEATURES.map(field),
 		)
 		.setColor(headerNote ? 0x57f287 : 0x5865f2)
+		.setFooter({ text: `Fokus: ${focusLabel} · Custom numbers → ${PORTAL_DASHBOARD_URL}/settings` })
 		.setTimestamp();
 
-	const mkSelect = (feature, label) =>
-		new ActionRowBuilder().addComponents(
-			new StringSelectMenuBuilder()
-				.setCustomId(`ts_set:${feature}`)
-				.setPlaceholder(`${label}: pilih Default / ON / OFF`)
-				.addOptions(
-					{ label: `${label}: Default`, value: 'default', description: 'Ikuti setting global admin' },
-					{ label: `${label}: ON`, value: 'on' },
-					{ label: `${label}: OFF`, value: 'off' },
-				),
-		);
+	const focusRow = new ActionRowBuilder().addComponents(
+		new StringSelectMenuBuilder()
+			.setCustomId('ts_set:focus')
+			.setPlaceholder(`Fokus fitur: ${focusLabel}`)
+			.addOptions(
+				TS_FEATURES_ALL.map((f) => ({
+					label: `${TS_GROUPY_FEATURES.includes(f) ? 'Groupy' : 'Classic'}: ${TS_LABELS[f]}`,
+					value: f,
+					default: f === focusFeature,
+					description: TS_DEFAULT_ON.has(f) ? 'Default ON' : 'Default OFF',
+				})),
+			),
+	);
 
-	const cycleRow = new ActionRowBuilder().addComponents(
-		TS_CYCLE_FEATURES.map((feature) => {
-			const state = o[feature] === true ? 'on' : o[feature] === false ? 'off' : 'default';
-			return new ButtonBuilder()
-				.setCustomId(`ts_cycle:${feature}`)
-				.setLabel(`${TS_CYCLE_LABELS[feature]}: ${state === 'default' ? 'Default' : state === 'on' ? 'ON' : 'OFF'}`)
-				.setStyle(state === 'on' ? ButtonStyle.Success : state === 'off' ? ButtonStyle.Danger : ButtonStyle.Secondary);
-		}),
+	const enableRow = new ActionRowBuilder().addComponents(
+		new StringSelectMenuBuilder()
+			.setCustomId(`ts_set:${focusFeature}`)
+			.setPlaceholder(`${focusLabel}: Default / ON / OFF`)
+			.addOptions(
+				{ label: `${focusLabel}: Default`, value: 'default', description: 'Ikuti setting global admin' },
+				{ label: `${focusLabel}: ON`, value: 'on' },
+				{ label: `${focusLabel}: OFF`, value: 'off' },
+			),
+	);
+
+	const levelRow = new ActionRowBuilder().addComponents(
+		new StringSelectMenuBuilder()
+			.setCustomId(`ts_set:level:${focusFeature}`)
+			.setPlaceholder(
+				focusFeature === 'antiWaste'
+					? `${focusLabel}: intensity (custom penuh → portal)`
+					: `${focusLabel}: pilih intensity`,
+			)
+			.addOptions(tsIntensityOptions(focusFeature)),
+	);
+
+	const linkRow = new ActionRowBuilder().addComponents(
+		new ButtonBuilder()
+			.setStyle(ButtonStyle.Link)
+			.setLabel('User Portal — custom numbers')
+			.setURL(`${PORTAL_DASHBOARD_URL}/settings`),
 	);
 
 	return {
 		embeds: [embed],
-		components: [
-			mkSelect('rtk', 'RTK'),
-			mkSelect('groupyCompact', 'Groupy Compact'),
-			mkSelect('batch', 'Batch'),
-			cycleRow,
-		],
+		components: [focusRow, enableRow, levelRow, linkRow],
+	};
+}
+
+async function tsApplyIntensity(discordUserId, feature, level) {
+	if (level === 'default' || level == null) {
+		await proxyInternal(`/admin/internal/token-saver/${discordUserId}`, 'PUT', {
+			[`${feature}Mode`]: null,
+			[`${feature}Level`]: null,
+		});
+		return;
+	}
+	await proxyInternal(`/admin/internal/token-saver/${discordUserId}`, 'PUT', {
+		[`${feature}Mode`]: 'preset',
+		[`${feature}Level`]: feature === 'caveman' ? Number(level) : level,
+	});
+}
+
+/** Pending aggressive intensity — Confirm/Cancel replace action rows on the main panel. */
+function buildTokenSaverConfirmPanel(data, feature, level) {
+	const label = TS_LABELS[feature] || feature;
+	const base = buildTokenSaverPanel(
+		data,
+		`⚠️ **${label} → \`${level}\`** agresif — bisa ganggu agent loop / partial re-read.\nConfirm untuk terapkan, atau Cancel. Custom angka → portal.`,
+		feature,
+	);
+	const confirmRow = new ActionRowBuilder().addComponents(
+		new ButtonBuilder()
+			.setCustomId(`ts_cycle:confirm:${feature}:${level}`)
+			.setLabel('Confirm')
+			.setStyle(ButtonStyle.Danger),
+		new ButtonBuilder()
+			.setCustomId(`ts_cycle:cancel:${feature}`)
+			.setLabel('Cancel')
+			.setStyle(ButtonStyle.Secondary),
+	);
+	return {
+		embeds: base.embeds,
+		components: [confirmRow],
 	};
 }
 
@@ -6562,12 +6725,62 @@ async function handleTokenSaverPanel(interaction) {
 
 async function handleTokenSaverSelect(interaction) {
 	await interaction.deferUpdate();
-	const feature = interaction.customId.replace(/^ts_set:/, '');
+	const rest = interaction.customId.replace(/^ts_set:/, '');
 	const raw = interaction.values?.[0] || 'default';
-	const value = raw === 'on' ? true : raw === 'off' ? false : null;
 	const discordUserId = interaction.user.id;
 
-	if (!['rtk', 'groupyCompact', 'batch', 'headroom', 'caveman', 'ponytail'].includes(feature)) {
+	// Focus picker — rebuild panel for selected feature (no API write)
+	if (rest === 'focus') {
+		if (!TS_FEATURES_ALL.includes(raw)) {
+			await interaction.followUp({ content: '❌ Fitur tidak dikenal.', ephemeral: true });
+			return;
+		}
+		try {
+			const data = await proxyInternal(`/admin/internal/token-saver/${discordUserId}`);
+			await interaction.editReply(buildTokenSaverPanel(data, null, raw));
+		} catch (err) {
+			await interaction.followUp({
+				content: `❌ Gagal load: ${err.message || err}`,
+				ephemeral: true,
+			});
+		}
+		return;
+	}
+
+	// Intensity: ts_set:level:{feature}
+	if (rest.startsWith('level:')) {
+		const feature = rest.slice('level:'.length);
+		if (!TS_FEATURES_ALL.includes(feature)) {
+			await interaction.followUp({ content: '❌ Fitur tidak dikenal.', ephemeral: true });
+			return;
+		}
+		try {
+			const data = await proxyInternal(`/admin/internal/token-saver/${discordUserId}`);
+			if (raw !== 'default' && tsIntensityNeedsConfirm(feature, raw)) {
+				await interaction.editReply(buildTokenSaverConfirmPanel(data, feature, raw));
+				return;
+			}
+			await tsApplyIntensity(discordUserId, feature, raw);
+			const refreshed = await proxyInternal(`/admin/internal/token-saver/${discordUserId}`);
+			const note =
+				raw === 'default'
+					? `Intensity **${TS_LABELS[feature]}** → Default`
+					: `Intensity **${TS_LABELS[feature]}** → \`${raw}\``;
+			await interaction.editReply(buildTokenSaverPanel(refreshed, note, feature));
+		} catch (err) {
+			await interaction.followUp({
+				content: `❌ Gagal simpan intensity: ${err.message || err}`,
+				ephemeral: true,
+			});
+		}
+		return;
+	}
+
+	// Enable: ts_set:{feature}
+	const feature = rest;
+	const value = raw === 'on' ? true : raw === 'off' ? false : null;
+
+	if (!TS_FEATURES_ALL.includes(feature)) {
 		await interaction.followUp({ content: '❌ Fitur tidak dikenal.', ephemeral: true });
 		return;
 	}
@@ -6579,7 +6792,11 @@ async function handleTokenSaverSelect(interaction) {
 		const data = await proxyInternal(`/admin/internal/token-saver/${discordUserId}`);
 		const globalOn = tsGlobalOn(feature, data.global || {});
 		await interaction.editReply(
-			buildTokenSaverPanel(data, `Updated **${feature}** → ${fmtTriState(value, globalOn)}`),
+			buildTokenSaverPanel(
+				data,
+				`Updated **${TS_LABELS[feature]}** → ${fmtTriState(value, globalOn)}`,
+				feature,
+			),
 		);
 	} catch (err) {
 		await interaction.followUp({
@@ -6591,9 +6808,69 @@ async function handleTokenSaverSelect(interaction) {
 
 async function handleTokenSaverCycle(interaction) {
 	await interaction.deferUpdate();
-	const feature = interaction.customId.replace(/^ts_cycle:/, '');
+	const rest = interaction.customId.replace(/^ts_cycle:/, '');
 	const discordUserId = interaction.user.id;
 
+	// Aggressive intensity confirm / cancel (ephemeral buttons on main panel)
+	if (rest.startsWith('cancel:')) {
+		const feature = rest.slice('cancel:'.length);
+		const focus = TS_FEATURES_ALL.includes(feature) ? feature : 'antiWaste';
+		try {
+			const data = await proxyInternal(`/admin/internal/token-saver/${discordUserId}`);
+			await interaction.editReply(
+				buildTokenSaverPanel(data, 'Dibatalkan — intensity tidak diubah.', focus),
+			);
+		} catch (err) {
+			await interaction.followUp({
+				content: `❌ ${err.message || err}`,
+				ephemeral: true,
+			});
+		}
+		return;
+	}
+	if (rest === 'cancel') {
+		try {
+			const data = await proxyInternal(`/admin/internal/token-saver/${discordUserId}`);
+			await interaction.editReply(
+				buildTokenSaverPanel(data, 'Dibatalkan — intensity tidak diubah.'),
+			);
+		} catch (err) {
+			await interaction.editReply({
+				content: `Dibatalkan. (${err.message || err})`,
+				components: [],
+			});
+		}
+		return;
+	}
+	if (rest.startsWith('confirm:')) {
+		const parts = rest.slice('confirm:'.length).split(':');
+		const feature = parts[0];
+		const level = parts.slice(1).join(':');
+		if (!TS_FEATURES_ALL.includes(feature) || !level) {
+			await interaction.followUp({ content: '❌ Konfirmasi tidak valid.', ephemeral: true });
+			return;
+		}
+		try {
+			await tsApplyIntensity(discordUserId, feature, level);
+			const data = await proxyInternal(`/admin/internal/token-saver/${discordUserId}`);
+			await interaction.editReply(
+				buildTokenSaverPanel(
+					data,
+					`Intensity **${TS_LABELS[feature]}** → \`${level}\` diterapkan.`,
+					feature,
+				),
+			);
+		} catch (err) {
+			await interaction.followUp({
+				content: `❌ Gagal simpan: ${err.message || err}`,
+				ephemeral: true,
+			});
+		}
+		return;
+	}
+
+	// Legacy enable cycle: default → ON → OFF → default (headroom/caveman/ponytail)
+	const feature = rest;
 	if (!TS_CYCLE_FEATURES.includes(feature)) {
 		await interaction.followUp({ content: '❌ Fitur tidak dikenal.', ephemeral: true });
 		return;
@@ -6602,8 +6879,8 @@ async function handleTokenSaverCycle(interaction) {
 	try {
 		const current = await proxyInternal(`/admin/internal/token-saver/${discordUserId}`);
 		const o = current.overrides || {};
-		// Cycle: default (null) → ON (true) → OFF (false) → default
-		const nextValue = o[feature] === null || o[feature] === undefined ? true : o[feature] === true ? false : null;
+		const nextValue =
+			o[feature] === null || o[feature] === undefined ? true : o[feature] === true ? false : null;
 
 		await proxyInternal(`/admin/internal/token-saver/${discordUserId}`, 'PUT', {
 			[feature]: nextValue,
@@ -6611,7 +6888,11 @@ async function handleTokenSaverCycle(interaction) {
 		const data = await proxyInternal(`/admin/internal/token-saver/${discordUserId}`);
 		const globalOn = tsGlobalOn(feature, data.global || {});
 		await interaction.editReply(
-			buildTokenSaverPanel(data, `Updated **${feature}** → ${fmtTriState(nextValue, globalOn)}`),
+			buildTokenSaverPanel(
+				data,
+				`Updated **${TS_LABELS[feature] || feature}** → ${fmtTriState(nextValue, globalOn)}`,
+				feature,
+			),
 		);
 	} catch (err) {
 		await interaction.followUp({

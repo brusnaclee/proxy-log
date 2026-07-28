@@ -64,18 +64,27 @@ export function isAntiWasteEnabled(
   return true;
 }
 
-function buildShortCircuitHint(toolName?: string, target?: string): string {
+function buildShortCircuitHint(
+  toolName?: string,
+  target?: string,
+  lang: "en" | "id" = "en",
+): string {
   const tool = toolName || "tool";
-  const tgt = target ? `(${target})` : "";
+  const tgt = target ? ` (${target})` : "";
+  if (lang === "id") {
+    return (
+      `Sudah punya hasil ${tool}${tgt} di context. Lanjut langkah berbeda (edit/test) — jangan baca ulang range yang sama.`
+    );
+  }
   return (
-    `Already have result of ${tool}${tgt}; continue with next distinct step — do not re-read.`
+    `Already have this ${tool}${tgt} result in context. Continue with a different step (edit/test) — do not re-read the same range.`
   );
 }
 
 /** Pick a safe agent tool from the request tools list, if any. */
 export function resolveShortCircuitAgentTool(
   tools: unknown,
-  opts?: { toolName?: string; target?: string },
+  opts?: { toolName?: string; target?: string; lang?: "en" | "id" },
 ): ShortCircuitAgentTool | null {
   if (!Array.isArray(tools) || tools.length === 0) return null;
 
@@ -100,7 +109,7 @@ export function resolveShortCircuitAgentTool(
   }
   if (!picked) return null;
 
-  const hint = buildShortCircuitHint(opts?.toolName, opts?.target);
+  const hint = buildShortCircuitHint(opts?.toolName, opts?.target, opts?.lang || "en");
   const lower = picked.toLowerCase();
   let args: Record<string, unknown>;
   if (lower === "attempt_completion") {
@@ -114,12 +123,22 @@ export function resolveShortCircuitAgentTool(
   return { name: picked, arguments: args };
 }
 
+export type AntiWasteThresholdOverride = {
+  nudgeAt: number;
+  dedupeAt: number;
+  shortCircuitAt: number;
+};
+
 export function applyAntiWaste(opts: {
   requestBody: any;
   sessionKey: string;
   isNewPrompt: boolean;
   normalizedIde: string;
   headers?: Headers | Record<string, string | undefined> | null;
+  /** When false, skip even if env/header would allow (Token Saver toggle). */
+  featureEnabled?: boolean;
+  thresholds?: AntiWasteThresholdOverride | null;
+  lang?: "en" | "id";
 }): AntiWasteApplyResult {
   const flags: string[] = [];
   const empty: AntiWasteApplyResult = {
@@ -135,6 +154,7 @@ export function applyAntiWaste(opts: {
     flags,
   };
 
+  if (opts.featureEnabled === false) return empty;
   if (!isAntiWasteEnabled(opts.headers)) return empty;
   if (!opts.requestBody || !Array.isArray(opts.requestBody.messages)) {
     return { ...empty, enabled: true };
@@ -145,6 +165,9 @@ export function applyAntiWaste(opts: {
   }
 
   const profile = resolveAntiWasteProfile(opts.normalizedIde);
+  const nudgeAt = opts.thresholds?.nudgeAt ?? profile.nudgeAt;
+  const dedupeAt = opts.thresholds?.dedupeAt ?? profile.dedupeAt;
+  const shortCircuitAt = opts.thresholds?.shortCircuitAt ?? profile.shortCircuitAt;
   const signature = extractLatestToolSignature(opts.requestBody);
   const tracked = recordToolSignature(opts.sessionKey, signature);
 
@@ -157,7 +180,7 @@ export function applyAntiWaste(opts: {
   if (
     signature &&
     isNoisyToolSignature(signature) &&
-    tracked.seenCount >= profile.dedupeAt
+    tracked.seenCount >= dedupeAt
   ) {
     const r = stubLatestDuplicateToolDump(opts.requestBody, signature);
     deduped = r.applied;
@@ -168,7 +191,7 @@ export function applyAntiWaste(opts: {
   if (
     signature &&
     isNoisyToolSignature(signature) &&
-    tracked.consecutiveIdentical >= profile.nudgeAt &&
+    tracked.consecutiveIdentical >= nudgeAt &&
     !tracked.nudged
   ) {
     nudged = injectAntiWasteNudge(opts.requestBody, profile.nudgeText);
@@ -181,11 +204,12 @@ export function applyAntiWaste(opts: {
   if (
     signature &&
     isNoisyToolSignature(signature) &&
-    tracked.consecutiveIdentical >= profile.shortCircuitAt
+    tracked.consecutiveIdentical >= shortCircuitAt
   ) {
     shortCircuitTool = resolveShortCircuitAgentTool(opts.requestBody.tools, {
       toolName: signature.toolName,
       target: signature.target,
+      lang: opts.lang || "en",
     });
     if (shortCircuitTool) {
       shortCircuit = true;

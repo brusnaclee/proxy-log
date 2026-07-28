@@ -784,28 +784,13 @@ portal.get("/me", async (c) => {
     })(),
     perModelPromptsBypassedByAddon: quotaStack.bypassPerModelPrompts,
     pendingNotifications,
-    tokenSaver: {
-      global: {
-        rtk: config?.tokenSaverRtkEnabled ?? true,
-        rtkMaxChars: config?.tokenSaverRtkMaxChars ?? 2000,
-        headroom: config?.tokenSaverHeadroomEnabled ?? false,
-        caveman: config?.tokenSaverCavemanEnabled ?? false,
-        cavemanLevel: config?.tokenSaverCavemanLevel ?? 2,
-        ponytail: config?.tokenSaverPonytailEnabled ?? false,
-        ponytailLevel: config?.tokenSaverPonytailLevel || "lite",
-        groupyCompact: config?.tokenSaverGroupyCompactEnabled ?? true,
-        groupyCompactLevel: config?.tokenSaverGroupyCompactLevel || "balanced",
-        batch: (config as any)?.tokenSaverBatchEnabled ?? true,
-      },
-      overrides: {
-        rtk: settings?.tokenSaverRtkOverride ?? null,
-        headroom: settings?.tokenSaverHeadroomOverride ?? null,
-        caveman: settings?.tokenSaverCavemanOverride ?? null,
-        ponytail: settings?.tokenSaverPonytailOverride ?? null,
-        groupyCompact: settings?.tokenSaverGroupyCompactOverride ?? null,
-        batch: (settings as any)?.tokenSaverBatchOverride ?? null,
-      },
-    },
+    tokenSaver: await (async () => {
+      const { packGlobalTokenSaver, packUserTokenSaverOverrides } = await import("../../utils/token-saver-api.js");
+      return {
+        global: packGlobalTokenSaver(config),
+        overrides: packUserTokenSaverOverrides(settings),
+      };
+    })(),
   });
 });
 
@@ -1868,84 +1853,48 @@ portal.get("/settings/token-saver", async (c) => {
     db.select().from(userPortalSettings).where(eq(userPortalSettings.discordUserId, discordUserId)).then(r => r[0] ?? null),
     db.select().from(adminConfig).limit(1).then(r => r[0] ?? null),
   ]);
+  const { packGlobalTokenSaver, packUserTokenSaverOverrides } = await import("../../utils/token-saver-api.js");
   return c.json({
-    global: {
-      rtk: config?.tokenSaverRtkEnabled ?? true,
-      rtkMaxChars: config?.tokenSaverRtkMaxChars ?? 2000,
-      headroom: config?.tokenSaverHeadroomEnabled ?? false,
-      caveman: config?.tokenSaverCavemanEnabled ?? false,
-      cavemanLevel: config?.tokenSaverCavemanLevel ?? 2,
-      ponytail: config?.tokenSaverPonytailEnabled ?? false,
-      ponytailLevel: config?.tokenSaverPonytailLevel || "lite",
-      groupyCompact: config?.tokenSaverGroupyCompactEnabled ?? true,
-      groupyCompactLevel: config?.tokenSaverGroupyCompactLevel || "balanced",
-      batch: (config as any)?.tokenSaverBatchEnabled ?? true,
-    },
-    overrides: {
-      rtk: settings?.tokenSaverRtkOverride ?? null,
-      headroom: settings?.tokenSaverHeadroomOverride ?? null,
-      caveman: settings?.tokenSaverCavemanOverride ?? null,
-      ponytail: settings?.tokenSaverPonytailOverride ?? null,
-      groupyCompact: settings?.tokenSaverGroupyCompactOverride ?? null,
-      batch: (settings as any)?.tokenSaverBatchOverride ?? null,
-    },
+    global: packGlobalTokenSaver(config),
+    overrides: packUserTokenSaverOverrides(settings),
   });
 });
 
 portal.put("/settings/token-saver", async (c) => {
   const discordUserId = getPortalDiscordUserId(c)!;
-  const body = await c.req.json<{
-    rtk?: boolean | null;
-    headroom?: boolean | null;
-    caveman?: boolean | null;
-    ponytail?: boolean | null;
-    groupyCompact?: boolean | null;
-    batch?: boolean | null;
-  }>();
+  const body = await c.req.json<any>();
+  const { applyUserTokenSaverUpdates, packUserTokenSaverOverrides } = await import("../../utils/token-saver-api.js");
 
-  const normalize = (v: unknown): boolean | null => {
-    if (v === null || v === undefined || v === "default") return null;
-    if (v === true || v === "on" || v === "true") return true;
-    if (v === false || v === "off" || v === "false") return false;
-    return null;
-  };
+  const updates: Record<string, unknown> = { updatedAt: new Date() };
+  applyUserTokenSaverUpdates(body, updates);
 
-  const updates: Record<string, any> = { updatedAt: new Date() };
-  if (body.rtk !== undefined) updates.tokenSaverRtkOverride = normalize(body.rtk);
-  if (body.headroom !== undefined) updates.tokenSaverHeadroomOverride = normalize(body.headroom);
-  if (body.caveman !== undefined) updates.tokenSaverCavemanOverride = normalize(body.caveman);
-  if (body.ponytail !== undefined) updates.tokenSaverPonytailOverride = normalize(body.ponytail);
-  if (body.groupyCompact !== undefined) {
-    updates.tokenSaverGroupyCompactOverride = normalize(body.groupyCompact);
-  }
-  if (body.batch !== undefined) updates.tokenSaverBatchOverride = normalize(body.batch);
+  const [existing] = await db
+    .select()
+    .from(userPortalSettings)
+    .where(eq(userPortalSettings.discordUserId, discordUserId))
+    .limit(1);
 
-  const settings = (await db.select().from(userPortalSettings).where(eq(userPortalSettings.discordUserId, discordUserId)))[0];
-  if (settings) {
-    await db.update(userPortalSettings).set(updates).where(eq(userPortalSettings.discordUserId, discordUserId));
+  if (existing) {
+    await db
+      .update(userPortalSettings)
+      .set(updates as any)
+      .where(eq(userPortalSettings.discordUserId, discordUserId));
   } else {
     await db.insert(userPortalSettings).values({
       discordUserId,
-      tokenSaverRtkOverride: updates.tokenSaverRtkOverride ?? null,
-      tokenSaverHeadroomOverride: updates.tokenSaverHeadroomOverride ?? null,
-      tokenSaverCavemanOverride: updates.tokenSaverCavemanOverride ?? null,
-      tokenSaverPonytailOverride: updates.tokenSaverPonytailOverride ?? null,
-      tokenSaverGroupyCompactOverride: updates.tokenSaverGroupyCompactOverride ?? null,
-      tokenSaverBatchOverride: updates.tokenSaverBatchOverride ?? null,
+      ...(updates as any),
     });
   }
 
-  const refreshed = (await db.select().from(userPortalSettings).where(eq(userPortalSettings.discordUserId, discordUserId)))[0];
+  const [refreshed] = await db
+    .select()
+    .from(userPortalSettings)
+    .where(eq(userPortalSettings.discordUserId, discordUserId))
+    .limit(1);
+
   return c.json({
     success: true,
-    overrides: {
-      rtk: refreshed?.tokenSaverRtkOverride ?? null,
-      headroom: refreshed?.tokenSaverHeadroomOverride ?? null,
-      caveman: refreshed?.tokenSaverCavemanOverride ?? null,
-      ponytail: refreshed?.tokenSaverPonytailOverride ?? null,
-      groupyCompact: refreshed?.tokenSaverGroupyCompactOverride ?? null,
-      batch: refreshed?.tokenSaverBatchOverride ?? null,
-    },
+    overrides: packUserTokenSaverOverrides(refreshed),
   });
 });
 

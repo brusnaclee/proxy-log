@@ -1803,28 +1803,11 @@ internal.get("/internal/token-saver/:discordUserId", async (c) => {
     .where(eq(userPortalSettings.discordUserId, discordUserId))
     .limit(1);
 
+  const { packGlobalTokenSaver, packUserTokenSaverOverrides } = await import("../../utils/token-saver-api.js");
   return c.json({
     discordUserId,
-    global: {
-      rtk: config?.tokenSaverRtkEnabled ?? true,
-      rtkMaxChars: config?.tokenSaverRtkMaxChars ?? 2000,
-      headroom: config?.tokenSaverHeadroomEnabled ?? false,
-      caveman: config?.tokenSaverCavemanEnabled ?? false,
-      cavemanLevel: config?.tokenSaverCavemanLevel ?? 2,
-      ponytail: config?.tokenSaverPonytailEnabled ?? false,
-      ponytailLevel: config?.tokenSaverPonytailLevel || "lite",
-      groupyCompact: config?.tokenSaverGroupyCompactEnabled ?? true,
-      groupyCompactLevel: config?.tokenSaverGroupyCompactLevel || "balanced",
-      batch: (config as any)?.tokenSaverBatchEnabled ?? true,
-    },
-    overrides: {
-      rtk: settings?.tokenSaverRtkOverride ?? null,
-      headroom: settings?.tokenSaverHeadroomOverride ?? null,
-      caveman: settings?.tokenSaverCavemanOverride ?? null,
-      ponytail: settings?.tokenSaverPonytailOverride ?? null,
-      groupyCompact: settings?.tokenSaverGroupyCompactOverride ?? null,
-      batch: (settings as any)?.tokenSaverBatchOverride ?? null,
-    },
+    global: packGlobalTokenSaver(config),
+    overrides: packUserTokenSaverOverrides(settings),
   });
 });
 
@@ -1834,33 +1817,11 @@ internal.put("/internal/token-saver/:discordUserId", async (c) => {
   const discordUserId = c.req.param("discordUserId");
   if (!discordUserId) return c.json({ error: "discordUserId required" }, 400);
 
-  const body = await c.req.json<{
-    rtk?: boolean | null;
-    headroom?: boolean | null;
-    caveman?: boolean | null;
-    ponytail?: boolean | null;
-    groupyCompact?: boolean | null;
-    batch?: boolean | null;
-  }>().catch(() => ({} as any));
+  const body = await c.req.json<any>().catch(() => ({} as any));
+  const { applyUserTokenSaverUpdates, packUserTokenSaverOverrides } = await import("../../utils/token-saver-api.js");
 
-  const normalize = (v: unknown): boolean | null => {
-    if (v === null || v === undefined || v === "default") return null;
-    if (v === true || v === "true" || v === "on") return true;
-    if (v === false || v === "false" || v === "off") return false;
-    return null;
-  };
-
-  const updates: Partial<typeof userPortalSettings.$inferInsert> = {
-    updatedAt: new Date(),
-  };
-  if (body.rtk !== undefined) updates.tokenSaverRtkOverride = normalize(body.rtk);
-  if (body.headroom !== undefined) updates.tokenSaverHeadroomOverride = normalize(body.headroom);
-  if (body.caveman !== undefined) updates.tokenSaverCavemanOverride = normalize(body.caveman);
-  if (body.ponytail !== undefined) updates.tokenSaverPonytailOverride = normalize(body.ponytail);
-  if (body.groupyCompact !== undefined) {
-    updates.tokenSaverGroupyCompactOverride = normalize(body.groupyCompact);
-  }
-  if (body.batch !== undefined) updates.tokenSaverBatchOverride = normalize(body.batch);
+  const updates: Record<string, unknown> = { updatedAt: new Date() };
+  applyUserTokenSaverUpdates(body, updates);
 
   const [existing] = await db
     .select()
@@ -1871,17 +1832,12 @@ internal.put("/internal/token-saver/:discordUserId", async (c) => {
   if (existing) {
     await db
       .update(userPortalSettings)
-      .set(updates)
+      .set(updates as any)
       .where(eq(userPortalSettings.discordUserId, discordUserId));
   } else {
     await db.insert(userPortalSettings).values({
       discordUserId,
-      tokenSaverRtkOverride: updates.tokenSaverRtkOverride ?? null,
-      tokenSaverHeadroomOverride: updates.tokenSaverHeadroomOverride ?? null,
-      tokenSaverCavemanOverride: updates.tokenSaverCavemanOverride ?? null,
-      tokenSaverPonytailOverride: updates.tokenSaverPonytailOverride ?? null,
-      tokenSaverGroupyCompactOverride: updates.tokenSaverGroupyCompactOverride ?? null,
-      tokenSaverBatchOverride: updates.tokenSaverBatchOverride ?? null,
+      ...(updates as any),
     });
   }
 
@@ -1893,14 +1849,7 @@ internal.put("/internal/token-saver/:discordUserId", async (c) => {
 
   return c.json({
     success: true,
-    overrides: {
-      rtk: refreshed?.tokenSaverRtkOverride ?? null,
-      headroom: refreshed?.tokenSaverHeadroomOverride ?? null,
-      caveman: refreshed?.tokenSaverCavemanOverride ?? null,
-      ponytail: refreshed?.tokenSaverPonytailOverride ?? null,
-      groupyCompact: refreshed?.tokenSaverGroupyCompactOverride ?? null,
-      batch: refreshed?.tokenSaverBatchOverride ?? null,
-    },
+    overrides: packUserTokenSaverOverrides(refreshed),
   });
 });
 

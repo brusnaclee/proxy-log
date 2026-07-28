@@ -10,6 +10,10 @@ import { normalizeTokenInputMode, normalizeTokenLimitWeightPercent, normalizeTok
 import { destroyAllAuthSessions } from "../../utils/auth-sessions.js";
 import { destroySession } from "../../middleware/session.js";
 import { authSessions } from "../../db/schema.js";
+import {
+  packGlobalTokenSaver,
+  applyAdminTokenSaverUpdates,
+} from "../../utils/token-saver-api.js";
 
 const settings = new Hono();
 
@@ -41,17 +45,42 @@ settings.get("/settings/global", async (c) => {
         return [];
       }
     })(),
-    tokenSaverRtkEnabled: config.tokenSaverRtkEnabled ?? true,
-    tokenSaverRtkMaxChars: config.tokenSaverRtkMaxChars ?? 2000,
-    tokenSaverHeadroomEnabled: config.tokenSaverHeadroomEnabled ?? false,
-    tokenSaverHeadroomUrl: config.tokenSaverHeadroomUrl || "",
-    tokenSaverCavemanEnabled: config.tokenSaverCavemanEnabled ?? false,
-    tokenSaverCavemanLevel: config.tokenSaverCavemanLevel ?? 2,
-    tokenSaverPonytailEnabled: config.tokenSaverPonytailEnabled ?? false,
-    tokenSaverPonytailLevel: config.tokenSaverPonytailLevel || "lite",
-    tokenSaverGroupyCompactEnabled: config.tokenSaverGroupyCompactEnabled ?? true,
-    tokenSaverGroupyCompactLevel: config.tokenSaverGroupyCompactLevel || "balanced",
-    tokenSaverBatchEnabled: (config as any).tokenSaverBatchEnabled ?? true,
+    ...(() => {
+      const ts = packGlobalTokenSaver(config);
+      return {
+        tokenSaverRtkEnabled: ts.rtk,
+        tokenSaverRtkMaxChars: ts.rtkMaxChars,
+        tokenSaverRtkMode: ts.rtkMode,
+        tokenSaverRtkLevel: ts.rtkLevel,
+        tokenSaverRtkCustom: ts.rtkCustom,
+        tokenSaverHeadroomEnabled: ts.headroom,
+        tokenSaverHeadroomUrl: ts.headroomUrl,
+        tokenSaverHeadroomMode: ts.headroomMode,
+        tokenSaverHeadroomLevel: ts.headroomLevel,
+        tokenSaverHeadroomCustom: ts.headroomCustom,
+        tokenSaverCavemanEnabled: ts.caveman,
+        tokenSaverCavemanLevel: ts.cavemanLevel,
+        tokenSaverCavemanMode: ts.cavemanMode,
+        tokenSaverCavemanCustom: ts.cavemanCustom,
+        tokenSaverPonytailEnabled: ts.ponytail,
+        tokenSaverPonytailLevel: ts.ponytailLevel,
+        tokenSaverPonytailMode: ts.ponytailMode,
+        tokenSaverPonytailCustom: ts.ponytailCustom,
+        tokenSaverGroupyCompactEnabled: ts.groupyCompact,
+        tokenSaverGroupyCompactLevel: ts.groupyCompactLevel,
+        tokenSaverGroupyCompactMode: ts.groupyCompactMode,
+        tokenSaverGroupyCompactCustom: ts.groupyCompactCustom,
+        tokenSaverBatchEnabled: ts.batch,
+        tokenSaverBatchMode: ts.batchMode,
+        tokenSaverBatchLevel: ts.batchLevel,
+        tokenSaverBatchCustom: ts.batchCustom,
+        tokenSaverAntiWasteEnabled: ts.antiWaste,
+        tokenSaverAntiWasteMode: ts.antiWasteMode,
+        tokenSaverAntiWasteLevel: ts.antiWasteLevel,
+        tokenSaverAntiWasteCustom: ts.antiWasteCustom,
+        tokenSaver: ts,
+      };
+    })(),
   });
 });
 
@@ -104,31 +133,7 @@ settings.put("/settings/global", async (c) => {
         : [];
     updates.addonRequiredModels = JSON.stringify(list);
   }
-  if (body.tokenSaverRtkEnabled !== undefined) updates.tokenSaverRtkEnabled = !!body.tokenSaverRtkEnabled;
-  if (body.tokenSaverRtkMaxChars !== undefined) updates.tokenSaverRtkMaxChars = Math.max(200, Number(body.tokenSaverRtkMaxChars) || 2000);
-  if (body.tokenSaverHeadroomEnabled !== undefined) updates.tokenSaverHeadroomEnabled = !!body.tokenSaverHeadroomEnabled;
-  if (body.tokenSaverHeadroomUrl !== undefined) updates.tokenSaverHeadroomUrl = String(body.tokenSaverHeadroomUrl || "");
-  if (body.tokenSaverCavemanEnabled !== undefined) updates.tokenSaverCavemanEnabled = !!body.tokenSaverCavemanEnabled;
-  if (body.tokenSaverCavemanLevel !== undefined) {
-    updates.tokenSaverCavemanLevel = Math.max(1, Math.min(5, Number(body.tokenSaverCavemanLevel) || 2));
-  }
-  if (body.tokenSaverPonytailEnabled !== undefined) updates.tokenSaverPonytailEnabled = !!body.tokenSaverPonytailEnabled;
-  if (body.tokenSaverPonytailLevel !== undefined) {
-    const lvl = String(body.tokenSaverPonytailLevel || "lite").toLowerCase();
-    updates.tokenSaverPonytailLevel = ["lite", "full", "ultra"].includes(lvl) ? lvl : "lite";
-  }
-  if (body.tokenSaverGroupyCompactEnabled !== undefined) {
-    updates.tokenSaverGroupyCompactEnabled = !!body.tokenSaverGroupyCompactEnabled;
-  }
-  if (body.tokenSaverGroupyCompactLevel !== undefined) {
-    const lvl = String(body.tokenSaverGroupyCompactLevel || "balanced").toLowerCase();
-    updates.tokenSaverGroupyCompactLevel = ["lite", "balanced", "aggressive"].includes(lvl)
-      ? lvl
-      : "balanced";
-  }
-  if (body.tokenSaverBatchEnabled !== undefined) {
-    updates.tokenSaverBatchEnabled = !!body.tokenSaverBatchEnabled;
-  }
+  applyAdminTokenSaverUpdates(body, updates);
 
   await db.update(adminConfig).set(updates).where(eq(adminConfig.id, config.id));
   configCache.invalidate("admin_config"); // invalidate cached config

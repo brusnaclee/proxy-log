@@ -17,31 +17,7 @@ import { AdminAuditLogPanel } from "@/components/AdminAuditLogPanel";
 import { useNotify } from "@/components/Notify";
 import { globalSettings, request, type ModelLimitEntry } from "@/lib/api";
 import { Switch } from "@/components/ui/switch";
-import { TOKEN_SAVER_INTRO, TOKEN_SAVER_PIPELINE, getTokenSaverFeature } from "@/lib/token-saver-copy";
-
-function TsFeatureHelp({ id }: { id: "rtk" | "groupyCompact" | "headroom" | "caveman" | "ponytail" | "batch" }) {
-  const f = getTokenSaverFeature(id);
-  return (
-    <div className="pr-4 space-y-1">
-      <Label className="font-medium">{f.label}</Label>
-      <p className="text-xs text-foreground/80">
-        <span className="font-medium">Effect: </span>{f.effectShort}
-      </p>
-      <p className="text-[11px] text-muted-foreground leading-relaxed">{f.effectLong}</p>
-      <p className="text-[11px] text-muted-foreground">
-        <span className="font-medium text-foreground/70">Example: </span>{f.exampleShort}
-        {" — "}{f.exampleLong}
-      </p>
-      <p className="text-[11px] text-amber-600/90 dark:text-amber-400/80">
-        <span className="font-medium">Risk: </span>{f.riskShort}
-        {" — "}{f.riskLong}
-      </p>
-      <p className="text-[10px] text-muted-foreground/70">
-        Recommended default: {f.defaultOn ? "ON" : "OFF"}
-      </p>
-    </div>
-  );
-}
+import { TokenSaverAdminPanel } from "@/components/TokenSaverAdminPanel";
 
 function bareModelId(id: string): string {
   const s = String(id || "");
@@ -86,15 +62,34 @@ export default function SettingsPage() {
   const [tokenSaverRtkEnabled, setTokenSaverRtkEnabled] = useState(true);
   const [tokenInputMode, setTokenInputMode] = useState<"per_turn_peak" | "full" | "billable">("per_turn_peak");
   const [tokenSaverRtkMaxChars, setTokenSaverRtkMaxChars] = useState(2000);
+  const [tokenSaverRtkMode, setTokenSaverRtkMode] = useState("preset");
+  const [tokenSaverRtkLevel, setTokenSaverRtkLevel] = useState("balanced");
+  const [tokenSaverRtkCustom, setTokenSaverRtkCustom] = useState("{}");
   const [tokenSaverHeadroomEnabled, setTokenSaverHeadroomEnabled] = useState(false);
   const [tokenSaverHeadroomUrl, setTokenSaverHeadroomUrl] = useState("");
+  const [tokenSaverHeadroomMode, setTokenSaverHeadroomMode] = useState("preset");
+  const [tokenSaverHeadroomLevel, setTokenSaverHeadroomLevel] = useState("balanced");
+  const [tokenSaverHeadroomCustom, setTokenSaverHeadroomCustom] = useState("{}");
   const [tokenSaverCavemanEnabled, setTokenSaverCavemanEnabled] = useState(false);
   const [tokenSaverCavemanLevel, setTokenSaverCavemanLevel] = useState(2);
+  const [tokenSaverCavemanMode, setTokenSaverCavemanMode] = useState("preset");
+  const [tokenSaverCavemanCustom, setTokenSaverCavemanCustom] = useState("{}");
   const [tokenSaverPonytailEnabled, setTokenSaverPonytailEnabled] = useState(false);
   const [tokenSaverPonytailLevel, setTokenSaverPonytailLevel] = useState("lite");
+  const [tokenSaverPonytailMode, setTokenSaverPonytailMode] = useState("preset");
+  const [tokenSaverPonytailCustom, setTokenSaverPonytailCustom] = useState("{}");
   const [tokenSaverGroupyCompactEnabled, setTokenSaverGroupyCompactEnabled] = useState(true);
   const [tokenSaverGroupyCompactLevel, setTokenSaverGroupyCompactLevel] = useState("balanced");
+  const [tokenSaverGroupyCompactMode, setTokenSaverGroupyCompactMode] = useState("preset");
+  const [tokenSaverGroupyCompactCustom, setTokenSaverGroupyCompactCustom] = useState("{}");
   const [tokenSaverBatchEnabled, setTokenSaverBatchEnabled] = useState(true);
+  const [tokenSaverBatchMode, setTokenSaverBatchMode] = useState("preset");
+  const [tokenSaverBatchLevel, setTokenSaverBatchLevel] = useState("balanced");
+  const [tokenSaverBatchCustom, setTokenSaverBatchCustom] = useState("{}");
+  const [tokenSaverAntiWasteEnabled, setTokenSaverAntiWasteEnabled] = useState(true);
+  const [tokenSaverAntiWasteMode, setTokenSaverAntiWasteMode] = useState("preset");
+  const [tokenSaverAntiWasteLevel, setTokenSaverAntiWasteLevel] = useState("balanced");
+  const [tokenSaverAntiWasteCustom, setTokenSaverAntiWasteCustom] = useState("{}");
   const [globalModelLimits, setGlobalModelLimits] = useState<ModelLimitEntry[]>([]);
   const [modelCatalog, setModelCatalog] = useState<string[]>([]);
   const [newModelOverride, setNewModelOverride] = useState("");
@@ -232,15 +227,34 @@ export default function SettingsPage() {
       );
       setTokenSaverRtkEnabled(g.tokenSaverRtkEnabled ?? true);
       setTokenSaverRtkMaxChars(g.tokenSaverRtkMaxChars ?? 2000);
+      setTokenSaverRtkMode(g.tokenSaverRtkMode || "preset");
+      setTokenSaverRtkLevel(g.tokenSaverRtkLevel || "balanced");
+      setTokenSaverRtkCustom(g.tokenSaverRtkCustom || "{}");
       setTokenSaverHeadroomEnabled(g.tokenSaverHeadroomEnabled ?? false);
       setTokenSaverHeadroomUrl(g.tokenSaverHeadroomUrl || "");
+      setTokenSaverHeadroomMode(g.tokenSaverHeadroomMode || "preset");
+      setTokenSaverHeadroomLevel(g.tokenSaverHeadroomLevel || "balanced");
+      setTokenSaverHeadroomCustom(g.tokenSaverHeadroomCustom || "{}");
       setTokenSaverCavemanEnabled(g.tokenSaverCavemanEnabled ?? false);
       setTokenSaverCavemanLevel(g.tokenSaverCavemanLevel ?? 2);
+      setTokenSaverCavemanMode(g.tokenSaverCavemanMode || "preset");
+      setTokenSaverCavemanCustom(g.tokenSaverCavemanCustom || "{}");
       setTokenSaverPonytailEnabled(g.tokenSaverPonytailEnabled ?? false);
       setTokenSaverPonytailLevel(g.tokenSaverPonytailLevel || "lite");
+      setTokenSaverPonytailMode(g.tokenSaverPonytailMode || "preset");
+      setTokenSaverPonytailCustom(g.tokenSaverPonytailCustom || "{}");
       setTokenSaverGroupyCompactEnabled(g.tokenSaverGroupyCompactEnabled ?? true);
       setTokenSaverGroupyCompactLevel(g.tokenSaverGroupyCompactLevel || "balanced");
+      setTokenSaverGroupyCompactMode(g.tokenSaverGroupyCompactMode || "preset");
+      setTokenSaverGroupyCompactCustom(g.tokenSaverGroupyCompactCustom || "{}");
       setTokenSaverBatchEnabled(g.tokenSaverBatchEnabled ?? true);
+      setTokenSaverBatchMode(g.tokenSaverBatchMode || "preset");
+      setTokenSaverBatchLevel(g.tokenSaverBatchLevel || "balanced");
+      setTokenSaverBatchCustom(g.tokenSaverBatchCustom || "{}");
+      setTokenSaverAntiWasteEnabled(g.tokenSaverAntiWasteEnabled ?? true);
+      setTokenSaverAntiWasteMode(g.tokenSaverAntiWasteMode || "preset");
+      setTokenSaverAntiWasteLevel(g.tokenSaverAntiWasteLevel || "balanced");
+      setTokenSaverAntiWasteCustom(g.tokenSaverAntiWasteCustom || "{}");
     } catch {}
 
     try {
@@ -345,11 +359,17 @@ export default function SettingsPage() {
         tokenLimitWeightCustom,
         addonRequiredModels,
         tokenSaverRtkEnabled, tokenSaverRtkMaxChars,
+        tokenSaverRtkMode, tokenSaverRtkLevel, tokenSaverRtkCustom,
         tokenSaverHeadroomEnabled, tokenSaverHeadroomUrl,
+        tokenSaverHeadroomMode, tokenSaverHeadroomLevel, tokenSaverHeadroomCustom,
         tokenSaverCavemanEnabled, tokenSaverCavemanLevel,
+        tokenSaverCavemanMode, tokenSaverCavemanCustom,
         tokenSaverPonytailEnabled, tokenSaverPonytailLevel,
+        tokenSaverPonytailMode, tokenSaverPonytailCustom,
         tokenSaverGroupyCompactEnabled, tokenSaverGroupyCompactLevel,
-        tokenSaverBatchEnabled,
+        tokenSaverGroupyCompactMode, tokenSaverGroupyCompactCustom,
+        tokenSaverBatchEnabled, tokenSaverBatchMode, tokenSaverBatchLevel, tokenSaverBatchCustom,
+        tokenSaverAntiWasteEnabled, tokenSaverAntiWasteMode, tokenSaverAntiWasteLevel, tokenSaverAntiWasteCustom,
       });
       await request("/settings/bot", {
         method: "POST",
@@ -438,110 +458,84 @@ export default function SettingsPage() {
       <ProvidersManager />
 
       <div className="space-y-8 max-w-2xl">
-      {/* Token Saver (9router-style) */}
+      {/* Token Saver — Groupy + classic */}
       <Card className="border-border/50">
         <CardHeader>
           <CardTitle className="text-base">Token Saver</CardTitle>
-          <CardDescription className="space-y-2">
-            <p>{TOKEN_SAVER_INTRO.long}</p>
-            <p className="text-xs">
-              Pipeline: <strong>{TOKEN_SAVER_PIPELINE}</strong>. See{" "}
-              <code className="text-xs">docs/features/token_saver.md</code>.
-            </p>
+          <CardDescription className="text-xs">
+            See <code className="text-xs">docs/features/token_saver.md</code>
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
-            <TsFeatureHelp id="rtk" />
-            <Switch checked={tokenSaverRtkEnabled} onCheckedChange={setTokenSaverRtkEnabled} />
-          </div>
-          {tokenSaverRtkEnabled && (
-            <div>
-              <Label>RTK max chars per tool result</Label>
-              <p className="text-[11px] text-muted-foreground mb-1">Budget after which middle is truncated (min 200). Default 2000.</p>
-              <Input
-                type="number"
-                value={tokenSaverRtkMaxChars}
-                onChange={(e) => setTokenSaverRtkMaxChars(parseInt(e.target.value) || 2000)}
-                className="mt-1 max-w-xs"
-              />
-            </div>
-          )}
-          <div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
-            <TsFeatureHelp id="groupyCompact" />
-            <Switch
-              checked={tokenSaverGroupyCompactEnabled}
-              onCheckedChange={setTokenSaverGroupyCompactEnabled}
-            />
-          </div>
-          {tokenSaverGroupyCompactEnabled && (
-            <div>
-              <Label>Groupy Compact level</Label>
-              <select
-                value={tokenSaverGroupyCompactLevel}
-                onChange={(e) => setTokenSaverGroupyCompactLevel(e.target.value)}
-                className="mt-1 flex h-9 w-full max-w-xs rounded-md border border-input bg-transparent px-3 py-1 text-sm"
-              >
-                <option value="lite">lite — keep last 4 tools; stub only if &gt;4k chars</option>
-                <option value="balanced">balanced — keep last 3; stub if &gt;1.5k (default)</option>
-                <option value="aggressive">aggressive — keep last 2; also trim old assistant prose</option>
-              </select>
-            </div>
-          )}
-          <div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
-            <TsFeatureHelp id="headroom" />
-            <Switch checked={tokenSaverHeadroomEnabled} onCheckedChange={setTokenSaverHeadroomEnabled} />
-          </div>
-          {tokenSaverHeadroomEnabled && (
-            <div>
-              <Label>Headroom URL</Label>
-              <Input
-                value={tokenSaverHeadroomUrl}
-                onChange={(e) => setTokenSaverHeadroomUrl(e.target.value)}
-                placeholder="https://headroom.example/v1/compress"
-                className="mt-1"
-              />
-            </div>
-          )}
-          <div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
-            <TsFeatureHelp id="caveman" />
-            <Switch checked={tokenSaverCavemanEnabled} onCheckedChange={setTokenSaverCavemanEnabled} />
-          </div>
-          {tokenSaverCavemanEnabled && (
-            <div>
-              <Label>Caveman level (1–5)</Label>
-              <Input
-                type="number"
-                min={1}
-                max={5}
-                value={tokenSaverCavemanLevel}
-                onChange={(e) => setTokenSaverCavemanLevel(Math.max(1, Math.min(5, parseInt(e.target.value) || 2)))}
-                className="mt-1 max-w-xs"
-              />
-            </div>
-          )}
-          <div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
-            <TsFeatureHelp id="ponytail" />
-            <Switch checked={tokenSaverPonytailEnabled} onCheckedChange={setTokenSaverPonytailEnabled} />
-          </div>
-          {tokenSaverPonytailEnabled && (
-            <div>
-              <Label>Ponytail level</Label>
-              <select
-                value={tokenSaverPonytailLevel}
-                onChange={(e) => setTokenSaverPonytailLevel(e.target.value)}
-                className="mt-1 flex h-9 w-full max-w-xs rounded-md border border-input bg-transparent px-3 py-1 text-sm"
-              >
-                <option value="lite">lite — skip acks / plan echo</option>
-                <option value="full">full — + no post-tool summaries</option>
-                <option value="ultra">ultra — + never restate file contents</option>
-              </select>
-            </div>
-          )}
-          <div className="flex items-center justify-between p-3 border border-border/50 rounded-lg">
-            <TsFeatureHelp id="batch" />
-            <Switch checked={tokenSaverBatchEnabled} onCheckedChange={setTokenSaverBatchEnabled} />
-          </div>
+        <CardContent>
+          <TokenSaverAdminPanel
+            state={{
+              tokenSaverAntiWasteEnabled,
+              tokenSaverAntiWasteMode,
+              tokenSaverAntiWasteLevel,
+              tokenSaverAntiWasteCustom,
+              tokenSaverGroupyCompactEnabled,
+              tokenSaverGroupyCompactMode,
+              tokenSaverGroupyCompactLevel,
+              tokenSaverGroupyCompactCustom,
+              tokenSaverBatchEnabled,
+              tokenSaverBatchMode,
+              tokenSaverBatchLevel,
+              tokenSaverBatchCustom,
+              tokenSaverRtkEnabled,
+              tokenSaverRtkMode,
+              tokenSaverRtkLevel,
+              tokenSaverRtkCustom,
+              tokenSaverRtkMaxChars,
+              tokenSaverHeadroomEnabled,
+              tokenSaverHeadroomUrl,
+              tokenSaverHeadroomMode,
+              tokenSaverHeadroomLevel,
+              tokenSaverHeadroomCustom,
+              tokenSaverCavemanEnabled,
+              tokenSaverCavemanMode,
+              tokenSaverCavemanLevel,
+              tokenSaverCavemanCustom,
+              tokenSaverPonytailEnabled,
+              tokenSaverPonytailMode,
+              tokenSaverPonytailLevel,
+              tokenSaverPonytailCustom,
+            }}
+            set={(key, value) => {
+              const map: Record<string, (v: any) => void> = {
+                tokenSaverAntiWasteEnabled: setTokenSaverAntiWasteEnabled,
+                tokenSaverAntiWasteMode: setTokenSaverAntiWasteMode,
+                tokenSaverAntiWasteLevel: setTokenSaverAntiWasteLevel,
+                tokenSaverAntiWasteCustom: setTokenSaverAntiWasteCustom,
+                tokenSaverGroupyCompactEnabled: setTokenSaverGroupyCompactEnabled,
+                tokenSaverGroupyCompactMode: setTokenSaverGroupyCompactMode,
+                tokenSaverGroupyCompactLevel: setTokenSaverGroupyCompactLevel,
+                tokenSaverGroupyCompactCustom: setTokenSaverGroupyCompactCustom,
+                tokenSaverBatchEnabled: setTokenSaverBatchEnabled,
+                tokenSaverBatchMode: setTokenSaverBatchMode,
+                tokenSaverBatchLevel: setTokenSaverBatchLevel,
+                tokenSaverBatchCustom: setTokenSaverBatchCustom,
+                tokenSaverRtkEnabled: setTokenSaverRtkEnabled,
+                tokenSaverRtkMode: setTokenSaverRtkMode,
+                tokenSaverRtkLevel: setTokenSaverRtkLevel,
+                tokenSaverRtkCustom: setTokenSaverRtkCustom,
+                tokenSaverRtkMaxChars: setTokenSaverRtkMaxChars,
+                tokenSaverHeadroomEnabled: setTokenSaverHeadroomEnabled,
+                tokenSaverHeadroomUrl: setTokenSaverHeadroomUrl,
+                tokenSaverHeadroomMode: setTokenSaverHeadroomMode,
+                tokenSaverHeadroomLevel: setTokenSaverHeadroomLevel,
+                tokenSaverHeadroomCustom: setTokenSaverHeadroomCustom,
+                tokenSaverCavemanEnabled: setTokenSaverCavemanEnabled,
+                tokenSaverCavemanMode: setTokenSaverCavemanMode,
+                tokenSaverCavemanLevel: setTokenSaverCavemanLevel,
+                tokenSaverCavemanCustom: setTokenSaverCavemanCustom,
+                tokenSaverPonytailEnabled: setTokenSaverPonytailEnabled,
+                tokenSaverPonytailMode: setTokenSaverPonytailMode,
+                tokenSaverPonytailLevel: setTokenSaverPonytailLevel,
+                tokenSaverPonytailCustom: setTokenSaverPonytailCustom,
+              };
+              map[key]?.(value);
+            }}
+          />
         </CardContent>
       </Card>
 

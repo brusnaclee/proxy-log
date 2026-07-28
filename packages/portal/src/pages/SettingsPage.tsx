@@ -8,7 +8,12 @@ import { useI18n, type Lang } from "@/lib/i18n";
 import { badgeClass, badgeLabel, resolveDisplayBadges, formatAddonExpiry } from "@/lib/account-badge";
 import { formatRelativeTime } from "@/lib/utils";
 import { useNotify } from "@/components/Notify";
-import { TOKEN_SAVER_FEATURES, TOKEN_SAVER_INTRO } from "@/lib/token-saver-copy";
+import {
+  TOKEN_SAVER_FEATURES,
+  TOKEN_SAVER_INTRO,
+  GROUPY_TOKEN_SAVER_LABEL,
+  CLASSIC_TOKEN_SAVER_LABEL,
+} from "@/lib/token-saver-copy";
 import { ActiveSessionsPanel } from "@/components/ActiveSessionsPanel";
 
 const REALTIME_KEY = "portal_realtime_enabled";
@@ -44,6 +49,8 @@ export default function SettingsPage() {
   const [tsCaveman, setTsCaveman] = useState<boolean | null>(null);
   const [tsPonytail, setTsPonytail] = useState<boolean | null>(null);
   const [tsBatch, setTsBatch] = useState<boolean | null>(null);
+  const [tsAntiWaste, setTsAntiWaste] = useState<boolean | null>(null);
+  const [tsIntensity, setTsIntensity] = useState<Record<string, string | null>>({});
   const [tsSaving, setTsSaving] = useState(false);
   const [tsSuccess, setTsSuccess] = useState("");
   const [tsError, setTsError] = useState("");
@@ -62,12 +69,23 @@ export default function SettingsPage() {
         if (data.webhookUrl) setWebhookUrl(data.webhookUrl);
         if (data.tokenSaver) {
           setTsGlobal(data.tokenSaver.global);
-          setTsRtk(data.tokenSaver.overrides?.rtk ?? null);
-          setTsGroupyCompact(data.tokenSaver.overrides?.groupyCompact ?? null);
-          setTsHeadroom(data.tokenSaver.overrides?.headroom ?? null);
-          setTsCaveman(data.tokenSaver.overrides?.caveman ?? null);
-          setTsPonytail(data.tokenSaver.overrides?.ponytail ?? null);
-          setTsBatch(data.tokenSaver.overrides?.batch ?? null);
+          const o = data.tokenSaver.overrides || {};
+          setTsRtk(o.rtk ?? null);
+          setTsGroupyCompact(o.groupyCompact ?? null);
+          setTsHeadroom(o.headroom ?? null);
+          setTsCaveman(o.caveman ?? null);
+          setTsPonytail(o.ponytail ?? null);
+          setTsBatch(o.batch ?? null);
+          setTsAntiWaste(o.antiWaste ?? null);
+          setTsIntensity({
+            antiWaste: o.antiWasteLevel ?? null,
+            groupyCompact: o.groupyCompactLevel ?? null,
+            batch: o.batchLevel ?? null,
+            rtk: o.rtkLevel ?? null,
+            headroom: o.headroomLevel ?? null,
+            caveman: o.cavemanLevel != null ? String(o.cavemanLevel) : null,
+            ponytail: o.ponytailLevel ?? null,
+          });
         }
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load settings"))
@@ -154,22 +172,93 @@ export default function SettingsPage() {
 
   const handleSaveTokenSaver = async () => {
     setTsError(""); setTsSuccess("");
+    const { intensityNeedsConfirm } = await import("@/lib/token-saver-copy");
+    const aggressive: string[] = [];
+    for (const [feat, level] of Object.entries(tsIntensity)) {
+      if (level && intensityNeedsConfirm(feat as any, "preset", level, null)) {
+        aggressive.push(feat);
+      }
+    }
+    if (aggressive.length) {
+      const ok = await notify.confirm({
+        title: lang === "id" ? "Intensity agresif?" : "Aggressive intensity?",
+        message:
+          lang === "id"
+            ? `Fitur agresif: ${aggressive.join(", ")}. Risiko: agent bisa di-stop lebih cepat / stub lebih banyak. Lanjut?`
+            : `Aggressive features: ${aggressive.join(", ")}. Risk: earlier short-circuits / heavier stubs. Continue?`,
+        confirmLabel: lang === "id" ? "Lanjut" : "Continue",
+      });
+      if (!ok) return;
+    }
     setTsSaving(true);
     try {
-      const result = await api.settings.setTokenSaver({
+      const payload: any = {
         rtk: tsRtk,
         groupyCompact: tsGroupyCompact,
         headroom: tsHeadroom,
         caveman: tsCaveman,
         ponytail: tsPonytail,
         batch: tsBatch,
-      });
-      setTsRtk(result.overrides.rtk);
-      setTsGroupyCompact(result.overrides.groupyCompact ?? null);
-      setTsHeadroom(result.overrides.headroom);
-      setTsCaveman(result.overrides.caveman);
-      setTsPonytail(result.overrides.ponytail);
-      setTsBatch(result.overrides.batch ?? null);
+        antiWaste: tsAntiWaste,
+      };
+      if (tsIntensity.antiWaste != null) {
+        payload.antiWasteMode = "preset";
+        payload.antiWasteLevel = tsIntensity.antiWaste;
+      } else {
+        payload.antiWasteMode = null;
+        payload.antiWasteLevel = null;
+      }
+      if (tsIntensity.groupyCompact != null) {
+        payload.groupyCompactMode = "preset";
+        payload.groupyCompactLevel = tsIntensity.groupyCompact;
+      } else {
+        payload.groupyCompactMode = null;
+        payload.groupyCompactLevel = null;
+      }
+      if (tsIntensity.batch != null) {
+        payload.batchMode = "preset";
+        payload.batchLevel = tsIntensity.batch;
+      } else {
+        payload.batchMode = null;
+        payload.batchLevel = null;
+      }
+      if (tsIntensity.rtk != null) {
+        payload.rtkMode = "preset";
+        payload.rtkLevel = tsIntensity.rtk;
+      } else {
+        payload.rtkMode = null;
+        payload.rtkLevel = null;
+      }
+      if (tsIntensity.headroom != null) {
+        payload.headroomMode = "preset";
+        payload.headroomLevel = tsIntensity.headroom;
+      } else {
+        payload.headroomMode = null;
+        payload.headroomLevel = null;
+      }
+      if (tsIntensity.caveman != null) {
+        payload.cavemanMode = "preset";
+        payload.cavemanLevel = Number(tsIntensity.caveman);
+      } else {
+        payload.cavemanMode = null;
+        payload.cavemanLevel = null;
+      }
+      if (tsIntensity.ponytail != null) {
+        payload.ponytailMode = "preset";
+        payload.ponytailLevel = tsIntensity.ponytail;
+      } else {
+        payload.ponytailMode = null;
+        payload.ponytailLevel = null;
+      }
+      const result = await api.settings.setTokenSaver(payload);
+      const o = result.overrides || {};
+      setTsRtk(o.rtk ?? null);
+      setTsGroupyCompact(o.groupyCompact ?? null);
+      setTsHeadroom(o.headroom ?? null);
+      setTsCaveman(o.caveman ?? null);
+      setTsPonytail(o.ponytail ?? null);
+      setTsBatch(o.batch ?? null);
+      setTsAntiWaste(o.antiWaste ?? null);
       setTsSuccess(t("Save") + " OK");
     } catch (err) {
       setTsError(err instanceof Error ? err.message : "Failed to save token saver");
@@ -364,12 +453,12 @@ export default function SettingsPage() {
 
       <ActiveSessionsPanel />
 
-      {/* Token Saver — placed right under Account so it's visible without scrolling */}
+      {/* Token Saver — Groupy + classic */}
       <div className="bg-card border border-border rounded-xl p-4 border-primary/20">
         <div className="flex items-center justify-between gap-2 mb-1">
           <h2 className="text-sm font-medium text-foreground">{t("Token Saver")}</h2>
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
-            Compact + RTK + Batch ON
+            Anti-Waste + Compact + Batch ON
           </span>
         </div>
         <p className="text-xs text-muted-foreground mb-4">{TOKEN_SAVER_INTRO.short}</p>
@@ -385,44 +474,98 @@ export default function SettingsPage() {
             {tsError}
           </div>
         )}
-        {TOKEN_SAVER_FEATURES.map((f) => {
-          const value =
-            f.id === "rtk" ? tsRtk
-            : f.id === "groupyCompact" ? tsGroupyCompact
-            : f.id === "headroom" ? tsHeadroom
-            : f.id === "caveman" ? tsCaveman
-            : f.id === "ponytail" ? tsPonytail
-            : tsBatch;
-          const onChange =
-            f.id === "rtk" ? setTsRtk
-            : f.id === "groupyCompact" ? setTsGroupyCompact
-            : f.id === "headroom" ? setTsHeadroom
-            : f.id === "caveman" ? setTsCaveman
-            : f.id === "ponytail" ? setTsPonytail
-            : setTsBatch;
-          const globalOn =
-            f.id === "rtk" ? !!tsGlobal?.rtk
-            : f.id === "groupyCompact" ? tsGlobal?.groupyCompact !== false
-            : f.id === "headroom" ? !!tsGlobal?.headroom
-            : f.id === "caveman" ? !!tsGlobal?.caveman
-            : f.id === "ponytail" ? !!tsGlobal?.ponytail
-            : tsGlobal?.batch !== false;
-          return (
-            <TriState
-              key={f.id}
-              label={f.label}
-              effectShort={f.effectShort}
-              effectLong={f.effectLong}
-              exampleShort={f.exampleShort}
-              exampleLong={f.exampleLong}
-              riskShort={f.riskShort}
-              riskLong={f.riskLong}
-              value={value}
-              onChange={onChange}
-              globalOn={globalOn}
-            />
-          );
-        })}
+        {(["groupy", "classic"] as const).map((group) => (
+          <div key={group} className="mb-4">
+            <h3 className="text-xs font-semibold text-foreground/90 mb-1">
+              {group === "groupy" ? GROUPY_TOKEN_SAVER_LABEL : CLASSIC_TOKEN_SAVER_LABEL}
+            </h3>
+            {TOKEN_SAVER_FEATURES.filter((f) => f.group === group).map((f) => {
+              const value =
+                f.id === "rtk" ? tsRtk
+                : f.id === "groupyCompact" ? tsGroupyCompact
+                : f.id === "headroom" ? tsHeadroom
+                : f.id === "caveman" ? tsCaveman
+                : f.id === "ponytail" ? tsPonytail
+                : f.id === "antiWaste" ? tsAntiWaste
+                : tsBatch;
+              const onChange =
+                f.id === "rtk" ? setTsRtk
+                : f.id === "groupyCompact" ? setTsGroupyCompact
+                : f.id === "headroom" ? setTsHeadroom
+                : f.id === "caveman" ? setTsCaveman
+                : f.id === "ponytail" ? setTsPonytail
+                : f.id === "antiWaste" ? setTsAntiWaste
+                : setTsBatch;
+              const globalOn =
+                f.id === "rtk" ? !!tsGlobal?.rtk
+                : f.id === "groupyCompact" ? tsGlobal?.groupyCompact !== false
+                : f.id === "headroom" ? !!tsGlobal?.headroom
+                : f.id === "caveman" ? !!tsGlobal?.caveman
+                : f.id === "ponytail" ? !!tsGlobal?.ponytail
+                : f.id === "antiWaste" ? tsGlobal?.antiWaste !== false
+                : tsGlobal?.batch !== false;
+              const levelOpts =
+                f.id === "caveman"
+                  ? ["1", "2", "3", "4", "5"]
+                  : f.id === "ponytail"
+                    ? ["lite", "full", "ultra"]
+                    : ["lite", "balanced", "aggressive"];
+              const globalLevel =
+                f.id === "caveman"
+                  ? String(tsGlobal?.cavemanLevel ?? 2)
+                  : f.id === "ponytail"
+                    ? String(tsGlobal?.ponytailLevel || "lite")
+                    : f.id === "antiWaste"
+                      ? String(tsGlobal?.antiWasteLevel || "balanced")
+                      : f.id === "groupyCompact"
+                        ? String(tsGlobal?.groupyCompactLevel || "balanced")
+                        : f.id === "batch"
+                          ? String(tsGlobal?.batchLevel || "balanced")
+                          : f.id === "rtk"
+                            ? String(tsGlobal?.rtkLevel || "balanced")
+                            : String(tsGlobal?.headroomLevel || "balanced");
+              return (
+                <div key={f.id}>
+                  <TriState
+                    label={f.label}
+                    effectShort={f.effectShort}
+                    effectLong={f.effectLong}
+                    exampleShort={f.exampleShort}
+                    exampleLong={f.exampleLong}
+                    riskShort={f.riskShort}
+                    riskLong={f.riskLong}
+                    value={value}
+                    onChange={onChange}
+                    globalOn={globalOn}
+                  />
+                  <div className="pb-3 -mt-1 flex flex-wrap items-center gap-2 text-[11px]">
+                    <span className="text-muted-foreground">Intensity:</span>
+                    <select
+                      className="h-7 rounded border border-border bg-transparent px-2"
+                      value={tsIntensity[f.id] ?? ""}
+                      onChange={(e) =>
+                        setTsIntensity((prev) => ({
+                          ...prev,
+                          [f.id]: e.target.value || null,
+                        }))
+                      }
+                    >
+                      <option value="">
+                        Default ({globalLevel})
+                      </option>
+                      {levelOpts.map((o) => (
+                        <option key={o} value={o}>
+                          {o}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-muted-foreground/80">{f.intensityHint}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ))}
         <button
           type="button"
           onClick={handleSaveTokenSaver}

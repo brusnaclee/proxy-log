@@ -13,34 +13,35 @@ export type AntiWasteProfile = {
   nudgeText: string;
 };
 
+/** Defaults = balanced preset (overridable via Token Saver intensity). */
 const CLINE_FAMILY: AntiWasteProfile = {
-  nudgeAt: 2,
-  dedupeAt: 3,
-  shortCircuitAt: 5,
+  nudgeAt: 3,
+  dedupeAt: 4,
+  shortCircuitAt: 8,
   nudgeText:
-    "[tokito anti-waste] Do not re-read the same file path. Batch read_file/search_files for paths you still need, then edit. Prefer one multi-file pass.",
+    "[tokito anti-waste] Do not re-read the same file path+range. Batch read_file/search_files for paths you still need, then edit. Prefer one multi-file pass.",
 };
 
 const CURSOR_FAMILY: AntiWasteProfile = {
-  nudgeAt: 2,
-  dedupeAt: 3,
-  shortCircuitAt: 5,
+  nudgeAt: 3,
+  dedupeAt: 4,
+  shortCircuitAt: 8,
   nudgeText:
     "[tokito anti-waste] Stop identical tool calls with the same arguments. Use parallel tool_calls for unread files only; reuse content already in context.",
 };
 
 const CLAUDE_FAMILY: AntiWasteProfile = {
-  nudgeAt: 2,
-  dedupeAt: 3,
-  shortCircuitAt: 5,
+  nudgeAt: 3,
+  dedupeAt: 4,
+  shortCircuitAt: 8,
   nudgeText:
-    "[tokito anti-waste] Avoid repeating the same Read/Bash cat on one path. Summarize what you already have and proceed to the edit plan.",
+    "[tokito anti-waste] Avoid repeating the same Read/Bash cat on one path+range. Summarize what you already have and proceed to the edit plan.",
 };
 
 const DEFAULT_PROFILE: AntiWasteProfile = {
-  nudgeAt: 2,
-  dedupeAt: 3,
-  shortCircuitAt: 5,
+  nudgeAt: 3,
+  dedupeAt: 4,
+  shortCircuitAt: 8,
   nudgeText:
     "[tokito anti-waste] You already received this tool result earlier in the turn. Do not repeat the same tool; continue with a different action.",
 };

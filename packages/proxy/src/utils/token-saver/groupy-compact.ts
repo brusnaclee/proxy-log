@@ -284,9 +284,15 @@ function headTailTruncate(text: string, maxChars: number): string {
 export function applyGroupyCompact(
 	body: any,
 	levelRaw: string | GroupyCompactLevel = "balanced",
+	override?: { recentKeep?: number; minChars?: number; assistantProseMax?: number } | null,
 ): GroupyCompactStats {
 	const level = normalizeGroupyCompactLevel(levelRaw);
-	const cfg = LEVELS[level];
+	const base = LEVELS[level];
+	const cfg: LevelConfig = {
+		recentKeep: override?.recentKeep ?? base.recentKeep,
+		minChars: override?.minChars ?? base.minChars,
+		assistantProseMax: override?.assistantProseMax ?? base.assistantProseMax,
+	};
 	const stats: GroupyCompactStats = {
 		stubs: 0,
 		charsSaved: 0,

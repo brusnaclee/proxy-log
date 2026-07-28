@@ -25,6 +25,7 @@ function measureBodyChars(body: any): number {
 export async function applyHeadroom(
 	body: any,
 	url: string,
+	timeoutMs: number = HEADROOM_TIMEOUT_MS,
 ): Promise<HeadroomStats> {
 	const stats: HeadroomStats = { invoked: false, ok: false };
 	if (!url || typeof url !== 'string') return stats;
@@ -33,8 +34,9 @@ export async function applyHeadroom(
 	stats.invoked = true;
 	stats.beforeChars = measureBodyChars(body);
 
+	const ms = Math.max(500, Math.min(10000, Number(timeoutMs) || HEADROOM_TIMEOUT_MS));
 	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(), HEADROOM_TIMEOUT_MS);
+	const timer = setTimeout(() => controller.abort(), ms);
 	try {
 		const res = await fetch(url, {
 			method: 'POST',

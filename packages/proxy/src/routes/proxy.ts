@@ -2287,34 +2287,26 @@ proxy.all('/*', async (c) => {
 	// ─── 7d. Token Saver (RTK → Groupy Compact → Headroom → Caveman → Ponytail) ─
 	// Runs after Anthropic→OpenAI convert so both formats share one path.
 	// Header X-Token-Saver: off disables all; else user override > global default.
+	let resolvedTsFlags = resolveTokenSaverFlags(config as any, null, c.req.raw.headers);
+	let portalPreferredLang: "en" | "id" = "en";
 	if (requestBody && Array.isArray((requestBody as any).messages)) {
 		try {
-			let userOverrides: {
-				tokenSaverRtkOverride?: boolean | null;
-				tokenSaverHeadroomOverride?: boolean | null;
-				tokenSaverCavemanOverride?: boolean | null;
-				tokenSaverPonytailOverride?: boolean | null;
-				tokenSaverGroupyCompactOverride?: boolean | null;
-				tokenSaverBatchOverride?: boolean | null;
-			} | null = null;
+			let userOverrides: Record<string, unknown> | null = null;
 			if (keyRecord.discordUserId) {
 				userOverrides =
 					(
 						await db
-							.select({
-								tokenSaverRtkOverride: userPortalSettings.tokenSaverRtkOverride,
-								tokenSaverHeadroomOverride: userPortalSettings.tokenSaverHeadroomOverride,
-								tokenSaverCavemanOverride: userPortalSettings.tokenSaverCavemanOverride,
-								tokenSaverPonytailOverride: userPortalSettings.tokenSaverPonytailOverride,
-								tokenSaverGroupyCompactOverride: userPortalSettings.tokenSaverGroupyCompactOverride,
-								tokenSaverBatchOverride: userPortalSettings.tokenSaverBatchOverride,
-							})
+							.select()
 							.from(userPortalSettings)
 							.where(eq(userPortalSettings.discordUserId, keyRecord.discordUserId))
 							.limit(1)
 					)[0] ?? null;
+				if (userOverrides && String((userOverrides as any).preferredLang || "").toLowerCase() === "id") {
+					portalPreferredLang = "id";
+				}
 			}
-			const tsFlags = resolveTokenSaverFlags(config as any, userOverrides, c.req.raw.headers);
+			resolvedTsFlags = resolveTokenSaverFlags(config as any, userOverrides as any, c.req.raw.headers);
+			const tsFlags = resolvedTsFlags;
 			const tsResult = await applyTokenSavers(requestBody, tsFlags, { ide });
 			if (
 				tsResult.rtk?.charsSaved ||
@@ -2333,14 +2325,13 @@ proxy.all('/*', async (c) => {
 							? `(stubs=${tsResult.groupyCompact.stubs},saved=${tsResult.groupyCompact.charsSaved},level=${tsResult.groupyCompact.level})`
 							: '') +
 						` headroom=${tsFlags.headroom}` +
-						` caveman=${tsFlags.caveman}` +
-						` ponytail=${tsFlags.ponytail}` +
-						` batch=${tsFlags.batch}` +
-						(tsFlags.disabledByHeader ? ' (header-off)' : ''),
+						(tsResult.headroom?.ok ? `(ok,timeout=${tsFlags.headroomTimeoutMs})` : '') +
+						` caveman=${tsResult.caveman} ponytail=${tsResult.ponytail} batch=${tsResult.batch}` +
+						` antiWaste=${tsFlags.antiWaste}`,
 				);
 			}
 		} catch (err) {
-			console.warn('[token-saver] apply failed (fail-open):', (err as Error)?.message || err);
+			console.warn('[token-saver] apply failed:', (err as Error)?.message || err);
 		}
 	}
 
@@ -4430,6 +4421,9 @@ proxy.all('/*', async (c) => {
 			isNewPrompt,
 			normalizedIde,
 			headers: c.req.raw.headers,
+			featureEnabled: resolvedTsFlags.antiWaste,
+			thresholds: resolvedTsFlags.antiWasteThresholds,
+			lang: portalPreferredLang,
 		});
 		antiWasteFlags = aw.flags;
 		if (aw.deduped || aw.nudged) {
