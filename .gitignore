@@ -49,6 +49,8 @@ agent-tools/
 
 # Local-only ops scripts (keep on disk, never on GitHub)
 scripts/
+packages/**/scripts/
+**/scripts/
 
 # Documentation & editor (local only)
 docs/
