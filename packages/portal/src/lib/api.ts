@@ -165,26 +165,8 @@ export interface MeResponse {
   };
   pendingNotifications: any[];
   tokenSaver?: {
-    global: {
-      rtk: boolean;
-      rtkMaxChars: number;
-      headroom: boolean;
-      caveman: boolean;
-      cavemanLevel: number;
-      ponytail: boolean;
-      ponytailLevel: string;
-      groupyCompact: boolean;
-      groupyCompactLevel: string;
-      batch: boolean;
-    };
-    overrides: {
-      rtk: boolean | null;
-      headroom: boolean | null;
-      caveman: boolean | null;
-      ponytail: boolean | null;
-      groupyCompact: boolean | null;
-      batch: boolean | null;
-    };
+    global: Record<string, any>;
+    overrides: Record<string, any>;
   };
 }
 
@@ -519,46 +501,14 @@ export const settings = {
 
   getTokenSaver: () =>
     request<{
-      global: {
-        rtk: boolean;
-        rtkMaxChars: number;
-        headroom: boolean;
-        caveman: boolean;
-        cavemanLevel: number;
-        ponytail: boolean;
-        ponytailLevel: string;
-        groupyCompact: boolean;
-        groupyCompactLevel: string;
-        batch: boolean;
-      };
-      overrides: {
-        rtk: boolean | null;
-        headroom: boolean | null;
-        caveman: boolean | null;
-        ponytail: boolean | null;
-        groupyCompact: boolean | null;
-        batch: boolean | null;
-      };
+      global: Record<string, any>;
+      overrides: Record<string, any>;
     }>("/settings/token-saver", "GET"),
 
-  setTokenSaver: (overrides: {
-    rtk?: boolean | null;
-    headroom?: boolean | null;
-    caveman?: boolean | null;
-    ponytail?: boolean | null;
-    groupyCompact?: boolean | null;
-    batch?: boolean | null;
-  }) =>
+  setTokenSaver: (overrides: Record<string, any>) =>
     request<{
       success: boolean;
-      overrides: {
-        rtk: boolean | null;
-        headroom: boolean | null;
-        caveman: boolean | null;
-        ponytail: boolean | null;
-        groupyCompact: boolean | null;
-        batch: boolean | null;
-      };
+      overrides: Record<string, any>;
     }>("/settings/token-saver", "PUT", overrides),
 };
 

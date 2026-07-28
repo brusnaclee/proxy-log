@@ -311,6 +311,11 @@ export interface ApiKeyListItem {
     inputUsed?: number;
     outputUsed?: number;
     dailyUsed?: number;
+    sharedAccount?: boolean;
+    accountKeyCount?: number;
+    keyPromptsUsed?: number;
+    keyInputUsed?: number;
+    keyOutputUsed?: number;
   } | null;
   liveUsage?: LiveUsagePayload | null;
 }
@@ -833,15 +838,35 @@ export interface GlobalSettings {
   addonRequiredModels?: string[];
   tokenSaverRtkEnabled?: boolean;
   tokenSaverRtkMaxChars?: number;
+  tokenSaverRtkMode?: string;
+  tokenSaverRtkLevel?: string;
+  tokenSaverRtkCustom?: string;
   tokenSaverHeadroomEnabled?: boolean;
   tokenSaverHeadroomUrl?: string;
+  tokenSaverHeadroomMode?: string;
+  tokenSaverHeadroomLevel?: string;
+  tokenSaverHeadroomCustom?: string;
   tokenSaverCavemanEnabled?: boolean;
   tokenSaverCavemanLevel?: number;
+  tokenSaverCavemanMode?: string;
+  tokenSaverCavemanCustom?: string;
   tokenSaverPonytailEnabled?: boolean;
   tokenSaverPonytailLevel?: string;
+  tokenSaverPonytailMode?: string;
+  tokenSaverPonytailCustom?: string;
   tokenSaverGroupyCompactEnabled?: boolean;
   tokenSaverGroupyCompactLevel?: string;
+  tokenSaverGroupyCompactMode?: string;
+  tokenSaverGroupyCompactCustom?: string;
   tokenSaverBatchEnabled?: boolean;
+  tokenSaverBatchMode?: string;
+  tokenSaverBatchLevel?: string;
+  tokenSaverBatchCustom?: string;
+  tokenSaverAntiWasteEnabled?: boolean;
+  tokenSaverAntiWasteMode?: string;
+  tokenSaverAntiWasteLevel?: string;
+  tokenSaverAntiWasteCustom?: string;
+  tokenSaver?: Record<string, unknown>;
 }
 
 export interface ModelLimitEntry {
