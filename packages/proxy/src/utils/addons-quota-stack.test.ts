@@ -2,9 +2,9 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { resolveAddonQuotaStack } from "./addons.js";
 
-const G_IN = 2_000_000;
-const G_OUT = 5_000_000;
-const PACK = 10_000_000;
+const G_IN = 20_000_000;
+const G_OUT = 50_000_000;
+const PACK = 100_000_000;
 
 describe("resolveAddonQuotaStack (PM rules)", () => {
   it("Phantom only: hard I/O from global, daily unlimited", () => {

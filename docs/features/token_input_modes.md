@@ -12,7 +12,7 @@ Storage unchanged: each `request_logs` row keeps full `prompt_tokens` / `cached_
 
 | Mode | Input credit | Output |
 |------|----------------|--------|
-| **`first_rest_flat`** (default) | Hop 1 = 100%; hops 2+ = flat % (`token_limit_weight_percent`, default **10**) | 100% |
+| **`first_rest_flat`** (default) | Hop 1 = 100%; hops 2+ = flat % (`token_limit_weight_percent`, default **100**) | 100% |
 | **`flat_all`** | Every hop = flat % | 100% |
 | **`peak`** | `MAX(prompt+cache)` once per turn | 100% |
 | **`full`** | 100% every hop (amanai-style for limits) | 100% |

@@ -507,7 +507,7 @@ export async function getApiCallWindowResetMs(
 }
 
 export type CheckModelPromptLimitOpts = {
-  /** Fallback when no override/default applies (e.g. non-addon Claude/GPT-5.6 tease = 5). */
+  /** Fallback when no override/default applies (e.g. non-addon Claude/GPT-5.6 tease = 3). */
   teaseDefaultLimit?: number;
 };
 

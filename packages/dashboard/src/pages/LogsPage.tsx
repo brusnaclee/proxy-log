@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { formatDate, formatNumber, formatRelativeTime, formatLogUserDisplay, formatInputBreakdown } from "@/lib/utils";
+import { formatDate, formatNumber, formatLogUserDisplay, formatInputBreakdown } from "@/lib/utils";
 import { Download, Radio, ChevronLeft, ChevronRight } from "lucide-react";
 import { formatCost } from "@/lib/utils";
 import { useRealtimeSSE } from "@/lib/use-realtime-sse";
@@ -568,7 +568,6 @@ export default function LogsPage() {
                         <td className="py-2 px-3 text-right text-xs text-muted-foreground">{session.compactCount || 0} / {session.switchCount || 0}</td>
                         <td className="py-2 px-3 text-xs text-muted-foreground">
                           <div>{formatDate(session.lastSeenAt)}</div>
-                          <div className="text-[10px]">{formatRelativeTime(session.lastSeenAt)}</div>
                         </td>
                       </tr>
                     ))}

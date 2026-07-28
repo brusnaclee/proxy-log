@@ -62,7 +62,7 @@ export async function initializeDatabase() {
 		if (grokSeed.rows[0]?.id) {
 			await pool.query(
 				`UPDATE model_limits SET
-				   daily_token_limit = 3000000,
+				   daily_token_limit = 30000000,
 				   dedicated_quota = true,
 				   prompt_limit = 0,
 				   monthly_token_limit = 0,
@@ -77,10 +77,10 @@ export async function initializeDatabase() {
 				   scope, scope_id, model, is_pattern, dedicated_quota,
 				   prompt_limit, daily_token_limit, monthly_token_limit,
 				   daily_input_token_limit, daily_output_token_limit
-				 ) VALUES ('global', 0, 'tokitoV2/gcli/grok-4.5', true, true, 0, 3000000, 0, 0, 0)`,
+				 ) VALUES ('global', 0, 'tokitoV2/gcli/grok-4.5', true, true, 0, 30000000, 0, 0, 0)`,
 			);
 		}
-		console.log('✅ Applied idempotent model_limits migrations (+ tokitoV2/gcli/grok-4.5 dedicated 3M)');
+		console.log('✅ Applied idempotent model_limits migrations (+ tokitoV2/gcli/grok-4.5 dedicated 30M)');
 	} catch (err: any) {
 		console.warn('⚠️ model_limits idempotent migration warning:', err?.message || err);
 	}
@@ -185,7 +185,7 @@ export async function initializeDatabase() {
 	await migrateTokenInputModeColumn();
 	try {
 		await pool.query(
-			`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS token_limit_weight_percent integer NOT NULL DEFAULT 10`,
+			`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS token_limit_weight_percent integer NOT NULL DEFAULT 100`,
 		);
 		await pool.query(
 			`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS token_limit_weight_mode text NOT NULL DEFAULT 'first_rest_flat'`,
@@ -197,6 +197,24 @@ export async function initializeDatabase() {
 	try {
 		await pool.query(
 			`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS addon_required_models text NOT NULL DEFAULT '[]'`,
+		);
+	} catch (_) {}
+	try {
+		// Weight 100% + limits ×10 + tease overrides → 3 (idempotent; only bumps legacy values)
+		await pool.query(
+			`UPDATE admin_config SET token_limit_weight_percent = 100 WHERE COALESCE(token_limit_weight_percent, 10) < 100`,
+		);
+		await pool.query(
+			`UPDATE admin_config SET global_daily_input_token_limit = 20000000 WHERE global_daily_input_token_limit = 2000000`,
+		);
+		await pool.query(
+			`UPDATE admin_config SET global_daily_output_token_limit = 50000000 WHERE global_daily_output_token_limit = 5000000`,
+		);
+		await pool.query(
+			`UPDATE admin_config SET global_per_model_prompt_limit = 3 WHERE global_per_model_prompt_limit IN (5, 10)`,
+		);
+		await pool.query(
+			`UPDATE model_limits SET prompt_limit = 3 WHERE prompt_limit IN (5, 10)`,
 		);
 	} catch (_) {}
 	try {

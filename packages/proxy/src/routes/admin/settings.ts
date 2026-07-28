@@ -34,7 +34,7 @@ settings.get("/settings/global", async (c) => {
     globalDailyInputTokenLimit: config.globalDailyInputTokenLimit || 0,
     globalDailyOutputTokenLimit: config.globalDailyOutputTokenLimit || 0,
     tokenInputMode: normalizeTokenInputMode((config as any).tokenInputMode),
-    tokenLimitWeightPercent: normalizeTokenLimitWeightPercent((config as any).tokenLimitWeightPercent ?? 10),
+    tokenLimitWeightPercent: normalizeTokenLimitWeightPercent((config as any).tokenLimitWeightPercent ?? 100),
     tokenLimitWeightMode: normalizeTokenLimitWeightMode((config as any).tokenLimitWeightMode),
     tokenLimitWeightCustom: normalizeHopWeightRanges((config as any).tokenLimitWeightCustom),
     addonRequiredModels: (() => {

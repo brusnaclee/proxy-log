@@ -568,7 +568,7 @@ export default function OverviewPage() {
                 {recentLogs.map((log, i) => (
                   <tr key={log.id || i} className="border-b border-border/30 hover:bg-accent/30 transition-colors">
                     <td className="py-2 px-3 text-xs text-muted-foreground font-mono">
-                      {log.createdAt ? formatRelativeTime(log.createdAt) : "just now"}
+                      {log.createdAt ? formatRelativeTime(log.createdAt) : "—"}
                     </td>
                     <td className="py-2 px-3 text-xs">
                       <div className="flex items-center gap-1">

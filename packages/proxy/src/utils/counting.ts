@@ -54,7 +54,7 @@ export type TokenInputMode = "per_turn_peak" | "full" | "billable";
 
 let tokenInputModeCache: TokenInputMode = "per_turn_peak";
 let tokenLimitWeightModeCache: TokenLimitWeightMode = "first_rest_flat";
-let tokenLimitWeightPercentCache = 10;
+let tokenLimitWeightPercentCache = 100;
 let tokenLimitWeightCustomCache: HopWeightRange[] = [];
 
 export function setTokenLimitWeightPercentCache(percent: unknown): void {

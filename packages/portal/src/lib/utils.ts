@@ -54,31 +54,26 @@ export function formatCost(microDollars: number | undefined | null): string {
   return "$" + (microDollars / 1_000_000).toFixed(4);
 }
 
-// Format relative time in Indonesian
+/** Absolute WIB clock (replaces "baru saja" / "X menit lalu" for clearer logs). */
 export function formatRelativeTime(dateStr: string): string {
-  const date = new Date(dateStr);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffSec = Math.floor(diffMs / 1000);
-  const diffMin = Math.floor(diffSec / 60);
-  const diffHour = Math.floor(diffMin / 60);
-  const diffDay = Math.floor(diffHour / 24);
-
-  if (diffSec < 60) return "baru saja";
-  if (diffMin < 60) return `${diffMin} menit lalu`;
-  if (diffHour < 24) return `${diffHour} jam lalu`;
-  if (diffDay < 7) return `${diffDay} hari lalu`;
   return formatDateWIB(dateStr);
 }
 
-// Format date as DD/MM HH:mm WIB
+/** DD/MM/YYYY HH:mm:ss in Asia/Jakarta */
 export function formatDateWIB(dateStr: string): string {
+  if (!dateStr) return "—";
   const date = new Date(dateStr);
-  const day = String(date.getDate()).padStart(2, "0");
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  return `${day}/${month} ${hours}:${minutes}`;
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString("en-GB", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
 }
 
 // Human-readable status label

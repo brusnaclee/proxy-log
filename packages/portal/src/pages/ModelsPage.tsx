@@ -29,10 +29,8 @@ function CopyButton({ text }: { text: string }) {
 function lastCheckLabel(m: ModelEntry, t: (k: string) => string): string {
   if (m.checkedAt) return formatRelativeTime(m.checkedAt);
   if (m.lastCheckedMinutes != null) {
-    if (m.lastCheckedMinutes < 1) return t("just now");
-    if (m.lastCheckedMinutes < 60) return `${m.lastCheckedMinutes} ${t("min ago")}`;
-    const h = Math.floor(m.lastCheckedMinutes / 60);
-    return `${h} ${t("hours")} ${t("ago")}`;
+    const at = new Date(Date.now() - m.lastCheckedMinutes * 60_000).toISOString();
+    return formatRelativeTime(at);
   }
   return t("Never checked");
 }

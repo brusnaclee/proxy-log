@@ -140,7 +140,7 @@ export default function AddonsPage() {
   const [defaultDurationDays, setDefaultDurationDays] = useState(0);
   const [discordRoleId, setDiscordRoleId] = useState("");
   const [limitPattern, setLimitPattern] = useState("");
-  const [limitValue, setLimitValue] = useState(5_000_000);
+  const [limitValue, setLimitValue] = useState(50_000_000);
   const [modelDailyLimits, setModelDailyLimits] = useState<Record<string, number>>({});
 
   const [assignAddonId, setAssignAddonId] = useState<number | "">("");
@@ -211,7 +211,7 @@ export default function AddonsPage() {
     setDiscordRoleId("");
     setModelDailyLimits({});
     setLimitPattern("");
-    setLimitValue(5_000_000);
+    setLimitValue(50_000_000);
   };
 
   const startEdit = (addon: AddonEntry) => {
@@ -227,7 +227,7 @@ export default function AddonsPage() {
     setDiscordRoleId(addon.discordRoleId || "");
     setModelDailyLimits({ ...(addon.modelDailyLimitsParsed || {}) });
     setLimitPattern("");
-    setLimitValue(5_000_000);
+    setLimitValue(50_000_000);
     setError(null);
     // Scroll form into view on mobile
     document.getElementById("addon-editor")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -339,7 +339,7 @@ export default function AddonsPage() {
             <Package className="h-6 w-6" /> Add-ons
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Premium required to assign · Phantom stacks base daily (e.g. 2M) + pack · without Phantom = pack only.
+            Premium required to assign · Phantom stacks base daily (e.g. 20M) + pack · without Phantom = pack only.
             Active pack bypasses per-model prompt caps; global Prompts still apply. Hard locks: Settings → Models requiring add-on.
           </p>
         </div>
@@ -425,7 +425,7 @@ export default function AddonsPage() {
             <div className="space-y-2 border border-border/50 rounded-lg p-3">
               <Label>Per-model daily token limits</Label>
               <p className="text-[10px] text-muted-foreground">
-                Pattern substring → cap harian. Contoh: chatgpt-5.6 / terra / sol / kimi-k3 = 5,000,000.
+                Pattern substring → cap harian. Contoh: chatgpt-5.6 / terra / sol / kimi-k3 = 30,000,000.
               </p>
               {Object.keys(modelDailyLimits).length > 0 && (
                 <div className="flex flex-wrap gap-1">
@@ -483,7 +483,7 @@ export default function AddonsPage() {
                 value={dailyTokenLimit}
                 onChange={(e) => setDailyTokenLimit(parseInt(e.target.value) || 0)}
               />
-              <p className="text-[10px] text-muted-foreground mt-1">Stacked on account daily limit. Vibecode tiers: 3M / 5M / 10M.</p>
+              <p className="text-[10px] text-muted-foreground mt-1">Stacked on account daily limit. Vibecode tiers: 50M / 100M.</p>
             </div>
             <div>
               <Label>Max devices (0 = no change)</Label>

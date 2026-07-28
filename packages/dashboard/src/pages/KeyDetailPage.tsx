@@ -1726,7 +1726,6 @@ export API_TIMEOUT_MS=500000`}
                       <td className="py-2 px-4 text-xs">{rule.label || "-"}</td>
                       <td className="py-2 px-4 text-xs text-muted-foreground">
                         <div>{formatDate(rule.createdAt)}</div>
-                        <div className="text-[10px]">{formatRelativeTime(rule.createdAt)}</div>
                       </td>
                       <td className="py-2 px-4 text-center">
                         <Button size="icon" variant="ghost" onClick={() => handleRemoveDeviceRule(rule.id)}>
@@ -1797,7 +1796,6 @@ export API_TIMEOUT_MS=500000`}
                       <td className="py-2 px-4 text-xs font-mono">{rule.ideName}</td>
                       <td className="py-2 px-4 text-xs text-muted-foreground">
                         <div>{formatDate(rule.createdAt)}</div>
-                        <div className="text-[10px]">{formatRelativeTime(rule.createdAt)}</div>
                       </td>
                       <td className="py-2 px-4 text-center">
                         <Button size="icon" variant="ghost" onClick={() => handleRemoveIdeRule(rule.id)}>
@@ -1853,7 +1851,6 @@ export API_TIMEOUT_MS=500000`}
                         {d.firstSeen ? (
                           <>
                             <div>{formatDate(d.firstSeen)}</div>
-                            <div className="text-[10px]">{formatRelativeTime(d.firstSeen)}</div>
                           </>
                         ) : "?"}
                       </td>
@@ -1861,7 +1858,6 @@ export API_TIMEOUT_MS=500000`}
                         {d.lastSeen ? (
                           <>
                             <div>{formatDate(d.lastSeen)}</div>
-                            <div className="text-[10px]">{formatRelativeTime(d.lastSeen)}</div>
                           </>
                         ) : "?"}
                       </td>
@@ -1953,7 +1949,6 @@ export API_TIMEOUT_MS=500000`}
                             </td>
                             <td className="py-2 px-3 text-xs text-muted-foreground font-mono whitespace-nowrap">
                               <div>{formatDate(log.createdAt)}</div>
-                              <div className="text-[10px]">{formatRelativeTime(log.createdAt)}</div>
                             </td>
                             <td className="py-2 px-3 min-w-[260px] max-w-[420px]">
                               <code
@@ -2133,7 +2128,6 @@ export API_TIMEOUT_MS=500000`}
                         {d.lastSeen ? (
                           <>
                             <div>{formatDate(d.lastSeen)}</div>
-                            <div className="text-[10px]">{formatRelativeTime(d.lastSeen)}</div>
                           </>
                         ) : "?"}
                       </td>
@@ -2196,7 +2190,6 @@ export API_TIMEOUT_MS=500000`}
                         {s.lastSeenAt ? (
                           <>
                             <div>{formatDate(s.lastSeenAt)}</div>
-                            <div className="text-[10px]">{formatRelativeTime(s.lastSeenAt)}</div>
                           </>
                         ) : "?"}
                       </td>

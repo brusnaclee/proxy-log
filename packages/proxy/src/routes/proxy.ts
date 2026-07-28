@@ -2024,7 +2024,7 @@ proxy.all('/*', async (c) => {
 		setTokenInputModeCache((config as any).tokenInputMode);
 		setTokenLimitWeightConfigCache({
 			mode: (config as any).tokenLimitWeightMode,
-			percent: (config as any).tokenLimitWeightPercent ?? 10,
+			percent: (config as any).tokenLimitWeightPercent ?? 100,
 			custom: (config as any).tokenLimitWeightCustom,
 		});
 	}
@@ -3835,7 +3835,7 @@ proxy.all('/*', async (c) => {
 								? `pattern "${mlCheck.overrideModel}"`
 								: `override "${mlCheck.overrideModel}"`
 							: mlCheck.source === 'tease_default'
-								? 'non-addon Claude/GPT-5.6 tease (5 prompts / 1d)'
+								? 'non-addon Claude/GPT-5.6 tease (3 prompts / 1d)'
 								: mlCheck.source === 'key_default'
 									? "your key's per-model default"
 									: 'global per-model default';

@@ -71,19 +71,9 @@ export function formatDate(dateStr: string): string {
   });
 }
 
+/** Absolute WIB clock time (replaces "5s ago" style for clearer logs). */
 export function formatRelativeTime(dateStr: string): string {
-  const now = Date.now();
-  const d = parseProxyDate(dateStr).getTime();
-  const diff = now - d;
-  const seconds = Math.floor(diff / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-
-  if (seconds < 60) return `${seconds}s ago`;
-  if (minutes < 60) return `${minutes}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  return `${days}d ago`;
+  return formatDate(dateStr);
 }
 
 function parseProxyDate(dateStr: string): Date {

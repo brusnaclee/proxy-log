@@ -53,7 +53,7 @@ Rate limits and Token limits are evaluated in a specific hierarchy during the re
 4. **Daily / Monthly Token Limits**:
    - **Base In/Out**: key custom (>0) → else global for Phantom/Staff (`follow_global`); Premium/Pro (`zero_unless_addon`) baseIn = 0 until add-on; with add-on, Premium/Pro still get global Out as baseOut.
    - **Without add-on**: hard caps = Input + Output only. Daily total unlimited unless key sets custom `daily_token_limit`.
-   - **With add-on**: pack **adds to Input only** (e.g. Phantom 2M + pack 10M = **12M In**, Out stays 5M). I/O remain **hard caps**. Daily stays unlimited unless key custom daily. Per-model prompt caps bypassed.
+   - **With add-on**: pack **adds to Input only** (e.g. Phantom 20M + pack 100M = **120M In**, Out stays 50M). I/O remain **hard caps**. Daily stays unlimited unless key custom daily. Per-model prompt caps bypassed.
    - Premium/Pro without add-on: blocked (`zero_unless_addon`) — no shared quota and no dedicated pools.
 5. **IDE Smart Anti-Waste** (optional, default on): see [`ide_anti_waste.md`](./ide_anti_waste.md) — stub duplicate tool dumps + soft nudge + SSE short-circuit after repeated identical noisy tools (does **not** hard-stop the IDE).
 
@@ -96,6 +96,6 @@ Live meters (Discord Usage, admin Live Usage, portal Usage Today) show:
 - **Input Harian** bar = limit credit, with sublabel `context (cached) + input (billable)`
 - **Dedicated model pools** section when ≥1 dedicated rule applies
 
-Seeded default: global pattern `tokitoV2/gcli/grok-4.5`, 3M tokens/day **total** (input+output as one hop-weighted pool), `dedicated_quota=true`. Editable anytime via Admin Settings → Model Limits (or per-key override). Optional `daily_input_token_limit` / `daily_output_token_limit` on the same row enforce separate I/O caps inside that pool; Discord / admin Live Usage / portal meters pick up changes automatically.
+Seeded default: global pattern `tokitoV2/gcli/grok-4.5`, 30M tokens/day **total** (input+output as one hop-weighted pool), `dedicated_quota=true`. Editable anytime via Admin Settings → Model Limits (or per-key override). Optional `daily_input_token_limit` / `daily_output_token_limit` on the same row enforce separate I/O caps inside that pool; Discord / admin Live Usage / portal meters pick up changes automatically.
 
 Pattern matching for slash-containing rules also checks the raw/catalog model id (normalize strips `tokito/` / `tokitoV2/` / `gcli/`, so bare `grok-4.5` alone is not enough). Slash tails are matched too: rule `tokitoV2/gcli/grok-4.5` counts logs `tokitoV2/gcli/grok-4.5`, `tokito/gcli/grok-4.5`, `gcli/grok-4.5`, and `auto (gcli/grok-4.5)` — not `amanai/grok-4.5`.

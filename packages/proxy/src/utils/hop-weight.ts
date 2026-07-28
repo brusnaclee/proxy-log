@@ -28,7 +28,7 @@ export function normalizeTokenLimitWeightMode(raw: unknown): TokenLimitWeightMod
 
 export function normalizeTokenLimitWeightPercent(raw: unknown): number {
 	const n = Math.round(Number(raw));
-	if (!Number.isFinite(n)) return 10;
+	if (!Number.isFinite(n)) return 100;
 	return Math.max(0, Math.min(100, n));
 }
 

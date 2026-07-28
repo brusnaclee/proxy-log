@@ -14,7 +14,7 @@ export const adminConfig = pgTable('admin_config', {
 	globalPromptLimit: integer('global_prompt_limit').default(50),
 	globalPromptLimitWindow: text('global_prompt_limit_window').default('5h'),
 	/** Percent used by first_rest_flat / flat_all limit modes (0–100). */
-	tokenLimitWeightPercent: integer('token_limit_weight_percent').notNull().default(10),
+	tokenLimitWeightPercent: integer('token_limit_weight_percent').notNull().default(100),
 	/** first_rest_flat | flat_all | peak | full | custom */
 	tokenLimitWeightMode: text('token_limit_weight_mode').notNull().default('first_rest_flat'),
 	/** JSON array of {fromHop,toHop,percent} when mode=custom */

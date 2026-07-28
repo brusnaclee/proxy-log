@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { formatRelativeTime, formatDate } from "@/lib/utils";
+import { formatDate } from "@/lib/utils";
 import { Download, RefreshCw, Activity, ServerCrash, CheckCircle2, Clock, Zap, Power, PowerOff } from "lucide-react";
 import { exportXlsx } from "@/lib/export-xlsx";
 import { useNotify } from "@/components/Notify";
@@ -682,8 +682,7 @@ export default function ModelMonitorPage() {
                       )}
                     </td>
                     <td className="py-3 px-4 text-xs text-muted-foreground">
-                      <div>{formatRelativeTime(d.checkedAt)}</div>
-                      <div className="text-[10px] opacity-70">{formatDate(d.checkedAt)}</div>
+                      <div>{formatDate(d.checkedAt)}</div>
                     </td>
                     <td className="py-3 px-4 text-center">
                       <div className="flex items-center justify-center gap-1">

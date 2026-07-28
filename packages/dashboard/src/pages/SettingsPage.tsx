@@ -44,7 +44,7 @@ export default function SettingsPage() {
   const [globalPromptLimitWindow, setGlobalPromptLimitWindow] = useState("5h");
   const [globalRateLimit, setGlobalRateLimit] = useState(1000);
   const [globalRateLimitWindow, setGlobalRateLimitWindow] = useState("5h");
-  const [tokenLimitWeightPercent, setTokenLimitWeightPercent] = useState(10);
+  const [tokenLimitWeightPercent, setTokenLimitWeightPercent] = useState(100);
   const [tokenLimitWeightMode, setTokenLimitWeightMode] = useState<
     "first_rest_flat" | "flat_all" | "peak" | "full" | "custom"
   >("first_rest_flat");
@@ -53,7 +53,7 @@ export default function SettingsPage() {
   >([]);
   const [addonRequiredModels, setAddonRequiredModels] = useState<string[]>([]);
   const [addonRequiredDraft, setAddonRequiredDraft] = useState("");
-  const [globalPerModelPromptLimit, setGlobalPerModelPromptLimit] = useState(10);
+  const [globalPerModelPromptLimit, setGlobalPerModelPromptLimit] = useState(3);
   const [globalPerModelPromptLimitWindow, setGlobalPerModelPromptLimitWindow] = useState("5h");
   const [globalDailyTokenLimit, setGlobalDailyTokenLimit] = useState(0);
   const [globalMonthlyTokenLimit, setGlobalMonthlyTokenLimit] = useState(0);
@@ -196,7 +196,7 @@ export default function SettingsPage() {
       setGlobalRateLimit(g.globalRateLimit || 0);
       setGlobalRateLimitWindow(g.globalRateLimitWindow || "5h");
       setTokenLimitWeightPercent(
-        typeof g.tokenLimitWeightPercent === "number" ? g.tokenLimitWeightPercent : 10,
+        typeof g.tokenLimitWeightPercent === "number" ? g.tokenLimitWeightPercent : 100,
       );
       const wm = String(g.tokenLimitWeightMode || "first_rest_flat");
       setTokenLimitWeightMode(
@@ -664,14 +664,14 @@ export default function SettingsPage() {
                         type="number"
                         value={tokenLimitWeightPercent}
                         onChange={(e) => setTokenLimitWeightPercent(parseInt(e.target.value) || 0)}
-                        placeholder="10"
+                        placeholder="100"
                         className="mt-1"
                         min={0}
                         max={100}
                       />
                       <p className="text-[10px] text-muted-foreground mt-1">
                         {tokenLimitWeightMode === "first_rest_flat"
-                          ? "Hops 2+ use this % (default 10)."
+                          ? "Hops 2+ use this % (default 100)."
                           : "Every hop (including hop 1) uses this %."}
                       </p>
                     </div>
@@ -765,7 +765,7 @@ export default function SettingsPage() {
                 <Label>Models requiring add-on</Label>
                 <p className="text-[10px] text-muted-foreground">
                   Substring patterns that hard-lock without a pack. Empty = Phantom can use catalog models without add-on.
-                  Claude / GPT-5.6+ still get a 5-prompt tease for non-addon users (see model overrides / tease).
+                  Claude / GPT-5.6+ still get a 3-prompt tease for non-addon users (see model overrides / tease).
                 </p>
                 {addonRequiredModels.length > 0 && (
                   <div className="flex flex-wrap gap-1">
@@ -836,7 +836,7 @@ export default function SettingsPage() {
                     type="number"
                     value={globalPerModelPromptLimit}
                     onChange={(e) => setGlobalPerModelPromptLimit(parseInt(e.target.value) || 0)}
-                    placeholder="10"
+                    placeholder="3"
                     className="mt-1"
                   />
                   <p className="text-[10px] text-muted-foreground mt-1">
@@ -902,8 +902,8 @@ export default function SettingsPage() {
                     <option value="billable">Billable / delta only (legacy tables/Discord)</option>
                   </select>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Does <strong>not</strong> change daily/monthly token limits. Limits always use hop-weighted input
-                    (hop 1 = 100%, hops 2–5 = 0%, then +10% every 5 hops, ≥50 = 100%; output always 100%).
+                    Does <strong>not</strong> change daily/monthly token limits. Limits use hop-weighted input
+                    (hop 1 = 100%, hops 2+ = flat % from schedule above; default flat 100%; output always 100%).
                     Peak/full/billable only changes how input is shown in analytics, Discord, and Key Detail.
                   </p>
                 </div>
@@ -939,7 +939,7 @@ export default function SettingsPage() {
                     <Label className="text-sm font-medium">Model Limit Overrides</Label>
                     <p className="text-[10px] text-muted-foreground">
                       Override prompt and/or token caps per model (global). Token-only rows (daily/monthly without prompt limit) are enforced.
-                      Pattern rows (e.g. <span className="font-mono">claude</span> / <span className="font-mono">gpt-5.6</span> @ 5 prompts) share one family quota.
+                      Pattern rows (e.g. <span className="font-mono">claude</span> / <span className="font-mono">gpt-5.6</span> @ 3 prompts) share one family quota.
                       Window for all overrides = <b>Default Per-Model Window</b> above (not per-row). Unlimited token users still get these prompt caps.
                     </p>
                   </div>

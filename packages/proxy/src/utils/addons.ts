@@ -290,7 +290,7 @@ export async function checkAddonModelAccess(opts: {
 
   return {
     allowed: false,
-    reason: `Model "${opts.model}" requires an active add-on (${hint}). Upgrade to a Vibecode pack (vibecode-5m / vibecode-10m) for access — ask in Discord for payment.`,
+    reason: `Model "${opts.model}" requires an active add-on (${hint}). Upgrade to a Vibecode pack (vibecode-5m / 50M · vibecode-10m / 100M) for access — ask in Discord for payment.`,
     requiredAddon: names[0] || "vibecode-10m",
   };
 }
@@ -472,18 +472,18 @@ export function resolveAddonModelDailyTokenLimit(
 
 /**
  * Premium tease models: non-addon users get a small prompt allowance instead of hard lock.
- * Longer patterns win (e.g. chatgpt-5.5 over gpt-5.5). GPT 5.5 = 10; Claude / GPT 5.6 = 5.
+ * Longer patterns win (e.g. chatgpt-5.5 over gpt-5.5). All tease families = 3 prompts.
  */
 const ADDON_TEASE_RULES: Array<{ pattern: string; limit: number }> = [
-	{ pattern: "chatgpt-5.5", limit: 10 },
-	{ pattern: "gpt-5.5", limit: 10 },
-	{ pattern: "chatgpt-5.6", limit: 5 },
-	{ pattern: "gpt-5.6", limit: 5 },
-	{ pattern: "claude", limit: 5 },
+	{ pattern: "chatgpt-5.5", limit: 3 },
+	{ pattern: "gpt-5.5", limit: 3 },
+	{ pattern: "chatgpt-5.6", limit: 3 },
+	{ pattern: "gpt-5.6", limit: 3 },
+	{ pattern: "claude", limit: 3 },
 ];
 
 /** Fallback when no model_limits row matches (legacy callers). Prefer getAddonTeaseDefaultLimit. */
-export const ADDON_TEASE_DEFAULT_PROMPT_LIMIT = 5;
+export const ADDON_TEASE_DEFAULT_PROMPT_LIMIT = 3;
 
 export function getAddonTeaseDefaultLimit(model: string): number {
 	const lower = (model || "").toLowerCase();
@@ -539,9 +539,9 @@ const VIBECODE_ALLOWLIST = [
 ];
 
 const VIBECODE_SUBCAPS = {
-  "gpt-5.6-terra": 3_000_000,
-  "gpt-5.6-sol": 3_000_000,
-  "gpt-5.6-luna": 3_000_000,
+  "gpt-5.6-terra": 30_000_000,
+  "gpt-5.6-sol": 30_000_000,
+  "gpt-5.6-luna": 30_000_000,
 };
 
 /** Upsert Vibecode catalog packs to latest Discord post specs. */
@@ -558,8 +558,8 @@ export async function ensureVibecodeCatalog(): Promise<void> {
     {
       name: "vibecode-5m",
       description:
-        "Vibecode 5M · @300k · Requires Premium role · if Phantom, stacks with Phantom daily (2M + pack) · max 1 device · slots ~20 · no weekly limit",
-      daily: 5_000_000,
+        "Vibecode 50M · @300k · Requires Premium role · if Phantom, stacks with Phantom daily (20M + pack) · max 1 device · slots ~20 · no weekly limit",
+      daily: 50_000_000,
       days: 15,
       slotsNote: 20,
       active: true,
@@ -568,8 +568,8 @@ export async function ensureVibecodeCatalog(): Promise<void> {
     {
       name: "vibecode-10m",
       description:
-        "Vibecode 10M · @459k · Requires Premium role · if Phantom, stacks with Phantom daily (2M + pack) · max 1 device · slots ~10 · no weekly limit",
-      daily: 10_000_000,
+        "Vibecode 100M · @459k · Requires Premium role · if Phantom, stacks with Phantom daily (20M + pack) · max 1 device · slots ~10 · no weekly limit",
+      daily: 100_000_000,
       days: 30,
       slotsNote: 10,
       active: true,
