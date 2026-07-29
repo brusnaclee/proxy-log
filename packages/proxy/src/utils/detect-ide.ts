@@ -29,11 +29,10 @@ const IDE_PATTERNS: [RegExp, string][] = [
 	[/codex/i, "Codex"],
 	[/opencode.*vscode/i, "OpenCode (VS Code)"],
 	[/opencode/i, "OpenCode"],
-	// Trae (ByteDance). Its UA is the bare name of ByteDance's Go HTTP stack,
-	// `hertz`, which no other client we see sends. Without this it falls through
-	// to content detection and flip-flops between OpenCode and Continue mid-session.
+	// Trae can identify itself explicitly. Its observed bare `hertz` UA is only
+	// ByteDance's generic Go HTTP stack, not proof of the IDE; classify that as
+	// generic below and require a body marker/toolset before calling it Trae.
 	[/\btrae\b/i, "Trae"],
-	[/^hertz(\/|$)/i, "Trae"],
 	[/cursor/i, "Cursor"],
 	[/pearai/i, "PearAI"],
 	[/windsurf/i, "Windsurf"],
@@ -96,6 +95,7 @@ const IDE_PATTERNS: [RegExp, string][] = [
 	[/okhttp/i, "OkHttp Client"],
 	[/postmanruntime|postman/i, "Postman"],
 	[/Go-http-client|go-resty/i, "Go HTTP Client"],
+	[/^hertz(\/|$)/i, "Hertz Client"],
 	[/curl/i, "curl"],
 
 	// --- Browser / shell (low priority, catch-all) ---
@@ -120,6 +120,7 @@ export const GENERIC_IDE_LABELS = new Set([
 	"axios",
 	"curl",
 	"go http client",
+	"hertz client",
 	"powershell",
 	"browser client",
 	"vs code",
@@ -290,11 +291,13 @@ export function detectIdeFromContent(requestBody: any, transcriptSnapshot?: stri
 	// Codex CLI
 	if (toolSet.has("codex_app") || (toolSet.has("apply_patch") && toolSet.has("exec_command"))) return "Codex CLI";
 
-	// Trae — SearchCodebase / OpenPreview / run_mcp / goal tools are unique to it.
+	// Trae — SearchCodebase combined with its preview/MCP surface, or its full
+	// goal-tool trio, are high-confidence fingerprints observed alongside the
+	// literal <trae_command> marker. Avoid inferring Trae from generic command
+	// runner tools alone; several agents expose those.
 	// Must precede OpenCode: Trae also ships TodoWrite + Skill + Glob.
 	if (toolSet.has("searchcodebase") && (toolSet.has("openpreview") || toolSet.has("run_mcp"))) return "Trae";
 	if (toolSet.has("create_goal") && toolSet.has("update_goal") && toolSet.has("get_goal")) return "Trae";
-	if (toolSet.has("checkcommandstatus") && toolSet.has("stopcommand") && toolSet.has("runcommand")) return "Trae";
 
 	// OpenCode — uses TodoWrite, Skill, Glob, Grep, Agent
 	if (toolSet.has("todowrite") && toolSet.has("skill") && toolSet.has("glob")) return "OpenCode";

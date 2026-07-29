@@ -176,10 +176,12 @@ export function scrubUpstreamLeakText(text: string | null | undefined): string {
   out = scrubHostUrls(out);
   out = out.replace(SK_RE, REDACT_KEY);
   out = out.replace(BEARER_RE, REDACT_KEY);
-  // Collapse leftover blank lines / double spaces from removals
-  out = out.replace(/[ \t]{2,}/g, " ");
-  out = out.replace(/\n{3,}/g, "\n\n");
-  return out.trimStart();
+  // SECURITY INVARIANT: apart from the exact sensitive spans above, preserve
+  // every byte. This function also runs on individual SSE delta fragments.
+  // trimStart()/whitespace collapsing here turns streamed `" backend"` into
+  // `"backend"`, corrupts shell commands (`ls backend` → `lsbackend`), joins
+  // path components, and destroys indentation even when Token Saver is off.
+  return out;
 }
 
 function scrubStringFieldsDeep(value: unknown, depth: number): unknown {

@@ -201,6 +201,7 @@ import {
 	scrubUpstreamLeakJson,
 	scrubUpstreamLeakText,
 } from '../utils/upstream-leak-scrub.js';
+import { isKeyScopedAuthFailure } from '../utils/upstream-key-failure.js';
 
 const proxy = new Hono();
 
@@ -1100,6 +1101,27 @@ async function fetchWithKeyRotation(
 			);
 			await captureFail(response, keyResult.keyId, keyResult.apiKey);
 			continue;
+		}
+
+		// Several upstreams report a definitively bad *key* as HTTP 403 instead
+		// of 401. Today this accounted for most proxy 502s: a revoked key or a
+		// model/key permission mismatch was returned immediately even when the
+		// provider had other keys available. Rotate only on explicit key-scoped
+		// messages; generic provider/model 403s must still surface as-is.
+		if (response.status === 403) {
+			let bodyText = '';
+			try {
+				bodyText = await response.clone().text();
+			} catch {
+				bodyText = '';
+			}
+			if (isKeyScopedAuthFailure(response.status, bodyText)) {
+				console.warn(
+					`[key-rotation] Key ${keyResult.keyId} for provider ${providerId} returned key-scoped 403, trying next key`,
+				);
+				await captureFail(response, keyResult.keyId, keyResult.apiKey);
+				continue;
+			}
 		}
 
 		// Grok farmed-account contention: after same-key retests exhausted, try next key.

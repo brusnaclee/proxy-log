@@ -65,6 +65,15 @@ describe("resolveShortCircuitAgentTool", () => {
       null,
     );
   });
+
+  it("supports OpenCode's question tool alias", () => {
+    const resolved = resolveShortCircuitAgentTool(
+      [{ type: "function", function: { name: "question" } }],
+      { toolName: "bash", target: "backend/" },
+    );
+    assert.equal(resolved?.name, "question");
+    assert.ok(String(resolved?.arguments.question).includes("backend/"));
+  });
 });
 
 describe("applyAntiWaste", () => {
@@ -94,7 +103,8 @@ describe("applyAntiWaste", () => {
     });
     assert.equal(r.shortCircuit, false);
 
-    for (let i = 2; i <= 5; i++) {
+    // Balanced preset short-circuits on the 8th identical call.
+    for (let i = 2; i <= 8; i++) {
       body = bodyFactory(i);
       r = applyAntiWaste({
         requestBody: body,
@@ -299,7 +309,7 @@ describe("IDE harness ~10 prompts", () => {
           isNewPrompt: true,
           normalizedIde: ide,
         });
-        for (let h = 0; h < 6; h++) {
+        for (let h = 0; h < 8; h++) {
           const body = {
             tools: CLINE_TOOLS,
             messages: [

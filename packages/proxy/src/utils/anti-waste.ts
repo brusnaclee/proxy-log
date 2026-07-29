@@ -24,6 +24,8 @@ export const SAFE_AGENT_SHORTCIRCUIT_TOOLS = [
   "ask_followup_question",
   "attempt_completion",
   "ask_question",
+  // OpenCode exposes the same one-question contract under this shorter name.
+  "question",
 ] as const;
 
 export type ShortCircuitAgentTool = {

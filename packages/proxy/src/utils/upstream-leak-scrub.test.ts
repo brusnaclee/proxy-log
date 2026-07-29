@@ -68,6 +68,58 @@ describe("upstream-leak-scrub", () => {
     assert.ok(!payload.error.message.includes("LEGACYKEY"));
   });
 
+  it("preserves whitespace exactly when there is nothing sensitive", () => {
+    const original =
+      '  ls -la "/Users/me/Pebble Labs Pte. Ltd./backend/"  \n\n\n' +
+      "    indented code\n";
+    assert.equal(scrubUpstreamLeakText(original), original);
+  });
+
+  it("preserves streamed text boundaries across holdback emissions", () => {
+    const hb = new StreamHoldbackScrubber(12);
+    const chunks = [
+      "Saya sudah",
+      " memiliki informasi",
+      " yang cukup.",
+      "  Keep  double spaces.",
+      "\n    code indent",
+    ];
+    const emitted = chunks.map((chunk) => hb.push(chunk)).join("") + hb.flush();
+    assert.equal(emitted, chunks.join(""));
+  });
+
+  it("preserves leading spaces in streamed tool argument fragments", () => {
+    const first = {
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              { index: 0, function: { arguments: '{"command":"ls' } },
+            ],
+          },
+        },
+      ],
+    };
+    const second = {
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              { index: 0, function: { arguments: ' backend/"}' } },
+            ],
+          },
+        },
+      ],
+    };
+    scrubOpenAiStreamChunk(first, null);
+    scrubOpenAiStreamChunk(second, null);
+    assert.equal(
+      first.choices[0].delta.tool_calls[0].function.arguments +
+        second.choices[0].delta.tool_calls[0].function.arguments,
+      '{"command":"ls backend/"}',
+    );
+  });
+
   it("holdback catches footer split across chunks", () => {
     const hb = new StreamHoldbackScrubber(80);
     const part1 = "Normal answer text continues here. This response was deliv";

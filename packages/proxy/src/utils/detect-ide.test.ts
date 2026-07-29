@@ -24,10 +24,10 @@ describe("detectIde UA", () => {
     assert.equal(detectIde("AsyncOpenAI/Python 2.44.0"), "OpenAI Python SDK");
     assert.equal(detectIde("node"), "Node.js Client");
   });
-  it("detects Trae from its bare hertz UA", () => {
-    assert.equal(detectIde("hertz"), "Trae");
+  it("keeps bare hertz generic and detects explicit Trae UA", () => {
+    assert.equal(detectIde("hertz"), "Hertz Client");
     assert.equal(detectIde("Trae/2.0.1"), "Trae");
-    // must not swallow the ByteDance framework used as a real server UA suffix
+    // A framework UA alone must not claim an IDE identity.
     assert.equal(detectIde("Mozilla/5.0 Chrome"), "Browser Client");
   });
 
@@ -105,6 +105,13 @@ describe("detectIdeFromContent", () => {
     assert.equal(detectIdeFromContent({ messages: [], tools: traeTools }), "Trae");
   });
 
+  it("does not infer Trae from generic command-runner tools", () => {
+    const genericTools = ["RunCommand", "CheckCommandStatus", "StopCommand"].map(
+      (name) => ({ type: "function", function: { name } }),
+    );
+    assert.equal(detectIdeFromContent({ messages: [], tools: genericTools }), null);
+  });
+
   it("detects Cline duplicate-read and Roo tool_response", () => {
     assert.equal(
       detectIdeFromContent({
@@ -128,7 +135,14 @@ describe("detectIdeFromContent", () => {
 
 describe("GENERIC_IDE_LABELS", () => {
   it("includes new generic clients for content re-detect", () => {
-    for (const k of ["bun client", "openai go sdk", "okhttp client", "postman", "pi agent"]) {
+    for (const k of [
+      "bun client",
+      "openai go sdk",
+      "okhttp client",
+      "postman",
+      "pi agent",
+      "hertz client",
+    ]) {
       assert.ok(GENERIC_IDE_LABELS.has(k), k);
     }
     assert.equal(normalizeIdeName("Bun Client"), "bun client");
