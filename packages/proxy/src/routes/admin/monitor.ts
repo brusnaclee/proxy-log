@@ -137,10 +137,10 @@ const checkInternal = (c: any) => {
 };
 
 const checkAdminSession = async (c: any) => {
-  if (!(await isAuthenticated(c))) {
-    return c.json({ error: "Unauthorized" }, 401);
-  }
-  return null;
+  // Dashboard cookie OR internal bot/ops secret (for scripted Test All / bulk publish).
+  if (isInternalRequest(c)) return null;
+  if (await isAuthenticated(c)) return null;
+  return c.json({ error: "Unauthorized" }, 401);
 };
 
 // Also export the base /monitor/models route that the bot hits (bot hits /admin/internal/monitor/models)
@@ -615,7 +615,8 @@ monitor.get("/monitor/models/details", async (c) => {
 
 /** Force re-fetch /models into Model Monitor for all active upstreams. */
 monitor.post("/monitor/sync-catalog", async (c) => {
-  if (!(await isAuthenticated(c))) return c.json({ error: "Unauthorized" }, 401);
+  const authErr = await checkAdminSession(c);
+  if (authErr) return authErr;
   const { syncAllActiveProvidersToMonitor } = await import("../../utils/model-catalog.js");
   const result = await syncAllActiveProvidersToMonitor();
   return c.json({ success: true, ...result });
@@ -626,7 +627,8 @@ let sweepRunning = false;
 let sweepProgress = { total: 0, tested: 0, online: 0, offline: 0, rateLimited: 0, startedAt: "", status: "idle" as string };
 
 monitor.post("/monitor/sweep", async (c) => {
-  if (!(await isAuthenticated(c))) return c.json({ error: "Unauthorized" }, 401);
+  const authErr = await checkAdminSession(c);
+  if (authErr) return authErr;
   if (sweepRunning) return c.json({ error: "Sweep already running", progress: sweepProgress });
 
   const body = await c.req.json<{ manual?: boolean }>().catch(() => ({} as { manual?: boolean }));
@@ -848,7 +850,8 @@ monitor.post("/monitor/sweep", async (c) => {
 });
 
 monitor.get("/monitor/sweep/progress", async (c) => {
-  if (!(await isAuthenticated(c))) return c.json({ error: "Unauthorized" }, 401);
+  const authErr = await checkAdminSession(c);
+  if (authErr) return authErr;
   return c.json(sweepProgress);
 });
 
