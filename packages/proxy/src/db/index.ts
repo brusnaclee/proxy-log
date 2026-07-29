@@ -204,6 +204,12 @@ export async function initializeDatabase() {
 		await refreshTeaseLimitsCacheFromDb();
 	} catch (_) {}
 	try {
+		const { refreshUpstreamScrubSecretsFromDb } = await import(
+			"../utils/upstream-leak-scrub.js"
+		);
+		await refreshUpstreamScrubSecretsFromDb();
+	} catch (_) {}
+	try {
 		const { setTokenInputModeCache, setTokenLimitWeightConfigCache } = await import('../utils/counting.js');
 		const modeRow = await pool.query(
 			`SELECT token_input_mode, token_limit_weight_percent, token_limit_weight_mode, token_limit_weight_custom FROM admin_config LIMIT 1`,

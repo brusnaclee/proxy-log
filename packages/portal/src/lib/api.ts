@@ -349,10 +349,18 @@ function clientHintPayload() {
     const ua = (navigator as any).userAgentData as
       | { platform?: string; mobile?: boolean }
       | undefined;
+    let timezone: string | undefined;
+    try {
+      timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    } catch {
+      /* ignore */
+    }
     return {
       platform: ua?.platform || navigator.platform || undefined,
       mobile: ua?.mobile,
-      label: ua?.platform || undefined,
+      label: ua?.platform || navigator.platform || undefined,
+      timezone,
+      languages: typeof navigator.language === "string" ? navigator.language : undefined,
     };
   } catch {
     return { platform: navigator.platform || undefined };

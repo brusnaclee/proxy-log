@@ -1490,6 +1490,13 @@ export async function getNextApiKey(providerId: number): Promise<{ keyId: number
       })
       .where(eq(providerApiKeys.id, chosen.id));
 
+    try {
+      const { registerUpstreamSecret } = await import("./upstream-leak-scrub.js");
+      registerUpstreamSecret(chosen.apiKey);
+    } catch {
+      /* ignore */
+    }
+
     return { keyId: chosen.id, apiKey: chosen.apiKey };
   }
 

@@ -1,19 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { auditLogsApi, type AdminAuditRow } from "@/lib/api";
+import { formatLogTimeLine } from "@/lib/log-time";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useNotify } from "@/components/Notify";
 import { ScrollText } from "lucide-react";
-
-function fmt(d?: string | null) {
-  if (!d) return "—";
-  try {
-    return new Date(d).toLocaleString();
-  } catch {
-    return String(d);
-  }
-}
 
 export function AdminAuditLogPanel() {
   const notify = useNotify();
@@ -59,7 +51,29 @@ export function AdminAuditLogPanel() {
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="flex flex-wrap gap-2 items-end">
-          <div className="flex-1 min-w-[160px]">
+          <div className="flex gap-1.5 flex-wrap">
+            {[
+              { label: "All", value: "" },
+              { label: "Logins", value: "auth.login" },
+              { label: "Password changes", value: "settings.password.change" },
+              { label: "Session revoke", value: "session.revoke" },
+            ].map((chip) => (
+              <Button
+                key={chip.label}
+                type="button"
+                size="sm"
+                variant={actionFilter === chip.value ? "default" : "outline"}
+                className="h-7 text-[11px]"
+                onClick={() => {
+                  setOffset(0);
+                  setActionFilter(chip.value);
+                }}
+              >
+                {chip.label}
+              </Button>
+            ))}
+          </div>
+          <div className="flex-1 min-w-[140px]">
             <Input
               value={actionFilter}
               onChange={(e) => {
@@ -86,11 +100,11 @@ export function AdminAuditLogPanel() {
             >
               <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                 <span className="font-mono font-medium text-foreground">{row.action}</span>
-                <span className="text-muted-foreground">{fmt(row.createdAt)}</span>
                 {row.statusCode != null && (
                   <span className="text-muted-foreground">HTTP {row.statusCode}</span>
                 )}
               </div>
+              <p className="text-foreground/90">{formatLogTimeLine(row.createdAt)}</p>
               <p className="text-muted-foreground font-mono truncate">
                 {row.actor}
                 {row.ip ? ` · ${row.ip}` : ""}

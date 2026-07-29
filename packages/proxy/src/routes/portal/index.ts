@@ -13,6 +13,7 @@ import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { getRecapWindow } from "../../utils/recap-window.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
+import { scrubUpstreamLeakText } from "../../utils/upstream-leak-scrub.js";
 import { parseTrialModelWhitelist, resolveKeyPromptLimit, resolveKeyApiCallLimit } from "../../utils/trial-config.js";
 import {
   checkPromptLimit,
@@ -153,9 +154,7 @@ function generateWebhookSecret(): string {
 
 function sanitizeErrorMsg(msg: string | null | undefined): string {
   if (!msg) return "";
-  return msg
-    .replace(/sk-[A-Za-z0-9_\-]{6,}/g, "sk-***")
-    .replace(/Bearer\s+\S{6,}/g, "Bearer ***");
+  return scrubUpstreamLeakText(msg);
 }
 
 function sanitizePreview(text: string | null | undefined, maxLen = 2500): string {

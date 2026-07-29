@@ -18,6 +18,7 @@ import {
   Shield,
   Gift,
   Package,
+  ClipboardList,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +32,7 @@ const mainNav = [
 ];
 
 const sysNav = [
+  { to: "/admin-log", icon: ClipboardList, label: "Admin Log" },
   { to: "/settings", icon: Settings, label: "Settings" },
   { to: "/addons", icon: Package, label: "Add-ons" },
   { to: "/trial", icon: Gift, label: "Trial Mode" },

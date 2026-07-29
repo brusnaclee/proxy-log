@@ -33,7 +33,8 @@ export default function ModelMonitorPage() {
 
   const handleSweep = async () => {
     try {
-      await monitor.triggerSweep();
+      const started = await monitor.triggerSweep({ manual: true });
+      notify.success(started.message || "Sweep started");
       setSweepState({ running: true, progress: null });
       // Poll every 1.5s for snappier feedback; also pull model table on every
       // tick so the user sees results appear in real time (instead of only
@@ -68,7 +69,58 @@ export default function ModelMonitorPage() {
       setSweepInterval(interval);
     } catch (err) {
       console.error("Sweep failed:", err);
+      notify.error(`Test All failed: ${(err as any)?.message || err}`);
     }
+  };
+
+  /** Run a manual sweep and resolve when it finishes (or errors / times out). */
+  const runManualSweepUntilDone = async (): Promise<void> => {
+    await monitor.triggerSweep({ manual: true });
+    setSweepState({ running: true, progress: null });
+    const startedAt = Date.now();
+    const maxMs = 30 * 60 * 1000;
+    await new Promise<void>((resolve, reject) => {
+      const interval = setInterval(async () => {
+        try {
+          if (Date.now() - startedAt > maxMs) {
+            clearInterval(interval);
+            setSweepInterval(null);
+            setSweepState({ running: false, progress: null });
+            reject(new Error("Sweep timed out"));
+            return;
+          }
+          const progress = await monitor.getSweepProgress();
+          setSweepState({ running: progress.status === "running", progress });
+          if (progress.status === "running") {
+            const res = await monitor.getModels();
+            setData(res.data);
+            setSummary({
+              total: res.summary.total,
+              online: res.summary.online,
+              offline: res.summary.offline,
+              timeout: res.summary.timeout,
+              probeOk: res.summary.probeOk ?? 0,
+            });
+          }
+          if (progress.status !== "running") {
+            clearInterval(interval);
+            setSweepInterval(null);
+            if (progress.status === "error") {
+              reject(new Error("Sweep ended with error"));
+              return;
+            }
+            resolve();
+          }
+        } catch (e) {
+          clearInterval(interval);
+          setSweepInterval(null);
+          reject(e);
+        }
+      }, 1500);
+      setSweepInterval(interval);
+    });
+    await new Promise((r) => setTimeout(r, 1500));
+    await loadData();
   };
 
   // Cleanup interval on unmount
@@ -267,6 +319,7 @@ export default function ModelMonitorPage() {
     action: "on" | "off",
     probe?: "ok" | "fail" | "all",
   ) => {
+    const testThenPublishOn = action === "on" && (probe === "all" || !probe || probe === "ok");
     const probeLabel =
       probe === "ok" ? " (Probe OK only)" : probe === "fail" ? " (Probe Fail only)" : "";
     const verb = action === "on" ? "ON" : "OFF";
@@ -276,6 +329,39 @@ export default function ModelMonitorPage() {
         : probe === "fail"
           ? filtered.filter((d) => !d.probeOk).length
           : filtered.length;
+
+    if (testThenPublishOn) {
+      if (
+        !(await notify.confirm({
+          title: `Test All → Published ${verb}?`,
+          message:
+            `Will run Test All (manual probe), then Publish ON for models that come Probe OK in ${bulkScopeLabel}. ` +
+            `Models still Fail stay OFF. Current filter match before re-test: ${matchCount}.`,
+          confirmLabel: "Test + Publish ON",
+        }))
+      )
+        return;
+      setBulkLoading(true);
+      try {
+        notify.success("Running Test All…");
+        await runManualSweepUntilDone();
+        const res = await monitor.bulkOverride({
+          action: "on",
+          provider: upstreamFilter !== "all" ? upstreamFilter : undefined,
+          vendor: modelVendorFilter !== "all" ? modelVendorFilter : undefined,
+          probe: "ok",
+        });
+        await loadData();
+        notify.success(res.message || `Published ON for ${res.updated} Probe OK model(s)`);
+      } catch (err) {
+        console.error("Test + publish failed:", err);
+        notify.error(`Test + publish failed: ${(err as any)?.message || err}`);
+      } finally {
+        setBulkLoading(false);
+      }
+      return;
+    }
+
     if (
       !(await notify.confirm({
         title: `Published ${verb}?`,
@@ -338,18 +424,18 @@ export default function ModelMonitorPage() {
                 variant="destructive"
                 size="sm"
                 onClick={handleSweep}
-                disabled={sweepState.running || monitorAutoMode === "off"}
+                disabled={sweepState.running || bulkLoading}
                 title={
                   monitorAutoMode === "off"
-                    ? "Auto mode is Off — enable Notif only / On in Settings, or use Sync /models (listing only)"
-                    : undefined
+                    ? "Manual Test All — updates Probe OK/Fail only; Published catalog stays as-is while mode is Off"
+                    : "Test all models (completion probe)"
                 }
               >
                 <Zap className={`h-4 w-4 mr-2 ${sweepState.running ? "animate-pulse" : ""}`} />
                 {sweepState.running && sweepState.progress
                   ? `Sweeping... ${sweepState.progress.tested}/${sweepState.progress.total} (${Math.round((sweepState.progress.tested / Math.max(sweepState.progress.total, 1)) * 100)}%)`
                   : monitorAutoMode === "off"
-                    ? "Test All (disabled — mode Off)"
+                    ? "Test All Models (manual)"
                     : "Test All Models"}
               </Button>
               <Button variant="outline" size="sm" onClick={handleExport}>
@@ -573,16 +659,16 @@ export default function ModelMonitorPage() {
             <Button
               size="sm"
               variant="outline"
-              disabled={bulkLoading || filtered.length === 0}
+              disabled={bulkLoading || sweepState.running || filtered.length === 0}
               onClick={() => handleBulkOverride("on")}
-              title="Publish ON for all visible models"
+              title="Test All first, then Publish ON for Probe OK in current filter"
             >
               <Power className="h-3 w-3 mr-1" /> All ON
             </Button>
             <Button
               size="sm"
               variant="outline"
-              disabled={bulkLoading || filtered.length === 0}
+              disabled={bulkLoading || sweepState.running || filtered.length === 0}
               onClick={() => handleBulkOverride("off")}
               title="Publish OFF for all visible models"
             >
@@ -591,16 +677,16 @@ export default function ModelMonitorPage() {
             <Button
               size="sm"
               variant="default"
-              disabled={bulkLoading || filtered.filter((d) => d.probeOk).length === 0}
+              disabled={bulkLoading || sweepState.running || filtered.length === 0}
               onClick={() => handleBulkOverride("on", "ok")}
-              title="Publish ON only for models with Probe OK"
+              title="Test All first, then Publish ON only for Probe OK"
             >
               <Power className="h-3 w-3 mr-1" /> ON Probe OK
             </Button>
             <Button
               size="sm"
               variant="destructive"
-              disabled={bulkLoading || filtered.filter((d) => !d.probeOk).length === 0}
+              disabled={bulkLoading || sweepState.running || filtered.filter((d) => !d.probeOk).length === 0}
               onClick={() => handleBulkOverride("off", "fail")}
               title="Publish OFF only for models with Probe Fail"
             >

@@ -192,8 +192,33 @@ import {
 	shouldInjectStreamReasoningBackfill,
 	type ReasoningProfile,
 } from '../utils/reasoning-profile.js';
+import {
+	StreamHoldbackScrubber,
+	buildOpenAiContentFlushChunk,
+	registerUpstreamHost,
+	registerUpstreamSecret,
+	scrubOpenAiStreamChunk,
+	scrubUpstreamLeakJson,
+	scrubUpstreamLeakText,
+} from '../utils/upstream-leak-scrub.js';
 
 const proxy = new Hono();
+
+/** Never forward client credentials / hop-by-hop headers to upstream. */
+const UPSTREAM_BLOCKED_HEADERS = new Set([
+	'host',
+	'content-length',
+	'content-encoding',
+	'content-type',
+	'authorization',
+	'x-api-key',
+	'api-key',
+	'cookie',
+	'connection',
+	'keep-alive',
+	'transfer-encoding',
+	'upgrade',
+]);
 
 async function notifyTrialLimitIfNeeded(
 	keyRecord: { id: number; isTrial: boolean; discordUserId?: string | null },
@@ -2640,18 +2665,7 @@ proxy.all('/*', async (c) => {
 		}
 
 		// Build blocked headers set once
-		const blockedHeaders = new Set([
-			'host',
-			'content-length',
-			'content-encoding',
-			'content-type',
-			'authorization',
-			'cookie',
-			'connection',
-			'keep-alive',
-			'transfer-encoding',
-			'upgrade',
-		]);
+		const blockedHeaders = UPSTREAM_BLOCKED_HEADERS;
 		let baseHeaders: Record<string, string> = {};
 		for (const [k, v] of c.req.raw.headers.entries()) {
 			if (!blockedHeaders.has(k.toLowerCase())) baseHeaders[k] = v;
@@ -2996,6 +3010,7 @@ proxy.all('/*', async (c) => {
 						let openaiPassthroughBuffer = '';
 						let anthropicBuffer = '';
 						let autoHasActualToolCalls = false;
+						const streamHoldback = new StreamHoldbackScrubber();
 						const anthropicStreamState = isAnthropicAuto
 							? createStreamState(`auto (${candidate.modelId})`)
 							: null;
@@ -3015,20 +3030,33 @@ proxy.all('/*', async (c) => {
 												anthropicStreamState,
 											);
 											for (const line of openaiLines) {
-												controller.enqueue(
-													new TextEncoder().encode(line + '\n\n'),
-												);
 												if (
 													line.startsWith('data: ') &&
 													line !== 'data: [DONE]'
 												) {
 													try {
-														const data = JSON.parse(line.slice(6));
+														const data = scrubOpenAiStreamChunk(
+															JSON.parse(line.slice(6)),
+															streamHoldback,
+														);
+														controller.enqueue(
+															new TextEncoder().encode(
+																`data: ${JSON.stringify(data)}\n\n`,
+															),
+														);
 														if (detectToolCallsInResponse(data)) {
 															autoHasActualToolCalls = true;
 														}
 														consumeStreamPayload(acc, data);
-													} catch {}
+													} catch {
+														controller.enqueue(
+															new TextEncoder().encode(line + '\n\n'),
+														);
+													}
+												} else {
+													controller.enqueue(
+														new TextEncoder().encode(line + '\n\n'),
+													);
 												}
 											}
 										}
@@ -3042,6 +3070,16 @@ proxy.all('/*', async (c) => {
 									openaiPassthroughBuffer = lines.pop() || '';
 									for (const line of lines) {
 										if (line === 'data: [DONE]') {
+											const flushed = streamHoldback.flush();
+											const flushLine = buildOpenAiContentFlushChunk(
+												lastStreamChunk,
+												flushed,
+											);
+											if (flushLine) {
+												controller.enqueue(
+													new TextEncoder().encode(flushLine),
+												);
+											}
 											if (
 												shouldInjectStreamReasoningBackfill({
 													profile: reasoningOpts.reasoningProfile,
@@ -3069,9 +3107,12 @@ proxy.all('/*', async (c) => {
 												continue;
 											}
 											try {
-												const data = backfillOpenAIResponseContent(
-													JSON.parse(payloadText),
-													streamReasoningOpts,
+												const data = scrubOpenAiStreamChunk(
+													backfillOpenAIResponseContent(
+														JSON.parse(payloadText),
+														streamReasoningOpts,
+													),
+													streamHoldback,
 												);
 												lastStreamChunk = data;
 												noteStreamDeltaFields(data, streamDeltaState);
@@ -3083,7 +3124,9 @@ proxy.all('/*', async (c) => {
 												);
 											} catch {
 												controller.enqueue(
-													new TextEncoder().encode(`${line}\n`),
+													new TextEncoder().encode(
+														`${scrubUpstreamLeakText(line)}\n`,
+													),
 												);
 											}
 										} else {
@@ -3097,6 +3140,14 @@ proxy.all('/*', async (c) => {
 								}
 							},
 							flush(controller) {
+								const flushed = streamHoldback.flush();
+								const flushLine = buildOpenAiContentFlushChunk(
+									lastStreamChunk,
+									flushed,
+								);
+								if (flushLine) {
+									controller.enqueue(new TextEncoder().encode(flushLine));
+								}
 								const finalized = finalizeCompletion(acc);
 								const rawCompletionTokens = finalized.completionTokens
 									? finalized.completionTokens
@@ -3601,18 +3652,7 @@ proxy.all('/*', async (c) => {
 			? resolveAnthropicUpstreamUrl(targetProvider2.endpoint)
 			: joinUpstreamOpenAIUrl(targetProvider2.endpoint, forwardPath);
 		let upstreamHeaders2: Record<string, string> = {};
-		const blocked2 = new Set([
-			'host',
-			'content-length',
-			'content-encoding',
-			'content-type',
-			'authorization',
-			'cookie',
-			'connection',
-			'keep-alive',
-			'transfer-encoding',
-			'upgrade',
-		]);
+		const blocked2 = UPSTREAM_BLOCKED_HEADERS;
 		for (const [k, v] of c.req.raw.headers.entries()) {
 			if (!blocked2.has(k.toLowerCase())) upstreamHeaders2[k] = v;
 		}
@@ -4720,18 +4760,7 @@ proxy.all('/*', async (c) => {
 
 	// ΓöÇΓöÇΓöÇ 10. Forward Request to Upstream ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 	let upstreamHeaders: Record<string, string> = {};
-	const blockedHeaders = new Set([
-		'host',
-		'content-length',
-		'content-encoding',
-		'content-type',
-		'authorization',
-		'cookie',
-		'connection',
-		'keep-alive',
-		'transfer-encoding',
-		'upgrade',
-	]);
+	const blockedHeaders = UPSTREAM_BLOCKED_HEADERS;
 
 	for (const [headerKey, headerValue] of c.req.raw.headers.entries()) {
 		if (!blockedHeaders.has(headerKey.toLowerCase())) {
@@ -4994,6 +5023,8 @@ proxy.all('/*', async (c) => {
 					attemptProvider.name,
 					attemptIsAnthropic || attemptIsYoucom ? attemptActualUrl : attemptUpstreamUrl,
 					(apiKey) => {
+						registerUpstreamSecret(apiKey);
+						registerUpstreamHost(attemptProvider.endpoint);
 						if (attemptIsAnthropic) {
 							return {
 								method: c.req.method,
@@ -5131,7 +5162,9 @@ proxy.all('/*', async (c) => {
 					let upstreamDetail = '';
 					try {
 						const peek = await upstreamResponse.clone().text();
-						upstreamDetail = peek.replace(/\s+/g, ' ').trim().slice(0, 160);
+						upstreamDetail = scrubUpstreamLeakText(
+							peek.replace(/\s+/g, ' ').trim().slice(0, 160),
+						);
 					} catch {}
 					console.warn(
 						`[proxy] upstream ${pickModel} HTTP ${upstreamResponse.status}${upstreamDetail ? `: ${upstreamDetail}` : ''}`,
@@ -5175,7 +5208,7 @@ proxy.all('/*', async (c) => {
 		if (!fetchSucceeded) {
 			throw new Error(
 				fetchError?.message
-					? `All upstream attempts failed (${fetchError.message})`
+					? `All upstream attempts failed (${scrubUpstreamLeakText(fetchError.message)})`
 					: 'All upstream attempts failed',
 			);
 		}
@@ -5184,6 +5217,7 @@ proxy.all('/*', async (c) => {
 		const resolvedProvider = await getProviderForModel(model);
 		if (resolvedProvider) {
 			targetProvider = resolvedProvider;
+			registerUpstreamHost(targetProvider.endpoint);
 			isAnthropicProvider =
 				targetProvider.endpointType === 'anthropic' ||
 				(isAnthropicRequest && providerSupportsNativeAnthropic(targetProvider));
@@ -5260,11 +5294,11 @@ proxy.all('/*', async (c) => {
 			// FIX: Track SSE done events to drop duplicates
 			let openaiSawDone = false;
 			let anthropicSawDone = false;
+			const streamHoldback = new StreamHoldbackScrubber();
 
 			const { readable, writable } = new TransformStream({
 				transform(chunk, controller) {
 					if (anthropicPassthrough) {
-						controller.enqueue(chunk);
 						try {
 							anthropicPassthroughBuffer += decoder.decode(chunk, {
 								stream: true,
@@ -5272,17 +5306,34 @@ proxy.all('/*', async (c) => {
 							const split = splitAnthropicSseEvents(anthropicPassthroughBuffer);
 							anthropicPassthroughBuffer = split.remainder;
 							for (const event of split.events) {
+								const scrubbedLines: string[] = [];
 								for (const line of event.split('\n')) {
-									if (!line.startsWith('data: ')) continue;
+									if (!line.startsWith('data: ')) {
+										scrubbedLines.push(line);
+										continue;
+									}
 									const payloadText = line.slice(6).trim();
-									if (!payloadText || payloadText === '[DONE]') continue;
+									if (!payloadText || payloadText === '[DONE]') {
+										scrubbedLines.push(line);
+										continue;
+									}
 									try {
-										const data = JSON.parse(payloadText);
+										const data = scrubUpstreamLeakJson(JSON.parse(payloadText));
 										consumeStreamPayload(acc, data);
-									} catch {}
+										scrubbedLines.push(`data: ${JSON.stringify(data)}`);
+									} catch {
+										scrubbedLines.push(
+											`data: ${scrubUpstreamLeakText(payloadText)}`,
+										);
+									}
 								}
+								controller.enqueue(
+									new TextEncoder().encode(scrubbedLines.join('\n') + '\n\n'),
+								);
 							}
-						} catch {}
+						} catch {
+							controller.enqueue(chunk);
+						}
 					} else if (isAnthropicProvider && anthropicStreamState) {
 						// Anthropic streaming: convert SSE events to OpenAI format
 						anthropicBuffer += decoder.decode(chunk, { stream: true });
@@ -5295,18 +5346,44 @@ proxy.all('/*', async (c) => {
 								anthropicStreamState,
 							);
 							for (const line of openaiLines) {
-								const encoded = new TextEncoder().encode(line + '\n\n');
-								controller.enqueue(encoded);
-
-								// Also accumulate for logging
-								if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+								if (
+									line.startsWith('data: ') &&
+									line !== 'data: [DONE]'
+								) {
 									try {
-										const data = JSON.parse(line.slice(6));
+										const data = scrubOpenAiStreamChunk(
+											JSON.parse(line.slice(6)),
+											streamHoldback,
+										);
+										const encoded = new TextEncoder().encode(
+											`data: ${JSON.stringify(data)}\n\n`,
+										);
+										controller.enqueue(encoded);
 										appendToolsFromPayload(data);
 										if (detectToolCallsInResponse(data))
 											hasActualToolCalls = true;
 										consumeStreamPayload(acc, data);
-									} catch {}
+									} catch {
+										controller.enqueue(
+											new TextEncoder().encode(line + '\n\n'),
+										);
+									}
+								} else {
+									if (line === 'data: [DONE]' || line.startsWith('data: [DONE]')) {
+										const flushed = streamHoldback.flush();
+										const flushLine = buildOpenAiContentFlushChunk(
+											lastStreamChunk,
+											flushed,
+										);
+										if (flushLine) {
+											controller.enqueue(
+												new TextEncoder().encode(flushLine),
+											);
+										}
+									}
+									controller.enqueue(
+										new TextEncoder().encode(line + '\n\n'),
+									);
 								}
 							}
 						}
@@ -5361,9 +5438,12 @@ proxy.all('/*', async (c) => {
 							}
 							if (!payloadText) continue;
 							try {
-								const data = backfillOpenAIResponseContent(
-									JSON.parse(payloadText),
-									streamReasoningOpts,
+								const data = scrubOpenAiStreamChunk(
+									backfillOpenAIResponseContent(
+										JSON.parse(payloadText),
+										streamReasoningOpts,
+									),
+									streamHoldback,
 								);
 								noteStreamDeltaFields(data, streamDeltaState);
 								appendToolsFromPayload(data);
@@ -5391,6 +5471,14 @@ proxy.all('/*', async (c) => {
 								if (line === 'data: [DONE]') {
 									if (openaiSawDone) continue; // Drop duplicate
 									openaiSawDone = true;
+									const flushed = streamHoldback.flush();
+									const flushLine = buildOpenAiContentFlushChunk(
+										lastStreamChunk,
+										flushed,
+									);
+									if (flushLine) {
+										controller.enqueue(new TextEncoder().encode(flushLine));
+									}
 									if (
 										shouldInjectStreamReasoningBackfill({
 											profile: reasoningOpts.reasoningProfile,
@@ -5416,9 +5504,12 @@ proxy.all('/*', async (c) => {
 										continue;
 									}
 									try {
-										const data = backfillOpenAIResponseContent(
-											JSON.parse(payloadText),
-											streamReasoningOpts,
+										const data = scrubOpenAiStreamChunk(
+											backfillOpenAIResponseContent(
+												JSON.parse(payloadText),
+												streamReasoningOpts,
+											),
+											streamHoldback,
 										);
 										lastStreamChunk = data;
 										noteStreamDeltaFields(data, streamDeltaState);
@@ -5432,7 +5523,11 @@ proxy.all('/*', async (c) => {
 											),
 										);
 									} catch {
-										controller.enqueue(new TextEncoder().encode(`${line}\n`));
+										controller.enqueue(
+											new TextEncoder().encode(
+												`${scrubUpstreamLeakText(line)}\n`,
+											),
+										);
 									}
 								} else {
 									controller.enqueue(new TextEncoder().encode(`${line}\n`));
@@ -5484,9 +5579,12 @@ proxy.all('/*', async (c) => {
 								) {
 									const payloadText = finalLine.slice(6).trim();
 									if (payloadText) {
-										const data = backfillOpenAIResponseContent(
-											JSON.parse(payloadText),
-											streamReasoningOpts,
+										const data = scrubOpenAiStreamChunk(
+											backfillOpenAIResponseContent(
+												JSON.parse(payloadText),
+												streamReasoningOpts,
+											),
+											streamHoldback,
 										);
 										lastStreamChunk = data;
 										noteStreamDeltaFields(data, streamDeltaState);
@@ -5500,8 +5598,20 @@ proxy.all('/*', async (c) => {
 									controller.enqueue(new TextEncoder().encode(finalLine));
 								}
 							} catch {
-								controller.enqueue(new TextEncoder().encode(finalLine));
+								controller.enqueue(
+									new TextEncoder().encode(scrubUpstreamLeakText(finalLine)),
+								);
 							}
+						}
+					}
+					{
+						const flushed = streamHoldback.flush();
+						const flushLine = buildOpenAiContentFlushChunk(
+							lastStreamChunk,
+							flushed,
+						);
+						if (flushLine) {
+							controller.enqueue(new TextEncoder().encode(flushLine));
 						}
 					}
 					if (
@@ -5817,6 +5927,7 @@ proxy.all('/*', async (c) => {
 			const parsed = JSON.parse(responseBody);
 			const reasoningOpts = reasoningOptsForIde(ide);
 			backfillOpenAIResponseContent(parsed, reasoningOpts);
+			scrubUpstreamLeakJson(parsed);
 			responseBody = JSON.stringify(parsed);
 			appendToolsFromPayload(parsed);
 
@@ -5824,7 +5935,9 @@ proxy.all('/*', async (c) => {
 			hasActualToolCalls = detectToolCallsInResponse(parsed);
 
 			if (parsed.error) {
-				errorMessage = parsed.error.message || JSON.stringify(parsed.error);
+				errorMessage = scrubUpstreamLeakText(
+					parsed.error.message || JSON.stringify(parsed.error),
+				);
 			}
 
 			// Upstream combo gateways (api3) return 404 "No active credentials for provider: X"
@@ -5975,10 +6088,44 @@ proxy.all('/*', async (c) => {
 					} catch {}
 				}
 				if (!errorMessage) {
-					errorMessage = responseBody.slice(0, 500);
+					errorMessage = scrubUpstreamLeakText(responseBody.slice(0, 500));
 				}
 				console.warn(`[proxy] Upstream ${statusCode} for model "${model}": ${errorMessage.slice(0, 200)}`);
 			}
+		}
+
+		// Never forward raw upstream error bodies that may embed secrets / hostnames.
+		if (statusCode >= 400) {
+			try {
+				const parsedErr = JSON.parse(responseBody);
+				scrubUpstreamLeakJson(parsedErr);
+				if (parsedErr?.error?.message) {
+					parsedErr.error.message = scrubUpstreamLeakText(
+						String(parsedErr.error.message),
+					);
+				}
+				responseBody = JSON.stringify(
+					parsedErr?.error
+						? {
+								error: {
+									message: scrubUpstreamLeakText(
+										parsedErr.error.message || errorMessage || "Upstream error",
+									),
+									type: parsedErr.error.type || "upstream_error",
+									code: parsedErr.error.code || null,
+								},
+							}
+						: { error: { message: scrubUpstreamLeakText(errorMessage || "Upstream error"), type: "upstream_error" } },
+				);
+			} catch {
+				responseBody = JSON.stringify({
+					error: {
+						message: scrubUpstreamLeakText(errorMessage || "Upstream error"),
+						type: "upstream_error",
+					},
+				});
+			}
+			errorMessage = scrubUpstreamLeakText(errorMessage || "Upstream error");
 		}
 
 		const billableTokens = resolveBillableTokens(
@@ -6121,7 +6268,9 @@ proxy.all('/*', async (c) => {
 		});
 	} catch (error: any) {
 		const latencyMs = Date.now() - startTime;
-		const errorMessage = error?.message || 'Upstream request failed';
+		const errorMessage = scrubUpstreamLeakText(
+			error?.message || 'Upstream request failed',
+		);
 		const toolsUsed = Array.from(toolNameSet);
 
 		const logEntry = {

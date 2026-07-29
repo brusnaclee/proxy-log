@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Monitor, Smartphone, Tablet, Bot, Shield, Trash2 } from "lucide-react";
+import { Monitor, Smartphone, Tablet, Bot, Shield, Trash2, RefreshCw } from "lucide-react";
 import { api, type PortalSessionRow } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { useNotify } from "@/components/Notify";
@@ -42,9 +42,19 @@ export function ActiveSessionsPanel() {
     void load();
   }, [load]);
 
-  async function revoke(id: number) {
+  async function revoke(s: PortalSessionRow) {
     try {
-      await api.sessions.revoke(id);
+      await api.sessions.revoke(s.id);
+      if (s.isCurrent) {
+        notify.success(t("Session revoked"));
+        try {
+          await api.auth.logout();
+        } catch {
+          /* cookie may already be invalid */
+        }
+        window.location.href = "/login";
+        return;
+      }
       notify.success(t("Session revoked"));
       await load();
     } catch (e: any) {
@@ -74,13 +84,23 @@ export function ActiveSessionsPanel() {
             {t("Devices signed into your portal. Sessions expire after 3 days.")}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => void revokeOthers()}
-          className="px-3 py-1.5 text-xs rounded-md border border-border text-foreground hover:bg-accent transition-colors"
-        >
-          {t("Sign out other devices")}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void load()}
+            className="p-1.5 rounded-md border border-border text-muted-foreground hover:bg-accent transition-colors"
+            aria-label="Refresh"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => void revokeOthers()}
+            className="px-3 py-1.5 text-xs rounded-md border border-border text-foreground hover:bg-accent transition-colors"
+          >
+            {t("Sign out other devices")}
+          </button>
+        </div>
       </div>
 
       {loading && <p className="text-xs text-muted-foreground">{t("Loading…")}</p>}
@@ -95,7 +115,7 @@ export function ActiveSessionsPanel() {
             className="flex items-start justify-between gap-3 rounded-lg border border-border/60 px-3 py-2.5"
           >
             <div className="min-w-0 space-y-0.5">
-              <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+              <div className="flex items-center gap-2 text-sm font-medium text-foreground flex-wrap">
                 <DeviceIcon cls={s.deviceClass} />
                 <span>
                   {[s.osName, s.clientName, s.clientLabel].filter(Boolean).join(" · ") ||
@@ -112,19 +132,18 @@ export function ActiveSessionsPanel() {
                 {s.country ? ` · ${s.country}` : ""}
               </p>
               <p className="text-[10px] text-muted-foreground">
-                {t("Last seen")} {fmt(s.lastSeenAt)} · {t("Expires")} {fmt(s.expiresAt)}
+                {t("First login")} {fmt(s.createdAt)} · {t("Last active")} {fmt(s.lastSeenAt)} ·{" "}
+                {t("Expires")} {fmt(s.expiresAt)}
               </p>
             </div>
-            {!s.isCurrent && (
-              <button
-                type="button"
-                onClick={() => void revoke(s.id)}
-                className="inline-flex items-center gap-1 px-2 py-1.5 text-xs text-red-400 hover:bg-red-400/10 rounded-md transition-colors"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                {t("Revoke")}
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => void revoke(s)}
+              className="inline-flex items-center gap-1 px-2 py-1.5 text-xs text-red-400 hover:bg-red-400/10 rounded-md transition-colors shrink-0"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              {t("Revoke")}
+            </button>
           </div>
         ))}
       </div>

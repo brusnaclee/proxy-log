@@ -14,13 +14,50 @@ export interface SessionClientMeta {
   clientLabel: string | null;
 }
 
-/** Best-effort client IP from proxy headers. */
+function headerFirst(c: Context, name: string): string {
+  const v = c.req.header(name);
+  if (!v) return "";
+  return v.split(",")[0].trim();
+}
+
+function stripIpv6Mapped(ip: string): string {
+  return ip.replace(/^::ffff:/i, "").trim();
+}
+
+function isLoopback(ip: string): boolean {
+  const s = stripIpv6Mapped(ip).toLowerCase();
+  return !s || s === "::1" || s === "127.0.0.1" || s === "localhost";
+}
+
+/** Best-effort client IP from proxy / CDN headers, then socket. */
 export function requestClientIp(c: Context): string {
-  return (
-    c.req.header("cf-connecting-ip") ||
-    c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
-    "unknown"
-  );
+  const candidates = [
+    headerFirst(c, "cf-connecting-ip"),
+    headerFirst(c, "true-client-ip"),
+    headerFirst(c, "x-real-ip"),
+    headerFirst(c, "x-forwarded-for"),
+  ]
+    .map(stripIpv6Mapped)
+    .filter(Boolean);
+
+  for (const ip of candidates) {
+    if (!isLoopback(ip)) return ip;
+  }
+  if (candidates[0]) return candidates[0];
+
+  try {
+    const raw =
+      (c.env as { incoming?: { socket?: { remoteAddress?: string } } })?.incoming?.socket
+        ?.remoteAddress ||
+      (c.req.raw as unknown as { socket?: { remoteAddress?: string } })?.socket?.remoteAddress ||
+      "";
+    const addr = stripIpv6Mapped(String(raw || ""));
+    if (addr) return addr;
+  } catch {
+    /* ignore */
+  }
+
+  return "unknown";
 }
 
 export function requestCountry(c: Context): string | null {
@@ -71,9 +108,17 @@ function detectDeviceClass(ua: string, chMobile?: string | null): DeviceClass {
   return "unknown";
 }
 
+export type ClientHintInput = {
+  platform?: string;
+  mobile?: boolean;
+  label?: string;
+  timezone?: string;
+  languages?: string;
+};
+
 export function parseSessionClientMeta(
   c: Context,
-  clientHint?: { platform?: string; mobile?: boolean; label?: string } | null,
+  clientHint?: ClientHintInput | null,
 ): SessionClientMeta {
   const ip = requestClientIp(c);
   const userAgent = c.req.header("user-agent") || "";
@@ -93,16 +138,25 @@ export function parseSessionClientMeta(
         chPlatform || "",
         clientName || "unknown",
         deviceClass,
-        // coarse UA family only — avoid raw UA entropy that rotates often
         (userAgent.match(/^[^\s/]+/) || ["ua"])[0],
+        clientHint?.timezone || "",
       ].join("|"),
     )
     .digest("hex")
     .slice(0, 32);
 
+  const labelParts = [
+    clientHint?.label && String(clientHint.label).trim(),
+    clientHint?.timezone && String(clientHint.timezone).trim(),
+    clientHint?.languages && String(clientHint.languages).trim().slice(0, 40),
+  ].filter(Boolean) as string[];
+
   const clientLabel =
-    (clientHint?.label && String(clientHint.label).trim().slice(0, 80)) ||
-    (clientHint?.platform ? String(clientHint.platform).slice(0, 80) : null);
+    labelParts.length > 0
+      ? labelParts.join(" · ").slice(0, 80)
+      : clientHint?.platform
+        ? String(clientHint.platform).slice(0, 80)
+        : null;
 
   return {
     ip,

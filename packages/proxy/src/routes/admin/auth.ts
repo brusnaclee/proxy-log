@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { db } from "../../db/index.js";
 import { adminConfig } from "../../db/schema.js";
 import { createSession, destroySession, isAuthenticated } from "../../middleware/session.js";
+import { requestClientIp } from "../../utils/session-client-meta.js";
 
 const auth = new Hono();
 
@@ -22,11 +23,10 @@ function checkLoginRateLimit(ip: string): boolean {
 }
 
 auth.post("/login", async (c) => {
-  const ip =
-    c.req.header("cf-connecting-ip") ||
-    c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
-    "unknown";
+  const ip = requestClientIp(c);
   if (!checkLoginRateLimit(ip)) {
+    (c as any).set("auditAction", "auth.login");
+    (c as any).set("auditDetails", { ok: false, reason: "rate_limited" });
     return c.json({ error: "Too many login attempts. Try again later." }, 429);
   }
 
@@ -34,7 +34,11 @@ auth.post("/login", async (c) => {
     password: string;
     clientHint?: { platform?: string; mobile?: boolean; label?: string };
   }>();
-  if (!body.password) return c.json({ error: "Password is required" }, 400);
+  if (!body.password) {
+    (c as any).set("auditAction", "auth.login");
+    (c as any).set("auditDetails", { ok: false, reason: "missing_password" });
+    return c.json({ error: "Password is required" }, 400);
+  }
 
   const config = (await db.select().from(adminConfig))[0];
   if (!config) return c.json({ error: "Admin not configured" }, 500);
@@ -43,7 +47,7 @@ auth.post("/login", async (c) => {
   const isValid = await verify(config.passwordHash, body.password);
   if (!isValid) {
     (c as any).set("auditAction", "auth.login");
-    (c as any).set("auditDetails", { ok: false });
+    (c as any).set("auditDetails", { ok: false, reason: "invalid_password" });
     return c.json({ error: "Invalid password" }, 401);
   }
 

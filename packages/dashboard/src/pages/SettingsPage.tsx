@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { settings, logs } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,8 +12,6 @@ import {
 
 import { useRealtime } from "@/lib/realtime-context";
 import { ProvidersManager } from "@/components/ProvidersManager";
-import { ActiveSessionsPanel } from "@/components/ActiveSessionsPanel";
-import { AdminAuditLogPanel } from "@/components/AdminAuditLogPanel";
 import { useNotify } from "@/components/Notify";
 import { globalSettings, request, type ModelLimitEntry } from "@/lib/api";
 import { Switch } from "@/components/ui/switch";
@@ -1528,7 +1526,8 @@ export default function SettingsPage() {
               <Label className="text-base">Model Monitor Auto Mode</Label>
               <p className="text-xs text-muted-foreground mt-1">
                 Scheduled every 10 minutes. <span className="text-foreground font-medium">Off</span> = no
-                completion probes (no upstream credit burn).{" "}
+                auto probes (no scheduled credit burn). Dashboard <span className="text-foreground font-medium">Test All</span> still
+                works manually (probe only; does not flip Published).{" "}
                 <span className="text-foreground font-medium">Notif only / On</span> still POST test
                 chat/completions each cycle — that burns provider credits.
               </p>
@@ -1536,7 +1535,7 @@ export default function SettingsPage() {
             <div className="flex flex-wrap gap-2">
               {(
                 [
-                  { id: "off" as const, label: "Off", desc: "No auto probe — zero test completions" },
+                  { id: "off" as const, label: "Off", desc: "No scheduled probe — Test All still manual" },
                   { id: "notif_only" as const, label: "Notif only", desc: "STILL probes every 10m (burns credits); heal Online on OK; fail keeps catalog" },
                   { id: "auto" as const, label: "On (auto)", desc: "Probes every 10m + auto publish ON/OFF" },
                 ]
@@ -1566,18 +1565,6 @@ export default function SettingsPage() {
           {loading ? "Saving..." : "Save Settings"}
         </Button>
       </div>
-
-      <ActiveSessionsPanel
-        kind="admin"
-        title="Active admin sessions"
-        description="Browser sessions for this dashboard. Revoke any device that should no longer have access. Sessions expire after 3 days."
-      />
-      <ActiveSessionsPanel
-        kind="portal"
-        title="Portal sessions"
-        description="Active client-portal logins. Revoke to force a user to sign in again."
-      />
-      <AdminAuditLogPanel />
 
       {/* Change Password */}
       <Card className="border-border/50">
