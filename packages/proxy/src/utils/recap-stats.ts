@@ -23,6 +23,7 @@ import {
   weightedHopInputTokensSql,
   weightedHopTotalTokensSql,
 } from "./counting.js";
+import { isTrialOnlyKeySet } from "./account-token-tier.js";
 import { enrichRecapStory } from "./recap-story-enrich.js";
 
 /**
@@ -218,13 +219,11 @@ async function resolveRecapAccount(keyId: number): Promise<{ keyIds: number[]; i
     SELECT id, is_trial, is_active FROM api_keys WHERE discord_user_id = ${discordUserId}
   `)).rows as any[];
   const ids = rows.map((r) => num(r.id)).filter((id) => id > 0);
-  // Trial-only = every key on the account is a trial key. Inactive member keys
-  // must still use member multipliers so monthly recap matches Discord/dashboard
-  // (INPUT/OUTPUT_TOKEN_MULTIPLIER) for historical usage.
-  const hasNonTrialKey = rows.some((r) => !r.is_trial);
+  // Every key of the account counts, including inactive / add-on / admin-override
+  // keys: a month of history must stay visible after a membership lapses.
   return {
     keyIds: ids.length ? ids : [keyId],
-    isTrial: !hasNonTrialKey,
+    isTrial: isTrialOnlyKeySet(rows.map((r) => ({ isTrial: !!r.is_trial }))),
   };
 }
 
@@ -708,21 +707,33 @@ export async function getMonthLeaderboard(yearMonth: string): Promise<{
   const { input, output } = getTokenMultipliers();
   const w = hopWeightExprSql();
 
+  // Trial-only accounts count raw (1x); anyone with a non-trial key — active or
+  // lapsed — gets member multipliers, matching resolveRecapAccount and the
+  // dashboards. Without this the leaderboard would inflate trial users only.
   const rows = (await db.execute(sql`
+    WITH acct AS (
+      SELECT COALESCE(discord_user_id, id::text) AS acct_key,
+        BOOL_AND(COALESCE(is_trial, false)) AS trial_only
+      FROM api_keys
+      GROUP BY COALESCE(discord_user_id, id::text)
+    )
     SELECT
       MIN(h.api_key_id) AS api_key_id,
-      k.discord_user_id AS discord_user_id,
-      MAX(k.discord_username) AS discord_username,
-      MAX(k.name) AS api_key_name,
+      h.discord_user_id AS discord_user_id,
+      MAX(h.discord_username) AS discord_username,
+      MAX(h.api_key_name) AS api_key_name,
       COALESCE(COUNT(DISTINCT h.turn_key), 0) AS requests,
       COALESCE(SUM(h.input_credit), 0) AS input_tokens,
       COALESCE(SUM(h.output_credit), 0) AS output_tokens,
       COALESCE(SUM(h.input_credit + h.output_credit), 0) AS tokens
     FROM (
-      SELECT api_key_id,
-        turn_key,
-        (inn * (${sql.raw(w)}) * ${input}) AS input_credit,
-        (outt * ${output}) AS output_credit
+      SELECT hops.api_key_id,
+        hops.turn_key,
+        k.discord_user_id AS discord_user_id,
+        k.discord_username AS discord_username,
+        k.name AS api_key_name,
+        (hops.inn * (${sql.raw(w)}) * CASE WHEN COALESCE(a.trial_only, false) THEN 1 ELSE ${input} END) AS input_credit,
+        (hops.outt * CASE WHEN COALESCE(a.trial_only, false) THEN 1 ELSE ${output} END) AS output_credit
       FROM (
         SELECT api_key_id,
           COALESCE(turn_id, 'orphan-' || id::text) AS turn_key,
@@ -736,9 +747,10 @@ export async function getMonthLeaderboard(yearMonth: string): Promise<{
         WHERE created_at >= ${start} AND created_at < ${end}
           AND status_code BETWEEN 200 AND 299 AND api_key_id IS NOT NULL
       ) hops
+      LEFT JOIN api_keys k ON k.id = hops.api_key_id
+      LEFT JOIN acct a ON a.acct_key = COALESCE(k.discord_user_id, hops.api_key_id::text)
     ) h
-    LEFT JOIN api_keys k ON k.id = h.api_key_id
-    GROUP BY COALESCE(k.discord_user_id, h.api_key_id::text), k.discord_user_id
+    GROUP BY COALESCE(h.discord_user_id, h.api_key_id::text), h.discord_user_id
   `)).rows as any[];
 
   const entries: LeaderboardEntry[] = rows.map((r) => ({

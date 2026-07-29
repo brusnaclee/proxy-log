@@ -703,7 +703,10 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   const key = await findBestKeyForDiscordUser(discordUserId);
   if (!key) return c.json({ error: "User not found" }, 404);
 
-  const tmOpts = key.isTrial ? { isTrial: true as const } : undefined;
+  // Account-level tier (any non-trial key => member multipliers, even if that key
+  // is inactive) so Discord, admin dashboard, portal and recap never disagree.
+  const { resolveAccountTokenTier, accountTokenTierOpts } = await import("../../utils/account-token-tier.js");
+  const tmOpts = accountTokenTierOpts((await resolveAccountTokenTier(discordUserId)).isTrial);
   const { input: umInput, output: umOutput } = getTokenMultipliers(tmOpts);
 
   const keyId = key.id;

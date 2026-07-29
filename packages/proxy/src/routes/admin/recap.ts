@@ -426,7 +426,7 @@ recap.get("/internal/recap/users", async (c) => {
  *
  * Body: { yearMonth?: string; userIds?: string[]; onlyEmpty?: boolean }
  *  - yearMonth   default = current window
- *  - userIds     default = all active keys with non-null discord_user_id
+ *  - userIds     default = every key with non-null discord_user_id (incl. inactive)
  *  - onlyEmpty   if true, skip users that already have a recap row for the
  *                target month (default: false = force regen of everyone)
  */
@@ -444,8 +444,10 @@ recap.post("/internal/recap/regenerate-users", async (c) => {
       .from(apiKeys).where(sql`discord_user_id = ANY(${body.userIds})`);
     targets = rows.filter((r): r is { discordUserId: string; name: string } => r.discordUserId != null);
   } else {
+    // Inactive/expired keys are included on purpose: someone who used the proxy
+    // for half the month and then lapsed still has a recap for that month.
     const rows = await db.select({ discordUserId: apiKeys.discordUserId, name: apiKeys.name })
-      .from(apiKeys).where(sql`discord_user_id IS NOT NULL AND is_active = true`);
+      .from(apiKeys).where(sql`discord_user_id IS NOT NULL`);
     targets = rows.filter((r): r is { discordUserId: string; name: string } => r.discordUserId != null);
   }
 

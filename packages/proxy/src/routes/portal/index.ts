@@ -126,7 +126,17 @@ function periodWhereHops(discordUserId: string, period: PeriodKey) {
   );
 }
 
-/** Returns true when the user has NO active non-trial key (trial-only account). */
+/**
+ * Token accounting tier for stats/usage math. Unlike `isTrialAccount` below it
+ * ignores active state, so an expired membership keeps member multipliers and
+ * the portal numbers stay identical to Discord, admin dashboard and recap.
+ */
+async function statsIsTrial(discordUserId: string): Promise<boolean> {
+  const { resolveAccountTokenTier } = await import("../../utils/account-token-tier.js");
+  return (await resolveAccountTokenTier(discordUserId)).isTrial;
+}
+
+/** Feature gating only: true when the user has NO ACTIVE non-trial key. */
 async function isTrialAccount(discordUserId: string): Promise<boolean> {
   const rows = await db.select({ id: apiKeys.id })
     .from(apiKeys)
@@ -310,6 +320,8 @@ portal.get("/me", async (c) => {
   ]);
 
   const isTrial = await isTrialAccount(discordUserId);
+  // Usage numbers must not flip to 1x when a membership lapses.
+  const usageIsTrial = await statsIsTrial(discordUserId);
   const primaryKey =
     pickPrimaryNonTrialKey(userKeys) ||
     userKeys.find((k) => k.isActive) ||
@@ -350,13 +362,13 @@ portal.get("/me", async (c) => {
   );
   const usageToday = (await db.select({
     requests: turnCountSql(todayPw!),
-    promptTokens: weightedHopInputTokensSql(todayHops!, { isTrial }),
-    peakPromptTokens: peakPromptTokensSql(todayPw!, { isTrial }),
-    billablePromptTokens: turnBillablePromptTokensSql(todayPw!, { isTrial }),
-    cachedTokens: turnCachedTokensSql(todayPw!, { isTrial }),
-    fullInputTokens: hopFullInputTokensSql(todayHops!, { isTrial }),
-    completionTokens: turnCompletionTokensSql(todayPw!, { isTrial }),
-    totalTokens: weightedHopTotalTokensSql(todayHops!, { isTrial }),
+    promptTokens: weightedHopInputTokensSql(todayHops!, { isTrial: usageIsTrial }),
+    peakPromptTokens: peakPromptTokensSql(todayPw!, { isTrial: usageIsTrial }),
+    billablePromptTokens: turnBillablePromptTokensSql(todayPw!, { isTrial: usageIsTrial }),
+    cachedTokens: turnCachedTokensSql(todayPw!, { isTrial: usageIsTrial }),
+    fullInputTokens: hopFullInputTokensSql(todayHops!, { isTrial: usageIsTrial }),
+    completionTokens: turnCompletionTokensSql(todayPw!, { isTrial: usageIsTrial }),
+    totalTokens: weightedHopTotalTokensSql(todayHops!, { isTrial: usageIsTrial }),
   }).from(requestLogs).where(todayPw))[0];
 
   // This month usage (for monthly limit bar)
@@ -372,7 +384,7 @@ portal.get("/me", async (c) => {
     sql`status_code BETWEEN 200 AND 299`,
   );
   const usageMonth = (await db.select({
-    tokens: weightedHopTotalTokensSql(monthHops!, { isTrial }),
+    tokens: weightedHopTotalTokensSql(monthHops!, { isTrial: usageIsTrial }),
   }).from(requestLogs).where(monthPw))[0];
 
   const { limit: promptLimit, window: promptLimitWindow } = primaryKey
@@ -563,9 +575,9 @@ portal.get("/me", async (c) => {
       )!;
       const usedRow = await db
         .select({
-          total: weightedHopTotalTokensSql(wherePool, { isTrial }),
-          input: weightedHopInputTokensSql(wherePool, { isTrial }),
-          output: turnCompletionTokensSql(wherePool, { isTrial }),
+          total: weightedHopTotalTokensSql(wherePool, { isTrial: usageIsTrial }),
+          input: weightedHopInputTokensSql(wherePool, { isTrial: usageIsTrial }),
+          output: turnCompletionTokensSql(wherePool, { isTrial: usageIsTrial }),
         })
         .from(requestLogs)
         .where(wherePool)
@@ -808,7 +820,7 @@ portal.get("/stats/overview", async (c) => {
   const period = (c.req.query("period") || "today") as PeriodKey;
   const pw = periodWhere(discordUserId, period);
   const hops = periodWhereHops(discordUserId, period);
-  const isTrial = await isTrialAccount(discordUserId);
+  const isTrial = await statsIsTrial(discordUserId);
 
   const stats = (await db.select({
     requests: turnCountSql(pw),
@@ -879,7 +891,7 @@ portal.get("/stats/timeseries", async (c) => {
   const period = (c.req.query("period") || "7d") as PeriodKey;
   const range = resolvePeriodRange(period);
   const days = chartDaysForPeriod(period);
-  const isTrial = await isTrialAccount(discordUserId);
+  const isTrial = await statsIsTrial(discordUserId);
   const { input, output } = getTokenMultipliers({ isTrial });
 
   const groupExpr = days <= 1
@@ -921,7 +933,7 @@ portal.get("/stats/by-model", async (c) => {
   const discordUserId = getPortalDiscordUserId(c)!;
   const period = (c.req.query("period") || "today") as PeriodKey;
   const range = resolvePeriodRange(period);
-  const isTrial = await isTrialAccount(discordUserId);
+  const isTrial = await statsIsTrial(discordUserId);
 
   const extraWhere = sql`
     api_key_id IN (${userApiKeyIds(discordUserId)})
@@ -1015,7 +1027,7 @@ portal.get("/stats/top-errors", async (c) => {
 
 portal.get("/stats/compare", async (c) => {
   const discordUserId = getPortalDiscordUserId(c)!;
-  const isTrial = await isTrialAccount(discordUserId);
+  const isTrial = await statsIsTrial(discordUserId);
 
   const todayRange = resolvePeriodRange("today");
   const wibTodayMidnight = todayRange.start;
@@ -1088,7 +1100,7 @@ portal.get("/stats/compare", async (c) => {
 
 portal.get("/stats/forecast", async (c) => {
   const discordUserId = getPortalDiscordUserId(c)!;
-  const isTrial = await isTrialAccount(discordUserId);
+  const isTrial = await statsIsTrial(discordUserId);
 
   const userKeys = await db.select().from(apiKeys).where(eq(apiKeys.discordUserId, discordUserId));
   const primaryKey =
@@ -1212,6 +1224,8 @@ portal.get("/keys", async (c) => {
 
   // Primary badges: trial (if any) + override/phantom/oldest non-trial
   const primaryIds = new Set(getPortalPrimaryKeyIds(userKeys));
+  // Account-level tier so per-key rows sum to the account total shown elsewhere.
+  const keyTier = await statsIsTrial(discordUserId);
 
   for (const key of userKeys) {
     const todayHops = and(
@@ -1226,9 +1240,9 @@ portal.get("/keys", async (c) => {
     const todayStats = (await db.select({
       requests: turnCountSql(todayPw!),
       hops: hopCountSql(todayHops!),
-      tokens: weightedHopTotalTokensSql(todayHops!, { isTrial: !!key.isTrial }),
-      input: weightedHopInputTokensSql(todayHops!, { isTrial: !!key.isTrial }),
-      output: turnCompletionTokensSql(todayPw!, { isTrial: !!key.isTrial }),
+      tokens: weightedHopTotalTokensSql(todayHops!, { isTrial: keyTier }),
+      input: weightedHopInputTokensSql(todayHops!, { isTrial: keyTier }),
+      output: turnCompletionTokensSql(todayPw!, { isTrial: keyTier }),
     }).from(requestLogs).where(todayHops))[0];
 
     const isPrimary = primaryIds.has(key.id);
