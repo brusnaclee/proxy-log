@@ -218,11 +218,13 @@ async function resolveRecapAccount(keyId: number): Promise<{ keyIds: number[]; i
     SELECT id, is_trial, is_active FROM api_keys WHERE discord_user_id = ${discordUserId}
   `)).rows as any[];
   const ids = rows.map((r) => num(r.id)).filter((id) => id > 0);
-  // Trial-only account = no active non-trial key (same rule as portal).
-  const hasNonTrialActive = rows.some((r) => !r.is_trial && r.is_active);
+  // Trial-only = every key on the account is a trial key. Inactive member keys
+  // must still use member multipliers so monthly recap matches Discord/dashboard
+  // (INPUT/OUTPUT_TOKEN_MULTIPLIER) for historical usage.
+  const hasNonTrialKey = rows.some((r) => !r.is_trial);
   return {
     keyIds: ids.length ? ids : [keyId],
-    isTrial: !hasNonTrialActive,
+    isTrial: !hasNonTrialKey,
   };
 }
 
