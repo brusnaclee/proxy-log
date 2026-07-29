@@ -401,6 +401,8 @@ export const sessions = {
   revoke: (id: number) => request<{ success: boolean }>(`/sessions/${id}`, "DELETE"),
   revokeOthers: () =>
     request<{ success: boolean; revoked: number }>("/sessions/revoke-others", "POST", {}),
+  revokeAll: () =>
+    request<{ success: boolean; revoked: number }>("/sessions/revoke-all", "POST", {}),
 };
 
 // ─── Me ───────────────────────────────────────────────────────────────────────

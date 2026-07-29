@@ -406,6 +406,9 @@ export default function SettingsPage() {
         </div>
       )}
 
+      {/* Active sessions — keep near top so clients find revoke/logout controls */}
+      <ActiveSessionsPanel />
+
       {/* Account Info */}
       <div className="bg-card border border-border rounded-xl p-4">
         <h2 className="text-sm font-medium text-foreground mb-4">{t("Account")}</h2>
@@ -450,8 +453,6 @@ export default function SettingsPage() {
           )}
         </div>
       </div>
-
-      <ActiveSessionsPanel />
 
       {/* Token Saver — Groupy + classic */}
       <div className="bg-card border border-border rounded-xl p-4 border-primary/20">

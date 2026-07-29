@@ -269,7 +269,17 @@ const dict: Record<string, Record<Lang, string>> = {
     id: "Perangkat yang masuk ke portal. Sesi berakhir setelah 3 hari.",
     en: "Devices signed into your portal. Sessions expire after 3 days.",
   },
+  "Devices signed into your portal. Sessions expire after 3 days. Changing password or revoking all signs every device out.": {
+    id: "Perangkat yang login ke portal. Sesi habis setelah 3 hari. Ganti password atau cabut semua akan mengeluarkan semua perangkat.",
+    en: "Devices signed into your portal. Sessions expire after 3 days. Changing password or revoking all signs every device out.",
+  },
   "Sign out other devices": { id: "Keluar dari perangkat lain", en: "Sign out other devices" },
+  "Sign out everywhere": { id: "Keluar dari semua perangkat", en: "Sign out everywhere" },
+  "Sign out all devices? You will need to log in again.": {
+    id: "Keluar dari semua perangkat? Kamu harus login ulang.",
+    en: "Sign out all devices? You will need to log in again.",
+  },
+  "All sessions revoked": { id: "Semua sesi dicabut", en: "All sessions revoked" },
   "Failed to load sessions": { id: "Gagal memuat sesi", en: "Failed to load sessions" },
   "Session revoked": { id: "Sesi dicabut", en: "Session revoked" },
   "Revoke failed": { id: "Gagal mencabut", en: "Revoke failed" },
@@ -277,11 +287,17 @@ const dict: Record<string, Record<Lang, string>> = {
   "other session(s)": { id: "sesi lain", en: "other session(s)" },
   "Loading…": { id: "Memuat…", en: "Loading…" },
   "No active sessions.": { id: "Tidak ada sesi aktif.", en: "No active sessions." },
+  "No active sessions. Log in again to create one.": {
+    id: "Tidak ada sesi aktif. Login lagi untuk membuat sesi baru.",
+    en: "No active sessions. Log in again to create one.",
+  },
   "Unknown device": { id: "Perangkat tidak dikenal", en: "Unknown device" },
   Current: { id: "Saat ini", en: "Current" },
   "Last seen": { id: "Terakhir terlihat", en: "Last seen" },
   "First login": { id: "Login pertama", en: "First login" },
   "Last active": { id: "Aktif terakhir", en: "Last active" },
+  Expires: { id: "Kedaluwarsa", en: "Expires" },
+  Revoke: { id: "Cabut", en: "Revoke" },
 };
 
 let _lang: Lang = (() => {

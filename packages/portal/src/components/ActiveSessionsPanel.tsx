@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Monitor, Smartphone, Tablet, Bot, Shield, Trash2, RefreshCw } from "lucide-react";
+import { Monitor, Smartphone, Tablet, Bot, Shield, Trash2, RefreshCw, LogOut } from "lucide-react";
 import { api, type PortalSessionRow } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { useNotify } from "@/components/Notify";
@@ -72,19 +72,37 @@ export function ActiveSessionsPanel() {
     }
   }
 
+  async function revokeAll() {
+    if (!window.confirm(t("Sign out all devices? You will need to log in again."))) return;
+    try {
+      await api.sessions.revokeAll();
+      notify.success(t("All sessions revoked"));
+      try {
+        await api.auth.logout();
+      } catch {
+        /* already cleared */
+      }
+      window.location.href = "/login";
+    } catch (e: any) {
+      notify.error(e?.message || t("Revoke failed"));
+    }
+  }
+
   return (
-    <div className="bg-card border border-border rounded-xl p-4">
+    <div className="bg-card border border-border rounded-xl p-4 border-emerald-500/20">
       <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
         <div>
           <h2 className="text-sm font-medium text-foreground flex items-center gap-2">
-            <Shield className="w-4 h-4" />
+            <Shield className="w-4 h-4 text-emerald-400" />
             {t("Active sessions")}
           </h2>
-          <p className="text-xs text-muted-foreground mt-1">
-            {t("Devices signed into your portal. Sessions expire after 3 days.")}
+          <p className="text-xs text-muted-foreground mt-1 max-w-xl">
+            {t(
+              "Devices signed into your portal. Sessions expire after 3 days. Changing password or revoking all signs every device out.",
+            )}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
             onClick={() => void load()}
@@ -100,12 +118,22 @@ export function ActiveSessionsPanel() {
           >
             {t("Sign out other devices")}
           </button>
+          <button
+            type="button"
+            onClick={() => void revokeAll()}
+            className="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-md border border-red-400/30 text-red-400 hover:bg-red-400/10 transition-colors"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            {t("Sign out everywhere")}
+          </button>
         </div>
       </div>
 
       {loading && <p className="text-xs text-muted-foreground">{t("Loading…")}</p>}
       {!loading && rows.length === 0 && (
-        <p className="text-xs text-muted-foreground">{t("No active sessions.")}</p>
+        <p className="text-xs text-muted-foreground">
+          {t("No active sessions. Log in again to create one.")}
+        </p>
       )}
 
       <div className="space-y-2">
@@ -130,6 +158,7 @@ export function ActiveSessionsPanel() {
               <p className="text-[11px] text-muted-foreground font-mono truncate">
                 {s.ip || "?"}
                 {s.country ? ` · ${s.country}` : ""}
+                {s.userAgent ? ` · ${s.userAgent.slice(0, 80)}` : ""}
               </p>
               <p className="text-[10px] text-muted-foreground">
                 {t("First login")} {fmt(s.createdAt)} · {t("Last active")} {fmt(s.lastSeenAt)} ·{" "}

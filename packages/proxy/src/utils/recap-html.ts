@@ -1558,7 +1558,7 @@ const RECAP_JS = `
   var wallsData=[];
   try{ wallsData=JSON.parse((card&&card.getAttribute('data-walls'))||'[]')||[]; }catch(e){}
   var curTheme=Math.max(0,Math.min(99,parseInt((card&&card.getAttribute('data-theme'))||'0',10)));
-  function applyTheme(i,swapWall){
+  function applyTheme(i,swapWall,forcedWall){
     curTheme=((i%100)+100)%100;
     var t=THEMES[curTheme];
     if(card){
@@ -1572,25 +1572,38 @@ const RECAP_JS = `
     if(cardWall){
       cardWall.style.filter='saturate('+t.sat+') brightness('+t.bright+')';
       if(swapWall!==false){
-        // Use the wallpaper at the swatch's exact index (1:1 with stored).
-        var w=wallsData[curTheme%wallCount]||wallsData[t.wall]||wallsData[0];
-        if(w) cardWall.src=w;
+        var live=wallsData.filter(Boolean);
+        var w=forcedWall || (live.length ? live[curTheme % live.length] : null) || wallsData[t.wall] || wallsData[0];
+        if(w){
+          cardWall.style.display='';
+          cardWall.src=w;
+          if(/\\.gif(\\?|$)/i.test(w)) cardWall.classList.add('wc-wall--gif');
+          else cardWall.classList.remove('wc-wall--gif');
+          if(cardFallback) cardFallback.style.display='none';
+        }
       }
     }
     if(cardFallback){
       cardFallback.style.background='linear-gradient(160deg,'+t.a+','+t.b+')';
       cardFallback.style.backgroundSize='220% 220%';
     }
-    [].slice.call(themesWrap?themesWrap.children:[]).forEach(function(sw,j){sw.classList.toggle('on',j===curTheme);});
+    [].slice.call(themesWrap?themesWrap.children:[]).forEach(function(sw,j){sw.classList.toggle('on',j===curTheme || parseInt(sw.dataset.idx||'-1',10)===curTheme);});
   }
   if(themesWrap){
-    var wallCount=Math.max(wallsData.length,1);
-    var slotCount=Math.min(wallCount, 50);
+    var wallCount=Math.max(wallsData.filter(Boolean).length, wallsData.length, 1);
+    // Always expose many swatches so color themes + wallpapers feel alive even
+    // when only a handful of live GIFs resolved (locals pad the rest).
+    var slotCount=Math.min(Math.max(wallCount, 24), 48);
     var SWATCH_LAZY_INIT=12;
+    function wallAt(idx){
+      var live=wallsData.filter(Boolean);
+      if(live.length) return live[idx % live.length];
+      return wallsData[idx % wallCount] || wallsData[0] || '';
+    }
     function fillSwatchBg(sw,idx){
       if(sw.dataset.loaded) return;
       var t=THEMES[idx%THEMES.length];
-      var wu=wallsData[idx%wallCount];
+      var wu=wallAt(idx);
       if(wu){
         sw.style.backgroundImage='url("'+wu+'")';
         sw.style.backgroundSize='cover';
@@ -1628,7 +1641,7 @@ const RECAP_JS = `
         sw.addEventListener('click',function(){
           if(isDownloading){ setStatus('Tunggu render selesai sebelum ganti wallpaper ⏳'); return; }
           fillSwatchBg(sw,idx);
-          applyTheme(idx);
+          applyTheme(idx, true, wallAt(idx));
         });
         themesWrap.appendChild(sw);
       })(k);

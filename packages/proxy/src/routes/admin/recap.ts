@@ -207,16 +207,17 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
     );
   }
 
-  // Resolve GIFs + card meta. Interactive skips live GIF/wallpaper search (slow
-  // external APIs) and uses local fallbacks so the bot fetch finishes reliably.
+  // Resolve GIFs + card meta. Interactive still searches live GIFs/wallpapers
+  // (with a tighter budget) so Discord opens keep a varied picker; local memes
+  // pad anything search doesn't fill in time.
   try {
-    narrative.gifs = await resolveRecapGifs(discordUserId, stats, publicBase(), { liveSearch: !interactive });
+    narrative.gifs = await resolveRecapGifs(discordUserId, stats, publicBase(), { liveSearch: true });
   } catch { narrative.gifs = {}; }
 
   try {
     narrative.card = await resolveCardMeta(discordUserId, stats, narrative, publicBase(), {
-      wallpaperCount: interactive ? 8 : 12,
-      timeBudgetMs: interactive ? 12_000 : 25_000,
+      wallpaperCount: interactive ? 24 : 36,
+      timeBudgetMs: interactive ? 18_000 : 30_000,
     });
   } catch { narrative.card = null; }
 

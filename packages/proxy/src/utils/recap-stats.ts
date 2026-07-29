@@ -13,8 +13,38 @@ import { sql } from "drizzle-orm";
 import { getTokenMultipliers, type TokenMultiplierOpts } from "./token-multiplier.js";
 import { getMonthRangeUtc } from "./recap-window.js";
 import { getModelRates } from "./cost-calculator.js";
-import { getTokenInputModeSync, groupedInputSumSql } from "./counting.js";
+import {
+  getTokenLimitWeightModeSync,
+  inputHopWeightSqlExpr,
+  turnBillablePromptTokensSql,
+  turnCachedTokensSql,
+  turnCompletionTokensSql,
+  turnCountSql,
+  weightedHopInputTokensSql,
+  weightedHopTotalTokensSql,
+} from "./counting.js";
 import { enrichRecapStory } from "./recap-story-enrich.js";
+
+/**
+ * Recap / Discord / dashboard totals must share one formula:
+ * - Input (+cache): hop schedule from token_limit_weight_* (first_rest_flat by default)
+ * - Output: 100% of completion tokens
+ * - Multipliers: INPUT/OUTPUT_TOKEN_MULTIPLIER (skipped for trial)
+ *
+ * token_input_mode (per_turn_peak) is only for the prompt/cache *split* label,
+ * matching Overview's formatInputBreakdown(billable, cached, weightedTotal).
+ */
+function billableWhere(keyIds: number[], start: Date, end: Date) {
+  return sql`${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end} AND status_code BETWEEN 200 AND 299`;
+}
+
+/** Weight fraction SQL for hop rn — mirrors weightedHop*Sql branches. */
+function hopWeightExprSql(): string {
+  const mode = getTokenLimitWeightModeSync();
+  if (mode === "full") return "1.0";
+  if (mode === "peak") return "(CASE WHEN rn = 1 THEN 1.0 ELSE 0.0 END)";
+  return inputHopWeightSqlExpr();
+}
 
 function num(v: any): number {
   if (v === null || v === undefined) return 0;
@@ -220,67 +250,28 @@ function longestStreak(days: string[]): number {
 }
 
 /**
- * Per-turn aggregated totals for one api key in a month (multiplier-aware).
- * Mirrors counting.ts turn-based logic but inlined to also extract latency/tools.
- * Also returns prompt vs cache split (peak-hop aware when mode=per_turn_peak).
+ * Account totals for one month — same SQL helpers as Discord/dashboard live usage.
  */
 async function fetchTotals(keyIds: number[], start: Date, end: Date, tmOpts?: TokenMultiplierOpts) {
-  const { input, output } = getTokenMultipliers(tmOpts);
+  const where = billableWhere(keyIds, start, end);
   const row = (await db.execute(sql`
     SELECT
-      COUNT(*) AS turns,
-      COALESCE(SUM(sum_delta), 0) AS input_raw,
-      COALESCE(SUM(sum_c), 0) AS output_raw,
-      COALESCE(SUM(est), 0) AS est_cost
-    FROM (
-      SELECT turn_id,
-        ${sql.raw(groupedInputSumSql())} AS sum_delta,
-        SUM(completion_tokens) AS sum_c,
-        SUM(estimated_cost) AS est
-      FROM request_logs
-      WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
-        AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY turn_id
-    ) t
+      ${turnCountSql(where)} AS turns,
+      ${weightedHopInputTokensSql(where, tmOpts)} AS input_tokens,
+      ${turnCompletionTokensSql(where, tmOpts)} AS output_tokens,
+      ${weightedHopTotalTokensSql(where, tmOpts)} AS total_tokens,
+      ${turnBillablePromptTokensSql(where, tmOpts)} AS billable_prompt,
+      ${turnCachedTokensSql(where, tmOpts)} AS cached,
+      COALESCE((SELECT SUM(estimated_cost) FROM request_logs WHERE ${where}), 0) AS est_cost
   `)).rows[0] as any;
 
-  // Prompt vs cache breakdown (same rules as turnBillablePromptTokensSql / turnCachedTokensSql).
-  let billableRaw = 0;
-  let cacheRaw = 0;
-  if (getTokenInputModeSync() === "per_turn_peak") {
-    const bc = (await db.execute(sql`
-      SELECT COALESCE(SUM(p), 0) AS billable_raw, COALESCE(SUM(c), 0) AS cache_raw
-      FROM (
-        SELECT DISTINCT ON (turn_id)
-          COALESCE(prompt_tokens, 0) AS p,
-          COALESCE(cached_tokens, 0) AS c
-        FROM request_logs
-        WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
-          AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-        ORDER BY turn_id, (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) DESC
-      ) h
-    `)).rows[0] as any;
-    billableRaw = num(bc?.billable_raw);
-    cacheRaw = num(bc?.cache_raw);
-  } else {
-    const bc = (await db.execute(sql`
-      SELECT
-        COALESCE(SUM(COALESCE(prompt_tokens, 0)), 0) AS billable_raw,
-        COALESCE(SUM(COALESCE(cached_tokens, 0)), 0) AS cache_raw
-      FROM request_logs
-      WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
-        AND status_code BETWEEN 200 AND 299
-    `)).rows[0] as any;
-    billableRaw = num(bc?.billable_raw);
-    cacheRaw = num(bc?.cache_raw);
-  }
-
   const requests = num(row?.turns);
-  const inputTokens = Math.round(num(row?.input_raw) * input);
-  const billablePromptTokens = Math.round(billableRaw * input);
-  const cachedTokens = Math.round(cacheRaw * input);
-  const outputTokens = Math.round(num(row?.output_raw) * output);
-  const totalTokens = inputTokens + outputTokens;
+  const inputTokens = Math.round(num(row?.input_tokens));
+  const billablePromptTokens = Math.round(num(row?.billable_prompt));
+  const cachedTokens = Math.round(num(row?.cached));
+  const outputTokens = Math.round(num(row?.output_tokens));
+  // Prefer the shared total helper so peak/full/flat modes never drift from In+Out.
+  const totalTokens = Math.round(num(row?.total_tokens));
   return {
     requests,
     inputTokens,
@@ -294,35 +285,40 @@ async function fetchTotals(keyIds: number[], start: Date, end: Date, tmOpts?: To
   };
 }
 
-/** Per-model breakdown with latency (auto normalized to base model). */
+/** Per-model breakdown with latency — hop-weighted input like dashboard Top Models. */
 async function fetchModels(keyIds: number[], start: Date, end: Date, tmOpts?: TokenMultiplierOpts): Promise<ModelStat[]> {
   const { input, output } = getTokenMultipliers(tmOpts);
+  const w = hopWeightExprSql();
+  const where = billableWhere(keyIds, start, end);
   const rows = (await db.execute(sql`
     SELECT model,
-      COUNT(*) AS requests,
-      COALESCE(SUM(sum_delta), 0) AS input_raw,
-      COALESCE(SUM(sum_c), 0) AS output_raw,
+      COUNT(DISTINCT turn_key)::int AS requests,
+      COALESCE(SUM(inn * (${sql.raw(w)}) * ${input}), 0) AS input_tokens,
+      COALESCE(SUM(outt * ${output}), 0) AS output_tokens,
       COALESCE(AVG(NULLIF(avg_lat, 0)), 0) AS avg_lat
     FROM (
-      SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END AS model,
-        turn_id,
-        ${sql.raw(groupedInputSumSql())} AS sum_delta,
-        SUM(completion_tokens) AS sum_c,
-        AVG(NULLIF(latency_ms, 0)) AS avg_lat
+      SELECT
+        CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END AS model,
+        COALESCE(turn_id, 'orphan-' || id::text) AS turn_key,
+        (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
+        COALESCE(completion_tokens, 0)::float8 AS outt,
+        NULLIF(latency_ms, 0)::float8 AS avg_lat,
+        ROW_NUMBER() OVER (
+          PARTITION BY COALESCE(turn_id, 'orphan-' || id::text)
+          ORDER BY created_at ASC, id ASC
+        ) AS rn
       FROM request_logs
-      WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
-        AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
-    ) m
+      WHERE ${where}
+    ) hops
     GROUP BY model
     ORDER BY requests DESC
   `)).rows as any[];
 
   return rows.map((r) => ({
-    model: r.model || "unknown",
+    model: String(r.model || "unknown"),
     requests: num(r.requests),
-    inputTokens: Math.round(num(r.input_raw) * input),
-    outputTokens: Math.round(num(r.output_raw) * output),
+    inputTokens: Math.round(num(r.input_tokens)),
+    outputTokens: Math.round(num(r.output_tokens)),
     avgLatencyMs: Math.round(num(r.avg_lat)),
   }));
 }
@@ -380,24 +376,27 @@ function buildCost(models: ModelStat[], buckets: { day: any; hour: any }): Recap
   };
 }
 
-/** Per-day (WIB) request + token buckets. */
+/** Per-day (WIB) request + token buckets — hop-weighted like dashboard. */
 async function fetchPerDay(keyIds: number[], start: Date, end: Date, tmOpts?: TokenMultiplierOpts): Promise<DayStat[]> {
   const { input, output } = getTokenMultipliers(tmOpts);
+  const w = hopWeightExprSql();
+  const where = billableWhere(keyIds, start, end);
   const rows = (await db.execute(sql`
     SELECT day,
-      COUNT(*) AS requests,
-      COALESCE(SUM(sum_delta), 0) AS input_raw,
-      COALESCE(SUM(sum_c), 0) AS output_raw
+      COUNT(DISTINCT turn_key)::int AS requests,
+      COALESCE(SUM(inn * (${sql.raw(w)}) * ${input} + outt * ${output}), 0) AS tokens
     FROM (
       SELECT to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') AS day,
-        turn_id,
-        ${sql.raw(groupedInputSumSql())} AS sum_delta,
-        SUM(completion_tokens) AS sum_c
+        COALESCE(turn_id, 'orphan-' || id::text) AS turn_key,
+        (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
+        COALESCE(completion_tokens, 0)::float8 AS outt,
+        ROW_NUMBER() OVER (
+          PARTITION BY COALESCE(turn_id, 'orphan-' || id::text)
+          ORDER BY created_at ASC, id ASC
+        ) AS rn
       FROM request_logs
-      WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
-        AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY 1, turn_id
-    ) d
+      WHERE ${where}
+    ) hops
     GROUP BY day
     ORDER BY day
   `)).rows as any[];
@@ -405,7 +404,7 @@ async function fetchPerDay(keyIds: number[], start: Date, end: Date, tmOpts?: To
   return rows.map((r) => ({
     day: r.day,
     requests: num(r.requests),
-    tokens: Math.round(num(r.input_raw) * input + num(r.output_raw) * output),
+    tokens: Math.round(num(r.tokens)),
   }));
 }
 
@@ -568,22 +567,31 @@ async function fetchKeyBreakdown(keyIds: number[], start: Date, end: Date, tmOpt
     return { count: 0, favorite: null, top: [] };
   }
   const { input, output } = getTokenMultipliers(tmOpts);
+  const w = hopWeightExprSql();
+  const where = billableWhere(keyIds, start, end);
   const rows = (await db.execute(sql`
     SELECT k.id AS key_id,
       COALESCE(NULLIF(k.name, ''), 'key-' || k.id::text) AS name,
-      COALESCE(SUM(t.turn_present), 0) AS requests,
-      COALESCE(SUM(t.sum_delta) * ${input} + SUM(t.sum_c) * ${output}, 0) AS tokens
+      COALESCE(COUNT(DISTINCT hops.turn_key), 0) AS requests,
+      COALESCE(SUM(hops.credit), 0) AS tokens
     FROM api_keys k
     LEFT JOIN (
-      SELECT api_key_id, turn_id,
-        1 AS turn_present,
-        ${sql.raw(groupedInputSumSql())} AS sum_delta,
-        SUM(completion_tokens) AS sum_c
-      FROM request_logs
-      WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
-        AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY api_key_id, turn_id
-    ) t ON t.api_key_id = k.id
+      SELECT api_key_id,
+        turn_key,
+        (inn * (${sql.raw(w)}) * ${input} + outt * ${output}) AS credit
+      FROM (
+        SELECT api_key_id,
+          COALESCE(turn_id, 'orphan-' || id::text) AS turn_key,
+          (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
+          COALESCE(completion_tokens, 0)::float8 AS outt,
+          ROW_NUMBER() OVER (
+            PARTITION BY api_key_id, COALESCE(turn_id, 'orphan-' || id::text)
+            ORDER BY created_at ASC, id ASC
+          ) AS rn
+        FROM request_logs
+        WHERE ${where}
+      ) x
+    ) hops ON hops.api_key_id = k.id
     WHERE k.id IN (${sql.join(keyIds.map((id) => sql`${id}`), sql`, `)})
     GROUP BY k.id, k.name
     ORDER BY requests DESC, tokens DESC
@@ -688,6 +696,7 @@ export interface LeaderboardEntry {
 /**
  * Compute the global leaderboard for a month (multiplier-aware),
  * aggregated by Discord account (multi-key usage merged).
+ * Uses the same hop-weight formula as Discord/dashboard totals.
  */
 export async function getMonthLeaderboard(yearMonth: string): Promise<{
   byRequests: LeaderboardEntry[];
@@ -695,29 +704,39 @@ export async function getMonthLeaderboard(yearMonth: string): Promise<{
 }> {
   const { start, end } = getMonthRangeUtc(yearMonth);
   const { input, output } = getTokenMultipliers();
+  const w = hopWeightExprSql();
 
   const rows = (await db.execute(sql`
     SELECT
-      MIN(t.api_key_id) AS api_key_id,
+      MIN(h.api_key_id) AS api_key_id,
       k.discord_user_id AS discord_user_id,
       MAX(k.discord_username) AS discord_username,
       MAX(k.name) AS api_key_name,
-      COALESCE(SUM(t.turn_present), 0) AS requests,
-      COALESCE(SUM(t.sum_delta) * ${input} + SUM(t.sum_c) * ${output}, 0) AS tokens,
-      COALESCE(SUM(t.sum_delta) * ${input}, 0) AS input_tokens,
-      COALESCE(SUM(t.sum_c) * ${output}, 0) AS output_tokens
+      COALESCE(COUNT(DISTINCT h.turn_key), 0) AS requests,
+      COALESCE(SUM(h.input_credit), 0) AS input_tokens,
+      COALESCE(SUM(h.output_credit), 0) AS output_tokens,
+      COALESCE(SUM(h.input_credit + h.output_credit), 0) AS tokens
     FROM (
-      SELECT api_key_id, turn_id,
-        1 AS turn_present,
-        ${sql.raw(groupedInputSumSql())} AS sum_delta,
-        SUM(completion_tokens) AS sum_c
-      FROM request_logs
-      WHERE created_at >= ${start} AND created_at < ${end}
-        AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL AND api_key_id IS NOT NULL
-      GROUP BY api_key_id, turn_id
-    ) t
-    LEFT JOIN api_keys k ON k.id = t.api_key_id
-    GROUP BY COALESCE(k.discord_user_id, t.api_key_id::text), k.discord_user_id
+      SELECT api_key_id,
+        turn_key,
+        (inn * (${sql.raw(w)}) * ${input}) AS input_credit,
+        (outt * ${output}) AS output_credit
+      FROM (
+        SELECT api_key_id,
+          COALESCE(turn_id, 'orphan-' || id::text) AS turn_key,
+          (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
+          COALESCE(completion_tokens, 0)::float8 AS outt,
+          ROW_NUMBER() OVER (
+            PARTITION BY api_key_id, COALESCE(turn_id, 'orphan-' || id::text)
+            ORDER BY created_at ASC, id ASC
+          ) AS rn
+        FROM request_logs
+        WHERE created_at >= ${start} AND created_at < ${end}
+          AND status_code BETWEEN 200 AND 299 AND api_key_id IS NOT NULL
+      ) hops
+    ) h
+    LEFT JOIN api_keys k ON k.id = h.api_key_id
+    GROUP BY COALESCE(k.discord_user_id, h.api_key_id::text), k.discord_user_id
   `)).rows as any[];
 
   const entries: LeaderboardEntry[] = rows.map((r) => ({
@@ -785,19 +804,23 @@ async function fetchPerDayRequests(keyIds: number[], start: Date, end: Date): Pr
 /** Per-day total token counts (multiplier-aware) for one key (WIB). */
 async function fetchPerDayTokens(keyIds: number[], start: Date, end: Date): Promise<Map<string, number>> {
   const { input, output } = getTokenMultipliers();
+  const w = hopWeightExprSql();
+  const where = billableWhere(keyIds, start, end);
   const rows = (await db.execute(sql`
     SELECT day,
-      COALESCE(SUM(sum_delta) * ${input} + SUM(sum_c) * ${output}, 0) AS tokens
+      COALESCE(SUM(inn * (${sql.raw(w)}) * ${input} + outt * ${output}), 0) AS tokens
     FROM (
       SELECT to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') AS day,
-        turn_id,
-        ${sql.raw(groupedInputSumSql())} AS sum_delta,
-        SUM(completion_tokens) AS sum_c
+        (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
+        COALESCE(completion_tokens, 0)::float8 AS outt,
+        ROW_NUMBER() OVER (
+          PARTITION BY COALESCE(turn_id, 'orphan-' || id::text)
+          ORDER BY created_at ASC, id ASC
+        ) AS rn
       FROM request_logs
-      WHERE ${keyScopeSql(keyIds)} AND created_at >= ${start} AND created_at < ${end}
-        AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY 1, turn_id
-    ) d GROUP BY day
+      WHERE ${where}
+    ) hops
+    GROUP BY day
   `)).rows as any[];
   const m = new Map<string, number>();
   for (const r of rows) m.set(r.day, Math.round(num(r.tokens)));

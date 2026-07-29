@@ -5,7 +5,7 @@
  * URLs + applies overlay themes client-side.
  */
 import { findLiveGif } from "./recap-gif-search.js";
-import { memeForCategory, assetUrl } from "./recap-assets.js";
+import { assetUrl, loadAssets } from "./recap-assets.js";
 import { type GifCategory } from "./recap-gifs.js";
 
 export type CardTileSize = "hero" | "sm" | "wide" | "quote";
@@ -244,12 +244,13 @@ const EXTRA_WALLPAPER_QUERIES: string[][] = [
 ];
 
 /** Resolve up to N distinct live anime wallpaper URLs with bounded concurrency.
- *  Stops early when `count` is reached or `budgetMs` elapses. */
+ *  Stops early when `count` is reached or `budgetMs` elapses. Always pads with
+ *  local meme GIFs so the theme picker never collapses to a single unusable slot. */
 async function resolveWallpapers(
   seedId: string,
   stats: any,
   base: string,
-  count = 12,
+  count = 24,
   budgetMs = 20_000,
 ): Promise<string[]> {
   const seed = seedFromStr(seedId);
@@ -267,10 +268,6 @@ async function resolveWallpapers(
       const q = allLists[myIdx];
       let url: string | null = null;
       try { url = await findLiveGif(q, seed + myIdx); } catch { url = null; }
-      if (!url) {
-        const local = memeForCategory("wallpaper" as GifCategory, q, seed + myIdx);
-        if (local) url = assetUrl(base, local.file);
-      }
       if (url && !seen.has(url)) {
         seen.add(url);
         out.push(proxiedWallpaperUrl(url, base));
@@ -278,6 +275,37 @@ async function resolveWallpapers(
     }
   }
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, allLists.length) }, () => worker()));
+
+  // Pad with self-hosted meme GIFs so the picker always has many distinct walls.
+  const locals = loadAssets().filter((a) => a.type === "gif" || (a.file || "").startsWith("memes/"));
+  let li = seed % Math.max(locals.length, 1);
+  while (out.length < count && locals.length > 0) {
+    const a = locals[li % locals.length];
+    li++;
+    const url = assetUrl(base, a.file);
+    if (!seen.has(url)) {
+      seen.add(url);
+      out.push(url);
+    }
+    // Avoid infinite loop if we already collected every local.
+    if (out.length >= locals.length && out.every((u) => u.startsWith(base))) break;
+    if (li > locals.length * 3) break;
+  }
+
+  // Last resort: curated remote catalog, then a single empty (gradient fallback).
+  if (out.length === 0) {
+    try {
+      const { pickGif } = await import("./recap-gifs.js");
+      const cats: GifCategory[] = ["intro", "hype", "coding", "celebrate", "night", "proud"];
+      for (let i = 0; i < Math.min(count, 12); i++) {
+        const g = pickGif(cats[i % cats.length], seedId, seed + i);
+        if (g && !seen.has(g)) {
+          seen.add(g);
+          out.push(proxiedWallpaperUrl(g, base));
+        }
+      }
+    } catch { /* ignore */ }
+  }
   if (out.length === 0) out.push("");
   return out;
 }
@@ -403,8 +431,8 @@ export async function resolveCardMeta(
   opts: ResolveCardMetaOpts = {},
 ): Promise<CardMeta> {
   const seed = seedFromStr(seedId);
-  const count = opts.wallpaperCount ?? 12;
-  const budgetMs = opts.timeBudgetMs ?? 20_000;
+  const count = opts.wallpaperCount ?? 24;
+  const budgetMs = opts.timeBudgetMs ?? 25_000;
   const wallpapers = await resolveWallpapers(seedId, stats, base, count, budgetMs);
   const tiles = buildTiles(stats);
   const quote = buildQuote(stats, narrative);

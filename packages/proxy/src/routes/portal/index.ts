@@ -292,6 +292,14 @@ portal.post("/sessions/revoke-others", async (c) => {
   return c.json({ success: true, revoked: n });
 });
 
+/** Revoke every portal session for this user (including current) and clear cookie. */
+portal.post("/sessions/revoke-all", async (c) => {
+  const discordUserId = getPortalDiscordUserId(c)!;
+  const n = await destroyAllAuthSessions("portal", discordUserId);
+  await destroyPortalSession(c);
+  return c.json({ success: true, revoked: n });
+});
+
 // ─── Me ───────────────────────────────────────────────────────────────────────
 
 portal.get("/me", async (c) => {
