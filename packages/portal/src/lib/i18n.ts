@@ -296,8 +296,6 @@ const dict: Record<string, Record<Lang, string>> = {
   "Last seen": { id: "Terakhir terlihat", en: "Last seen" },
   "First login": { id: "Login pertama", en: "First login" },
   "Last active": { id: "Aktif terakhir", en: "Last active" },
-  Expires: { id: "Kedaluwarsa", en: "Expires" },
-  Revoke: { id: "Cabut", en: "Revoke" },
 };
 
 let _lang: Lang = (() => {
