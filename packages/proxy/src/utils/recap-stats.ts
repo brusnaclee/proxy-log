@@ -722,13 +722,15 @@ export async function getMonthLeaderboard(yearMonth: string): Promise<{
       h.discord_user_id AS discord_user_id,
       MAX(h.discord_username) AS discord_username,
       MAX(h.api_key_name) AS api_key_name,
-      COALESCE(COUNT(DISTINCT h.turn_key), 0) AS requests,
+      -- Same request definition as turnCountSql / the user's own totals, so a
+      -- rank can never be computed from a different number than we display.
+      COALESCE(COUNT(DISTINCT h.turn_id), 0) AS requests,
       COALESCE(SUM(h.input_credit), 0) AS input_tokens,
       COALESCE(SUM(h.output_credit), 0) AS output_tokens,
       COALESCE(SUM(h.input_credit + h.output_credit), 0) AS tokens
     FROM (
       SELECT hops.api_key_id,
-        hops.turn_key,
+        hops.turn_id,
         k.discord_user_id AS discord_user_id,
         k.discord_username AS discord_username,
         k.name AS api_key_name,
@@ -736,7 +738,7 @@ export async function getMonthLeaderboard(yearMonth: string): Promise<{
         (hops.outt * CASE WHEN COALESCE(a.trial_only, false) THEN 1 ELSE ${output} END) AS output_credit
       FROM (
         SELECT api_key_id,
-          COALESCE(turn_id, 'orphan-' || id::text) AS turn_key,
+          turn_id,
           (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
           COALESCE(completion_tokens, 0)::float8 AS outt,
           ROW_NUMBER() OVER (

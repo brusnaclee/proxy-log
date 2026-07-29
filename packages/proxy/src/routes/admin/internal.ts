@@ -18,7 +18,7 @@ import {
 } from "../../utils/rate-limit.js";
 import { isInternalRequest } from "../../middleware/session.js";
 import { configCache } from "../../utils/cache.js";
-import { BILLABLE_LOG_SQL, COUNTED_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, peakPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, inputHopWeightSqlExpr, getTokenLimitWeightModeSync, weightedHopInputTokensSql, weightedHopTotalTokensSql, modelLimitCreditBreakdownSql, normalizeTokenLimitWeightPercent } from "../../utils/counting.js";
+import { BILLABLE_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, peakPromptTokensSql, turnCompletionTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, inputHopWeightSqlExpr, weightedHopInputTokensSql, weightedHopTotalTokensSql, modelLimitCreditBreakdownSql, normalizeTokenLimitWeightPercent } from "../../utils/counting.js";
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
 import { resolveKeyPromptLimit, resolveKeyApiCallLimit } from "../../utils/trial-config.js";
@@ -522,178 +522,114 @@ internal.get("/internal/stats/ranking", async (c) => {
     return rows as any[];
   }
 
-  async function getTopUsersByRequests(since: Date) {
-    const rows = (await db.execute(sql`
-      SELECT api_key_id as "apiKeyId", COUNT(*) as requests, COALESCE(SUM(sum_delta * ${tmInput} + sum_c * ${tmOutput}), 0) as tokens
-      FROM (SELECT api_key_id, turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
-        FROM request_logs WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 AND is_counted_request = true
-        GROUP BY api_key_id, turn_id)
-      GROUP BY api_key_id ORDER BY requests DESC LIMIT 20
-    `)).rows;
-
-    const result = [];
-    for (const row of rows as any[]) {
-      if (!row.apiKeyId) continue;
-      const [key] = await db.select({ discordUserId: apiKeys.discordUserId, discordUsername: apiKeys.discordUsername, name: apiKeys.name, isTrial: apiKeys.isTrial })
-        .from(apiKeys).where(eq(apiKeys.id, row.apiKeyId));
-      if (!key) continue;
-      if (key.isTrial) {
-        const whereClause = and(eq(requestLogs.apiKeyId, row.apiKeyId), sql`created_at >= ${since}`, COUNTED_LOG_SQL);
-        const [raw] = await db.select({ tokens: turnTotalTokensSql(whereClause, { isTrial: true }) }).from(requestLogs).where(whereClause);
-        row.tokens = raw?.tokens ?? row.tokens;
-      }
-      result.push({
-        discordUserId: key.discordUserId,
-        discordUsername: key.discordUsername || key.name,
-        keyName: key.name,
-        isTrial: key.isTrial || false,
-        requests: row.requests,
-        tokens: row.tokens,
-        estimatedCost: 0,
-      });
-      if (result.length >= 10) break;
-    }
-    return result;
-  }
-
-    async function getTopUsersByTokens(since: Date) {
-    const mode = getTokenLimitWeightModeSync();
-    let rows: any[];
-    if (mode === "peak") {
-      rows = (await db.execute(sql`
-        SELECT api_key_id as "apiKeyId", COUNT(*) as requests,
-          COALESCE(SUM(sum_delta * ${tmInput} + sum_c * ${tmOutput}), 0) as tokens,
-          COALESCE(SUM(sum_delta) * ${tmInput}, 0) as "promptTokens",
-          0::float8 as "billablePromptTokens",
-          0::float8 as "cachedTokens",
-          COALESCE(SUM(sum_c) * ${tmOutput}, 0) as "completionTokens"
-        FROM (
-          SELECT p.api_key_id, p.turn_id, p.sum_delta, COALESCE(c.sum_c, 0) as sum_c
-          FROM (
-            SELECT DISTINCT ON (api_key_id, turn_id)
-              api_key_id, turn_id,
-              COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0) as sum_delta
-            FROM request_logs
-            WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 AND is_billable_token = true
-            ORDER BY api_key_id, turn_id, (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) DESC
-          ) p
-          LEFT JOIN (
-            SELECT api_key_id, turn_id, SUM(completion_tokens) as sum_c
-            FROM request_logs
-            WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299 AND is_billable_token = true
-            GROUP BY api_key_id, turn_id
-          ) c ON c.api_key_id = p.api_key_id AND c.turn_id = p.turn_id
-        ) turns
-        GROUP BY api_key_id ORDER BY tokens DESC LIMIT 20
-      `)).rows as any[];
-    } else {
-      const wExpr = inputHopWeightSqlExpr();
-      rows = (await db.execute(sql`
-        SELECT api_key_id as "apiKeyId",
-          COUNT(DISTINCT CASE WHEN is_counted_request THEN turn_id END) as requests,
-          COALESCE(SUM(inn * (${sql.raw(wExpr)}) * ${tmInput} + outt * ${tmOutput}), 0) as tokens,
-          COALESCE(SUM(inn * (${sql.raw(wExpr)}) * ${tmInput}), 0) as "promptTokens",
-          0::float8 as "billablePromptTokens",
-          0::float8 as "cachedTokens",
-          COALESCE(SUM(outt * ${tmOutput}), 0) as "completionTokens"
-        FROM (
+  /**
+   * One row per Discord account (sibling keys merged), using the exact formula
+   * behind the user usage embed / admin user-detail / portal / monthly recap:
+   * requests = distinct turns on 2xx rows, input = hop-weighted, output = 100%,
+   * multipliers skipped only for accounts that own no non-trial key at all.
+   *
+   * Both ranking embeds read from this, so "Top Users" can never show a number
+   * that differs from what the same user sees in their own usage panel.
+   */
+  async function getTopAccounts(since: Date) {
+    const wExpr = inputHopWeightSqlExpr();
+    const rows = sanitizeRows(
+      (
+        await db.execute(sql`
+          WITH acct AS (
+            SELECT COALESCE(discord_user_id, id::text) AS acct_key,
+              BOOL_AND(COALESCE(is_trial, false)) AS trial_only
+            FROM api_keys
+            GROUP BY COALESCE(discord_user_id, id::text)
+          )
           SELECT
-            api_key_id,
-            turn_id,
-            is_counted_request,
-            (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
-            COALESCE(completion_tokens, 0)::float8 AS outt,
-            ROW_NUMBER() OVER (
-              PARTITION BY api_key_id, COALESCE(turn_id, 'orphan-' || id::text)
-              ORDER BY created_at ASC, id ASC
-            ) AS rn
-          FROM request_logs
-          WHERE created_at >= ${since}
-            AND status_code BETWEEN 200 AND 299
-            AND is_billable_token = true
-        ) hops
-        GROUP BY api_key_id
-        ORDER BY tokens DESC
-        LIMIT 20
-      `)).rows as any[];
-    }
+            MAX(h.discord_user_id) AS "discordUserId",
+            MAX(h.discord_username) AS "discordUsername",
+            MAX(h.api_key_name) AS "keyName",
+            BOOL_AND(h.trial_only) AS "isTrial",
+            COUNT(DISTINCT h.turn_id) AS requests,
+            COALESCE(SUM(h.input_credit), 0) AS "promptTokens",
+            COALESCE(SUM(h.output_credit), 0) AS "completionTokens",
+            COALESCE(SUM(h.input_credit + h.output_credit), 0) AS tokens
+          FROM (
+            SELECT hops.turn_id,
+              k.discord_user_id,
+              k.discord_username,
+              k.name AS api_key_name,
+              COALESCE(a.trial_only, false) AS trial_only,
+              COALESCE(k.discord_user_id, hops.api_key_id::text) AS acct_key,
+              (hops.inn * (${sql.raw(wExpr)}) * CASE WHEN COALESCE(a.trial_only, false) THEN 1 ELSE ${tmInput} END) AS input_credit,
+              (hops.outt * CASE WHEN COALESCE(a.trial_only, false) THEN 1 ELSE ${tmOutput} END) AS output_credit
+            FROM (
+              SELECT api_key_id, turn_id,
+                (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
+                COALESCE(completion_tokens, 0)::float8 AS outt,
+                ROW_NUMBER() OVER (
+                  PARTITION BY api_key_id, COALESCE(turn_id, 'orphan-' || id::text)
+                  ORDER BY created_at ASC, id ASC
+                ) AS rn
+              FROM request_logs
+              WHERE created_at >= ${since}
+                AND status_code BETWEEN 200 AND 299
+                AND api_key_id IS NOT NULL
+            ) hops
+            LEFT JOIN api_keys k ON k.id = hops.api_key_id
+            LEFT JOIN acct a ON a.acct_key = COALESCE(k.discord_user_id, hops.api_key_id::text)
+          ) h
+          GROUP BY h.acct_key
+        `)
+      ).rows as any[],
+      ["requests", "promptTokens", "completionTokens", "tokens"],
+    );
 
-    const result = [];
-    for (const row of rows as any[]) {
-      if (!row.apiKeyId) continue;
-      const [key] = await db.select({ discordUserId: apiKeys.discordUserId, discordUsername: apiKeys.discordUsername, name: apiKeys.name, isTrial: apiKeys.isTrial })
-        .from(apiKeys).where(eq(apiKeys.id, row.apiKeyId));
-      if (!key) continue;
-
-      if (key.isTrial) {
-        const whereHops = and(eq(requestLogs.apiKeyId, row.apiKeyId), sql`created_at >= ${since}`, BILLABLE_LOG_SQL);
-        const whereCounted = and(eq(requestLogs.apiKeyId, row.apiKeyId), sql`created_at >= ${since}`, COUNTED_LOG_SQL);
-        const [raw] = await db.select({
-          tokens: weightedHopTotalTokensSql(whereHops, { isTrial: true }),
-          promptTokens: weightedHopInputTokensSql(whereHops, { isTrial: true }),
-          completionTokens: turnCompletionTokensSql(whereHops, { isTrial: true }),
-          requests: turnCountSql(whereCounted),
-        }).from(requestLogs).where(whereHops);
-        row.tokens = raw?.tokens ?? row.tokens;
-        row.promptTokens = raw?.promptTokens ?? row.promptTokens;
-        row.completionTokens = raw?.completionTokens ?? row.completionTokens;
-        row.requests = raw?.requests ?? row.requests;
-        row.billablePromptTokens = 0;
-        row.cachedTokens = 0;
-      }
-
-      const estimatedCost = Math.round((row.promptTokens || 0) * 1.5 + (row.completionTokens || 0) * 6.0);
-
-      result.push({
-        discordUserId: key.discordUserId,
-        discordUsername: key.discordUsername || key.name,
-        keyName: key.name,
-        isTrial: key.isTrial || false,
-        requests: row.requests,
-        tokens: row.tokens,
-        promptTokens: row.promptTokens,
-        billablePromptTokens: row.billablePromptTokens || 0,
-        cachedTokens: row.cachedTokens || 0,
-        completionTokens: row.completionTokens,
-        estimatedCost,
-      });
-      if (result.length >= 10) break;
-    }
-    return result;
+    return rows.map((r: any) => ({
+      discordUserId: r.discordUserId || null,
+      discordUsername: r.discordUsername || r.keyName || null,
+      keyName: r.keyName || null,
+      isTrial: !!r.isTrial,
+      requests: r.requests,
+      tokens: Math.round(r.tokens),
+      promptTokens: Math.round(r.promptTokens),
+      billablePromptTokens: 0,
+      cachedTokens: 0,
+      completionTokens: Math.round(r.completionTokens),
+      estimatedCost: Math.round(r.promptTokens * 1.5 + r.completionTokens * 6.0),
+    }));
   }
+
+  const byRequests = (list: any[]) =>
+    [...list].sort((a, b) => b.requests - a.requests || b.tokens - a.tokens).slice(0, 10);
+  const byTokens = (list: any[]) =>
+    [...list].sort((a, b) => b.tokens - a.tokens || b.requests - a.requests).slice(0, 10);
 
   const [
     todayModelsByReq,
     monthModelsByReq,
     todayModelsByTok,
     monthModelsByTok,
-    todayUsersByReq,
-    monthUsersByReq,
-    todayUsersByTok,
-    monthUsersByTok,
+    todayAccounts,
+    monthAccounts,
   ] = await Promise.all([
     getTopModelsByRequests(todayDate),
     getTopModelsByRequests(monthDate),
     getTopModelsByTokens(todayDate),
     getTopModelsByTokens(monthDate),
-    getTopUsersByRequests(todayDate),
-    getTopUsersByRequests(monthDate),
-    getTopUsersByTokens(todayDate),
-    getTopUsersByTokens(monthDate),
+    getTopAccounts(todayDate),
+    getTopAccounts(monthDate),
   ]);
 
   return c.json({
     today: {
       topModelsByRequests: todayModelsByReq,
       topModelsByTokens: todayModelsByTok,
-      topUsersByRequests: todayUsersByReq,
-      topUsersByTokens: todayUsersByTok,
+      topUsersByRequests: byRequests(todayAccounts),
+      topUsersByTokens: byTokens(todayAccounts),
     },
     month: {
       topModelsByRequests: monthModelsByReq,
       topModelsByTokens: monthModelsByTok,
-      topUsersByRequests: monthUsersByReq,
-      topUsersByTokens: monthUsersByTok,
+      topUsersByRequests: byRequests(monthAccounts),
+      topUsersByTokens: byTokens(monthAccounts),
     },
   });
 });
