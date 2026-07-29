@@ -125,7 +125,7 @@ function summarizeProbeFailure(status: number, bodyText: string, fallback: strin
   return msg ? `HTTP ${status}: ${msg}` : `HTTP ${status}`;
 }
 
-const SWEEP_PROBE_TIMEOUT_MS = Number(process.env.SWEEP_PROBE_TIMEOUT_MS) || 180_000;
+const SWEEP_PROBE_TIMEOUT_MS = Number(process.env.SWEEP_PROBE_TIMEOUT_MS) || 300_000;
 const SWEEP_PROBE_ATTEMPTS = Math.max(1, Number(process.env.SWEEP_PROBE_ATTEMPTS) || 3);
 
 // Auth helper for bot pushing stats
@@ -761,7 +761,7 @@ monitor.post("/monitor/sweep", async (c) => {
 
       sweepProgress.total = allModels.length;
 
-      // Concurrent all-in-one probe (3 attempts × 180s timeout per model)
+      // Concurrent all-in-one probe (3 attempts × 300s timeout per model; all models in parallel)
       await Promise.allSettled(
         allModels.map(async (m) => {
           const keys = await getProviderProbeKeys(m.providerId, m.apiKey);
