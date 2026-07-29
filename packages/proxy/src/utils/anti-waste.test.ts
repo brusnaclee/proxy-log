@@ -154,6 +154,89 @@ describe("applyAntiWaste", () => {
     assert.ok(r.flags.includes("short_circuit_skipped_no_safe_tool"));
   });
 
+  it("nudges on a same-path loop even though every range differs", () => {
+    process.env.ANTI_WASTE_ENABLED = "1";
+    const sessionKey = `test-pathloop:${Date.now()}`;
+    resetAntiWasteTracker(sessionKey);
+
+    // The exact signature changes every hop because offset/limit drift, so the
+    // consecutiveIdentical counter can never catch this on its own.
+    const bodyFactory = (hop: number) => ({
+      model: "test",
+      tools: CLINE_TOOLS,
+      messages: [
+        {
+          role: "user",
+          content:
+            `[read_file for 'shopee/txt13.md'] offset: ${hop * 40} limit: ${880 - hop * 40} ` +
+            `Result: ${"x".repeat(5000)}`,
+        },
+      ],
+    });
+
+    let r = applyAntiWaste({
+      requestBody: bodyFactory(0),
+      sessionKey,
+      isNewPrompt: true,
+      normalizedIde: "cline",
+    });
+    assert.equal(r.consecutiveIdentical, 1);
+    assert.equal(r.nudged, false);
+
+    // The nudge is injected once per session, so watch every hop for it.
+    let nudgedAtHop = -1;
+    for (let hop = 1; hop <= 4; hop++) {
+      r = applyAntiWaste({
+        requestBody: bodyFactory(hop),
+        sessionKey,
+        isNewPrompt: false,
+        normalizedIde: "cline",
+      });
+      if (r.nudged && nudgedAtHop < 0) {
+        nudgedAtHop = hop;
+        assert.ok(r.flags.includes("anti_loop_nudge_path"));
+      }
+    }
+
+    assert.equal(r.consecutiveIdentical, 1, "ranges differ, so exact repeats stay at 1");
+    assert.equal(r.consecutiveSamePath, 5);
+    assert.equal(nudgedAtHop, 3, "cline nudgeAt=3, so the path loop trips on the 4th hop");
+  });
+
+  it("does not treat distinct paths as a same-path loop", () => {
+    process.env.ANTI_WASTE_ENABLED = "1";
+    const sessionKey = `test-distinct:${Date.now()}`;
+    resetAntiWasteTracker(sessionKey);
+
+    let r = applyAntiWaste({
+      requestBody: {
+        model: "test",
+        tools: CLINE_TOOLS,
+        messages: [{ role: "user", content: `[read_file for 'a.ts'] Result: ${"x".repeat(5000)}` }],
+      },
+      sessionKey,
+      isNewPrompt: true,
+      normalizedIde: "cline",
+    });
+    for (const path of ["b.ts", "c.ts", "d.ts", "e.ts", "f.ts"]) {
+      r = applyAntiWaste({
+        requestBody: {
+          model: "test",
+          tools: CLINE_TOOLS,
+          messages: [
+            { role: "user", content: `[read_file for '${path}'] Result: ${"x".repeat(5000)}` },
+          ],
+        },
+        sessionKey,
+        isNewPrompt: false,
+        normalizedIde: "cline",
+      });
+    }
+    assert.equal(r.consecutiveSamePath, 1);
+    assert.equal(r.shortCircuit, false);
+    assert.ok(!r.flags.includes("anti_loop_nudge_path"));
+  });
+
   it("respects X-Anti-Waste: off", () => {
     const headers = new Headers({ "X-Anti-Waste": "off" });
     assert.equal(isAntiWasteEnabled(headers), false);

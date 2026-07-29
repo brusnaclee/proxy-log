@@ -24,6 +24,13 @@ describe("detectIde UA", () => {
     assert.equal(detectIde("AsyncOpenAI/Python 2.44.0"), "OpenAI Python SDK");
     assert.equal(detectIde("node"), "Node.js Client");
   });
+  it("detects Trae from its bare hertz UA", () => {
+    assert.equal(detectIde("hertz"), "Trae");
+    assert.equal(detectIde("Trae/2.0.1"), "Trae");
+    // must not swallow the ByteDance framework used as a real server UA suffix
+    assert.equal(detectIde("Mozilla/5.0 Chrome"), "Browser Client");
+  });
+
   it("detects ZCode UA", () => {
     assert.equal(detectIde("ZCode/unknown"), "ZCode");
   });
@@ -82,6 +89,22 @@ describe("detectIdeFromContent", () => {
       "Cursor",
     );
   });
+  it("picks Trae over OpenCode from command marker and toolset", () => {
+    assert.equal(
+      detectIdeFromContent({
+        messages: [{ role: "system", content: "<trae_command> Command Name: ponytail" }],
+      }),
+      "Trae",
+    );
+    // Trae ships TodoWrite + Skill + Glob too, which used to resolve to OpenCode
+    const traeTools = [
+      "Task", "Skill", "SearchCodebase", "Glob", "LS", "Grep", "Read", "RunCommand",
+      "CheckCommandStatus", "StopCommand", "SearchReplace", "Write", "TodoWrite",
+      "OpenPreview", "get_goal", "create_goal", "update_goal", "run_mcp",
+    ].map((name) => ({ type: "function", function: { name } }));
+    assert.equal(detectIdeFromContent({ messages: [], tools: traeTools }), "Trae");
+  });
+
   it("detects Cline duplicate-read and Roo tool_response", () => {
     assert.equal(
       detectIdeFromContent({

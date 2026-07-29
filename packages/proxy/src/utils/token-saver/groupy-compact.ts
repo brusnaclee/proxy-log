@@ -184,11 +184,41 @@ function setContent(msg: any, text: string) {
 	msg.content = text;
 }
 
-function extractToolMeta(msg: any): { toolName: string; target: string } {
+/** Resolve the file path a role=tool result belongs to via the calling assistant. */
+function targetFromCallingAssistant(messages: any[], idx: number): string {
+	const msg = messages[idx];
+	const callId = typeof msg?.tool_call_id === "string" ? msg.tool_call_id : null;
+	for (let i = idx - 1; i >= 0 && i >= idx - 3; i--) {
+		const calls = messages[i]?.tool_calls;
+		if (!Array.isArray(calls)) continue;
+		for (const tc of calls) {
+			if (callId && tc?.id && tc.id !== callId) continue;
+			const argsStr =
+				typeof tc?.function?.arguments === "string"
+					? tc.function.arguments
+					: JSON.stringify(tc?.function?.arguments || tc?.arguments || {});
+			try {
+				const j = JSON.parse(argsStr);
+				const p = j.filePath || j.file_path || j.path || j.target_file || j.absolutePath || j.glob;
+				if (typeof p === "string" && p) return p;
+			} catch {
+				const pm = argsStr.match(
+					/"(?:filePath|file_path|path|target_file|absolutePath)"\s*:\s*"([^"]+)"/,
+				);
+				if (pm) return pm[1];
+			}
+		}
+	}
+	return "";
+}
+
+function extractToolMeta(msg: any, messages?: any[], idx?: number): { toolName: string; target: string } {
 	const role = String(msg?.role || "").toLowerCase();
 	if (TOOL_ROLES.has(role)) {
 		const toolName = String(msg.name || msg.tool_name || "tool");
-		return { toolName, target: "" };
+		const target =
+			messages && typeof idx === "number" ? targetFromCallingAssistant(messages, idx) : "";
+		return { toolName, target };
 	}
 	const text = getTextContent(msg?.content);
 	const m = text.match(CLINE_PATH_RE);
@@ -209,9 +239,14 @@ function extractToolMeta(msg: any): { toolName: string; target: string } {
 
 function buildStub(toolName: string, target: string, chars: number): string {
 	const pathPart = target ? ` path=${target}` : "";
+	// Must never invite a blind re-read: literal models (GLM/Qwen class) treat
+	// "re-read if you need it" as an instruction and loop on the same path
+	// forever, so the file content never accumulates in context.
 	return (
-		`${STUB_MARKER} Earlier tool result for ${toolName}${pathPart} (chars=${chars}); ` +
-		`full text was in prior hops. Re-read if you need exact lines.`
+		`${STUB_MARKER} You ALREADY received the full ${toolName} result${pathPart} ` +
+		`(${chars} chars) earlier in this session; only the text is elided here to save tokens. ` +
+		`Do NOT call ${toolName} on this path again — use what you already know and move to the next step. ` +
+		`Re-read only if you can name a specific line range you have never seen.`
 	);
 }
 
@@ -313,12 +348,44 @@ export function applyGroupyCompact(
 	if (dumpIndices.length <= cfg.recentKeep) {
 		// Still may trim assistant prose in aggressive mode
 	} else {
-		const toStub = dumpIndices.slice(0, dumpIndices.length - cfg.recentKeep);
-		for (const idx of toStub) {
+		const meta = new Map<number, { toolName: string; target: string }>();
+		for (const idx of dumpIndices) {
+			meta.set(idx, extractToolMeta(messages[idx], messages, idx));
+		}
+
+		// For a path read repeatedly (paged reads, or a model grinding on one file),
+		// keep its newest chunk alive. Stubbing every hop means the content never
+		// accumulates in context, which pushes literal models into re-reading the
+		// same file indefinitely. Paths touched only once follow recentKeep as
+		// usual, and the rescue is capped so a wide crawl can't undo the savings.
+		const seenPerTarget = new Map<string, number>();
+		for (const idx of dumpIndices) {
+			const target = meta.get(idx)?.target;
+			if (target) seenPerTarget.set(target, (seenPerTarget.get(target) || 0) + 1);
+		}
+		const rescued = new Set<number>();
+		const rescuedTargets = new Set<string>();
+		for (let i = dumpIndices.length - 1; i >= 0; i--) {
+			if (rescued.size >= cfg.recentKeep) break;
+			const idx = dumpIndices[i];
+			const target = meta.get(idx)?.target;
+			if (!target || rescuedTargets.has(target)) continue;
+			if ((seenPerTarget.get(target) || 0) < 2) continue;
+			rescuedTargets.add(target);
+			rescued.add(idx);
+		}
+
+		const keep = new Set<number>([
+			...dumpIndices.slice(dumpIndices.length - cfg.recentKeep),
+			...rescued,
+		]);
+
+		for (const idx of dumpIndices) {
+			if (keep.has(idx)) continue;
 			const msg = messages[idx];
 			const len = contentLength(msg.content);
 			if (len < cfg.minChars) continue;
-			const { toolName, target } = extractToolMeta(msg);
+			const { toolName, target } = meta.get(idx)!;
 			if (isWriteToolName(toolName)) continue;
 			const stub = buildStub(toolName, target, len);
 			setContent(msg, stub);

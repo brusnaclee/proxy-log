@@ -15,6 +15,12 @@ export type ToolSignature = {
   key: string;
   /** Human path/target if known */
   target?: string;
+  /**
+   * Identity of the *path* only, ignoring line range. Lets callers spot a model
+   * grinding on one file with a drifting window — `key` deliberately differs on
+   * every range, so it can never catch that loop on its own.
+   */
+  pathKey: string | null;
   noisy: boolean;
 };
 
@@ -90,6 +96,7 @@ function makeSig(toolName: string, argsRaw: string, target?: string): ToolSignat
     argsHash,
     key: `${name}|${argsHash}`,
     target: target ? (range ? `${target}:${range}` : target) : undefined,
+    pathKey: target ? `${name}|${target}` : null,
     noisy: noisy && !write,
   };
 }

@@ -29,6 +29,11 @@ const IDE_PATTERNS: [RegExp, string][] = [
 	[/codex/i, "Codex"],
 	[/opencode.*vscode/i, "OpenCode (VS Code)"],
 	[/opencode/i, "OpenCode"],
+	// Trae (ByteDance). Its UA is the bare name of ByteDance's Go HTTP stack,
+	// `hertz`, which no other client we see sends. Without this it falls through
+	// to content detection and flip-flops between OpenCode and Continue mid-session.
+	[/\btrae\b/i, "Trae"],
+	[/^hertz(\/|$)/i, "Trae"],
 	[/cursor/i, "Cursor"],
 	[/pearai/i, "PearAI"],
 	[/windsurf/i, "Windsurf"],
@@ -206,6 +211,10 @@ export function detectIdeFromContent(requestBody: any, transcriptSnapshot?: stri
 	if (searchText.includes("zed.dev")) return "Zed";
 	if (searchText.includes("[zed]")) return "Zed";
 
+	// === TRAE (ByteDance) — before OpenCode, whose TodoWrite/Skill/Glob rule matches too ===
+	if (searchText.includes("<trae_command>")) return "Trae";
+	if (searchText.includes("<trae_rule>") || searchText.includes("trae_agent")) return "Trae";
+
 	// === OPENCODEMULTI patterns ===
 	if (searchText.includes("you are opencode") || searchText.includes("you are an opencode")) return "OpenCode";
 	if (searchText.includes("interactive cli tool that helps")) return "OpenCode";
@@ -280,6 +289,12 @@ export function detectIdeFromContent(requestBody: any, transcriptSnapshot?: stri
 
 	// Codex CLI
 	if (toolSet.has("codex_app") || (toolSet.has("apply_patch") && toolSet.has("exec_command"))) return "Codex CLI";
+
+	// Trae — SearchCodebase / OpenPreview / run_mcp / goal tools are unique to it.
+	// Must precede OpenCode: Trae also ships TodoWrite + Skill + Glob.
+	if (toolSet.has("searchcodebase") && (toolSet.has("openpreview") || toolSet.has("run_mcp"))) return "Trae";
+	if (toolSet.has("create_goal") && toolSet.has("update_goal") && toolSet.has("get_goal")) return "Trae";
+	if (toolSet.has("checkcommandstatus") && toolSet.has("stopcommand") && toolSet.has("runcommand")) return "Trae";
 
 	// OpenCode — uses TodoWrite, Skill, Glob, Grep, Agent
 	if (toolSet.has("todowrite") && toolSet.has("skill") && toolSet.has("glob")) return "OpenCode";

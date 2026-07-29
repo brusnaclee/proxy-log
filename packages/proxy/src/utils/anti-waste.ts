@@ -36,6 +36,7 @@ export type AntiWasteApplyResult = {
   signature: ToolSignature | null;
   seenCount: number;
   consecutiveIdentical: number;
+  consecutiveSamePath: number;
   deduped: boolean;
   charsSaved: number;
   nudged: boolean;
@@ -78,6 +79,26 @@ function buildShortCircuitHint(
   }
   return (
     `Already have this ${tool}${tgt} result in context. Continue with a different step (edit/test) — do not re-read the same range.`
+  );
+}
+
+function pathLoopNudgeText(
+  toolName: string,
+  pathKey: string | null,
+  lang: "en" | "id",
+): string {
+  const path = pathKey?.split("|").slice(1).join("|") || "this file";
+  if (lang === "id") {
+    return (
+      `[tokito anti-waste] Kamu sudah memanggil ${toolName} ke ${path} berkali-kali dengan range yang beda-beda. ` +
+      `Isi file itu sudah ada di context — berhenti membacanya. Lanjut ke langkah berikutnya (edit/test), ` +
+      `atau kalau memang butuh bagian tertentu, sebutkan dulu range mana dan kenapa.`
+    );
+  }
+  return (
+    `[tokito anti-waste] You have called ${toolName} on ${path} repeatedly with a shifting range. ` +
+    `That file is already in context — stop reading it. Move on to the next step (edit/test), ` +
+    `or if you genuinely need a specific part, state which range and why first.`
   );
 }
 
@@ -146,6 +167,7 @@ export function applyAntiWaste(opts: {
     signature: null,
     seenCount: 0,
     consecutiveIdentical: 0,
+    consecutiveSamePath: 0,
     deduped: false,
     charsSaved: 0,
     nudged: false,
@@ -188,23 +210,40 @@ export function applyAntiWaste(opts: {
     if (deduped) flags.push("tool_dedupe_applied");
   }
 
+  // A model grinding on one file with a drifting line range never repeats an
+  // exact signature, so `consecutiveIdentical` stays at 1 forever. Track the
+  // path on its own, one step behind the exact-repeat thresholds.
+  const pathLoopNudgeAt = nudgeAt + 1;
+  const pathLoopShortCircuitAt = shortCircuitAt + 2;
+  const isPathLoop =
+    !!signature?.pathKey && tracked.consecutiveSamePath >= pathLoopNudgeAt;
+
   if (
     signature &&
     isNoisyToolSignature(signature) &&
-    tracked.consecutiveIdentical >= nudgeAt &&
+    (tracked.consecutiveIdentical >= nudgeAt || isPathLoop) &&
     !tracked.nudged
   ) {
-    nudged = injectAntiWasteNudge(opts.requestBody, profile.nudgeText);
+    // Exact repeats keep the IDE-specific copy; only a range-drift loop needs the
+    // path-specific wording, since the generic text is about identical arguments.
+    const usePathCopy = isPathLoop && tracked.consecutiveIdentical < nudgeAt;
+    nudged = injectAntiWasteNudge(
+      opts.requestBody,
+      usePathCopy
+        ? pathLoopNudgeText(signature.toolName, signature.pathKey, opts.lang || "en")
+        : profile.nudgeText,
+    );
     if (nudged) {
       markAntiWasteNudged(opts.sessionKey);
-      flags.push("anti_loop_nudge");
+      flags.push(usePathCopy ? "anti_loop_nudge_path" : "anti_loop_nudge");
     }
   }
 
   if (
     signature &&
     isNoisyToolSignature(signature) &&
-    tracked.consecutiveIdentical >= shortCircuitAt
+    (tracked.consecutiveIdentical >= shortCircuitAt ||
+      (!!signature.pathKey && tracked.consecutiveSamePath >= pathLoopShortCircuitAt))
   ) {
     shortCircuitTool = resolveShortCircuitAgentTool(opts.requestBody.tools, {
       toolName: signature.toolName,
@@ -224,6 +263,7 @@ export function applyAntiWaste(opts: {
     signature,
     seenCount: tracked.seenCount,
     consecutiveIdentical: tracked.consecutiveIdentical,
+    consecutiveSamePath: tracked.consecutiveSamePath,
     deduped,
     charsSaved,
     nudged,

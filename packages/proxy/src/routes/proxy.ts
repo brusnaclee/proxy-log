@@ -603,6 +603,8 @@ const NON_STREAMING_TIMEOUT_MS = 90 * 1000;
 const UPSTREAM_MAX_ATTEMPTS = 10;
 const UPSTREAM_RETRY_BACKOFF_MS = 1000;
 const TRANSIENT_MAX_ATTEMPTS = 8;
+// grok-cli commonly needs 80–105s for one tool-heavy turn; 120s left no margin.
+const GROK_PER_ATTEMPT_TIMEOUT_MS = 240_000;
 // Conduit models (e.g. gpt-5) often need 25–30s+ for a single non-stream response.
 const TRANSIENT_NON_STREAMING_ATTEMPT_MS = 45_000;
 // Allow multiple 502 retries plus one slow success within the wall clock.
@@ -895,7 +897,13 @@ async function fetchUpstreamWithRetry(
 
 			if (clientSignal) {
 				if (clientSignal.aborted) {
-					throw new Error('Client already disconnected');
+					// The signal is a merge of the real client signal and our own
+					// per-attempt timer, so blaming the client unconditionally sent us
+					// chasing phantom disconnects. Surface whichever actually fired.
+					const reason = (clientSignal.reason as any)?.message || clientSignal.reason;
+					throw new Error(
+						reason ? `Request aborted before upstream: ${reason}` : 'Client already disconnected',
+					);
 				}
 				clientSignal.addEventListener('abort', abortHandler);
 			}
@@ -4944,11 +4952,19 @@ proxy.all('/*', async (c) => {
 					pickModel = pick.provider ? `${pick.provider}/${pick.modelId}` : pick.modelId;
 				}
 
-				// Trial / Phantom auto-fallback: cap each attempt at 120s so that
-				// slow reasoning upstreams have time to respond before we move on.
-				// The 1h default in fetchUpstreamWithRetry is for very long
-				// single requests, not for a fallback chain.
-				const perAttemptTimeoutMs = keyRecord.isTrial || (!keyRecord.isTrial && model !== 'auto') ? 120_000 : 0;
+				// Trial / Phantom auto-fallback: cap each attempt so that slow
+				// reasoning upstreams have time to respond before we move on. The 1h
+				// default in fetchUpstreamWithRetry is for very long single requests,
+				// not for a fallback chain.
+				//
+				// grok-cli routinely lands in the 80–105s band, so the plain 120s cap
+				// killed real work: the abort surfaced as "Client already
+				// disconnected" even though it was our own timer.
+				const perAttemptCapMs =
+					isGrokCliModel(pickModel) || isGrokCliModel(upstreamModel)
+						? GROK_PER_ATTEMPT_TIMEOUT_MS
+						: 120_000;
+				const perAttemptTimeoutMs = keyRecord.isTrial || (!keyRecord.isTrial && model !== 'auto') ? perAttemptCapMs : 0;
 				let attemptSignal = c.req.raw.signal;
 				let perAttemptController: AbortController | null = null;
 				if (perAttemptTimeoutMs > 0) {
@@ -5188,6 +5204,20 @@ proxy.all('/*', async (c) => {
 					break;
 				}
 				console.log(`[proxy] trial ${attemptModel} attempt ${attempt + 1}/${maxAttemptsPerModel} got ${upstreamResponse.status}, retrying...`);
+				// Record why, so exhausting the retries doesn't surface a bare
+				// "All upstream attempts failed" with the real reason thrown away.
+				if (attempt + 1 >= maxAttemptsPerModel) {
+					let retryDetail = '';
+					try {
+						const peek = await upstreamResponse.clone().text();
+						retryDetail = scrubUpstreamLeakText(
+							peek.replace(/\s+/g, ' ').trim().slice(0, 160),
+						);
+					} catch {}
+					fetchError = new Error(
+						`Upstream ${upstreamResponse.status} after ${maxAttemptsPerModel} attempts on ${pickModel}${retryDetail ? `: ${retryDetail}` : ''}`,
+					);
+				}
 				await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
 			}
 

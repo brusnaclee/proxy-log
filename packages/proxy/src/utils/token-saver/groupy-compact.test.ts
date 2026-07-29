@@ -97,6 +97,50 @@ describe("applyGroupyCompact", () => {
 		assert.ok(!String(body.messages[4].content).includes("[groupy-compact]"));
 	});
 
+	it("keeps the newest chunk of a repeatedly read path and never invites a re-read", () => {
+		// Reproduces the Trae/GLM loop: one file paged over many hops. Stubbing
+		// every chunk left nothing in context, so the model kept re-reading.
+		const messages: any[] = [{ role: "user", content: "summarize txt13.md" }];
+		for (let i = 0; i < 8; i++) {
+			messages.push({
+				role: "assistant",
+				tool_calls: [
+					{
+						id: `c${i}`,
+						type: "function",
+						function: {
+							name: "Read",
+							arguments: JSON.stringify({
+								file_path: "shopee/txt13.md",
+								offset: i * 40,
+								limit: 880 - i * 40,
+							}),
+						},
+					},
+				],
+			});
+			messages.push({
+				role: "tool",
+				name: "Read",
+				tool_call_id: `c${i}`,
+				content: `chunk ${i}\n` + "line of the md file\n".repeat(300),
+			});
+		}
+		const body = { messages };
+		applyGroupyCompact(body, "balanced");
+
+		const reads = body.messages.filter((m: any) => m.role === "tool");
+		const intact = reads.filter((m: any) => !String(m.content).includes("[groupy-compact]"));
+		assert.ok(intact.length >= 1, "at least one chunk of the path must survive");
+
+		const stubbed = reads.find((m: any) => String(m.content).includes("[groupy-compact]"));
+		assert.ok(stubbed, "older chunks should still be stubbed");
+		const stubText = String(stubbed.content);
+		assert.ok(stubText.includes("shopee/txt13.md"), "stub should name the path");
+		assert.ok(!/re-?read if you need/i.test(stubText));
+		assert.ok(/do not call/i.test(stubText));
+	});
+
 	it("does not drop or reorder messages", () => {
 		const body = {
 			messages: [

@@ -58,6 +58,7 @@ const PROFILE_BY_KEY: Record<string, AntiWasteProfile> = {
   "continue (vs code)": CURSOR_FAMILY,
   opencode: CURSOR_FAMILY,
   "opencode (vs code)": CURSOR_FAMILY,
+  trae: CURSOR_FAMILY,
   "claude code": CLAUDE_FAMILY,
   "claude desktop": CLAUDE_FAMILY,
   openclaw: CLAUDE_FAMILY,

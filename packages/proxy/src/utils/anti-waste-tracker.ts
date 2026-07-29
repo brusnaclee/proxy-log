@@ -9,6 +9,9 @@ export type AntiWasteTrackState = {
   seen: Map<string, number>;
   lastKey: string | null;
   consecutiveIdentical: number;
+  lastPathKey: string | null;
+  /** Consecutive hops hitting the same path, whatever the line range. */
+  consecutiveSamePath: number;
   nudged: boolean;
 };
 
@@ -26,7 +29,14 @@ function getOrCreate(key: string): AntiWasteTrackState {
         if (++i >= Math.floor(MAX_TRACKERS / 2)) break;
       }
     }
-    s = { seen: new Map(), lastKey: null, consecutiveIdentical: 0, nudged: false };
+    s = {
+      seen: new Map(),
+      lastKey: null,
+      consecutiveIdentical: 0,
+      lastPathKey: null,
+      consecutiveSamePath: 0,
+      nudged: false,
+    };
     trackers.set(key, s);
   }
   return s;
@@ -52,6 +62,12 @@ export function recordToolSignature(
   } else {
     state.consecutiveIdentical = 1;
     state.lastKey = sig.key;
+  }
+  if (sig.pathKey && state.lastPathKey === sig.pathKey) {
+    state.consecutiveSamePath += 1;
+  } else {
+    state.consecutiveSamePath = sig.pathKey ? 1 : 0;
+    state.lastPathKey = sig.pathKey;
   }
   return { ...state, seenCount };
 }
