@@ -462,20 +462,23 @@ export function resolvePeriodRange(period: PeriodKey): { start: Date; end: Date 
       const start = new Date(todayUtcMidnight.getTime() - 29 * 86400000);
       return { start, end: now };
     }
+    // Month boundaries must be derived from wibMidnight (WIB wall clock), not
+    // from todayUtcMidnight — that one already has the offset applied, so
+    // subtracting it again cut the first 7 hours of the month, and on days
+    // where the UTC date lags WIB it even landed in the previous month.
     case "thisMonth": {
-      const monthStart = new Date(todayUtcMidnight);
-      monthStart.setUTCDate(1);
-      return { start: new Date(monthStart.getTime() - wibOffset), end: now };
+      const monthStartWib = new Date(wibMidnight);
+      monthStartWib.setUTCDate(1);
+      return { start: new Date(monthStartWib.getTime() - wibOffset), end: now };
     }
     case "lastMonth": {
-      const prevMonth = new Date(todayUtcMidnight);
-      prevMonth.setUTCDate(1);
-      prevMonth.setUTCMonth(prevMonth.getUTCMonth() - 1);
-      const monthEnd = new Date(todayUtcMidnight);
-      monthEnd.setUTCDate(1);
+      const monthStartWib = new Date(wibMidnight);
+      monthStartWib.setUTCDate(1);
+      const prevMonthWib = new Date(monthStartWib);
+      prevMonthWib.setUTCMonth(prevMonthWib.getUTCMonth() - 1);
       return {
-        start: new Date(prevMonth.getTime() - wibOffset),
-        end: new Date(monthEnd.getTime() - wibOffset),
+        start: new Date(prevMonthWib.getTime() - wibOffset),
+        end: new Date(monthStartWib.getTime() - wibOffset),
       };
     }
     case "allTime":
