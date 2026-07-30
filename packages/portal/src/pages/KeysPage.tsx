@@ -82,6 +82,7 @@ export default function KeysPage() {
   const [expandedKey, setExpandedKey] = useState<number | null>(null);
   const [devices, setDevices] = useState<Record<number, DeviceInfo[]>>({});
   const [loadingDevices, setLoadingDevices] = useState<Record<number, boolean>>({});
+  const [deviceError, setDeviceError] = useState<Record<number, string | null>>({});
 
   const [rotating, setRotating] = useState<number | null>(null);
   const [rotatedKey, setRotatedKey] = useState<string | null>(null);
@@ -170,11 +171,15 @@ export default function KeysPage() {
     setExpandedKey(keyId);
     // Always refetch on expand
     setLoadingDevices((prev) => ({ ...prev, [keyId]: true }));
+    setDeviceError((prev) => ({ ...prev, [keyId]: null }));
     try {
       const result = await api.keys.devices(keyId);
       setDevices((prev) => ({ ...prev, [keyId]: result }));
     } catch (err) {
-      console.error("Failed to load devices:", err);
+      setDeviceError((prev) => ({
+        ...prev,
+        [keyId]: err instanceof Error ? err.message : "Failed to load devices",
+      }));
     } finally {
       setLoadingDevices((prev) => ({ ...prev, [keyId]: false }));
     }
@@ -479,8 +484,12 @@ export default function KeysPage() {
                 <div className="border-t border-border bg-accent/30">
                   {loadingDevices[key.id] ? (
                     <div className="p-4 text-sm text-muted-foreground">Loading...</div>
+                  ) : deviceError[key.id] ? (
+                    <div className="p-4 text-sm text-red-400">{deviceError[key.id]}</div>
                   ) : !devices[key.id]?.length ? (
-                    <div className="p-4 text-sm text-muted-foreground">No devices recorded</div>
+                    <div className="p-4 text-sm text-muted-foreground">
+                      {t("No devices recorded. Device slots are shared across all keys on your account.")}
+                    </div>
                   ) : (
                     <div className="divide-y divide-border">
                       {devices[key.id].map((device) => (
@@ -509,6 +518,9 @@ export default function KeysPage() {
                                     <span>First seen {formatRelativeTime(device.firstSeen)}</span>
                                   )}
                                   <span>{device.requestCount.toLocaleString()} reqs</span>
+                                  {device.isCurrentKey === false && (
+                                    <span>via {device.ownerKeyName || `key #${device.ownerKeyId}`}</span>
+                                  )}
                                 </div>
                                 {device.userAgentRaw && (
                                   <p className="text-xs text-muted-foreground/60 mt-0.5 truncate max-w-xs" title={device.userAgentRaw}>

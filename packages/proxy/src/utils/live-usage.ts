@@ -6,7 +6,7 @@
 
 import { and, eq, sql, inArray } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { apiKeys, adminConfig, requestLogs, modelLimits } from '../db/schema.js';
+import { apiKeys, adminConfig, requestLogs } from '../db/schema.js';
 import {
 	BILLABLE_LOG_SQL,
 	turnCountSql,
@@ -32,9 +32,7 @@ import {
 import {
 	checkApiCallLimit,
 	checkPromptLimit,
-	checkModelPromptLimit,
 	parseRateLimitWindow,
-	getWindowResetMs,
 	listDedicatedQuotaRules,
 	sqlExcludeDedicatedModels,
 	sqlMatchDedicatedRule,
@@ -46,13 +44,12 @@ import {
 	type InputLimitBreakdown,
 } from './usage-input-breakdown.js';
 import {
-	getAddonTeaseDefaultLimit,
 	getActiveAddonsForUser,
-	isAddonTeaseModel,
 	parseModelDailyLimits,
 	resolveAddonQuotaStack,
 	sumAddonDailyTokenBonus,
 } from './addons.js';
+import { buildModelPromptUsage } from './model-prompt-usage.js';
 
 export type LimitSource = 'override' | 'global' | 'none' | 'addon';
 
@@ -503,88 +500,15 @@ export async function buildLiveUsageForKey(
 		console.warn('[live-usage] input breakdown failed:', (err as Error)?.message || err);
 	}
 
-	const modelUsageLimits: ModelPromptUsage[] = [];
-	// Any active add-on → bypass all per-model prompt override/tease rows in UI
-	if (!limitKey.isTrial && promptScopeIds.length > 0 && activeAddons.length === 0) {
-		const todayModels = sanitizeRows(
-			(
-				await db.execute(sql`
-      SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
-        COUNT(DISTINCT turn_id)::int as requests
-      FROM request_logs
-      WHERE api_key_id IN (${sql.join(
-				promptScopeIds.map((id) => sql`${id}`),
-				sql`, `,
-			)})
-        AND created_at >= ${todayStart}
-        AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY 1
-      ORDER BY requests DESC
-      LIMIT 12
-    `)
-			).rows as any[],
-			['requests'],
-		);
-
-		const perKeyDefault = limitKey.perModelPromptLimit || 0;
-		const perKeyWindow = limitKey.perModelPromptLimitWindow || null;
-		const globalPerModel = cfg?.globalPerModelPromptLimit || 0;
-		const globalPerModelWindow = cfg?.globalPerModelPromptLimitWindow || '1d';
-
-		for (const tm of todayModels) {
-			if (!tm.model) continue;
-			const teaseDefault =
-				!limitKey.isTrial && isAddonTeaseModel(tm.model) && activeAddons.length === 0
-					? getAddonTeaseDefaultLimit(tm.model)
-					: 0;
-			const mlCheck = await checkModelPromptLimit(
-				promptScopeIds,
-				tm.model,
-				perKeyDefault,
-				perKeyWindow,
-				globalPerModel,
-				globalPerModelWindow,
-				{ teaseDefaultLimit: teaseDefault },
-			);
-			const windowStr = perKeyWindow || globalPerModelWindow;
-			const windowMs = parseRateLimitWindow(windowStr);
-			const resetMs = await getWindowResetMs(promptScopeIds, windowMs, tm.model);
-			if (mlCheck.used > 0 || mlCheck.effectiveLimit > 0) {
-				modelUsageLimits.push({
-					model: tm.model,
-					used: mlCheck.used,
-					limit: mlCheck.effectiveLimit,
-					window: windowStr,
-					remaining: rem(mlCheck.effectiveLimit, mlCheck.used),
-					resetAt: resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null,
-					source:
-						mlCheck.source === 'tease_default'
-							? 'global'
-							: mlCheck.source === 'override'
-								? 'global'
-								: perModelPick.source,
-				});
-			}
-		}
-
-		const activeModelLimits = await db
-			.select()
-			.from(modelLimits)
-			.where(eq(modelLimits.scope, 'global'));
-		for (const am of activeModelLimits) {
-			if (!modelUsageLimits.find((m) => m.model === am.model) && (am.promptLimit || 0) > 0) {
-				modelUsageLimits.push({
-					model: am.model,
-					used: 0,
-					limit: am.promptLimit || 0,
-					window: perKeyWindow || globalPerModelWindow,
-					remaining: rem(am.promptLimit || 0, 0),
-					resetAt: null,
-					source: 'global',
-				});
-			}
-		}
-	}
+	const modelUsageLimits: ModelPromptUsage[] = await buildModelPromptUsage({
+		scopeIds: promptScopeIds,
+		isTrial: !!limitKey.isTrial,
+		hasActiveAddons: activeAddons.length > 0,
+		perKeyDefaultLimit: limitKey.perModelPromptLimit || 0,
+		perKeyDefaultWindow: limitKey.perModelPromptLimitWindow || null,
+		globalDefaultLimit: cfg?.globalPerModelPromptLimit || 0,
+		globalDefaultWindow: cfg?.globalPerModelPromptLimitWindow || '1d',
+	});
 
 	const dedicatedPools: NonNullable<LiveUsagePayload['dedicatedPools']> = [];
 	if (!blockedWithoutAddon && dedicatedRules.length > 0) {

@@ -273,6 +273,10 @@ export interface DeviceInfo {
   lastSeen: string;
   firstSeen: string | null;
   isBlocked: boolean;
+  /** Key holding the slot — device limits are shared across an account's keys. */
+  ownerKeyId: number;
+  ownerKeyName: string | null;
+  isCurrentKey: boolean;
 }
 
 export interface LogItem {

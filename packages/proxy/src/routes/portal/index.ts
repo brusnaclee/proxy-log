@@ -26,6 +26,7 @@ import {
   sqlExcludeDedicatedModels,
   sqlMatchDedicatedRule,
 } from "../../utils/rate-limit.js";
+import { buildModelPromptUsage } from "../../utils/model-prompt-usage.js";
 import { logEmitter } from "../../utils/event-emitter.js";
 import { randomBytes } from "crypto";
 import {
@@ -432,63 +433,23 @@ portal.get("/me", async (c) => {
   // Per-model prompt usage (same as Discord /usage) — account-scoped
   const modelUsageLimits: Array<{
     model: string; used: number; limit: number; window: string; resetAt: string | null;
-  }> = [];
-  if (primaryKey && !isTrial && promptScopeIds.length > 0 && activeAddons.length === 0) {
-    const todayModels = sanitizeRows((await db.execute(sql`
-      SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
-        COUNT(DISTINCT turn_id)::int as requests
-      FROM request_logs
-      WHERE api_key_id IN (${sql.join(promptScopeIds.map((id) => sql`${id}`), sql`, `)})
-        AND created_at >= ${todayStart}
-        AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY 1
-      ORDER BY requests DESC
-      LIMIT 15
-    `)).rows as any[], ["requests"]);
-
-    const perKeyDefault = primaryKey.perModelPromptLimit || 0;
-    const perKeyWindow = primaryKey.perModelPromptLimitWindow || null;
-    const globalPerModel = config?.globalPerModelPromptLimit || 0;
-    const globalPerModelWindow = config?.globalPerModelPromptLimitWindow || "30m";
-
-    for (const tm of todayModels) {
-      if (!tm.model) continue;
-      const mlCheck = await checkModelPromptLimit(
-        promptScopeIds,
-        tm.model,
-        perKeyDefault,
-        perKeyWindow,
-        globalPerModel,
-        globalPerModelWindow,
-      );
-      const windowStr = perKeyWindow || globalPerModelWindow;
-      const windowMs = parseRateLimitWindow(windowStr);
-      const resetMs = await getWindowResetMs(promptScopeIds, windowMs, tm.model);
-      if (mlCheck.used > 0 || mlCheck.effectiveLimit > 0) {
-        modelUsageLimits.push({
-          model: tm.model,
-          used: mlCheck.used,
-          limit: mlCheck.effectiveLimit,
-          window: windowStr,
-          resetAt: resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null,
-        });
-      }
-    }
-
-    // Include configured global model limits even if unused today
-    const activeModelLimits = await db.select().from(modelLimits).where(eq(modelLimits.scope, "global"));
-    for (const am of activeModelLimits) {
-      if (!modelUsageLimits.find((m) => m.model === am.model) && (am.promptLimit || 0) > 0) {
-        modelUsageLimits.push({
-          model: am.model,
-          used: 0,
-          limit: am.promptLimit || 0,
-          window: perKeyWindow || globalPerModelWindow,
-          resetAt: null,
-        });
-      }
-    }
-  }
+  }> = primaryKey
+    ? (await buildModelPromptUsage({
+        scopeIds: promptScopeIds,
+        isTrial: !!isTrial,
+        hasActiveAddons: activeAddons.length > 0,
+        perKeyDefaultLimit: primaryKey.perModelPromptLimit || 0,
+        perKeyDefaultWindow: primaryKey.perModelPromptLimitWindow || null,
+        globalDefaultLimit: config?.globalPerModelPromptLimit || 0,
+        globalDefaultWindow: config?.globalPerModelPromptLimitWindow || "1d",
+      })).map((r) => ({
+        model: r.model,
+        used: r.used,
+        limit: r.limit,
+        window: r.window,
+        resetAt: r.resetAt,
+      }))
+    : [];
 
   const pickLimit = (keyVal: number | null | undefined, globalVal: number | null | undefined) => {
     const k = Number(keyVal) || 0;
@@ -1423,7 +1384,9 @@ portal.get("/keys/:id/devices", async (c) => {
   const key = (await db.select().from(apiKeys).where(and(eq(apiKeys.id, keyId), eq(apiKeys.discordUserId, discordUserId)))).find(Boolean);
   if (!key) return c.json({ error: "Key not found" }, 404);
 
-  const devs = await db.select().from(devices).where(eq(devices.apiKeyId, keyId)).orderBy(desc(devices.lastSeen)).limit(50);
+  // Account-scoped: device slots are shared across the account's keys, so a
+  // device held by a sibling key still has to be visible here.
+  const devs = (await listAccountDevices(keyId)).slice(0, 50);
   return c.json(devs.map(d => ({
     fingerprint: d.fingerprint,
     fingerprintShort: d.fingerprint.substring(0, 12),
@@ -1436,6 +1399,9 @@ portal.get("/keys/:id/devices", async (c) => {
     lastSeen: d.lastSeen,
     firstSeen: d.firstSeen,
     isBlocked: d.isBlocked,
+    ownerKeyId: d.ownerKeyId,
+    ownerKeyName: d.ownerKeyName,
+    isCurrentKey: d.isCurrentKey,
   })));
 });
 
@@ -1447,7 +1413,12 @@ portal.delete("/keys/:id/devices/:fingerprint", async (c) => {
   const key = (await db.select().from(apiKeys).where(and(eq(apiKeys.id, keyId), eq(apiKeys.discordUserId, discordUserId)))).find(Boolean);
   if (!key) return c.json({ error: "Key not found" }, 404);
 
-  await db.delete(devices).where(and(eq(devices.apiKeyId, keyId), eq(devices.fingerprint, fingerprint)));
+  // The row may live under a sibling key; freeing the slot means deleting it
+  // wherever it sits inside this Discord account.
+  await db.delete(devices).where(and(
+    eq(devices.fingerprint, fingerprint),
+    sql`${devices.apiKeyId} IN (SELECT id FROM api_keys WHERE discord_user_id = ${discordUserId})`,
+  ));
   return c.json({ success: true });
 });
 

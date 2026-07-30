@@ -13,6 +13,7 @@ import { enrichModelLimitsWithCatalog } from "../../utils/model-limits-enrich.js
 import { isAuthenticated } from "../../middleware/session.js";
 import { isProtectedPrimaryApiKey, isAdminDeleteBlocked } from "../../utils/api-key-primary.js";
 import { buildLiveUsageForKey } from "../../utils/live-usage.js";
+import { accountKeyIdsSql, listAccountDevices } from "../../utils/account-devices.js";
 import { resolveAccountKeyScope, syncAccountQuotaFields, ACCOUNT_QUOTA_SYNC_FIELDS } from "../../utils/api-key-account.js";
 import {
   dayOverrideHasAny,
@@ -1023,9 +1024,12 @@ keys.post("/keys/sync-all-roles", async (c) => {
   return c.json({ success: true, ...result });
 });
 
+// Device slots are enforced across every key of a Discord account, so the list
+// has to be account-scoped too — otherwise a key whose sibling holds the only
+// device reads "no devices" while the user is being turned away at the gate.
 keys.get("/keys/:id/devices", async (c) => {
   const id = parseInt(c.req.param("id"));
-  const allDevices = await db.select().from(devices).where(eq(devices.apiKeyId, id)).orderBy(desc(devices.lastSeen));
+  const allDevices = await listAccountDevices(id);
   return c.json(allDevices);
 });
 
@@ -1033,7 +1037,10 @@ keys.post("/keys/:id/devices/:fingerprint/block", async (c) => {
   const keyId = parseInt(c.req.param("id"));
   const fingerprint = c.req.param("fingerprint");
 
-  await db.update(devices).set({ isBlocked: true }).where(and(eq(devices.apiKeyId, keyId), eq(devices.fingerprint, fingerprint)));
+  await db.update(devices).set({ isBlocked: true }).where(and(
+    eq(devices.fingerprint, fingerprint),
+    sql`${devices.apiKeyId} IN ${accountKeyIdsSql(keyId)}`,
+  ));
 
   const existing = await db.select().from(allowedDevices)
     .where(and(eq(allowedDevices.apiKeyId, keyId), eq(allowedDevices.fingerprint, fingerprint), eq(allowedDevices.listType, "block")));
@@ -1048,7 +1055,10 @@ keys.post("/keys/:id/devices/:fingerprint/allow", async (c) => {
   const keyId = parseInt(c.req.param("id"));
   const fingerprint = c.req.param("fingerprint");
 
-  await db.update(devices).set({ isBlocked: false }).where(and(eq(devices.apiKeyId, keyId), eq(devices.fingerprint, fingerprint)));
+  await db.update(devices).set({ isBlocked: false }).where(and(
+    eq(devices.fingerprint, fingerprint),
+    sql`${devices.apiKeyId} IN ${accountKeyIdsSql(keyId)}`,
+  ));
   await db.delete(allowedDevices).where(and(eq(allowedDevices.apiKeyId, keyId), eq(allowedDevices.fingerprint, fingerprint), eq(allowedDevices.listType, "block")));
 
   const existing = await db.select().from(allowedDevices)
@@ -1064,7 +1074,10 @@ keys.delete("/keys/:id/devices/:fingerprint", async (c) => {
   const keyId = parseInt(c.req.param("id"));
   const fingerprint = c.req.param("fingerprint");
   await db.delete(allowedDevices).where(and(eq(allowedDevices.apiKeyId, keyId), eq(allowedDevices.fingerprint, fingerprint)));
-  await db.delete(devices).where(and(eq(devices.apiKeyId, keyId), eq(devices.fingerprint, fingerprint)));
+  await db.delete(devices).where(and(
+    eq(devices.fingerprint, fingerprint),
+    sql`${devices.apiKeyId} IN ${accountKeyIdsSql(keyId)}`,
+  ));
   return c.json({ success: true, message: "Device deleted" });
 });
 
