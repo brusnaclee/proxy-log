@@ -1842,9 +1842,11 @@ export API_TIMEOUT_MS=500000`}
                     <tr key={d.id} className="border-b border-border/30 hover:bg-accent/30">
                       <td className="py-2 px-4">
                         <code className="text-xs font-mono">{d.fingerprint?.substring(0, 16)}...</code>
-                        {d.isCurrentKey === false && (
+                        {(d.isCurrentKey === false || d.mergedRows > 1) && (
                           <div className="text-[11px] text-muted-foreground mt-0.5">
-                            via {d.ownerKeyName || `key #${d.ownerKeyId}`}
+                            {d.isCurrentKey === false && `via ${d.ownerKeyName || `key #${d.ownerKeyId}`}`}
+                            {d.isCurrentKey === false && d.mergedRows > 1 && " · "}
+                            {d.mergedRows > 1 && `${d.mergedRows} rows merged`}
                           </div>
                         )}
                       </td>

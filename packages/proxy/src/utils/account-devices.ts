@@ -10,6 +10,7 @@
 
 import { sql, type SQL } from 'drizzle-orm';
 import { db } from '../db/index.js';
+import { machineKeyOfDevice } from './device-slots.js';
 
 /**
  * Key ids sharing an account with `apiKeyId` — the key itself plus any sibling
@@ -44,11 +45,19 @@ export interface AccountDevice {
 	ownerKeyName: string | null;
 	/** False when the slot is held through a sibling key of the same account. */
 	isCurrentKey: boolean;
+	/** Rows collapsed into this slot (legacy fingerprints, duplicate rows). */
+	mergedRows: number;
 }
 
 /**
  * Devices visible to `apiKeyId`: account-wide when the key is Discord-linked,
  * otherwise just that key's own rows.
+ *
+ * Rows are collapsed into machine slots with the same grouping
+ * `countDistinctMachines` uses at the gate, so the list length equals the
+ * number of slots consumed. Without this the list can show many rows per slot:
+ * legacy fingerprints for one machine, plus outright duplicates left behind
+ * because the `(api_key_id, fingerprint)` unique index could not be created.
  */
 export async function listAccountDevices(
 	apiKeyId: number,
@@ -80,5 +89,29 @@ export async function listAccountDevices(
 		`)
 	).rows as unknown as AccountDevice[];
 
-	return rows.map((r) => ({ ...r, isCurrentKey: !!r.isCurrentKey }));
+	const slots = new Map<string, AccountDevice>();
+	for (const row of rows) {
+		const device = { ...row, isCurrentKey: !!row.isCurrentKey, mergedRows: 1 };
+		const hint = machineKeyOfDevice(device);
+		const slotKey =
+			hint && hint !== 'unknown:' ? `m:${hint}` : `f:${device.fingerprint}`;
+
+		const existing = slots.get(slotKey);
+		if (!existing) {
+			slots.set(slotKey, device);
+			continue;
+		}
+		// Rows arrive newest-first, so the first one stays the representative.
+		existing.mergedRows += 1;
+		existing.requestCount += device.requestCount;
+		existing.isBlocked = existing.isBlocked && device.isBlocked;
+		// Prefer showing the slot against the key being viewed when it holds one.
+		if (!existing.isCurrentKey && device.isCurrentKey) {
+			existing.ownerKeyId = device.ownerKeyId;
+			existing.ownerKeyName = device.ownerKeyName;
+			existing.isCurrentKey = true;
+		}
+	}
+
+	return [...slots.values()];
 }
