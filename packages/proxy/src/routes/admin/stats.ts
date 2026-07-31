@@ -3,9 +3,14 @@ import { db } from "../../db/index.js";
 import { requestLogs, apiKeys, devices, chatSessions, monthlyStats } from "../../db/schema.js";
 import { eq, sql, and } from "drizzle-orm";
 import { getModelRates } from "../../utils/cost-calculator.js";
-import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, wibTodayStartSql, turnCountSql, hopCountSql, turnPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, sanitizeRows, resolvePeriodRange, chartDaysForPeriod, groupedInputSumSql, getTokenInputModeSync, modelLimitCreditBreakdownSql, type PeriodKey } from "../../utils/counting.js";
+import { VALID_LOG_SQL, turnCountSql, hopCountSql, turnCompletionTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, sanitizeRows, resolvePeriodRange, groupedInputSumSql, modelLimitCreditBreakdownSql, type PeriodKey } from "../../utils/counting.js";
 import { applyTokenMultiplierRows, getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { statsCache } from "../../utils/cache.js";
+import {
+  getAccountUsageAggregates,
+  sortTopByRequests,
+  sortTopByTokens,
+} from "../../utils/account-usage-stats.js";
 
 const stats = new Hono();
 
@@ -49,265 +54,188 @@ function calculateBreakdownCosts(modelBreakdown: Array<{ model: string | null, p
 }
 
 stats.get("/stats/overview", async (c) => {
-  return c.json(await statsCache.getOrFetch("overview:v2", async () => {
-  const todayStart  = localTodayStart();
-  const weekStart   = new Date(todayStart.getTime() - 7  * 86400000);
-  // month: 1st of current month at local midnight
-  const monthStart  = new Date(todayStart); monthStart.setDate(1);
+  const rawPeriod = (c.req.query("period") || "today") as PeriodKey;
+  const period: PeriodKey = [
+    "today", "3d", "7d", "30d", "thisMonth", "lastMonth", "allTime",
+  ].includes(rawPeriod)
+    ? rawPeriod
+    : "today";
 
-  const todayStr  = todayStart;
-  const weekStr   = weekStart;
-  const monthStr  = monthStart;
+  return c.json(await statsCache.getOrFetch(`overview:v3:${period}`, async () => {
+    const range = resolvePeriodRange(period);
+    const start = period === "allTime" ? null : range.start;
+    const periodWhere = start
+      ? and(sql`created_at >= ${start}`, VALID_LOG_SQL)
+      : VALID_LOG_SQL;
+    const dateFilter = start
+      ? sql`AND created_at >= ${start}`
+      : sql``;
 
-  // Today — turn-based aggregation (MAX prompt per turn, SUM completion per turn)
-  const todayWhere = and(sql`created_at >= ${todayStr}`, VALID_LOG_SQL);
-  const todayStats = (await db.select({
-    requests: turnCountSql(todayWhere),
-    apiCalls: hopCountSql(todayWhere),
-    tokens: weightedHopTotalTokensSql(todayWhere),
-    promptTokens: weightedHopInputTokensSql(todayWhere),
-    billablePromptTokens: turnBillablePromptTokensSql(todayWhere),
-    cachedTokens: turnCachedTokensSql(todayWhere),
-    completionTokens: turnCompletionTokensSql(todayWhere),
-    contextTokens: sql<number>`0`,
-    uniqueDevices: sql<number>`COUNT(DISTINCT device_fingerprint)`
-  })
-  .from(requestLogs)
-  .where(todayWhere))[0];
+    const [
+      periodStats,
+      periodBreakdownRaw,
+      activeKeys,
+      totalKeys,
+      totalDevices,
+      sessionCountResult,
+      allTimeArchivedRaw,
+      allTimeArchivedBreakdown,
+    ] = await Promise.all([
+      db.select({
+        requests: turnCountSql(periodWhere),
+        apiCalls: hopCountSql(periodWhere),
+        tokens: weightedHopTotalTokensSql(periodWhere),
+        promptTokens: weightedHopInputTokensSql(periodWhere),
+        billablePromptTokens: turnBillablePromptTokensSql(periodWhere),
+        cachedTokens: turnCachedTokensSql(periodWhere),
+        completionTokens: turnCompletionTokensSql(periodWhere),
+        contextTokens: sql<number>`0`,
+        uniqueDevices: sql<number>`COUNT(DISTINCT device_fingerprint)`,
+      })
+        .from(requestLogs)
+        .where(periodWhere)
+        .then((r) => r[0]),
+      db.execute(sql`
+        SELECT model, COALESCE(SUM(sum_delta), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
+        FROM (
+          SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
+            turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
+          FROM request_logs
+          WHERE status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL ${dateFilter}
+          GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
+          UNION ALL
+          SELECT TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
+            turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
+          FROM request_logs
+          WHERE model LIKE 'auto (%)%' AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL ${dateFilter}
+          GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
+        )
+        GROUP BY model
+      `),
+      db.select({ count: sql<number>`count(*)` }).from(apiKeys).where(eq(apiKeys.isActive, true)).then((r) => r[0]),
+      db.select({ count: sql<number>`count(*)` }).from(apiKeys).then((r) => r[0]),
+      db.select({ count: sql<number>`count(*)` }).from(devices).then((r) => r[0]),
+      db.select({ count: sql<number>`count(*)` }).from(chatSessions).then((r) => r[0]),
+      period === "allTime"
+        ? db.select({
+            requests: sql<number>`COALESCE(SUM(turn_count), 0)`,
+            tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
+            promptTokens: sql<number>`COALESCE(SUM(input_tokens), 0)`,
+            completionTokens: sql<number>`COALESCE(SUM(output_tokens), 0)`,
+          })
+            .from(monthlyStats)
+            .where(sql`api_key_id IS NULL AND model = '_all_'`)
+            .then((r) => r[0])
+        : Promise.resolve(null),
+      period === "allTime"
+        ? db.select({
+            model: monthlyStats.model,
+            promptTokens: sql<number>`COALESCE(SUM(input_tokens), 0)`,
+            completionTokens: sql<number>`COALESCE(SUM(output_tokens), 0)`,
+          })
+            .from(monthlyStats)
+            .where(sql`api_key_id IS NULL AND model != '_all_'`)
+            .groupBy(monthlyStats.model)
+        : Promise.resolve([] as any[]),
+    ]);
 
-  const todayBreakdown = applyTokenMultiplierRows(sanitizeRows((await db.execute(sql`
-    SELECT model, COALESCE(SUM(sum_delta), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
-    FROM (
-      SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
-        turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
-      FROM request_logs WHERE created_at >= ${todayStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
-      UNION ALL
-      SELECT TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
-        turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
-      FROM request_logs WHERE model LIKE 'auto (%)%' AND created_at >= ${todayStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
-    )
-    GROUP BY model
-  `)).rows as any[], ['promptTokens', 'completionTokens']));
-  const todayCosts = calculateBreakdownCosts(todayBreakdown as any);
+    let requests = Number(periodStats?.requests) || 0;
+    let apiCalls = Number(periodStats?.apiCalls) || 0;
+    let tokens = Number(periodStats?.tokens) || 0;
+    let promptTokens = Number(periodStats?.promptTokens) || 0;
+    let billablePromptTokens = Number(periodStats?.billablePromptTokens) || 0;
+    let cachedTokens = Number(periodStats?.cachedTokens) || 0;
+    let completionTokens = Number(periodStats?.completionTokens) || 0;
+    const uniqueDevices = Number(periodStats?.uniqueDevices) || 0;
 
-  // Week
-  const weekWhere = and(sql`created_at >= ${weekStr}`, VALID_LOG_SQL);
-  const weekStats = (await db.select({
-    requests: turnCountSql(weekWhere),
-    apiCalls: hopCountSql(weekWhere),
-    tokens: weightedHopTotalTokensSql(weekWhere),
-    promptTokens: weightedHopInputTokensSql(weekWhere),
-    billablePromptTokens: turnBillablePromptTokensSql(weekWhere),
-    cachedTokens: turnCachedTokensSql(weekWhere),
-    completionTokens: turnCompletionTokensSql(weekWhere),
-    contextTokens: sql<number>`0`
-  })
-  .from(requestLogs)
-  .where(weekWhere))[0];
+    let breakdown = applyTokenMultiplierRows(
+      sanitizeRows(
+        (periodBreakdownRaw.rows as any[]) || [],
+        ["promptTokens", "completionTokens"],
+      ),
+    ) as any[];
 
-  const weekBreakdown = applyTokenMultiplierRows(sanitizeRows((await db.execute(sql`
-    SELECT model, COALESCE(SUM(sum_delta), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
-    FROM (
-      SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
-        turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
-      FROM request_logs WHERE created_at >= ${weekStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
-      UNION ALL
-      SELECT TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
-        turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
-      FROM request_logs WHERE model LIKE 'auto (%)%' AND created_at >= ${weekStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
-    )
-    GROUP BY model
-  `)).rows as any[], ['promptTokens', 'completionTokens']));
-  const weekCosts = calculateBreakdownCosts(weekBreakdown as any);
+    if (period === "allTime" && allTimeArchivedRaw) {
+      const archived = applyTokenMultiplierRows([{
+        ...allTimeArchivedRaw,
+        promptTokens: Number(allTimeArchivedRaw.promptTokens) || 0,
+        completionTokens: Number(allTimeArchivedRaw.completionTokens) || 0,
+        tokens: Number(allTimeArchivedRaw.tokens) || 0,
+      }])[0];
+      requests += Number(allTimeArchivedRaw.requests) || 0;
+      // archived monthly_stats has no hop count
+      tokens += Number(archived?.tokens) || 0;
+      promptTokens += Number(archived?.promptTokens) || 0;
+      billablePromptTokens += Number(archived?.promptTokens) || 0;
+      completionTokens += Number(archived?.completionTokens) || 0;
 
-  // Month
-  const monthWhere = and(sql`created_at >= ${monthStr}`, VALID_LOG_SQL);
-  const monthStats = (await db.select({
-    requests: turnCountSql(monthWhere),
-    apiCalls: hopCountSql(monthWhere),
-    tokens: weightedHopTotalTokensSql(monthWhere),
-    promptTokens: weightedHopInputTokensSql(monthWhere),
-    billablePromptTokens: turnBillablePromptTokensSql(monthWhere),
-    cachedTokens: turnCachedTokensSql(monthWhere),
-    completionTokens: turnCompletionTokensSql(monthWhere),
-    contextTokens: sql<number>`0`
-  })
-  .from(requestLogs)
-  .where(monthWhere))[0];
-
-  const monthBreakdown = applyTokenMultiplierRows(sanitizeRows((await db.execute(sql`
-    SELECT model, COALESCE(SUM(sum_delta), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
-    FROM (
-      SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
-        turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
-      FROM request_logs WHERE created_at >= ${monthStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
-      UNION ALL
-      SELECT TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
-        turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
-      FROM request_logs WHERE model LIKE 'auto (%)%' AND created_at >= ${monthStr} AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
-    )
-    GROUP BY model
-  `)).rows as any[], ['promptTokens', 'completionTokens']));
-  const monthCosts = calculateBreakdownCosts(monthBreakdown as any);
-
-  // All Time - live data
-  const allTimeWhere = VALID_LOG_SQL;
-  const allTimeLive = (await db.select({
-    requests: turnCountSql(allTimeWhere),
-    apiCalls: hopCountSql(allTimeWhere),
-    tokens: weightedHopTotalTokensSql(allTimeWhere),
-    promptTokens: weightedHopInputTokensSql(allTimeWhere),
-    billablePromptTokens: turnBillablePromptTokensSql(allTimeWhere),
-    cachedTokens: turnCachedTokensSql(allTimeWhere),
-    completionTokens: turnCompletionTokensSql(allTimeWhere),
-    contextTokens: sql<number>`0`
-  })
-  .from(requestLogs)
-  .where(allTimeWhere))[0];
-
-  // All Time - archived data from monthly_stats (survives 3-month cleanup)
-  const allTimeArchivedRaw = (await db.select({
-    requests: sql<number>`COALESCE(SUM(turn_count), 0)`,
-    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-    promptTokens: sql<number>`COALESCE(SUM(input_tokens), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(output_tokens), 0)`,
-  })
-  .from(monthlyStats)
-  .where(sql`api_key_id IS NULL AND model = '_all_'`))[0];
-  const allTimeArchived = applyTokenMultiplierRows([{ ...allTimeArchivedRaw, promptTokens: Number(allTimeArchivedRaw?.promptTokens) || 0, completionTokens: Number(allTimeArchivedRaw?.completionTokens) || 0, tokens: Number(allTimeArchivedRaw?.tokens) || 0 }])[0];
-
-  // Combine live + archived
-  const allTimeStats = {
-    requests: (allTimeLive?.requests || 0) + (allTimeArchived?.requests || 0),
-    // monthly_stats has no hop archive — live hop count only
-    apiCalls: allTimeLive?.apiCalls || 0,
-    tokens: (allTimeLive?.tokens || 0) + (allTimeArchived?.tokens || 0),
-    promptTokens: (allTimeLive?.promptTokens || 0) + (allTimeArchived?.promptTokens || 0),
-    // Archived monthly_stats has no cache split — attribute archived input to billable
-    billablePromptTokens: (allTimeLive?.billablePromptTokens || 0) + (allTimeArchived?.promptTokens || 0),
-    cachedTokens: allTimeLive?.cachedTokens || 0,
-    completionTokens: (allTimeLive?.completionTokens || 0) + (allTimeArchived?.completionTokens || 0),
-    contextTokens: 0,
-  };
-
-  // All Time breakdown - live data
-  const allTimeLiveBreakdown = applyTokenMultiplierRows(sanitizeRows((await db.execute(sql`
-    SELECT model, COALESCE(SUM(sum_delta), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
-    FROM (
-      SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
-        turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
-      FROM request_logs WHERE status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
-      UNION ALL
-      SELECT TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
-        turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
-      FROM request_logs WHERE model LIKE 'auto (%)%' AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
-    )
-    GROUP BY model
-  `)).rows as any[], ['promptTokens', 'completionTokens']));
-
-  // All Time breakdown - archived model data
-  const allTimeArchivedBreakdown = applyTokenMultiplierRows((await db.select({
-    model: monthlyStats.model,
-    promptTokens: sql<number>`COALESCE(SUM(input_tokens), 0)`,
-    completionTokens: sql<number>`COALESCE(SUM(output_tokens), 0)`,
-  })
-  .from(monthlyStats)
-  .where(sql`api_key_id IS NULL AND model != '_all_'`)
-  .groupBy(monthlyStats.model)).map((r: any) => ({ ...r, promptTokens: Number(r.promptTokens) || 0, completionTokens: Number(r.completionTokens) || 0 })));
-
-  // Merge live and archived breakdowns by model
-  const breakdownMap = new Map<string, { promptTokens: number; completionTokens: number }>();
-  for (const row of allTimeLiveBreakdown as any[]) {
-    breakdownMap.set(row.model, { promptTokens: row.promptTokens, completionTokens: row.completionTokens });
-  }
-  for (const row of allTimeArchivedBreakdown as any[]) {
-    const existing = breakdownMap.get(row.model);
-    if (existing) {
-      existing.promptTokens += row.promptTokens;
-      existing.completionTokens += row.completionTokens;
-    } else {
-      breakdownMap.set(row.model, { promptTokens: row.promptTokens, completionTokens: row.completionTokens });
+      const archivedBd = applyTokenMultiplierRows(
+        (allTimeArchivedBreakdown as any[]).map((r) => ({
+          ...r,
+          promptTokens: Number(r.promptTokens) || 0,
+          completionTokens: Number(r.completionTokens) || 0,
+        })),
+      );
+      const breakdownMap = new Map<string, { promptTokens: number; completionTokens: number }>();
+      for (const row of breakdown) {
+        breakdownMap.set(row.model, {
+          promptTokens: row.promptTokens,
+          completionTokens: row.completionTokens,
+        });
+      }
+      for (const row of archivedBd as any[]) {
+        const existing = breakdownMap.get(row.model);
+        if (existing) {
+          existing.promptTokens += row.promptTokens;
+          existing.completionTokens += row.completionTokens;
+        } else {
+          breakdownMap.set(row.model, {
+            promptTokens: row.promptTokens,
+            completionTokens: row.completionTokens,
+          });
+        }
+      }
+      breakdown = Array.from(breakdownMap.entries()).map(([model, v]) => ({
+        model,
+        ...v,
+      }));
     }
-  }
-  const allTimeBreakdown = Array.from(breakdownMap.entries()).map(([model, v]) => ({ model, ...v }));
-  const allTimeCosts = calculateBreakdownCosts(allTimeBreakdown as any);
 
-  const activeKeys = (await db.select({ count: sql<number>`count(*)` }).from(apiKeys).where(eq(apiKeys.isActive, true)))[0];
-  const totalKeys = (await db.select({ count: sql<number>`count(*)` }).from(apiKeys))[0];
-  const totalDevices = (await db.select({ count: sql<number>`count(*)` }).from(devices))[0];
-  
-  // Sessions & Average calculations
-  const sessionCountResult = (await db.select({ count: sql<number>`count(*)` }).from(chatSessions))[0];
-  const totalSessions = sessionCountResult?.count || 0;
-  const avgRequestsPerSession = totalSessions > 0 ? (allTimeStats?.requests || 0) / totalSessions : 0;
+    const costs = calculateBreakdownCosts(breakdown as any);
+    const totalSessions = Number(sessionCountResult?.count) || 0;
+    const avgRequestsPerSession =
+      totalSessions > 0 ? requests / totalSessions : 0;
 
-  return {
-    today: { 
-      requests: todayStats?.requests || 0,
-      apiCalls: todayStats?.apiCalls || 0,
-      tokens: todayStats?.tokens || 0,
-      promptTokens: todayStats?.promptTokens || 0,
-      billablePromptTokens: todayStats?.billablePromptTokens || 0,
-      cachedTokens: todayStats?.cachedTokens || 0,
-      completionTokens: todayStats?.completionTokens || 0,
-      contextTokens: todayStats?.contextTokens || 0,
-      promptCost: todayCosts.promptCost,
-      completionCost: todayCosts.completionCost,
-      totalCost: todayCosts.totalCost,
-      uniqueDevices: todayStats?.uniqueDevices || 0 
-    },
-    week: { 
-      requests: weekStats?.requests || 0,
-      apiCalls: weekStats?.apiCalls || 0,
-      tokens: weekStats?.tokens || 0,
-      promptTokens: weekStats?.promptTokens || 0,
-      billablePromptTokens: weekStats?.billablePromptTokens || 0,
-      cachedTokens: weekStats?.cachedTokens || 0,
-      completionTokens: weekStats?.completionTokens || 0,
-      contextTokens: weekStats?.contextTokens || 0,
-      promptCost: weekCosts.promptCost,
-      completionCost: weekCosts.completionCost,
-      totalCost: weekCosts.totalCost
-    },
-    month: { 
-      requests: monthStats?.requests || 0,
-      apiCalls: monthStats?.apiCalls || 0,
-      tokens: monthStats?.tokens || 0,
-      promptTokens: monthStats?.promptTokens || 0,
-      billablePromptTokens: monthStats?.billablePromptTokens || 0,
-      cachedTokens: monthStats?.cachedTokens || 0,
-      completionTokens: monthStats?.completionTokens || 0,
-      contextTokens: monthStats?.contextTokens || 0,
-      promptCost: monthCosts.promptCost,
-      completionCost: monthCosts.completionCost,
-      totalCost: monthCosts.totalCost
-    },
-    allTime: { 
-      requests: allTimeStats?.requests || 0,
-      apiCalls: allTimeStats?.apiCalls || 0,
-      tokens: allTimeStats?.tokens || 0,
-      promptTokens: allTimeStats?.promptTokens || 0,
-      billablePromptTokens: allTimeStats?.billablePromptTokens || 0,
-      cachedTokens: allTimeStats?.cachedTokens || 0,
-      completionTokens: allTimeStats?.completionTokens || 0,
-      contextTokens: allTimeStats?.contextTokens || 0,
-      promptCost: allTimeCosts.promptCost,
-      completionCost: allTimeCosts.completionCost,
-      totalCost: allTimeCosts.totalCost,
+    const statsPayload = {
+      requests,
+      apiCalls,
+      tokens,
+      promptTokens,
+      billablePromptTokens,
+      cachedTokens,
+      completionTokens,
+      contextTokens: 0,
+      promptCost: costs.promptCost,
+      completionCost: costs.completionCost,
+      totalCost: costs.totalCost,
+      uniqueDevices,
       totalSessions,
-      avgRequestsPerSession
-    },
-    activeKeys: activeKeys?.count || 0, totalKeys: totalKeys?.count || 0, totalDevices: totalDevices?.count || 0,
-  };
-  })); // end statsCache.getOrFetch
+      avgRequestsPerSession,
+    };
+
+    return {
+      period,
+      stats: statsPayload,
+      // Backward-compatible aliases so older clients still render something.
+      today: period === "today" ? statsPayload : statsPayload,
+      week: statsPayload,
+      month: statsPayload,
+      allTime: statsPayload,
+      activeKeys: Number(activeKeys?.count) || 0,
+      totalKeys: Number(totalKeys?.count) || 0,
+      totalDevices: Number(totalDevices?.count) || 0,
+    };
+  }));
 });
 
 stats.get("/stats/by-key", async (c) => {
@@ -469,7 +397,7 @@ stats.get("/stats/timeseries", async (c) => {
   if (apiKeyRaw && !keyScoped) {
     return c.json({ error: "Invalid api_key_id" }, 400);
   }
-  const cacheKey = `timeseries:v2:${newPeriod || legacyPeriod || "daily"}:${days}:k${keyScoped ? apiKeyId : "all"}`;
+  const cacheKey = `timeseries:v3:${newPeriod || legacyPeriod || "daily"}:${days}:k${keyScoped ? apiKeyId : "all"}`;
   return c.json(await statsCache.getOrFetch(cacheKey, async () => {
   let startDate: Date;
   let groupPeriod: "hourly" | "daily";
@@ -477,7 +405,8 @@ stats.get("/stats/timeseries", async (c) => {
   if (newPeriod && ["today", "3d", "7d", "30d", "thisMonth", "lastMonth", "allTime"].includes(newPeriod)) {
     const range = resolvePeriodRange(newPeriod);
     startDate = range.start;
-    groupPeriod = chartDaysForPeriod(newPeriod) <= 1 ? "hourly" : "daily";
+    // today + 3d: hourly bars; longer windows: daily (readable + cheaper)
+    groupPeriod = newPeriod === "today" || newPeriod === "3d" ? "hourly" : "daily";
   } else {
     startDate = new Date(Date.now() - days * 86400000);
     groupPeriod = (legacyPeriod === "hourly") ? "hourly" : "daily";
@@ -524,122 +453,50 @@ stats.get("/stats/timeseries", async (c) => {
   })); // end statsCache
 });
 
-// ─── Top Users ────────────────────────────────────────────────────────────────
+// ─── Top Users (Discord-account scoped, hop-weighted — same as Discord ranking)
 stats.get("/stats/top-users", async (c) => {
   const period = c.req.query("period") as PeriodKey | undefined;
   const legacyDays = parseInt(c.req.query("days") || "0");
-  const cacheKey = `top-users:${period || legacyDays}`;
+  const cacheKey = `top-users:v3:${period || legacyDays}`;
   return c.json(await statsCache.getOrFetch(cacheKey, async () => {
   let startDate: Date | null;
   if (period && ["today", "3d", "7d", "30d", "thisMonth", "lastMonth", "allTime"].includes(period)) {
     const range = resolvePeriodRange(period);
-    startDate = range.start;
+    startDate = period === "allTime" ? null : range.start;
   } else {
     startDate = legacyDays > 0 ? new Date(Date.now() - legacyDays * 86400000) : null;
   }
 
-  const dateFilter = startDate ? sql`AND created_at >= ${startDate}` : sql``;
-  const peakMode = getTokenInputModeSync() === "per_turn_peak";
+  const accounts = await getAccountUsageAggregates(startDate);
 
-  // Aggregate per api_key_id using turn-level token aggregation
-  const aggRows = sanitizeRows((await db.execute(peakMode ? sql`
-    SELECT
-      api_key_id as "apiKeyId",
-      COUNT(*) as "requests",
-      COALESCE(SUM(sum_delta + sum_c), 0) as tokens,
-      COALESCE(SUM(sum_delta), 0) as "promptTokens",
-      COALESCE(SUM(sum_bill), 0) as "billablePromptTokens",
-      COALESCE(SUM(sum_cache), 0) as "cachedTokens",
-      COALESCE(SUM(sum_c), 0) as "completionTokens"
-    FROM (
-      SELECT p.api_key_id, p.turn_id,
-        p.sum_delta, p.sum_bill, p.sum_cache,
-        COALESCE(c.sum_c, 0) as sum_c
-      FROM (
-        SELECT DISTINCT ON (api_key_id, turn_id)
-          api_key_id, turn_id,
-          COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0) as sum_delta,
-          COALESCE(prompt_tokens, 0) as sum_bill,
-          COALESCE(cached_tokens, 0) as sum_cache
-        FROM request_logs
-        WHERE turn_id IS NOT NULL ${dateFilter} AND status_code BETWEEN 200 AND 299
-        ORDER BY api_key_id, turn_id, (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) DESC
-      ) p
-      LEFT JOIN (
-        SELECT api_key_id, turn_id, SUM(completion_tokens) as sum_c
-        FROM request_logs
-        WHERE turn_id IS NOT NULL ${dateFilter} AND status_code BETWEEN 200 AND 299
-        GROUP BY api_key_id, turn_id
-      ) c ON c.api_key_id = p.api_key_id AND c.turn_id = p.turn_id
-    ) turns
-    GROUP BY api_key_id
-  ` : sql`
-    SELECT
-      api_key_id as "apiKeyId",
-      COUNT(*) as "requests",
-      COALESCE(SUM(sum_delta + sum_c), 0) as tokens,
-      COALESCE(SUM(sum_delta), 0) as "promptTokens",
-      COALESCE(SUM(sum_bill), 0) as "billablePromptTokens",
-      COALESCE(SUM(sum_cache), 0) as "cachedTokens",
-      COALESCE(SUM(sum_c), 0) as "completionTokens"
-    FROM (
-      SELECT api_key_id, turn_id,
-        ${sql.raw(groupedInputSumSql())} as sum_delta,
-        SUM(COALESCE(prompt_tokens, 0)) as sum_bill,
-        SUM(COALESCE(cached_tokens, 0)) as sum_cache,
-        SUM(completion_tokens) as sum_c
-      FROM request_logs
-      WHERE turn_id IS NOT NULL ${dateFilter} AND status_code BETWEEN 200 AND 299
-      GROUP BY api_key_id, turn_id
-    )
-    GROUP BY api_key_id
-  `)).rows as any[], ['requests', 'tokens', 'promptTokens', 'billablePromptTokens', 'cachedTokens', 'completionTokens']);
-  const enriched = await Promise.all(
-    (aggRows as any[])
-      .filter(r => r.apiKeyId != null)
-      .map(async (r: any) => {
-        const key = (await db.select({
-          name: apiKeys.name,
-          discordUserId: apiKeys.discordUserId,
-          discordUsername: apiKeys.discordUsername,
-          isTrial: apiKeys.isTrial,
-        }).from(apiKeys).where(eq(apiKeys.id, r.apiKeyId!)))[0];
+  const toRow = (r: (typeof accounts)[0]) => {
+    const displayName =
+      r.discordUsername ||
+      (r.discordUserId ? `Discord #${r.discordUserId.substring(0, 8)}` : null) ||
+      r.keyName ||
+      "Unknown";
+    return {
+      keyName: r.keyName || displayName,
+      displayName,
+      discordUserId: r.discordUserId,
+      isTrial: r.isTrial,
+      requests: r.requests,
+      turns: r.requests,
+      apiCalls: r.apiCalls,
+      tokens: r.tokens,
+      promptTokens: r.promptTokens,
+      billablePromptTokens: r.billablePromptTokens,
+      cachedTokens: r.cachedTokens,
+      completionTokens: r.completionTokens,
+      cost: r.estimatedCost,
+      estimatedCost: r.estimatedCost,
+    };
+  };
 
-        const displayName = key?.discordUsername
-          || (key?.discordUserId ? `Discord #${key.discordUserId.substring(0, 8)}` : null)
-          || key?.name
-          || `Key #${r.apiKeyId}`;
-
-        const { input, output } = getTokenMultipliers();
-        const promptTokens = Math.round((r.promptTokens || 0) * input);
-        const billablePromptTokens = Math.round((r.billablePromptTokens || 0) * input);
-        const cachedTokens = Math.round((r.cachedTokens || 0) * input);
-        const completionTokens = Math.round((r.completionTokens || 0) * output);
-        const tokens = promptTokens + completionTokens;
-        const estimatedCost = Math.round(promptTokens * 1.5 + completionTokens * 6.0);
-
-        return {
-          keyName: key?.name || `Key #${r.apiKeyId}`,
-          displayName,
-          discordUserId: key?.discordUserId || null,
-          isTrial: key?.isTrial ?? false,
-          requests: Number(r.requests) || 0,
-          turns: Number(r.requests) || 0,
-          tokens,
-          promptTokens,
-          billablePromptTokens,
-          cachedTokens,
-          completionTokens,
-          cost: estimatedCost,
-          estimatedCost,
-        };
-      })
-  );
-
-  const byRequests = [...enriched].sort((a, b) => b.turns - a.turns).slice(0, 10);
-  const byTokens = [...enriched].sort((a, b) => b.tokens - a.tokens).slice(0, 10);
-
-  return { byRequests, byTokens };
+  return {
+    byRequests: sortTopByRequests(accounts).map(toRow),
+    byTokens: sortTopByTokens(accounts).map(toRow),
+  };
   })); // end statsCache.getOrFetch
 });
 

@@ -936,9 +936,15 @@ export interface OverviewPeriodStats {
   totalCost?: number;
   estimatedCost?: number;
   uniqueDevices?: number;
+  totalSessions?: number;
+  avgRequestsPerSession?: number;
 }
 
 export interface OverviewStats {
+  period?: string;
+  /** Active period bucket (preferred). */
+  stats?: OverviewPeriodStats;
+  /** @deprecated Prefer `stats` — kept for older caches. */
   today: OverviewPeriodStats;
   week: OverviewPeriodStats;
   month: OverviewPeriodStats;
@@ -949,14 +955,46 @@ export interface OverviewStats {
 }
 
 export const stats = {
-  overview: () => request<OverviewStats>("/stats/overview"),
-  byKey: (days = 0) => request<any[]>(`/stats/by-key?days=${days}`),
-  byModel: (days = 0, apiKeyId?: number) =>
-    request<any[]>(`/stats/by-model?days=${days}${apiKeyId ? `&api_key_id=${apiKeyId}` : ""}`),
-  byDevice: (days = 0) => request<any[]>(`/stats/by-device?days=${days}`),
-  topUsers: (days = 0) => request<{ byRequests: any[]; byTokens: any[] }>(`/stats/top-users?days=${days}`),
-  timeseries: (period: string = "daily", days: number = 7, apiKeyId?: number) => {
-    const q = new URLSearchParams({ period, days: String(days) });
+  overview: (period: string = "today") =>
+    request<OverviewStats>(`/stats/overview?period=${encodeURIComponent(period)}`),
+  byKey: (days = 0, period?: string) => {
+    const q = new URLSearchParams();
+    if (period) q.set("period", period);
+    else q.set("days", String(days));
+    return request<any[]>(`/stats/by-key?${q.toString()}`);
+  },
+  byModel: (days = 0, apiKeyId?: number, period?: string) => {
+    const q = new URLSearchParams();
+    if (period) q.set("period", period);
+    else q.set("days", String(days));
+    if (apiKeyId) q.set("api_key_id", String(apiKeyId));
+    return request<any[]>(`/stats/by-model?${q.toString()}`);
+  },
+  byDevice: (days = 0, period?: string) => {
+    const q = new URLSearchParams();
+    if (period) q.set("period", period);
+    else q.set("days", String(days));
+    return request<any[]>(`/stats/by-device?${q.toString()}`);
+  },
+  topUsers: (days = 0, period?: string) => {
+    const q = new URLSearchParams();
+    if (period) q.set("period", period);
+    else q.set("days", String(days));
+    return request<{ byRequests: any[]; byTokens: any[] }>(`/stats/top-users?${q.toString()}`);
+  },
+  timeseries: (
+    granularity: string = "daily",
+    days: number = 7,
+    apiKeyId?: number,
+    calendarPeriod?: string,
+  ) => {
+    const q = new URLSearchParams();
+    if (calendarPeriod) {
+      q.set("period", calendarPeriod);
+    } else {
+      q.set("period", granularity);
+      q.set("days", String(days));
+    }
     if (apiKeyId && apiKeyId > 0) q.set("api_key_id", String(apiKeyId));
     return request<any[]>(`/stats/timeseries?${q.toString()}`);
   },

@@ -66,6 +66,11 @@ export default function OverviewPage() {
   const [chartPeriod, setChartPeriod]   = useState<LocalPeriodKey>("7d"); // for charts only
   const [modelChartDays, setModelChartDays] = useState(7);
   const [chartMetric, setChartMetric]   = useState<"prompts" | "apiCalls">("prompts");
+  const [loading, setLoading]           = useState(true);
+  const [refreshing, setRefreshing]     = useState(false);
+  const [error, setError]               = useState<string | null>(null);
+  const [allTimeBaseline, setAllTimeBaseline] = useState<OverviewStats["today"] | null>(null);
+  const hasOverviewRef = useRef(false);
 
   // Search User State
   const [searchUserResult, setSearchUserResult] = useState<any>(null);
@@ -94,33 +99,36 @@ export default function OverviewPage() {
     }
   };
 
-  // Map period to overview sub-object
-  const periodData = overview
-    ? ({
-        today:      overview.today,
-        "3d":       overview.week,
-        "7d":       overview.week,
-        "30d":      overview.month,
-        thisMonth:  overview.month,
-        lastMonth:  overview.month,
-        allTime:    overview.allTime,
-      } as Record<LocalPeriodKey, typeof overview.today>)[period]
-    : null;
+  const periodData = overview?.stats ?? overview?.today ?? null;
+  const allTimeStats = allTimeBaseline ?? overview?.allTime ?? null;
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (_opts?: { soft?: boolean }) => {
+    if (!hasOverviewRef.current) setLoading(true);
+    else setRefreshing(true);
+    setError(null);
     try {
-      const tsdays = CHART_DAYS[chartPeriod];
-      const tsperiod = tsdays <= 1 ? "hourly" : "daily";
-      const [ov, ts, ms] = await Promise.all([
-        stats.overview(),
-        stats.timeseries(tsperiod, tsdays),
+      const [ov, allTimeOv, ts, ms] = await Promise.all([
+        stats.overview(period),
+        period === "allTime" ? Promise.resolve(null) : stats.overview("allTime"),
+        stats.timeseries("daily", CHART_DAYS[chartPeriod], undefined, chartPeriod),
         stats.byModel(modelChartDays),
       ]);
       setOverview(ov);
+      hasOverviewRef.current = true;
+      setAllTimeBaseline(
+        period === "allTime"
+          ? (ov.stats ?? ov.allTime)
+          : (allTimeOv?.stats ?? allTimeOv?.allTime ?? null),
+      );
       setTimeseries(ts);
       setModelStats(ms);
-    } catch {}
-  }, [chartPeriod, modelChartDays]);
+    } catch (e: any) {
+      setError(e?.message || "Failed to load overview");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [period, chartPeriod, modelChartDays]);
 
   const loadRecentLogs = useCallback(async (page: number) => {
     const safePage = Math.max(1, Math.min(page, RECENT_MAX_PAGES));
@@ -156,7 +164,7 @@ export default function OverviewPage() {
     }
   }, []);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => { void loadData(); }, [loadData]);
   useEffect(() => { void loadRecentLogs(1); }, [loadRecentLogs]);
 
   const handleSSEMessage = useCallback((data: any) => {
@@ -188,7 +196,7 @@ export default function OverviewPage() {
 
   // Soft refresh cards/charts every 45s (cache-backed on server; logs stay SSE-live)
   useEffect(() => {
-    const id = setInterval(() => { void loadData(); }, 45_000);
+    const id = setInterval(() => { void loadData({ soft: true }); }, 45_000);
     return () => clearInterval(id);
   }, [loadData]);
 
@@ -202,22 +210,23 @@ export default function OverviewPage() {
     const dateStr = new Date().toISOString().split("T")[0];
     const sheets = [];
 
-    // Sheet 1: Summary stats across all periods
-    if (overview) {
+    // Sheet 1: Summary for selected period
+    if (overview && periodData) {
       sheets.push({
         name: "Summary",
-        note: "Aggregated stats across all API keys and devices",
-        headers: ["Metric", "Today", "Last 7 Days", "Last 30 Days", "All Time"],
+        note: `Aggregated stats — period: ${activePeriodLabel}`,
+        headers: ["Metric", activePeriodLabel, "All Time"],
         rows: [
-          ["Prompts",           overview.today.requests,                                 overview.week?.requests ?? "",              overview.month?.requests ?? "",              overview.allTime.requests],
-          ["Total Tokens",      overview.today.tokens,                                   overview.week?.tokens ?? "",                overview.month?.tokens ?? "",                overview.allTime.tokens],
-          ["Input Tokens",      overview.today.promptTokens ?? "",                       overview.week?.promptTokens ?? "",          overview.month?.promptTokens ?? "",          overview.allTime.promptTokens ?? ""],
-          ["Output Tokens",     overview.today.completionTokens ?? "",                   overview.week?.completionTokens ?? "",      overview.month?.completionTokens ?? "",      overview.allTime.completionTokens ?? ""],
-          ["Unique Devices",    overview.today.uniqueDevices ?? "",                      "",                                        "",                                          overview.totalDevices],
-          ["Active Keys",       overview.activeKeys,                                     "",                                        "",                                          overview.totalKeys],
-          ["Total Sessions",    "",                                                      "",                                        "",                                          overview.allTime.totalSessions ?? ""],
-          ["Avg Prompts/Session", "",                                                    "",                                        "",                                          (overview.allTime.avgRequestsPerSession || 0).toFixed(2)],
-          ["Est. Cost",         fmtCost(overview.today.totalCost ?? overview.today.estimatedCost), fmtCost(overview.week?.totalCost ?? overview.week?.estimatedCost), fmtCost(overview.month?.totalCost ?? overview.month?.estimatedCost), fmtCost(overview.allTime.totalCost ?? overview.allTime.estimatedCost)],
+          ["Prompts",           periodData.requests,                                 allTimeStats?.requests ?? ""],
+          ["API Calls",         periodData.apiCalls ?? 0,                            allTimeStats?.apiCalls ?? ""],
+          ["Total Tokens",      periodData.tokens,                                   allTimeStats?.tokens ?? ""],
+          ["Input Tokens",      periodData.promptTokens ?? "",                       allTimeStats?.promptTokens ?? ""],
+          ["Output Tokens",     periodData.completionTokens ?? "",                   allTimeStats?.completionTokens ?? ""],
+          ["Unique Devices",    periodData.uniqueDevices ?? "",                      overview.totalDevices],
+          ["Active Keys",       overview.activeKeys,                                 overview.totalKeys],
+          ["Total Sessions",    "",                                                  allTimeStats?.totalSessions ?? ""],
+          ["Avg Prompts/Session", "",                                                (allTimeStats?.avgRequestsPerSession || 0).toFixed(2)],
+          ["Est. Cost",         fmtCost(periodData.totalCost ?? periodData.estimatedCost), fmtCost(allTimeStats?.totalCost ?? allTimeStats?.estimatedCost)],
         ],
       });
     }
@@ -265,8 +274,8 @@ export default function OverviewPage() {
           value: formatNumber(periodData.requests),
           icon: Activity,
           sub: period === "allTime"
-            ? `${overview?.allTime.totalSessions || 0} sessions total`
-            : `${formatNumber(overview?.allTime.requests || 0)} all time`,
+            ? `${allTimeStats?.totalSessions || 0} sessions total`
+            : `${formatNumber(allTimeStats?.requests || 0)} all time`,
           color: "text-blue-400",
         },
         {
@@ -275,14 +284,14 @@ export default function OverviewPage() {
           icon: TrendingUp,
           sub: period === "allTime"
             ? "Live hops (tool retries included)"
-            : `${formatNumber(overview?.allTime.apiCalls || 0)} all time`,
+            : `${formatNumber(allTimeStats?.apiCalls || 0)} all time`,
           color: "text-indigo-400",
         },
         {
           label: `Total Tokens (${periodLabelMap[period]})`,
           value: formatNumber(periodData.tokens),
           icon: Coins,
-          sub: `${formatNumber(overview?.allTime.tokens || 0)} all time`,
+          sub: `${formatNumber(allTimeStats?.tokens || 0)} all time`,
           color: "text-emerald-400",
         },
         {
@@ -307,7 +316,7 @@ export default function OverviewPage() {
           label: `Est. Cost (${periodLabelMap[period]})`,
           value: formatCost((periodData.promptCost || 0) + (periodData.completionCost || 0)),
           icon: DollarSign,
-          sub: `All time: ${formatCost((overview?.allTime.promptCost || 0) + (overview?.allTime.completionCost || 0))}`,
+          sub: `All time: ${formatCost((allTimeStats?.promptCost || 0) + (allTimeStats?.completionCost || 0))}`,
           color: "text-emerald-500",
         },
       ]
@@ -324,16 +333,16 @@ export default function OverviewPage() {
         },
         {
           label: "Unique Devices",
-          value: (overview.today.uniqueDevices || 0).toString(),
+          value: (periodData?.uniqueDevices || 0).toString(),
           icon: Monitor,
           sub: `${overview.totalDevices} total registered`,
           color: "text-amber-400",
         },
         {
           label: "Total Sessions",
-          value: formatNumber(overview.allTime.totalSessions || 0),
+          value: formatNumber(allTimeStats?.totalSessions || 0),
           icon: TrendingUp,
-          sub: `Avg ${(overview.allTime.avgRequestsPerSession || 0).toFixed(2)} prompts/session`,
+          sub: `Avg ${(allTimeStats?.avgRequestsPerSession || 0).toFixed(2)} prompts/session`,
           color: "text-pink-400",
         },
       ]
@@ -351,8 +360,8 @@ export default function OverviewPage() {
           <p className="text-sm text-muted-foreground mt-1">Monitor your AI API proxy usage in real-time</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={loadData}>
-            <RefreshCw className="h-4 w-4 mr-2" />Refresh
+          <Button variant="outline" size="sm" onClick={() => void loadData()} disabled={loading || refreshing}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />Refresh
           </Button>
           <Button variant="outline" size="sm" onClick={handleExport}>
             <Download className="h-4 w-4 mr-2" />Export XLSX
@@ -366,6 +375,27 @@ export default function OverviewPage() {
         <PeriodSelector value={period} onChange={setPeriod} />
       </div>
 
+      {error && !overview && (
+        <div className="flex flex-col items-center justify-center py-12 rounded-xl border border-border/50 bg-card">
+          <p className="text-red-400 mb-4 text-sm">{error}</p>
+          <Button variant="outline" size="sm" onClick={() => void loadData()}>Retry</Button>
+        </div>
+      )}
+
+      {loading && !overview ? (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <Card key={i} className="border-border/50">
+              <CardContent className="stat-card animate-pulse">
+                <div className="h-3 w-20 bg-muted rounded mb-3" />
+                <div className="h-7 w-24 bg-muted rounded" />
+                <div className="h-3 w-16 bg-muted rounded mt-2" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ) : overview ? (
+      <div className={refreshing ? "opacity-70 transition-opacity space-y-6 sm:space-y-8" : "space-y-6 sm:space-y-8"}>
       {/* User Search Feature */}
       <Card className="border-border/50 bg-accent/20">
         <CardContent className="p-4 flex flex-col md:flex-row gap-4 items-center justify-between">
@@ -663,6 +693,8 @@ export default function OverviewPage() {
           </div>
         </CardContent>
       </Card>
+      </div>
+      ) : null}
     </div>
   );
 }

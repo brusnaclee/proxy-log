@@ -18,8 +18,13 @@ import {
 } from "../../utils/rate-limit.js";
 import { isInternalRequest } from "../../middleware/session.js";
 import { configCache } from "../../utils/cache.js";
-import { BILLABLE_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, peakPromptTokensSql, turnCompletionTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, inputHopWeightSqlExpr, weightedHopInputTokensSql, weightedHopTotalTokensSql, modelLimitCreditBreakdownSql, normalizeTokenLimitWeightPercent } from "../../utils/counting.js";
+import { BILLABLE_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, peakPromptTokensSql, turnCompletionTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, modelLimitCreditBreakdownSql, normalizeTokenLimitWeightPercent } from "../../utils/counting.js";
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
+import {
+  getAccountUsageAggregates,
+  sortTopByRequests,
+  sortTopByTokens,
+} from "../../utils/account-usage-stats.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
 import { resolveKeyPromptLimit, resolveKeyApiCallLimit } from "../../utils/trial-config.js";
 import { listGpyCatalogModels } from "../../utils/trial-routing.js";
@@ -522,86 +527,6 @@ internal.get("/internal/stats/ranking", async (c) => {
     return rows as any[];
   }
 
-  /**
-   * One row per Discord account (sibling keys merged), using the exact formula
-   * behind the user usage embed / admin user-detail / portal / monthly recap:
-   * requests = distinct turns on 2xx rows, input = hop-weighted, output = 100%,
-   * multipliers skipped only for accounts that own no non-trial key at all.
-   *
-   * Both ranking embeds read from this, so "Top Users" can never show a number
-   * that differs from what the same user sees in their own usage panel.
-   */
-  async function getTopAccounts(since: Date) {
-    const wExpr = inputHopWeightSqlExpr();
-    const rows = sanitizeRows(
-      (
-        await db.execute(sql`
-          WITH acct AS (
-            SELECT COALESCE(discord_user_id, id::text) AS acct_key,
-              BOOL_AND(COALESCE(is_trial, false)) AS trial_only
-            FROM api_keys
-            GROUP BY COALESCE(discord_user_id, id::text)
-          )
-          SELECT
-            MAX(h.discord_user_id) AS "discordUserId",
-            MAX(h.discord_username) AS "discordUsername",
-            MAX(h.api_key_name) AS "keyName",
-            BOOL_AND(h.trial_only) AS "isTrial",
-            COUNT(DISTINCT h.turn_id) AS requests,
-            COALESCE(SUM(h.input_credit), 0) AS "promptTokens",
-            COALESCE(SUM(h.output_credit), 0) AS "completionTokens",
-            COALESCE(SUM(h.input_credit + h.output_credit), 0) AS tokens
-          FROM (
-            SELECT hops.turn_id,
-              k.discord_user_id,
-              k.discord_username,
-              k.name AS api_key_name,
-              COALESCE(a.trial_only, false) AS trial_only,
-              COALESCE(k.discord_user_id, hops.api_key_id::text) AS acct_key,
-              (hops.inn * (${sql.raw(wExpr)}) * CASE WHEN COALESCE(a.trial_only, false) THEN 1 ELSE ${tmInput} END) AS input_credit,
-              (hops.outt * CASE WHEN COALESCE(a.trial_only, false) THEN 1 ELSE ${tmOutput} END) AS output_credit
-            FROM (
-              SELECT api_key_id, turn_id,
-                (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
-                COALESCE(completion_tokens, 0)::float8 AS outt,
-                ROW_NUMBER() OVER (
-                  PARTITION BY api_key_id, COALESCE(turn_id, 'orphan-' || id::text)
-                  ORDER BY created_at ASC, id ASC
-                ) AS rn
-              FROM request_logs
-              WHERE created_at >= ${since}
-                AND status_code BETWEEN 200 AND 299
-                AND api_key_id IS NOT NULL
-            ) hops
-            LEFT JOIN api_keys k ON k.id = hops.api_key_id
-            LEFT JOIN acct a ON a.acct_key = COALESCE(k.discord_user_id, hops.api_key_id::text)
-          ) h
-          GROUP BY h.acct_key
-        `)
-      ).rows as any[],
-      ["requests", "promptTokens", "completionTokens", "tokens"],
-    );
-
-    return rows.map((r: any) => ({
-      discordUserId: r.discordUserId || null,
-      discordUsername: r.discordUsername || r.keyName || null,
-      keyName: r.keyName || null,
-      isTrial: !!r.isTrial,
-      requests: r.requests,
-      tokens: Math.round(r.tokens),
-      promptTokens: Math.round(r.promptTokens),
-      billablePromptTokens: 0,
-      cachedTokens: 0,
-      completionTokens: Math.round(r.completionTokens),
-      estimatedCost: Math.round(r.promptTokens * 1.5 + r.completionTokens * 6.0),
-    }));
-  }
-
-  const byRequests = (list: any[]) =>
-    [...list].sort((a, b) => b.requests - a.requests || b.tokens - a.tokens).slice(0, 10);
-  const byTokens = (list: any[]) =>
-    [...list].sort((a, b) => b.tokens - a.tokens || b.requests - a.requests).slice(0, 10);
-
   const [
     todayModelsByReq,
     monthModelsByReq,
@@ -614,22 +539,22 @@ internal.get("/internal/stats/ranking", async (c) => {
     getTopModelsByRequests(monthDate),
     getTopModelsByTokens(todayDate),
     getTopModelsByTokens(monthDate),
-    getTopAccounts(todayDate),
-    getTopAccounts(monthDate),
+    getAccountUsageAggregates(todayDate),
+    getAccountUsageAggregates(monthDate),
   ]);
 
   return c.json({
     today: {
       topModelsByRequests: todayModelsByReq,
       topModelsByTokens: todayModelsByTok,
-      topUsersByRequests: byRequests(todayAccounts),
-      topUsersByTokens: byTokens(todayAccounts),
+      topUsersByRequests: sortTopByRequests(todayAccounts),
+      topUsersByTokens: sortTopByTokens(todayAccounts),
     },
     month: {
       topModelsByRequests: monthModelsByReq,
       topModelsByTokens: monthModelsByTok,
-      topUsersByRequests: byRequests(monthAccounts),
-      topUsersByTokens: byTokens(monthAccounts),
+      topUsersByRequests: sortTopByRequests(monthAccounts),
+      topUsersByTokens: sortTopByTokens(monthAccounts),
     },
   });
 });

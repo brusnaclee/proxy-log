@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { stats } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -50,36 +50,56 @@ export default function AnalyticsPage() {
   const [keyData,       setKeyData]       = useState<any[]>([]);
   const [deviceData,    setDeviceData]    = useState<any[]>([]);
   const [timeseriesData,setTimeseriesData]= useState<any[]>([]);
-  const [hourlyData,    setHourlyData]    = useState<any[]>([]);
+  const [trafficData,   setTrafficData]   = useState<any[]>([]);
   const [topUsersData,  setTopUsersData]  = useState<{ byRequests: any[]; byTokens: any[] }>({ byRequests: [], byTokens: [] });
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const hasDataRef = useRef(false);
 
   // Pie chart mode toggle
   const [modelChartMode, setModelChartMode] = useState<"tokens" | "requests">("tokens");
+  // Traffic chart: prompts vs API calls (local — no refetch)
+  const [trafficMetric, setTrafficMetric] = useState<"prompts" | "apiCalls">("prompts");
 
-  const loadData = useCallback(async (d = daysFromPeriod(periodKey)) => {
+  const trafficIsHourly = periodKey === "today" || periodKey === "3d";
+
+  const loadData = useCallback(async (_opts?: { soft?: boolean }) => {
+    if (!hasDataRef.current) setLoading(true);
+    else setRefreshing(true);
+    setError(null);
     try {
-      const tsdays = d === 0 ? 30 : d;
-      const hrdays = d === 1 ? 1 : 2;
-      const [models, byKey, byDevice, daily, hourly, topUsers] = await Promise.all([
-        stats.byModel(d),
-        stats.byKey(d),
-        stats.byDevice(d),
-        stats.timeseries("daily", tsdays),
-        stats.timeseries("hourly", hrdays),
-        stats.topUsers(d),
+      const [models, byKey, byDevice, daily, traffic, topUsers] = await Promise.all([
+        stats.byModel(0, undefined, periodKey),
+        stats.byKey(0, periodKey),
+        stats.byDevice(0, periodKey),
+        stats.timeseries("daily", daysFromPeriod(periodKey) || 30, undefined, periodKey === "today" || periodKey === "3d" ? "7d" : periodKey),
+        stats.timeseries(
+          trafficIsHourly ? "hourly" : "daily",
+          daysFromPeriod(periodKey) || 7,
+          undefined,
+          periodKey,
+        ),
+        stats.topUsers(0, periodKey),
       ]);
       setModelData(models);
       setKeyData(byKey);
       setDeviceData(byDevice);
       setTimeseriesData(daily);
-      setHourlyData(hourly);
+      setTrafficData(traffic);
       setTopUsersData(topUsers || { byRequests: [], byTokens: [] });
-    } catch {}
-  }, [periodKey]);
+      hasDataRef.current = true;
+    } catch (e: any) {
+      setError(e?.message || "Failed to load analytics");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [periodKey, trafficIsHourly]);
 
-  useEffect(() => { loadData(daysFromPeriod(periodKey)); }, [periodKey]);
+  useEffect(() => { void loadData(); }, [loadData]);
 
-  const handleSSEMessage = useCallback(() => { void loadData(daysFromPeriod(periodKey)); }, [periodKey, loadData]);
+  const handleSSEMessage = useCallback(() => { void loadData({ soft: true }); }, [loadData]);
   useRealtimeSSE(handleSSEMessage, 900);
 
   // ── Export ──────────────────────────────────────────────────────────────────
@@ -153,12 +173,17 @@ export default function AnalyticsPage() {
       });
     }
 
-    if (hourlyData.length) {
+    if (trafficData.length) {
       sheets.push({
-        name: "Hourly Timeseries",
-        note: "Each row = one hour",
-        headers: ["Hour", "Prompts", "Total Tokens"],
-        rows: hourlyData.map(t => [t.period, Number(t.requests)||0, Number(t.tokens)||0]),
+        name: trafficIsHourly ? "Hourly Timeseries" : "Daily Traffic",
+        note: trafficIsHourly ? "Each row = one hour" : "Each row = one day",
+        headers: ["Period", "Prompts", "API Calls", "Total Tokens"],
+        rows: trafficData.map(t => [
+          t.period,
+          Number(t.requests)||0,
+          Number(t.apiCalls)||0,
+          Number(t.tokens)||0,
+        ]),
       });
     }
 
@@ -193,6 +218,24 @@ export default function AnalyticsPage() {
           </Button>
         </div>
       </div>
+
+      {error && !hasDataRef.current && (
+        <div className="flex flex-col items-center justify-center py-12 rounded-xl border border-border/50 bg-card">
+          <p className="text-red-400 mb-4 text-sm">{error}</p>
+          <Button variant="outline" size="sm" onClick={() => void loadData()}>Retry</Button>
+        </div>
+      )}
+
+      {loading && !hasDataRef.current ? (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Card key={i} className="border-border/50">
+              <CardContent className="h-[220px] animate-pulse bg-muted/30 rounded-lg m-4" />
+            </Card>
+          ))}
+        </div>
+      ) : hasDataRef.current || modelData.length > 0 || trafficData.length > 0 || topUsersData.byTokens.length > 0 ? (
+      <div className={refreshing ? "opacity-70 transition-opacity space-y-6 sm:space-y-8" : "space-y-6 sm:space-y-8"}>
 
       {/* Row 1: Models pie + IDE bar */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
@@ -288,6 +331,7 @@ export default function AnalyticsPage() {
       <Card className="border-border/50">
         <CardHeader className="pb-2">
           <CardTitle className="text-base font-medium">Users by Token Consumption</CardTitle>
+          <p className="text-xs text-muted-foreground mt-1">Per API key (hop-weighted tokens)</p>
         </CardHeader>
         <CardContent>
           <div className="h-[250px]">
@@ -314,6 +358,7 @@ export default function AnalyticsPage() {
         <Card className="border-border/50">
           <CardHeader className="pb-2">
             <CardTitle className="text-base font-medium">Top Users by Prompts</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">Per Discord account — same as Discord ranking</p>
           </CardHeader>
           <CardContent className="p-0">
             <table className="w-full text-sm">
@@ -355,6 +400,7 @@ export default function AnalyticsPage() {
         <Card className="border-border/50">
           <CardHeader className="pb-2">
             <CardTitle className="text-base font-medium">Top Users by Tokens</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">Per Discord account — hop-weighted + sibling key merge</p>
           </CardHeader>
           <CardContent className="p-0">
             <table className="w-full text-sm">
@@ -394,27 +440,55 @@ export default function AnalyticsPage() {
         </Card>
       </div>
 
-      {/* Row 4: Hourly + Device Growth */}
+      {/* Row 4: Traffic + Device Growth */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         <Card className="border-border/50">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base font-medium">
-              Prompts by Hour ({periodKey === "today" ? "Last 24h" : "Last 48h"})
-            </CardTitle>
+          <CardHeader className="pb-2 space-y-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <CardTitle className="text-base font-medium">
+                {trafficMetric === "prompts" ? "Prompts" : "API Calls"}
+                {trafficIsHourly ? " by Hour" : " by Day"}
+                {" "}({periodKeyToLabel(periodKey)})
+              </CardTitle>
+            </div>
+            <div className="inline-flex rounded-lg border border-border/60 p-0.5 bg-accent/20">
+              {([
+                { key: "prompts" as const, label: "Prompts" },
+                { key: "apiCalls" as const, label: "API Calls" },
+              ]).map((opt) => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => setTrafficMetric(opt.key)}
+                  className={`px-3 py-1 text-xs rounded-md transition-all duration-200 ${
+                    trafficMetric === opt.key
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </CardHeader>
           <CardContent>
-            {hourlyData.length > 0 ? (
+            {trafficData.length > 0 ? (
                 <ChartBox>
-                  <BarChart data={hourlyData}>
+                  <BarChart data={trafficData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                     <XAxis dataKey="period" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} tickFormatter={(v) => { const p = formatChartPeriod(v); return p.replace(" WIB", ""); }} />
                     <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
                     <Tooltip contentStyle={TOOLTIP_STYLE} itemStyle={ITEM_STYLE} labelStyle={LABEL_STYLE} />
-                    <Bar dataKey="requests" fill="#f59e0b" radius={[2, 2, 0, 0]} />
+                    <Bar
+                      dataKey={trafficMetric === "prompts" ? "requests" : "apiCalls"}
+                      name={trafficMetric === "prompts" ? "Prompts" : "API Calls"}
+                      fill={trafficMetric === "prompts" ? "#f59e0b" : "#34d399"}
+                      radius={[2, 2, 0, 0]}
+                    />
                   </BarChart>
                 </ChartBox>
               ) : (
-                <div className="flex items-center justify-center h-[200px] text-muted-foreground">No hourly data yet</div>
+                <div className="flex items-center justify-center h-[200px] text-muted-foreground">No traffic data yet</div>
               )}
           </CardContent>
         </Card>
@@ -480,6 +554,8 @@ export default function AnalyticsPage() {
           </div>
         </CardContent>
       </Card>
+      </div>
+      ) : null}
     </div>
   );
 }
