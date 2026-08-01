@@ -642,6 +642,10 @@ export function buildYouComStreamChunks(
   }
 
   const content = choice?.message?.content || "";
+  const reasoning =
+    (choice?.message as any)?.reasoning_content ||
+    (choice?.message as any)?.reasoning ||
+    "";
 
   const roleChunk = {
     id,
@@ -656,6 +660,20 @@ export function buildYouComStreamChunks(
       },
     ],
   };
+
+  // Reasoning models (glm, minimax, …) may answer with reasoning_content only;
+  // forward it so streaming clients don't receive an empty completion.
+  const reasoningChunk = reasoning
+    ? {
+        id,
+        object: "chat.completion.chunk",
+        created,
+        model,
+        choices: [
+          { index: 0, delta: { reasoning_content: reasoning }, finish_reason: null },
+        ],
+      }
+    : null;
 
   const contentChunk = {
     id,
@@ -676,6 +694,7 @@ export function buildYouComStreamChunks(
 
   return [
     `data: ${JSON.stringify(roleChunk)}`,
+    ...(reasoningChunk ? [`data: ${JSON.stringify(reasoningChunk)}`] : []),
     `data: ${JSON.stringify(contentChunk)}`,
     `data: ${JSON.stringify(finalChunk)}`,
     "data: [DONE]",

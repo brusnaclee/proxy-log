@@ -6343,6 +6343,9 @@ proxy.all('/*', async (c) => {
 					releasePromptReservations();
 					console.warn(`[proxy] ${errorMessage}`);
 				} else {
+					// Reasoning-only completions (glm/minimax etc.): promote reasoning
+					// into content per IDE prefs so the fake stream isn't empty.
+					backfillOpenAIResponseContent(openaiParsed, reasoningOptsForIde(ide));
 					const sseLines = buildYouComStreamChunks(openaiParsed);
 					const sseBody = sseLines.map((l) => l + '\n\n').join('');
 					return new Response(sseBody, {
