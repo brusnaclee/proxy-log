@@ -25,6 +25,8 @@ export type TsAdminState = {
   tokenSaverBatchMode: string;
   tokenSaverBatchLevel: string;
   tokenSaverBatchCustom: string;
+  tokenSaverStreamToNonstreamEnabled: boolean;
+  tokenSaverNonstreamToStreamEnabled: boolean;
   tokenSaverRtkEnabled: boolean;
   tokenSaverRtkMode: string;
   tokenSaverRtkLevel: string;
@@ -305,6 +307,29 @@ export function TokenSaverAdminPanel({ state, set }: Props) {
             setCustom={(c) => set("tokenSaverBatchCustom", c)}
             customFields={[{ key: "strength", label: "strength", min: 1, max: 5 }]}
           />
+        )}
+
+        <div className="flex items-start justify-between gap-3 p-3 border border-border/50 rounded-lg">
+          <FeatureHelp id="streamToNonstream" />
+          <Switch
+            checked={state.tokenSaverStreamToNonstreamEnabled}
+            onCheckedChange={(v) => set("tokenSaverStreamToNonstreamEnabled", v)}
+          />
+        </div>
+
+        <div className="flex items-start justify-between gap-3 p-3 border border-border/50 rounded-lg">
+          <FeatureHelp id="nonstreamToStream" />
+          <Switch
+            checked={state.tokenSaverNonstreamToStreamEnabled}
+            onCheckedChange={(v) => set("tokenSaverNonstreamToStreamEnabled", v)}
+          />
+        </div>
+        {state.tokenSaverStreamToNonstreamEnabled && state.tokenSaverNonstreamToStreamEnabled && (
+          <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+            Kedua arah Stream Translate aktif: request streaming dipaksa non-stream ke upstream, dan
+            request non-stream dipaksa streaming. Pastikan ini memang disengaja — untuk hemat biaya
+            (mis. pajak stream amanai) cukup nyalakan Stream → Non-stream saja.
+          </div>
         )}
       </section>
 

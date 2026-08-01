@@ -4464,6 +4464,22 @@ proxy.all('/*', async (c) => {
 	const upstreamUrl = joinUpstreamOpenAIUrl(targetProvider.endpoint, forwardPath);
 	const isStreaming = requestBody?.stream === true;
 
+	// ─── Token Saver "Stream Translate" eligibility ──────────────────────────
+	// s2ns: client streams, upstream gets stream:false, we fake-stream the
+	// buffered answer back (avoids upstream streaming billing overhead, e.g.
+	// amanai's flat +2000 prompt_tokens on every stream request).
+	// Anthropic-native and Responses API clients are excluded: re-emitting
+	// their SSE needs format-specific builders, so they pass through as-is.
+	// ns2s: client wants JSON, upstream streams; the existing looksSse
+	// assembler converts the SSE back into a single JSON response.
+	const tsStreamToNonstreamWanted =
+		isStreaming &&
+		resolvedTsFlags.streamToNonstream &&
+		!isAnthropicRequest &&
+		!isResponsesApi;
+	const tsNonstreamToStreamWanted =
+		!isStreaming && resolvedTsFlags.nonstreamToStream;
+
 	// ─── Sanitize message roles (amanai-safe allowlist) ─────────────────────
 	if (requestBody && Array.isArray((requestBody as any).messages)) {
 		const roleFix = sanitizeChatMessageRoles(requestBody);
@@ -4944,6 +4960,9 @@ proxy.all('/*', async (c) => {
 		// heuristic; otherwise upstreamResponse.body is left untouched.
 		let bufferedEmptyResponse: Response | null = null;
 		let trialForcedNonStreamForTools = false;
+		// Token Saver Stream Translate: true when the winning attempt sent
+		// stream:false upstream for a streaming client (fake-stream on return).
+		let tsForcedNonStreamUpstream = false;
 
 		// Skip models that are known to be offline in the last 10 minutes. This
 		// prevents the trial user from waiting for a 25s timeout on each broken
@@ -5004,6 +5023,15 @@ proxy.all('/*', async (c) => {
 					attemptSignal = AbortSignal.any([perAttemptController.signal, c.req.raw.signal].filter(Boolean)) as AbortSignal;
 				}
 
+				// A previous attempt may have flipped the stream flag (Stream
+				// Translate / trial force). Restore the client's original value so
+				// per-attempt body building (incl. Anthropic/you.com conversion)
+				// starts from a clean slate.
+				if (requestBody && (requestBody.stream === true) !== isStreaming) {
+					requestBody = { ...requestBody, stream: isStreaming };
+					requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
+				}
+
 				let attemptProvider = targetProvider;
 				let attemptUpstreamModel = upstreamModel;
 				let attemptUpstreamUrl = upstreamUrl;
@@ -5047,13 +5075,39 @@ proxy.all('/*', async (c) => {
 
 					const requestHasToolsForTrial =
 						Array.isArray(requestBody?.tools) && requestBody.tools.length > 0;
-					const attemptUsesStream =
-						isStreaming && !(keyRecord.isTrial && requestHasToolsForTrial);
-					if (keyRecord.isTrial && requestHasToolsForTrial && isStreaming && requestBody) {
-						requestBody = { ...requestBody, stream: false };
-						requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
-						trialForcedNonStreamForTools = true;
+					const trialForcesNonStream =
+						keyRecord.isTrial && requestHasToolsForTrial && isStreaming;
+					// Token Saver Stream Translate: only OpenAI-format attempts get the
+					// flag flip — Anthropic-native and you.com attempts use their own
+					// pre-built bodies and keep the client's original mode.
+					const tsForcesNonStream =
+						tsStreamToNonstreamWanted && !attemptIsAnthropic && !attemptIsYoucom;
+					const tsForcesStream =
+						tsNonstreamToStreamWanted && !attemptIsAnthropic && !attemptIsYoucom;
+					const attemptUsesStream = tsForcesStream
+						? true
+						: isStreaming && !trialForcesNonStream && !tsForcesNonStream;
+					if (requestBody) {
+						const wantUpstreamStream =
+							trialForcesNonStream || tsForcesNonStream
+								? false
+								: tsForcesStream
+									? true
+									: isStreaming;
+						if ((requestBody.stream === true) !== wantUpstreamStream) {
+							requestBody = { ...requestBody, stream: wantUpstreamStream };
+							requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
+							if (tsForcesNonStream || tsForcesStream) {
+								console.log(
+									`[stream-translate] ${pickModel}: client stream=${isStreaming} → upstream stream=${wantUpstreamStream}`,
+								);
+							}
+						}
+						if (trialForcesNonStream) trialForcedNonStreamForTools = true;
 					}
+					// Reflect the winning attempt only (reassigned every iteration).
+					tsForcedNonStreamUpstream =
+						!!requestBody && tsForcesNonStream && !trialForcesNonStream;
 
 				try {
 				const result = await fetchWithKeyRotation(
@@ -6255,13 +6309,14 @@ proxy.all('/*', async (c) => {
 		if (rateLimitRemaining)
 			responseHeaders['x-ratelimit-remaining-requests'] = rateLimitRemaining;
 
-		// you.com fake-streaming: client asked for stream:true but the agents API
-		// is non-streaming. Emit the converted answer as a short SSE sequence.
+		// Fake-streaming: client asked for stream:true but upstream was called
+		// non-streaming (you.com agents API, trial+tools force, or Token Saver
+		// Stream Translate). Emit the converted answer as a short SSE sequence.
 		if (
 			isStreaming &&
 			statusCode >= 200 &&
 			statusCode < 300 &&
-			(isYouComProvider || trialForcedNonStreamForTools)
+			(isYouComProvider || trialForcedNonStreamForTools || tsForcedNonStreamUpstream)
 		) {
 			try {
 				const openaiParsed = JSON.parse(responseBody);

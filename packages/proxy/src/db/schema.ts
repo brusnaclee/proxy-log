@@ -79,6 +79,10 @@ export const adminConfig = pgTable('admin_config', {
 	tokenSaverAntiWasteMode: text('token_saver_anti_waste_mode').notNull().default('preset'),
 	tokenSaverAntiWasteLevel: text('token_saver_anti_waste_level').notNull().default('balanced'),
 	tokenSaverAntiWasteCustom: text('token_saver_anti_waste_custom').notNull().default('{}'),
+	/** Stream Translate: client stream:true → upstream stream:false, proxy fake-streams back (avoids upstream stream billing overhead). */
+	tokenSaverStreamToNonstreamEnabled: boolean('token_saver_stream_to_nonstream_enabled').notNull().default(false),
+	/** Stream Translate reverse: client stream:false → upstream stream:true, proxy assembles the full JSON. */
+	tokenSaverNonstreamToStreamEnabled: boolean('token_saver_nonstream_to_stream_enabled').notNull().default(false),
 	/** off | notif_only | auto — default notif_only (probe heal Online on OK; fail keeps catalog) */
 	monitorAutoMode: text('monitor_auto_mode').notNull().default('notif_only'),
 	/** full = prompt_tokens+cached_tokens (match upstream In); billable = net context_delta */
@@ -638,6 +642,8 @@ export const userPortalSettings = pgTable('user_portal_settings', {
   tokenSaverAntiWasteModeOverride: text('token_saver_anti_waste_mode_override'),
   tokenSaverAntiWasteLevelOverride: text('token_saver_anti_waste_level_override'),
   tokenSaverAntiWasteCustomOverride: text('token_saver_anti_waste_custom_override'),
+  tokenSaverStreamToNonstreamOverride: boolean('token_saver_stream_to_nonstream_override'),
+  tokenSaverNonstreamToStreamOverride: boolean('token_saver_nonstream_to_stream_override'),
   /** Portal + Discord UI language: 'en' (default) | 'id' */
   preferredLang: text('preferred_lang').notNull().default('en'),
   createdAt: timestamp('created_at').notNull().defaultNow(),

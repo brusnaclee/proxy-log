@@ -50,6 +50,8 @@ export default function SettingsPage() {
   const [tsPonytail, setTsPonytail] = useState<boolean | null>(null);
   const [tsBatch, setTsBatch] = useState<boolean | null>(null);
   const [tsAntiWaste, setTsAntiWaste] = useState<boolean | null>(null);
+  const [tsStreamToNonstream, setTsStreamToNonstream] = useState<boolean | null>(null);
+  const [tsNonstreamToStream, setTsNonstreamToStream] = useState<boolean | null>(null);
   const [tsIntensity, setTsIntensity] = useState<Record<string, string | null>>({});
   const [tsSaving, setTsSaving] = useState(false);
   const [tsSuccess, setTsSuccess] = useState("");
@@ -77,6 +79,8 @@ export default function SettingsPage() {
           setTsPonytail(o.ponytail ?? null);
           setTsBatch(o.batch ?? null);
           setTsAntiWaste(o.antiWaste ?? null);
+          setTsStreamToNonstream(o.streamToNonstream ?? null);
+          setTsNonstreamToStream(o.nonstreamToStream ?? null);
           setTsIntensity({
             antiWaste: o.antiWasteLevel ?? null,
             groupyCompact: o.groupyCompactLevel ?? null,
@@ -200,6 +204,8 @@ export default function SettingsPage() {
         ponytail: tsPonytail,
         batch: tsBatch,
         antiWaste: tsAntiWaste,
+        streamToNonstream: tsStreamToNonstream,
+        nonstreamToStream: tsNonstreamToStream,
       };
       if (tsIntensity.antiWaste != null) {
         payload.antiWasteMode = "preset";
@@ -259,6 +265,8 @@ export default function SettingsPage() {
       setTsPonytail(o.ponytail ?? null);
       setTsBatch(o.batch ?? null);
       setTsAntiWaste(o.antiWaste ?? null);
+      setTsStreamToNonstream(o.streamToNonstream ?? null);
+      setTsNonstreamToStream(o.nonstreamToStream ?? null);
       setTsSuccess(t("Save") + " OK");
     } catch (err) {
       setTsError(err instanceof Error ? err.message : "Failed to save token saver");
@@ -488,6 +496,8 @@ export default function SettingsPage() {
                 : f.id === "caveman" ? tsCaveman
                 : f.id === "ponytail" ? tsPonytail
                 : f.id === "antiWaste" ? tsAntiWaste
+                : f.id === "streamToNonstream" ? tsStreamToNonstream
+                : f.id === "nonstreamToStream" ? tsNonstreamToStream
                 : tsBatch;
               const onChange =
                 f.id === "rtk" ? setTsRtk
@@ -496,6 +506,8 @@ export default function SettingsPage() {
                 : f.id === "caveman" ? setTsCaveman
                 : f.id === "ponytail" ? setTsPonytail
                 : f.id === "antiWaste" ? setTsAntiWaste
+                : f.id === "streamToNonstream" ? setTsStreamToNonstream
+                : f.id === "nonstreamToStream" ? setTsNonstreamToStream
                 : setTsBatch;
               const globalOn =
                 f.id === "rtk" ? !!tsGlobal?.rtk
@@ -504,7 +516,11 @@ export default function SettingsPage() {
                 : f.id === "caveman" ? !!tsGlobal?.caveman
                 : f.id === "ponytail" ? !!tsGlobal?.ponytail
                 : f.id === "antiWaste" ? tsGlobal?.antiWaste !== false
+                : f.id === "streamToNonstream" ? !!tsGlobal?.streamToNonstream
+                : f.id === "nonstreamToStream" ? !!tsGlobal?.nonstreamToStream
                 : tsGlobal?.batch !== false;
+              const hasIntensity =
+                f.id !== "streamToNonstream" && f.id !== "nonstreamToStream";
               const levelOpts =
                 f.id === "caveman"
                   ? ["1", "2", "3", "4", "5"]
@@ -539,6 +555,7 @@ export default function SettingsPage() {
                     onChange={onChange}
                     globalOn={globalOn}
                   />
+                  {hasIntensity && (
                   <div className="pb-3 -mt-1 flex flex-wrap items-center gap-2 text-[11px]">
                     <span className="text-muted-foreground">Intensity:</span>
                     <select
@@ -562,6 +579,7 @@ export default function SettingsPage() {
                     </select>
                     <span className="text-muted-foreground/80">{f.intensityHint}</span>
                   </div>
+                  )}
                 </div>
               );
             })}

@@ -88,6 +88,8 @@ export default function SettingsPage() {
   const [tokenSaverAntiWasteMode, setTokenSaverAntiWasteMode] = useState("preset");
   const [tokenSaverAntiWasteLevel, setTokenSaverAntiWasteLevel] = useState("balanced");
   const [tokenSaverAntiWasteCustom, setTokenSaverAntiWasteCustom] = useState("{}");
+  const [tokenSaverStreamToNonstreamEnabled, setTokenSaverStreamToNonstreamEnabled] = useState(false);
+  const [tokenSaverNonstreamToStreamEnabled, setTokenSaverNonstreamToStreamEnabled] = useState(false);
   const [globalModelLimits, setGlobalModelLimits] = useState<ModelLimitEntry[]>([]);
   const [modelCatalog, setModelCatalog] = useState<string[]>([]);
   const [newModelOverride, setNewModelOverride] = useState("");
@@ -253,6 +255,8 @@ export default function SettingsPage() {
       setTokenSaverAntiWasteMode(g.tokenSaverAntiWasteMode || "preset");
       setTokenSaverAntiWasteLevel(g.tokenSaverAntiWasteLevel || "balanced");
       setTokenSaverAntiWasteCustom(g.tokenSaverAntiWasteCustom || "{}");
+      setTokenSaverStreamToNonstreamEnabled(g.tokenSaverStreamToNonstreamEnabled ?? false);
+      setTokenSaverNonstreamToStreamEnabled(g.tokenSaverNonstreamToStreamEnabled ?? false);
     } catch {}
 
     try {
@@ -368,6 +372,7 @@ export default function SettingsPage() {
         tokenSaverGroupyCompactMode, tokenSaverGroupyCompactCustom,
         tokenSaverBatchEnabled, tokenSaverBatchMode, tokenSaverBatchLevel, tokenSaverBatchCustom,
         tokenSaverAntiWasteEnabled, tokenSaverAntiWasteMode, tokenSaverAntiWasteLevel, tokenSaverAntiWasteCustom,
+        tokenSaverStreamToNonstreamEnabled, tokenSaverNonstreamToStreamEnabled,
       });
       await request("/settings/bot", {
         method: "POST",
@@ -479,6 +484,8 @@ export default function SettingsPage() {
               tokenSaverBatchMode,
               tokenSaverBatchLevel,
               tokenSaverBatchCustom,
+              tokenSaverStreamToNonstreamEnabled,
+              tokenSaverNonstreamToStreamEnabled,
               tokenSaverRtkEnabled,
               tokenSaverRtkMode,
               tokenSaverRtkLevel,
@@ -512,6 +519,8 @@ export default function SettingsPage() {
                 tokenSaverBatchMode: setTokenSaverBatchMode,
                 tokenSaverBatchLevel: setTokenSaverBatchLevel,
                 tokenSaverBatchCustom: setTokenSaverBatchCustom,
+                tokenSaverStreamToNonstreamEnabled: setTokenSaverStreamToNonstreamEnabled,
+                tokenSaverNonstreamToStreamEnabled: setTokenSaverNonstreamToStreamEnabled,
                 tokenSaverRtkEnabled: setTokenSaverRtkEnabled,
                 tokenSaverRtkMode: setTokenSaverRtkMode,
                 tokenSaverRtkLevel: setTokenSaverRtkLevel,

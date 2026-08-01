@@ -65,6 +65,8 @@ export function packGlobalTokenSaver(config: any) {
     antiWasteMode: asMode(config?.tokenSaverAntiWasteMode),
     antiWasteLevel: asLba(config?.tokenSaverAntiWasteLevel),
     antiWasteCustom: asCustom(config?.tokenSaverAntiWasteCustom),
+    streamToNonstream: config?.tokenSaverStreamToNonstreamEnabled ?? false,
+    nonstreamToStream: config?.tokenSaverNonstreamToStreamEnabled ?? false,
   };
 }
 
@@ -98,6 +100,8 @@ export function packUserTokenSaverOverrides(settings: any) {
     antiWasteMode: settings?.tokenSaverAntiWasteModeOverride ?? null,
     antiWasteLevel: settings?.tokenSaverAntiWasteLevelOverride ?? null,
     antiWasteCustom: settings?.tokenSaverAntiWasteCustomOverride ?? null,
+    streamToNonstream: settings?.tokenSaverStreamToNonstreamOverride ?? null,
+    nonstreamToStream: settings?.tokenSaverNonstreamToStreamOverride ?? null,
   };
 }
 
@@ -149,6 +153,8 @@ export function applyAdminTokenSaverUpdates(body: any, updates: Record<string, u
     antiWasteMode: body.tokenSaverAntiWasteMode ?? body.antiWasteMode,
     antiWasteLevel: body.tokenSaverAntiWasteLevel ?? body.antiWasteLevel,
     antiWasteCustom: body.tokenSaverAntiWasteCustom ?? body.antiWasteCustom,
+    streamToNonstream: body.tokenSaverStreamToNonstreamEnabled ?? body.streamToNonstream,
+    nonstreamToStream: body.tokenSaverNonstreamToStreamEnabled ?? body.nonstreamToStream,
   };
 
   if (b.rtk !== undefined) updates.tokenSaverRtkEnabled = !!b.rtk;
@@ -203,6 +209,13 @@ export function applyAdminTokenSaverUpdates(body: any, updates: Record<string, u
     updates.tokenSaverAntiWasteCustom = asCustom(b.antiWasteCustom);
   }
 
+  if (b.streamToNonstream !== undefined) {
+    updates.tokenSaverStreamToNonstreamEnabled = !!b.streamToNonstream;
+  }
+  if (b.nonstreamToStream !== undefined) {
+    updates.tokenSaverNonstreamToStreamEnabled = !!b.nonstreamToStream;
+  }
+
   void bool;
   void mode;
   void lba;
@@ -231,6 +244,12 @@ export function applyUserTokenSaverUpdates(body: any, updates: Record<string, un
   }
   if (body.batch !== undefined) updates.tokenSaverBatchOverride = normalizeBool(body.batch);
   if (body.antiWaste !== undefined) updates.tokenSaverAntiWasteOverride = normalizeBool(body.antiWaste);
+  if (body.streamToNonstream !== undefined) {
+    updates.tokenSaverStreamToNonstreamOverride = normalizeBool(body.streamToNonstream);
+  }
+  if (body.nonstreamToStream !== undefined) {
+    updates.tokenSaverNonstreamToStreamOverride = normalizeBool(body.nonstreamToStream);
+  }
 
   if (body.rtkMode !== undefined) updates.tokenSaverRtkModeOverride = normalizeStr(body.rtkMode);
   if (body.rtkLevel !== undefined) updates.tokenSaverRtkLevelOverride = normalizeStr(body.rtkLevel);

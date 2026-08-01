@@ -878,6 +878,8 @@ export interface GlobalSettings {
   tokenSaverAntiWasteMode?: string;
   tokenSaverAntiWasteLevel?: string;
   tokenSaverAntiWasteCustom?: string;
+  tokenSaverStreamToNonstreamEnabled?: boolean;
+  tokenSaverNonstreamToStreamEnabled?: boolean;
   tokenSaver?: Record<string, unknown>;
   teaseModelLimits?: Array<{ model: string; promptLimit: number; isPattern: boolean }>;
 }

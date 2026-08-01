@@ -79,6 +79,8 @@ settings.get("/settings/global", async (c) => {
         tokenSaverAntiWasteMode: ts.antiWasteMode,
         tokenSaverAntiWasteLevel: ts.antiWasteLevel,
         tokenSaverAntiWasteCustom: ts.antiWasteCustom,
+        tokenSaverStreamToNonstreamEnabled: ts.streamToNonstream,
+        tokenSaverNonstreamToStreamEnabled: ts.nonstreamToStream,
         tokenSaver: ts,
       };
     })(),

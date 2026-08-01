@@ -67,6 +67,8 @@ export interface TokenSaverGlobalConfig {
 	tokenSaverAntiWasteMode?: string | null;
 	tokenSaverAntiWasteLevel?: string | null;
 	tokenSaverAntiWasteCustom?: string | null;
+	tokenSaverStreamToNonstreamEnabled?: boolean | null;
+	tokenSaverNonstreamToStreamEnabled?: boolean | null;
 }
 
 export interface TokenSaverUserOverrides {
@@ -98,6 +100,8 @@ export interface TokenSaverUserOverrides {
 	tokenSaverAntiWasteModeOverride?: string | null;
 	tokenSaverAntiWasteLevelOverride?: string | null;
 	tokenSaverAntiWasteCustomOverride?: string | null;
+	tokenSaverStreamToNonstreamOverride?: boolean | null;
+	tokenSaverNonstreamToStreamOverride?: boolean | null;
 }
 
 export interface EffectiveTokenSaverFlags {
@@ -119,6 +123,10 @@ export interface EffectiveTokenSaverFlags {
 	batchStrength: number;
 	antiWaste: boolean;
 	antiWasteThresholds: AntiWasteThresholds;
+	/** Stream Translate: rewrite client stream:true → upstream stream:false, fake-stream the reply back. */
+	streamToNonstream: boolean;
+	/** Stream Translate: rewrite client stream:false → upstream stream:true, assemble full JSON. */
+	nonstreamToStream: boolean;
 	disabledByHeader: boolean;
 }
 
@@ -288,6 +296,8 @@ export function resolveTokenSaverFlags(
 			batchStrength: batchParams.strength,
 			antiWaste: false,
 			antiWasteThresholds: emptyAw,
+			streamToNonstream: false,
+			nonstreamToStream: false,
 			disabledByHeader: true,
 		};
 	}
@@ -335,6 +345,16 @@ export function resolveTokenSaverFlags(
 			true,
 		),
 		antiWasteThresholds: awThresholds,
+		streamToNonstream: resolveFlag(
+			userOverrides?.tokenSaverStreamToNonstreamOverride,
+			globalCfg?.tokenSaverStreamToNonstreamEnabled,
+			false,
+		),
+		nonstreamToStream: resolveFlag(
+			userOverrides?.tokenSaverNonstreamToStreamOverride,
+			globalCfg?.tokenSaverNonstreamToStreamEnabled,
+			false,
+		),
 		disabledByHeader: false,
 	};
 }

@@ -7,6 +7,8 @@ export type TokenSaverFeatureId =
 	| "antiWaste"
 	| "groupyCompact"
 	| "batch"
+	| "streamToNonstream"
+	| "nonstreamToStream"
 	| "rtk"
 	| "headroom"
 	| "caveman"
@@ -95,6 +97,43 @@ export const TOKEN_SAVER_FEATURES: TokenSaverFeatureCopy[] = [
 		riskLong: "Strength 4–5 = agresif. Tidak mengubah schema tools.",
 		intensityHint: "strength 1 lembut … 5 kuat. balanced = 3. Agresif: ≥4.",
 		safeZone: "strength 1–3.",
+	},
+	{
+		id: "streamToNonstream",
+		label: "Stream Translate: Stream → Non-stream",
+		group: "groupy",
+		defaultOn: false,
+		effectShort:
+			"Request streaming diubah jadi non-stream ke upstream; balasan di-fake-stream balik ke client.",
+		effectLong:
+			"Client tetap kirim stream:true dan tetap menerima SSE seperti biasa — tapi ke upstream, proxy mengirim stream:false, menunggu jawaban penuh, lalu memutarnya sebagai stream sekali kirim (role → content → finish+usage → [DONE]). Berguna untuk upstream yang menagih overhead billing di mode streaming. Tidak berlaku untuk client Anthropic /v1/messages & Responses API (passthrough normal).",
+		exampleShort:
+			"amanai glm-5.2: prompt_tokens stream 2.138 → 136 untuk prompt yang sama (pajak +2000 hilang).",
+		exampleLong:
+			"amanai menambahkan ~+2000 prompt_tokens flat di setiap request streaming. Dengan toggle ini upstream melihat non-stream sehingga usage yang dilaporkan (dan kuota yang dipotong) kembali normal, sementara client tidak perlu mengubah apa pun.",
+		riskShort: "Token pertama datang lebih lambat (jawaban dirakit penuh dulu).",
+		riskLong:
+			"Tidak ada incremental typing — client 'diam' sampai upstream selesai, lalu seluruh jawaban muncul sekaligus. Generasi sangat panjang dibatasi timeout non-stream (~90s per attempt), jadi kurang cocok untuk jawaban super panjang.",
+		intensityHint: "Murni on/off — tidak ada intensity.",
+		safeZone: "Aman untuk chat/agent normal; hindari untuk generasi >90 detik.",
+	},
+	{
+		id: "nonstreamToStream",
+		label: "Stream Translate: Non-stream → Stream",
+		group: "groupy",
+		defaultOn: false,
+		effectShort:
+			"Request non-stream diubah jadi streaming ke upstream; proxy merakit SSE jadi satu JSON.",
+		effectLong:
+			"Client kirim stream:false dan tetap menerima satu JSON utuh — tapi ke upstream, proxy meminta stream:true lalu merakit seluruh chunk SSE menjadi respons lengkap. Berguna untuk upstream yang sering timeout / putus koneksi idle di mode non-stream pada generasi panjang.",
+		exampleShort: "Upstream lambat: SSE mengalir jadi koneksi tidak dianggap idle.",
+		exampleLong:
+			"Beberapa upstream memutus koneksi non-stream yang lama diam. Mode streaming mengirim byte terus-menerus sehingga generasi panjang selamat, lalu proxy mengembalikannya sebagai JSON biasa.",
+		riskShort: "Di provider dengan 'pajak stream' (mis. amanai) justru lebih boros.",
+		riskLong:
+			"Kalau upstream menagih overhead di mode streaming (amanai: +2000 prompt_tokens), toggle ini menambah biaya, bukan menghemat. Jangan nyalakan bersamaan dengan Stream → Non-stream untuk provider yang sama.",
+		intensityHint: "Murni on/off — tidak ada intensity.",
+		safeZone: "Nyalakan hanya jika sering kena timeout non-stream.",
 	},
 	{
 		id: "rtk",

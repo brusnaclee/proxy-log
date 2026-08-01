@@ -34,6 +34,8 @@ const ADMIN_COLS: Array<[string, string]> = [
   ['token_saver_anti_waste_mode', "text NOT NULL DEFAULT 'preset'"],
   ['token_saver_anti_waste_level', "text NOT NULL DEFAULT 'balanced'"],
   ['token_saver_anti_waste_custom', "text NOT NULL DEFAULT '{}'"],
+  ['token_saver_stream_to_nonstream_enabled', 'boolean NOT NULL DEFAULT false'],
+  ['token_saver_nonstream_to_stream_enabled', 'boolean NOT NULL DEFAULT false'],
 ];
 
 const USER_COLS: Array<[string, string]> = [
@@ -65,6 +67,8 @@ const USER_COLS: Array<[string, string]> = [
   ['token_saver_anti_waste_mode_override', 'text'],
   ['token_saver_anti_waste_level_override', 'text'],
   ['token_saver_anti_waste_custom_override', 'text'],
+  ['token_saver_stream_to_nonstream_override', 'boolean'],
+  ['token_saver_nonstream_to_stream_override', 'boolean'],
   ['preferred_lang', "text NOT NULL DEFAULT 'en'"],
 ];
 
