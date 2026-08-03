@@ -575,11 +575,13 @@ export async function checkModelPromptLimit(
       ? getPatternModelMatchCondition(activeOverride.model)
       : getModelMatchCondition(normalizedModel);
 
-  // Per-model override rows store prompt_window_start → fixed cliff window.
-  // Defaults without a stored start fall back to sliding last-N (rare path).
+  // Key-scoped overrides: fixed cliff via prompt_window_start.
+  // Global overrides: always per-key sliding window — a shared global
+  // prompt_window_start was resetting everyone's count when any user opened a new window.
   let windowStartDate: Date;
   let resetMs = windowMs;
-  if (source === "override" && activeOverride) {
+  let useSlidingReset = true;
+  if (source === "override" && activeOverride && activeOverride.scope === "key") {
     const fixed = resolveFixedWindow(activeOverride.promptWindowStart, windowMs, nowMs);
     if (!fixed.active) {
       return {
@@ -595,6 +597,7 @@ export async function checkModelPromptLimit(
     }
     windowStartDate = new Date(fixed.windowStartMs);
     resetMs = fixed.resetMs;
+    useSlidingReset = false;
   } else {
     windowStartDate = new Date(nowMs - windowMs);
   }
@@ -613,7 +616,7 @@ export async function checkModelPromptLimit(
     ));
 
   const used = Number(usage[0]?.count) || 0;
-  if (source !== "override") {
+  if (useSlidingReset) {
     const oldestRaw = usage[0]?.oldest;
     if (oldestRaw) {
       const oldestMs = parseDbTimestampMs(String(oldestRaw));
@@ -645,7 +648,8 @@ export async function getWindowResetMs(apiKeyId: number | number[], windowMs: nu
   if (model) {
     const normalizedModel = await normalizeModelForLimit(model);
     const activeOverride = await findActiveOverride(apiKeyIds[0], normalizedModel);
-    if (activeOverride?.promptWindowStart) {
+    // Key-scoped only — global patterns use sliding (shared global start was broken).
+    if (activeOverride?.scope === "key" && activeOverride.promptWindowStart) {
       return resolveFixedWindow(activeOverride.promptWindowStart, windowMs, nowMs).resetMs;
     }
     const windowStartDate = new Date(nowMs - windowMs);

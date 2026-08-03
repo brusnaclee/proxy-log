@@ -89,7 +89,7 @@ export const adminConfig = pgTable('admin_config', {
 	tokenInputMode: text('token_input_mode').notNull().default('per_turn_peak'),
 	/**
 	 * JSON array of per-model token multiplier rules (first match wins).
-	 * Example: [{"pattern":"claude","input":3},{"pattern":"gpt","input":2}]
+	 * Example: [{"pattern":"claude","input":2.5},{"pattern":"gpt","input":2}]
 	 * Omitted input/output inherits env INPUT/OUTPUT_TOKEN_MULTIPLIER.
 	 */
 	tokenMultiplierRules: text('token_multiplier_rules').notNull().default('[]'),

@@ -6,9 +6,10 @@
  *   - OUTPUT_TOKEN_MULTIPLIER
  *
  * Optional per-model pattern rules (admin_config.token_multiplier_rules JSON):
- *   [{ "pattern": "claude", "input": 3 }, { "pattern": "gpt", "input": 2 }]
- * First matching pattern wins (substring, case-insensitive). Omitted input/output
- * inherits the global env multiplier. Trial keys always use 1×.
+ *   [{ "pattern": "claude", "input": 2.5 }, { "pattern": "gpt", "input": 2 }]
+ * Multipliers may be decimals (e.g. 2.5). First matching pattern wins
+ * (substring, case-insensitive). Omitted input/output inherits the global env
+ * multiplier. Trial keys always use 1×.
  *
  * Applied at READ / gate time — raw request_logs columns stay unscaled.
  */

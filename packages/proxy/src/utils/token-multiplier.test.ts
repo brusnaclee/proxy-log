@@ -23,6 +23,22 @@ describe("token multiplier patterns", () => {
     assert.equal(m.output, 10);
   });
 
+  it("supports decimal multipliers (e.g. Claude 2.5)", () => {
+    setTokenMultiplierRulesCache([{ pattern: "claude", input: 2.5 }]);
+    const m = resolveTokenMultipliers("phantom/amanai/claude-sonnet-4.6");
+    assert.equal(m.input, 2.5);
+    assert.equal(m.output, 10);
+    assert.match(sqlMultiplierExpr("input", "model"), /THEN 2\.5/);
+    const row = applyTokenMultiplier({
+      model: "claude-sonnet-4.6",
+      promptTokens: 100,
+      completionTokens: 10,
+      tokens: 110,
+    });
+    assert.equal(row.promptTokens, 250);
+    assert.equal(row.completionTokens, 100);
+  });
+
   it("resolves gpt / chatgpt input 2x", () => {
     assert.equal(resolveTokenMultipliers("phantom/amanai/gpt-5.6-terra").input, 2);
     assert.equal(resolveTokenMultipliers("chatgpt-5.5").input, 2);

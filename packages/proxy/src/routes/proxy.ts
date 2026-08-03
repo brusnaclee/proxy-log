@@ -3300,7 +3300,8 @@ proxy.all('/*', async (c) => {
 											candidate.modelId,
 											`${candidate.provider}/${candidate.modelId}`,
 										]);
-										if (autoActiveOverride) {
+										// Key-scoped only — global patterns use per-key sliding windows.
+										if (autoActiveOverride && autoActiveOverride.scope === 'key') {
 											const autoModelWindowStr = keyRecord.perModelPromptLimitWindow || config.globalPerModelPromptLimitWindow || '30m';
 											const autoModelWindowMs = parseRateLimitWindow(autoModelWindowStr);
 											let autoModelWindowStartMs = 0;
@@ -3464,7 +3465,7 @@ proxy.all('/*', async (c) => {
 							candidate.modelId,
 							`${candidate.provider}/${candidate.modelId}`,
 						]);
-						if (autoActiveOverride2) {
+						if (autoActiveOverride2 && autoActiveOverride2.scope === 'key') {
 							const autoModelWindowStr2 = keyRecord.perModelPromptLimitWindow || config.globalPerModelPromptLimitWindow || '30m';
 							const autoModelWindowMs2 = parseRateLimitWindow(autoModelWindowStr2);
 							let autoModelWindowStartMs2 = 0;
@@ -4712,7 +4713,9 @@ proxy.all('/*', async (c) => {
 				const normalizedPersistModel = await normalizeModelForLimit(model);
 				const activeOverride = await findActiveOverrideInTx(tx, keyRecord.id, normalizedPersistModel, [model]);
 
-				if (activeOverride) {
+				// Key-scoped only — global patterns use per-key sliding windows
+				// (updating a shared global prompt_window_start reset every user's count).
+				if (activeOverride && activeOverride.scope === 'key') {
 					const modelWindowStr =
 						keyRecord.perModelPromptLimitWindow ||
 						config.globalPerModelPromptLimitWindow ||
