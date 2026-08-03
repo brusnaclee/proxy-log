@@ -3,7 +3,7 @@ import { db } from "../../db/index.js";
 import { requestLogs, apiKeys, devices, chatSessions, monthlyStats } from "../../db/schema.js";
 import { eq, sql, and } from "drizzle-orm";
 import { getModelRates } from "../../utils/cost-calculator.js";
-import { VALID_LOG_SQL, turnCountSql, hopCountSql, turnCompletionTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, sanitizeRows, resolvePeriodRange, groupedInputSumSql, modelLimitCreditBreakdownSql, type PeriodKey } from "../../utils/counting.js";
+import { VALID_LOG_SQL, BILLABLE_LOG_SQL, turnCountSql, hopCountSql, turnCompletionTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, peakPromptTokensSql, hopFullInputTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, sanitizeRows, resolvePeriodRange, groupedInputSumSql, modelLimitCreditBreakdownSql, hopWeightedTimeseriesSql, type PeriodKey } from "../../utils/counting.js";
 import { applyTokenMultiplierRows, getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { statsCache } from "../../utils/cache.js";
 import {
@@ -388,6 +388,7 @@ stats.get("/stats/timeseries", async (c) => {
   // Support new ?period= key (today|3d|7d|30d|thisMonth|lastMonth|allTime)
   // Fallback to legacy ?period=daily|hourly + ?days=N
   // Optional ?api_key_id=N scopes to one key (Key Detail charts).
+  // Limit-credit formula — same as gates / Key Detail cards / portal meters.
   const newPeriod = c.req.query("period") as PeriodKey | undefined;
   const legacyPeriod = c.req.query("period") as string | undefined; // daily|hourly
   const days = parseInt(c.req.query("days") || "7");
@@ -397,60 +398,100 @@ stats.get("/stats/timeseries", async (c) => {
   if (apiKeyRaw && !keyScoped) {
     return c.json({ error: "Invalid api_key_id" }, 400);
   }
-  const cacheKey = `timeseries:v3:${newPeriod || legacyPeriod || "daily"}:${days}:k${keyScoped ? apiKeyId : "all"}`;
+  const cacheKey = `timeseries:v4:limitcredit:${newPeriod || legacyPeriod || "daily"}:${days}:k${keyScoped ? apiKeyId : "all"}`;
   return c.json(await statsCache.getOrFetch(cacheKey, async () => {
   let startDate: Date;
+  let endDate: Date | null = null;
   let groupPeriod: "hourly" | "daily";
 
   if (newPeriod && ["today", "3d", "7d", "30d", "thisMonth", "lastMonth", "allTime"].includes(newPeriod)) {
     const range = resolvePeriodRange(newPeriod);
     startDate = range.start;
-    // today + 3d: hourly bars; longer windows: daily (readable + cheaper)
+    endDate = range.end;
     groupPeriod = newPeriod === "today" || newPeriod === "3d" ? "hourly" : "daily";
   } else {
     startDate = new Date(Date.now() - days * 86400000);
     groupPeriod = (legacyPeriod === "hourly") ? "hourly" : "daily";
   }
 
-  const startStr = toUtcStr(startDate);
   const keyFilter = keyScoped ? sql`AND api_key_id = ${apiKeyId}` : sql``;
+  const endFilter = endDate ? sql`AND created_at <= ${endDate}` : sql``;
 
   const groupExpr = groupPeriod === "hourly"
     ? sql`to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD HH24:00')`
     : sql`to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD')`;
 
-  // Simpler grouping: period + turn only (device count via DISTINCT in outer)
-  const result = applyTokenMultiplierRows(sanitizeRows((await db.execute(sql`
-    SELECT
-      period_group as period,
-      COUNT(*) as requests,
-      COALESCE(SUM(hop_count), 0) as "apiCalls",
-      COALESCE(SUM(sum_delta + sum_c), 0) as tokens,
-      COALESCE(SUM(sum_delta), 0) as "promptTokens",
-      COALESCE(SUM(sum_c), 0) as "completionTokens",
-      0 as "estimatedCost",
-      COUNT(DISTINCT device_fingerprint) as "uniqueDevices"
-    FROM (
-      SELECT
-        ${groupExpr} as period_group,
-        device_fingerprint,
-        turn_id,
-        COUNT(*)::int as hop_count,
-        ${sql.raw(groupedInputSumSql())} as sum_delta,
-        SUM(completion_tokens) as sum_c
-      FROM request_logs
-      WHERE created_at >= ${startStr}
-        AND status_code BETWEEN 200 AND 299
-        AND turn_id IS NOT NULL
-        ${keyFilter}
-      GROUP BY ${groupExpr}, device_fingerprint, turn_id
-    ) sub
-    GROUP BY period_group
-    ORDER BY period_group
-  `)).rows as any[], ['requests', 'apiCalls', 'tokens', 'promptTokens', 'completionTokens', 'estimatedCost', 'uniqueDevices']));
+  const whereExtra = sql`
+    created_at >= ${startDate}
+    ${endFilter}
+    AND status_code BETWEEN 200 AND 299
+    ${keyFilter}
+  `;
+
+  const result = sanitizeRows(
+    (await db.execute(hopWeightedTimeseriesSql(groupExpr, whereExtra))).rows as any[],
+    ["requests", "apiCalls", "tokens", "promptTokens", "completionTokens"],
+  ).map((row: any) => ({
+    ...row,
+    estimatedCost: 0,
+    uniqueDevices: 0,
+  }));
 
   return result;
   })); // end statsCache
+});
+
+/** Period-aware limit-credit totals (same formula as gates). Used by Key Detail cards. */
+stats.get("/stats/period-summary", async (c) => {
+  const period = (c.req.query("period") || "today") as PeriodKey;
+  if (!["today", "3d", "7d", "30d", "thisMonth", "lastMonth", "allTime"].includes(period)) {
+    return c.json({ error: "Invalid period" }, 400);
+  }
+  const apiKeyRaw = c.req.query("api_key_id");
+  const apiKeyId = apiKeyRaw ? parseInt(apiKeyRaw, 10) : NaN;
+  if (!apiKeyRaw || !Number.isFinite(apiKeyId) || apiKeyId <= 0) {
+    return c.json({ error: "api_key_id required" }, 400);
+  }
+
+  const cacheKey = `period-summary:v1:${period}:k${apiKeyId}`;
+  return c.json(await statsCache.getOrFetch(cacheKey, async () => {
+    const range = resolvePeriodRange(period);
+    const baseFilters = [
+      eq(requestLogs.apiKeyId, apiKeyId),
+      sql`created_at >= ${range.start}`,
+      ...(range.end ? [sql`created_at <= ${range.end}`] : []),
+    ];
+    const whereClause = and(...baseFilters, BILLABLE_LOG_SQL)!;
+    const whereTurns = and(...baseFilters, VALID_LOG_SQL)!;
+
+    const row = (await db.select({
+      requests: turnCountSql(whereTurns),
+      apiCalls: hopCountSql(whereTurns),
+      tokens: weightedHopTotalTokensSql(whereClause),
+      promptTokens: weightedHopInputTokensSql(whereClause),
+      peakPromptTokens: peakPromptTokensSql(whereTurns),
+      billablePromptTokens: turnBillablePromptTokensSql(whereTurns),
+      cachedTokens: turnCachedTokensSql(whereTurns),
+      fullInputTokens: hopFullInputTokensSql(whereClause),
+      completionTokens: turnCompletionTokensSql(whereTurns),
+    }).from(requestLogs).where(whereTurns))[0];
+
+    return {
+      period,
+      apiKeyId,
+      requests: Number(row?.requests) || 0,
+      apiCalls: Number(row?.apiCalls) || 0,
+      tokens: Number(row?.tokens) || 0,
+      promptTokens: Number(row?.promptTokens) || 0,
+      peakPromptTokens: Number(row?.peakPromptTokens) || 0,
+      billablePromptTokens: Number(row?.billablePromptTokens) || 0,
+      cachedTokens: Number(row?.cachedTokens) || 0,
+      fullInputTokens: Number(row?.fullInputTokens) || 0,
+      completionTokens: Number(row?.completionTokens) || 0,
+      contextTokens: 0,
+      estimatedCost: 0,
+    };
+  }));
 });
 
 // ─── Top Users (Discord-account scoped, hop-weighted — same as Discord ranking)

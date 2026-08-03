@@ -359,6 +359,101 @@ export function hopCountSql(whereCondition: SQL | undefined): SQL<number> {
 }
 
 /**
+ * Hop-weighted limit-credit timeseries (same formula as {@link weightedHopTotalTokensSql} / gates).
+ * `rn` is partitioned by turn across the whole window (not per bucket), so summing
+ * bucket totals equals the period aggregate.
+ *
+ * @param groupExpr SQL expression for the bucket key (e.g. to_char(...))
+ * @param whereExtra full WHERE body without leading WHERE
+ */
+export function hopWeightedTimeseriesSql(
+  groupExpr: SQL,
+  whereExtra: SQL,
+  opts?: TokenMultiplierOpts,
+): SQL {
+  const min = sql.raw(sqlMultiplierExpr("input", "model", opts));
+  const mout = sql.raw(sqlMultiplierExpr("output", "model", opts));
+
+  // peak mode: only the max-context hop per turn contributes input credit
+  if (tokenLimitWeightModeCache === "peak") {
+    return sql`
+      SELECT
+        period_group as period,
+        COUNT(DISTINCT turn_key)::int as requests,
+        COALESCE(SUM(hop_count), 0)::int as "apiCalls",
+        COALESCE(SUM(peak_in * ${min}), 0) as "promptTokens",
+        COALESCE(SUM(out_sum * ${mout}), 0) as "completionTokens",
+        COALESCE(SUM(peak_in * ${min} + out_sum * ${mout}), 0) as tokens
+      FROM (
+        SELECT
+          ${groupExpr} as period_group,
+          COALESCE(turn_id, 'orphan-' || id::text) as turn_key,
+          COUNT(*)::int as hop_count,
+          MAX(COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 as peak_in,
+          SUM(COALESCE(completion_tokens, 0))::float8 as out_sum,
+          (ARRAY_AGG(model ORDER BY (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) DESC, id ASC))[1] as model
+        FROM request_logs
+        WHERE ${whereExtra}
+        GROUP BY ${groupExpr}, COALESCE(turn_id, 'orphan-' || id::text)
+      ) turns
+      GROUP BY period_group
+      ORDER BY period_group
+    `;
+  }
+
+  if (tokenLimitWeightModeCache === "full") {
+    return sql`
+      SELECT
+        period_group as period,
+        COUNT(DISTINCT turn_key)::int as requests,
+        COUNT(*)::int as "apiCalls",
+        COALESCE(SUM(inn * ${min}), 0) as "promptTokens",
+        COALESCE(SUM(outt * ${mout}), 0) as "completionTokens",
+        COALESCE(SUM(inn * ${min} + outt * ${mout}), 0) as tokens
+      FROM (
+        SELECT
+          ${groupExpr} as period_group,
+          COALESCE(turn_id, 'orphan-' || id::text) as turn_key,
+          (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
+          COALESCE(completion_tokens, 0)::float8 AS outt,
+          model
+        FROM request_logs
+        WHERE ${whereExtra}
+      ) hops
+      GROUP BY period_group
+      ORDER BY period_group
+    `;
+  }
+
+  const w = inputHopWeightSqlExpr();
+  return sql`
+    SELECT
+      period_group as period,
+      COUNT(DISTINCT turn_key)::int as requests,
+      COUNT(*)::int as "apiCalls",
+      COALESCE(SUM(inn * (${sql.raw(w)}) * ${min}), 0) as "promptTokens",
+      COALESCE(SUM(outt * ${mout}), 0) as "completionTokens",
+      COALESCE(SUM(inn * (${sql.raw(w)}) * ${min} + outt * ${mout}), 0) as tokens
+    FROM (
+      SELECT
+        ${groupExpr} as period_group,
+        COALESCE(turn_id, 'orphan-' || id::text) as turn_key,
+        (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
+        COALESCE(completion_tokens, 0)::float8 AS outt,
+        model,
+        ROW_NUMBER() OVER (
+          PARTITION BY COALESCE(turn_id, 'orphan-' || id::text)
+          ORDER BY created_at ASC, id ASC
+        ) AS rn
+      FROM request_logs
+      WHERE ${whereExtra}
+    ) hops
+    GROUP BY period_group
+    ORDER BY period_group
+  `;
+}
+
+/**
  * Display label for Top Models: `auto (gcli/grok-4.5) [stream]` → `auto → gcli/grok-4.5`.
  * Keeps non-auto ids unchanged.
  */

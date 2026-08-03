@@ -9,7 +9,7 @@
 import { sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { inputHopWeightSqlExpr, sanitizeRows } from './counting.js';
-import { getTokenMultipliers } from './token-multiplier.js';
+import { sqlMultiplierExpr } from './token-multiplier.js';
 
 export type AccountUsageRow = {
 	discordUserId: string | null;
@@ -33,8 +33,9 @@ export type AccountUsageRow = {
 export async function getAccountUsageAggregates(
 	since: Date | null,
 ): Promise<AccountUsageRow[]> {
-	const { input: tmInput, output: tmOutput } = getTokenMultipliers();
 	const wExpr = inputHopWeightSqlExpr();
+	const minPaid = sqlMultiplierExpr("input", "hops.model");
+	const moutPaid = sqlMultiplierExpr("output", "hops.model");
 	const dateFilter = since
 		? sql`AND created_at >= ${since}`
 		: sql``;
@@ -65,10 +66,10 @@ export async function getAccountUsageAggregates(
 						k.name AS api_key_name,
 						COALESCE(a.trial_only, false) AS trial_only,
 						COALESCE(k.discord_user_id, hops.api_key_id::text) AS acct_key,
-						(hops.inn * (${sql.raw(wExpr)}) * CASE WHEN COALESCE(a.trial_only, false) THEN 1 ELSE ${tmInput} END) AS input_credit,
-						(hops.outt * CASE WHEN COALESCE(a.trial_only, false) THEN 1 ELSE ${tmOutput} END) AS output_credit
+						(hops.inn * (${sql.raw(wExpr)}) * CASE WHEN COALESCE(a.trial_only, false) THEN 1 ELSE ${sql.raw(minPaid)} END) AS input_credit,
+						(hops.outt * CASE WHEN COALESCE(a.trial_only, false) THEN 1 ELSE ${sql.raw(moutPaid)} END) AS output_credit
 					FROM (
-						SELECT api_key_id, turn_id,
+						SELECT api_key_id, turn_id, model,
 							(COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
 							COALESCE(completion_tokens, 0)::float8 AS outt,
 							ROW_NUMBER() OVER (

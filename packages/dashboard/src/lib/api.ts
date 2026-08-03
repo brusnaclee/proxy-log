@@ -1004,6 +1004,27 @@ export const stats = {
     if (apiKeyId && apiKeyId > 0) q.set("api_key_id", String(apiKeyId));
     return request<any[]>(`/stats/timeseries?${q.toString()}`);
   },
+  /** Limit-credit totals for one key + period (same formula as gates). */
+  periodSummary: (period: string, apiKeyId: number) => {
+    const q = new URLSearchParams();
+    q.set("period", period);
+    q.set("api_key_id", String(apiKeyId));
+    return request<{
+      period: string;
+      apiKeyId: number;
+      requests: number;
+      apiCalls: number;
+      tokens: number;
+      promptTokens: number;
+      peakPromptTokens: number;
+      billablePromptTokens: number;
+      cachedTokens: number;
+      fullInputTokens: number;
+      completionTokens: number;
+      contextTokens: number;
+      estimatedCost: number;
+    }>(`/stats/period-summary?${q.toString()}`);
+  },
   userDetail: (discordUserId: string) =>
     request<any>(`/internal/stats/user-detail/${encodeURIComponent(discordUserId)}`),
 };

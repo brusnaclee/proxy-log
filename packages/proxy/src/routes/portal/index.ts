@@ -8,8 +8,7 @@ import { eq, sql, and, desc } from "drizzle-orm";
 import { generateApiKey, getKeyPrefix, sha256, maskKey } from "../../utils/crypto.js";
 import { createPortalSession, destroyPortalSession, getPortalDiscordUserId, resolvePortalDiscordUserId, getPortalSessionRawId } from "../../middleware/portal-session.js";
 import { destroyAllAuthSessions, destroyAuthSessionById, destroyOtherAuthSessions, listAuthSessions } from "../../utils/auth-sessions.js";
-import { resolvePeriodRange, chartDaysForPeriod, type PeriodKey, turnCountSql, hopCountSql, peakPromptTokensSql, turnCompletionTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, hopFullInputTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, modelLimitCreditBreakdownSql, BILLABLE_LOG_SQL } from "../../utils/counting.js";
-import { getTokenMultipliers } from "../../utils/token-multiplier.js";
+import { resolvePeriodRange, chartDaysForPeriod, type PeriodKey, turnCountSql, hopCountSql, peakPromptTokensSql, turnCompletionTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, hopFullInputTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, modelLimitCreditBreakdownSql, hopWeightedTimeseriesSql, BILLABLE_LOG_SQL } from "../../utils/counting.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { getRecapWindow } from "../../utils/recap-window.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
@@ -802,33 +801,25 @@ portal.get("/stats/overview", async (c) => {
     count: sql<number>`COALESCE(SUM(CASE WHEN actual_tool_calls_in_response = true THEN 1 ELSE 0 END), 0)`,
   }).from(requestLogs).where(pw))[0];
 
-  // Cost breakdown by model
+  // Cost breakdown by model — same limit-credit rows as by-model / gates
   const range = resolvePeriodRange(period);
-  const breakdownRows = sanitizeRows((await db.execute(sql`
-    SELECT model,
-      COALESCE(SUM(sum_delta), 0) as "promptTokens",
-      COALESCE(SUM(sum_c), 0) as "completionTokens"
-    FROM (
-      SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model, turn_id,
-        ${sql.raw(groupedInputSumSql())} as sum_delta,
-        SUM(completion_tokens) as sum_c
-      FROM request_logs
-      WHERE api_key_id IN (${userApiKeyIds(discordUserId)})
-        AND created_at >= ${range.start}
-        ${range.end ? sql`AND created_at <= ${range.end}` : sql``}
-        AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY model, turn_id
-    ) sub
-    GROUP BY model
-  `)).rows as any[], ["promptTokens", "completionTokens"]);
+  const costWhere = sql`
+    api_key_id IN (${userApiKeyIds(discordUserId)})
+    AND created_at >= ${range.start}
+    ${range.end ? sql`AND created_at <= ${range.end}` : sql``}
+    AND status_code BETWEEN 200 AND 299
+  `;
+  const breakdownRows = sanitizeRows(
+    (await db.execute(modelLimitCreditBreakdownSql(costWhere, { isTrial, limit: 50 }))).rows as any[],
+    ["promptTokens", "completionTokens", "tokens"],
+  );
 
-  const { input, output } = getTokenMultipliers({ isTrial });
   let promptCost = 0;
   let completionCost = 0;
   for (const row of breakdownRows) {
     const rates = getModelRates(row.model || "");
-    promptCost += Math.round(row.promptTokens * input * rates.prompt);
-    completionCost += Math.round(row.completionTokens * output * rates.completion);
+    promptCost += Math.round(row.promptTokens * rates.prompt);
+    completionCost += Math.round(row.completionTokens * rates.completion);
   }
 
   return c.json({
@@ -853,41 +844,24 @@ portal.get("/stats/timeseries", async (c) => {
   const range = resolvePeriodRange(period);
   const days = chartDaysForPeriod(period);
   const isTrial = await statsIsTrial(discordUserId);
-  const { input, output } = getTokenMultipliers({ isTrial });
 
   const groupExpr = days <= 1
     ? sql`to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD HH24:00')`
     : sql`to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD')`;
 
-  const rows = sanitizeRows((await db.execute(sql`
-    SELECT period_group as period,
-      COUNT(*) as requests,
-      COALESCE(SUM(hop_count), 0) as "apiCalls",
-      COALESCE(SUM(sum_delta + sum_c), 0) as tokens,
-      COALESCE(SUM(sum_delta), 0) as "promptTokens",
-      COALESCE(SUM(sum_c), 0) as "completionTokens"
-    FROM (
-      SELECT ${groupExpr} as period_group, turn_id,
-        COUNT(*)::int as hop_count,
-        ${sql.raw(groupedInputSumSql())} as sum_delta,
-        SUM(completion_tokens) as sum_c
-      FROM request_logs
-      WHERE api_key_id IN (${userApiKeyIds(discordUserId)})
-        AND created_at >= ${range.start}
-        ${range.end ? sql`AND created_at <= ${range.end}` : sql``}
-        AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL
-      GROUP BY ${groupExpr}, turn_id
-    ) sub
-    GROUP BY period_group
-    ORDER BY period_group
-  `)).rows as any[], ["requests", "apiCalls", "tokens", "promptTokens", "completionTokens"]);
+  const whereExtra = sql`
+    api_key_id IN (${userApiKeyIds(discordUserId)})
+    AND created_at >= ${range.start}
+    ${range.end ? sql`AND created_at <= ${range.end}` : sql``}
+    AND status_code BETWEEN 200 AND 299
+  `;
 
-  return c.json(rows.map((r: any) => ({
-    ...r,
-    promptTokens: Math.round(r.promptTokens * input),
-    completionTokens: Math.round(r.completionTokens * output),
-    tokens: Math.round(r.promptTokens * input + r.completionTokens * output),
-  })));
+  const rows = sanitizeRows(
+    (await db.execute(hopWeightedTimeseriesSql(groupExpr, whereExtra, { isTrial }))).rows as any[],
+    ["requests", "apiCalls", "tokens", "promptTokens", "completionTokens"],
+  );
+
+  return c.json(rows);
 });
 
 portal.get("/stats/by-model", async (c) => {

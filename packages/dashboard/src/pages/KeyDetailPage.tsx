@@ -75,21 +75,25 @@ export default function KeyDetailPage() {
   const [selectedSessionDetail, setSelectedSessionDetail] = useState<SessionDetailResponse | null>(null);
   const [sessionDetailLoading, setSessionDetailLoading] = useState(false);
 
-  // One period for stat cards + usage charts (baked key stats use closest bucket)
-  type StatsPeriod = "today" | "week" | "month" | "allTime";
+  // One period for stat cards + usage charts + logs + models tab
   const [period, setPeriod] = useState<PeriodKey>("today");
-  const statsPeriod: StatsPeriod =
-    period === "today" ? "today"
-    : period === "3d" || period === "7d" ? "week"
-    : period === "30d" || period === "thisMonth" || period === "lastMonth" ? "month"
-    : "allTime";
-
   const [expandedLogId, setExpandedLogId] = useState<number | null>(null);
 
   // Per-key overview charts (same metrics as admin Overview)
   const [chartMetric, setChartMetric] = useState<"prompts" | "apiCalls">("prompts");
   const [keyTimeseries, setKeyTimeseries] = useState<any[]>([]);
   const [keyChartModels, setKeyChartModels] = useState<any[]>([]);
+  const [periodSummary, setPeriodSummary] = useState<{
+    requests: number;
+    apiCalls: number;
+    tokens: number;
+    promptTokens: number;
+    peakPromptTokens: number;
+    fullInputTokens: number;
+    completionTokens: number;
+    contextTokens: number;
+    estimatedCost: number;
+  } | null>(null);
   const [chartsLoading, setChartsLoading] = useState(false);
 
   // Models tab state (period follows page `period`)
@@ -195,15 +199,18 @@ export default function KeyDetailPage() {
     setChartsLoading(true);
     try {
       const days = KEY_CHART_DAYS[period];
-      const [ts, ms] = await Promise.all([
+      const [ts, ms, summary] = await Promise.all([
         stats.timeseries(period, days, keyId, period),
         stats.byModel(days <= 1 ? 1 : days >= 90 ? 0 : days, keyId, period === "allTime" ? undefined : period),
+        stats.periodSummary(period, keyId),
       ]);
       setKeyTimeseries(Array.isArray(ts) ? ts : []);
       setKeyChartModels(Array.isArray(ms) ? ms : []);
+      setPeriodSummary(summary || null);
     } catch {
       setKeyTimeseries([]);
       setKeyChartModels([]);
+      setPeriodSummary(null);
     } finally {
       setChartsLoading(false);
     }
@@ -926,19 +933,20 @@ export API_TIMEOUT_MS=500000`}
           <PeriodSelector value={period} onChange={setPeriod} />
         </div>
         {(() => {
-          // Prefer chart-period totals so cards stay in sync with the shared PeriodSelector.
-          // Fall back to baked today/week/month/allTime buckets while charts load.
-          const baked: KeyPeriodStats = keyData.stats[statsPeriod];
-          const fromCharts = keyTimeseries.length > 0;
-          const sum = (key: string) =>
-            keyTimeseries.reduce((acc, row) => acc + (Number(row?.[key]) || 0), 0);
-          const requests = fromCharts ? sum("requests") : baked.requests;
-          const apiCalls = fromCharts ? sum("apiCalls") : (baked.hopCount || 0);
-          const tokens = fromCharts ? sum("tokens") : baked.tokens;
-          const promptTokens = fromCharts ? sum("promptTokens") : baked.promptTokens;
-          const completionTokens = fromCharts ? sum("completionTokens") : baked.completionTokens;
-          const chartCost = fromCharts ? sum("estimatedCost") : 0;
-          const estimatedCost = chartCost > 0 ? chartCost : baked.estimatedCost;
+          // Limit-credit totals from /stats/period-summary (same formula as gates).
+          // Fall back to baked "today" while loading.
+          const baked: KeyPeriodStats = keyData.stats.today;
+          const s = periodSummary;
+          const requests = s?.requests ?? baked.requests;
+          const apiCalls = s?.apiCalls ?? (baked.hopCount || 0);
+          const tokens = s?.tokens ?? baked.tokens;
+          const promptTokens = s?.promptTokens ?? baked.promptTokens;
+          const completionTokens = s?.completionTokens ?? baked.completionTokens;
+          const peakPromptTokens = s?.peakPromptTokens ?? (baked as any).peakPromptTokens ?? 0;
+          const fullInputTokens = s?.fullInputTokens ?? baked.fullInputTokens ?? 0;
+          const estimatedCost = (s?.estimatedCost && s.estimatedCost > 0)
+            ? s.estimatedCost
+            : baked.estimatedCost;
           return (
             <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-4 gap-5">
               {[
@@ -949,18 +957,18 @@ export API_TIMEOUT_MS=500000`}
                   label: "Input (limit)",
                   value: formatNumber(promptTokens),
                   sub: [
-                    !fromCharts && (baked as any).peakPromptTokens
-                      ? `peak ${formatNumber((baked as any).peakPromptTokens)}`
+                    peakPromptTokens
+                      ? `peak ${formatNumber(peakPromptTokens)}`
                       : null,
-                    !fromCharts && (baked.fullInputTokens || 0) > 0
-                      ? `full ${formatNumber(baked.fullInputTokens || 0)} (amanai)`
+                    fullInputTokens > 0
+                      ? `full ${formatNumber(fullInputTokens)} (amanai)`
                       : null,
                   ]
                     .filter(Boolean)
                     .join(" · ") || undefined,
                 },
                 { label: "Output Tokens", value: formatNumber(completionTokens) },
-                { label: "Context Tokens",value: formatNumber(baked.contextTokens) },
+                { label: "Context Tokens",value: formatNumber(s?.contextTokens ?? baked.contextTokens) },
                 { label: "Est. Cost",     value: `$${(estimatedCost/1e6).toFixed(4)}` },
                 { label: "Devices",       value: keyData.stats.deviceCount.toString() },
               ].map(c => (
