@@ -422,13 +422,15 @@ export async function checkPromptLimit(
     startRaw = (await loadKeyWindowStarts(apiKeyIds)).promptWindowStart;
   }
   const fixed = resolveFixedWindow(startRaw, windowMs, nowMs);
-  if (!fixed.active) {
-    return { allowed: true, remaining: promptLimit, resetMs: 0, used: 0 };
-  }
+  // When cliff start is missing/expired, fall back to sliding last-N so meters
+  // still reflect recent turns (stuck prompt_window_start previously showed 0 forever).
+  const windowStartDate = fixed.active
+    ? new Date(fixed.windowStartMs)
+    : new Date(nowMs - windowMs);
 
-  const windowStartDate = new Date(fixed.windowStartMs);
   const usage = await db.select({
     count: sql<number>`COUNT(DISTINCT ${requestLogs.turnId})`,
+    oldest: sql<string | null>`MIN(${requestLogs.createdAt})`,
   })
     .from(requestLogs)
     .where(and(
@@ -439,10 +441,18 @@ export async function checkPromptLimit(
     ));
 
   const used = Number(usage[0]?.count) || 0;
+  let resetMs = fixed.active ? fixed.resetMs : 0;
+  if (!fixed.active) {
+    const oldestRaw = usage[0]?.oldest;
+    if (oldestRaw) {
+      const oldestMs = parseDbTimestampMs(String(oldestRaw));
+      if (oldestMs) resetMs = Math.max(0, oldestMs + windowMs - nowMs);
+    }
+  }
   return {
     allowed: used < promptLimit,
     remaining: Math.max(0, promptLimit - used),
-    resetMs: fixed.resetMs,
+    resetMs,
     used,
   };
 }
@@ -468,13 +478,13 @@ export async function checkApiCallLimit(
     startRaw = (await loadKeyWindowStarts(apiKeyIds)).rateWindowStart;
   }
   const fixed = resolveFixedWindow(startRaw, windowMs, nowMs);
-  if (!fixed.active) {
-    return { allowed: true, remaining: apiCallLimit, resetMs: 0, used: 0 };
-  }
+  const windowStartDate = fixed.active
+    ? new Date(fixed.windowStartMs)
+    : new Date(nowMs - windowMs);
 
-  const windowStartDate = new Date(fixed.windowStartMs);
   const usage = await db.select({
     count: sql<number>`count(*)`,
+    oldest: sql<string | null>`MIN(${requestLogs.createdAt})`,
   })
     .from(requestLogs)
     .where(and(
@@ -484,10 +494,18 @@ export async function checkApiCallLimit(
     ));
 
   const used = Number(usage[0]?.count) || 0;
+  let resetMs = fixed.active ? fixed.resetMs : 0;
+  if (!fixed.active) {
+    const oldestRaw = usage[0]?.oldest;
+    if (oldestRaw) {
+      const oldestMs = parseDbTimestampMs(String(oldestRaw));
+      if (oldestMs) resetMs = Math.max(0, oldestMs + windowMs - nowMs);
+    }
+  }
   return {
     allowed: used < apiCallLimit,
     remaining: Math.max(0, apiCallLimit - used),
-    resetMs: fixed.resetMs,
+    resetMs,
     used,
   };
 }

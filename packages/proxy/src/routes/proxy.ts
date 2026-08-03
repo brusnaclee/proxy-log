@@ -439,6 +439,20 @@ const sessionHashCache = new Map<string, string>();
 // For tool followups, reuse the same turn_id.
 const turnIdCache = new Map<string, string>();
 
+/** Turn ids already marked is_counted_request in this process (first billable hop only). */
+const promptCountedTurnIds = new Set<string>();
+function markPromptCountedTurn(turnId: string | null | undefined): boolean {
+	if (!turnId) return false;
+	const id = String(turnId);
+	if (promptCountedTurnIds.has(id)) return false;
+	promptCountedTurnIds.add(id);
+	if (promptCountedTurnIds.size > 20_000) {
+		promptCountedTurnIds.clear();
+		promptCountedTurnIds.add(id);
+	}
+	return true;
+}
+
 // Per-device mutex to serialize session resolution.
 // Without this, concurrent requests from the same device can both read "no session"
 // and each create their own session, causing duplicates and miscounts.
@@ -3240,7 +3254,7 @@ proxy.all('/*', async (c) => {
 										responsePreview: clipResponsePreview(
 											finalized.completionText || null,
 										),
-										isCountedRequest: autoIsNewPrompt ? true : false,
+										isCountedRequest: markPromptCountedTurn(autoTurnId),
 										isBillableToken: true,
 										estimatedCost: calculateEstimatedCost(
 											candidate.modelId,
@@ -3280,8 +3294,8 @@ proxy.all('/*', async (c) => {
 										});
 									}
 
-									// Update prompt_window_start for global and per-model limits
-									if (autoIsNewPrompt) {
+									// Open/refresh expired prompt cliff on billable auto hops (not only autoIsNewPrompt).
+									{
 										const autoGlobalWindowStr = keyRecord.promptLimitWindow || config.globalPromptLimitWindow || '30m';
 										const autoGlobalWindowMs = parseRateLimitWindow(autoGlobalWindowStr);
 										let autoGlobalWindowStartMs = 0;
@@ -3292,15 +3306,13 @@ proxy.all('/*', async (c) => {
 										const autoNowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
 										if (!autoGlobalWindowStartMs || autoNowMs >= autoGlobalWindowStartMs + autoGlobalWindowMs) {
 											await tx.update(apiKeys).set({ promptWindowStart: autoNowStr }).where(inArray(apiKeys.id, accountKeyIds));
+											keyRecord.promptWindowStart = autoNowStr;
 										}
-										// Per-model window start — use pattern-aware helper so substring
-										// overrides like "claude" also match the candidate model.
 										const autoNormModel = await normalizeModelForLimit(candidate.modelId);
 										const autoActiveOverride = await findActiveOverrideInTx(tx, keyRecord.id, autoNormModel, [
 											candidate.modelId,
 											`${candidate.provider}/${candidate.modelId}`,
 										]);
-										// Key-scoped only — global patterns use per-key sliding windows.
 										if (autoActiveOverride && autoActiveOverride.scope === 'key') {
 											const autoModelWindowStr = keyRecord.perModelPromptLimitWindow || config.globalPerModelPromptLimitWindow || '30m';
 											const autoModelWindowMs = parseRateLimitWindow(autoModelWindowStr);
@@ -3412,7 +3424,7 @@ proxy.all('/*', async (c) => {
 						responsePreview: clipResponsePreview(
 							responseJson?.choices?.[0]?.message?.content || null,
 						),
-						isCountedRequest: autoIsNewPrompt ? true : false,
+						isCountedRequest: markPromptCountedTurn(autoTurnId),
 						isBillableToken: true,
 					});
 					logEmitter.emit({
@@ -3446,8 +3458,8 @@ proxy.all('/*', async (c) => {
 						});
 					}
 
-					// Update prompt_window_start for global and per-model limits
-					if (autoIsNewPrompt) {
+					// Open/refresh expired prompt cliff on billable auto hops
+					{
 						const autoGlobalWindowStr = keyRecord.promptLimitWindow || config.globalPromptLimitWindow || '30m';
 						const autoGlobalWindowMs = parseRateLimitWindow(autoGlobalWindowStr);
 						let autoGlobalWindowStartMs = 0;
@@ -3458,8 +3470,8 @@ proxy.all('/*', async (c) => {
 						const autoNowStr2 = new Date().toISOString().replace('T', ' ').substring(0, 19);
 						if (!autoGlobalWindowStartMs || autoNowMs2 >= autoGlobalWindowStartMs + autoGlobalWindowMs) {
 							await tx.update(apiKeys).set({ promptWindowStart: autoNowStr2 }).where(inArray(apiKeys.id, accountKeyIds));
+							keyRecord.promptWindowStart = autoNowStr2;
 						}
-						// Per-model window start — pattern-aware
 						const autoNormModel2 = await normalizeModelForLimit(candidate.modelId);
 						const autoActiveOverride2 = await findActiveOverrideInTx(tx, keyRecord.id, autoNormModel2, [
 							candidate.modelId,
@@ -4604,9 +4616,6 @@ proxy.all('/*', async (c) => {
 			return completionTokens > 0 || promptTokens > 0;
 		};
 
-		let counted =
-			isNewPrompt && shouldCountRequest && hasActualContent(logEntry);
-
 		// Calculate billable flat. Every successful request to upstream uses tokens.
 		let isBillableToken = false;
 		if (shouldCountRequest && hasActualContent(logEntry)) {
@@ -4629,15 +4638,19 @@ proxy.all('/*', async (c) => {
 		// Safety net: guarantee turn_id is never null.
 		// Without a turn_id, the request is invisible to all stats queries, charts,
 		// and leaderboards (they all filter on turn_id IS NOT NULL).
-		// If we invent a turn here, this hop IS the turn start — count it toward
-		// prompt limits (otherwise users show 0 prompts while burning tokens).
 		if (!logEntry.turnId) {
 			const fallbackTurnId = `turn_${generateSessionId().slice(0, 16)}`;
 			turnIdCache.set(turnKey, fallbackTurnId);
 			logEntry.turnId = fallbackTurnId;
-			if (shouldCountRequest && hasActualContent(logEntry)) {
-				counted = true;
-			}
+		}
+
+		// First billable hop of each turn counts toward prompt quota / window start.
+		// Gate opens turns via willStartNewTurn (= isNewPrompt || !cachedTurnId); logging
+		// used to require isNewPrompt alone, so sessions with false isNewPrompt never set
+		// is_counted_request — prompt_window_start stayed expired and meters showed 0/N.
+		let counted = false;
+		if (isBillableToken && markPromptCountedTurn(logEntry.turnId)) {
+			counted = true;
 		}
 
 		enqueueLogWrite(async (tx) => {
