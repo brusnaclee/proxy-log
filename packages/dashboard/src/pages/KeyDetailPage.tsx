@@ -75,17 +75,20 @@ export default function KeyDetailPage() {
   const [selectedSessionDetail, setSelectedSessionDetail] = useState<SessionDetailResponse | null>(null);
   const [sessionDetailLoading, setSessionDetailLoading] = useState(false);
 
-  // Stats period filter
+  // One period for stat cards + usage charts (baked key stats use closest bucket)
   type StatsPeriod = "today" | "week" | "month" | "allTime";
-  const [statsPeriod, setStatsPeriod] = useState<StatsPeriod>("allTime");
-  const PERIOD_LABELS: Record<StatsPeriod, string> = { today: "Today", week: "Last 7 Days", month: "Last 30 Days", allTime: "All Time" };
+  const [period, setPeriod] = useState<PeriodKey>("today");
+  const statsPeriod: StatsPeriod =
+    period === "today" ? "today"
+    : period === "3d" || period === "7d" ? "week"
+    : period === "30d" || period === "thisMonth" || period === "lastMonth" ? "month"
+    : "allTime";
 
   // Logs period filter
   const [logsPeriod, setLogsPeriod] = useState<1 | 7 | 30 | 0>(0); // 0 = all
   const [expandedLogId, setExpandedLogId] = useState<number | null>(null);
 
   // Per-key overview charts (same metrics as admin Overview)
-  const [chartPeriod, setChartPeriod] = useState<PeriodKey>("7d");
   const [chartMetric, setChartMetric] = useState<"prompts" | "apiCalls">("prompts");
   const [keyTimeseries, setKeyTimeseries] = useState<any[]>([]);
   const [keyChartModels, setKeyChartModels] = useState<any[]>([]);
@@ -195,18 +198,10 @@ export default function KeyDetailPage() {
     if (!Number.isFinite(keyId) || keyId <= 0) return;
     setChartsLoading(true);
     try {
-      const days = KEY_CHART_DAYS[chartPeriod];
-      const tsperiod = days <= 1 ? "hourly" : "daily";
-      // Prefer named period keys when possible for consistent WIB ranges
-      const periodArg =
-        chartPeriod === "today" || chartPeriod === "3d" || chartPeriod === "7d" ||
-        chartPeriod === "30d" || chartPeriod === "thisMonth" || chartPeriod === "lastMonth" ||
-        chartPeriod === "allTime"
-          ? chartPeriod
-          : tsperiod;
+      const days = KEY_CHART_DAYS[period];
       const [ts, ms] = await Promise.all([
-        stats.timeseries(periodArg, days, keyId),
-        stats.byModel(days <= 1 ? 1 : days >= 90 ? 0 : days, keyId),
+        stats.timeseries(period, days, keyId, period),
+        stats.byModel(days <= 1 ? 1 : days >= 90 ? 0 : days, keyId, period === "allTime" ? undefined : period),
       ]);
       setKeyTimeseries(Array.isArray(ts) ? ts : []);
       setKeyChartModels(Array.isArray(ms) ? ms : []);
@@ -216,7 +211,7 @@ export default function KeyDetailPage() {
     } finally {
       setChartsLoading(false);
     }
-  }, [id, chartPeriod]);
+  }, [id, period]);
 
   useEffect(() => { void loadKeyCharts(); }, [loadKeyCharts]);
 
@@ -925,41 +920,52 @@ export API_TIMEOUT_MS=500000`}
         }}
       />
 
-      {/* Stats Cards with period filter */}
+      {/* Stats + charts share one period control */}
       <div className="space-y-3">
-        <div className="flex items-center gap-2">
-          {(["today","week","month","allTime"] as const).map(p => (
-            <button key={p} onClick={() => setStatsPeriod(p)}
-              className={`px-3 py-1 text-xs rounded transition-colors ${statsPeriod === p ? "bg-primary text-primary-foreground font-medium" : "text-muted-foreground hover:text-foreground border border-border/50"}`}>
-              {PERIOD_LABELS[p]}
-            </button>
-          ))}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold">Usage</h2>
+            <p className="text-[11px] text-muted-foreground">Cards and charts use the same period · this API key only</p>
+          </div>
+          <PeriodSelector value={period} onChange={setPeriod} />
         </div>
         {(() => {
-          const s: KeyPeriodStats = keyData.stats[statsPeriod];
+          // Prefer chart-period totals so cards stay in sync with the shared PeriodSelector.
+          // Fall back to baked today/week/month/allTime buckets while charts load.
+          const baked: KeyPeriodStats = keyData.stats[statsPeriod];
+          const fromCharts = keyTimeseries.length > 0;
+          const sum = (key: string) =>
+            keyTimeseries.reduce((acc, row) => acc + (Number(row?.[key]) || 0), 0);
+          const requests = fromCharts ? sum("requests") : baked.requests;
+          const apiCalls = fromCharts ? sum("apiCalls") : (baked.hopCount || 0);
+          const tokens = fromCharts ? sum("tokens") : baked.tokens;
+          const promptTokens = fromCharts ? sum("promptTokens") : baked.promptTokens;
+          const completionTokens = fromCharts ? sum("completionTokens") : baked.completionTokens;
+          const chartCost = fromCharts ? sum("estimatedCost") : 0;
+          const estimatedCost = chartCost > 0 ? chartCost : baked.estimatedCost;
           return (
             <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-4 gap-5">
               {[
-                { label: "Prompts", value: formatNumber(s.requests), sub: "User turns" },
-                { label: "API Calls", value: formatNumber(s.hopCount || 0), sub: "Upstream hops" },
-                { label: "Total Tokens",  value: formatNumber(s.tokens), sub: "limit in+out" },
+                { label: "Prompts", value: formatNumber(requests), sub: "User turns" },
+                { label: "API Calls", value: formatNumber(apiCalls), sub: "Upstream hops" },
+                { label: "Total Tokens",  value: formatNumber(tokens), sub: "limit in+out" },
                 {
                   label: "Input (limit)",
-                  value: formatNumber(s.promptTokens),
+                  value: formatNumber(promptTokens),
                   sub: [
-                    (s as any).peakPromptTokens
-                      ? `peak ${formatNumber((s as any).peakPromptTokens)}`
+                    !fromCharts && (baked as any).peakPromptTokens
+                      ? `peak ${formatNumber((baked as any).peakPromptTokens)}`
                       : null,
-                    (s.fullInputTokens || 0) > 0
-                      ? `full ${formatNumber(s.fullInputTokens || 0)} (amanai)`
+                    !fromCharts && (baked.fullInputTokens || 0) > 0
+                      ? `full ${formatNumber(baked.fullInputTokens || 0)} (amanai)`
                       : null,
                   ]
                     .filter(Boolean)
                     .join(" · ") || undefined,
                 },
-                { label: "Output Tokens", value: formatNumber(s.completionTokens) },
-                { label: "Context Tokens",value: formatNumber(s.contextTokens) },
-                { label: "Est. Cost",     value: `$${(s.estimatedCost/1e6).toFixed(4)}` },
+                { label: "Output Tokens", value: formatNumber(completionTokens) },
+                { label: "Context Tokens",value: formatNumber(baked.contextTokens) },
+                { label: "Est. Cost",     value: `$${(estimatedCost/1e6).toFixed(4)}` },
                 { label: "Devices",       value: keyData.stats.deviceCount.toString() },
               ].map(c => (
                 <Card key={c.label} className="border-border/50 transition-all duration-200 hover:border-border hover:bg-accent/10">
@@ -975,14 +981,10 @@ export API_TIMEOUT_MS=500000`}
         })()}
       </div>
 
-      {/* Per-key charts ? same Prompts / API Calls / Tokens views as Overview */}
       <div className="space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <div>
-            <h2 className="text-sm font-semibold">Usage charts</h2>
-            <p className="text-[11px] text-muted-foreground">Scoped to this API key only</p>
-          </div>
-          <PeriodSelector value={chartPeriod} onChange={setChartPeriod} />
+        <div>
+          <h2 className="text-sm font-semibold">Usage charts</h2>
+          <p className="text-[11px] text-muted-foreground">Same period as cards above</p>
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <Card className="border-border/50">

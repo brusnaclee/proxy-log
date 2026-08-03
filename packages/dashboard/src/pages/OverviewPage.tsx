@@ -18,13 +18,6 @@ import { useNotify } from "@/components/Notify";
 // ─── Types ────────────────────────────────────────────────────────────────────
 type LocalPeriodKey = "today" | "3d" | "7d" | "30d" | "thisMonth" | "lastMonth" | "allTime";
 
-const PERIOD_OPTS: { key: LocalPeriodKey; label: string }[] = [
-  { key: "today",   label: "Today"    },
-  { key: "7d",     label: "7 Days"   },
-  { key: "30d",    label: "30 Days"  },
-  { key: "allTime", label: "All Time" },
-];
-
 const CHART_DAYS: Record<LocalPeriodKey, number> = {
   today:      1,
   "3d":       3,
@@ -63,9 +56,14 @@ export default function OverviewPage() {
   const [recentError, setRecentError]   = useState<string | null>(null);
   const recentPageRef = useRef(1);
   const [period, setPeriod]             = useState<LocalPeriodKey>("today");
-  const [chartPeriod, setChartPeriod]   = useState<LocalPeriodKey>("7d"); // for charts only
-  const [modelChartDays, setModelChartDays] = useState(7);
   const [chartMetric, setChartMetric]   = useState<"prompts" | "apiCalls">("prompts");
+  /** Model bar chart follows the same period as cards + timeseries. */
+  const modelChartDays =
+    period === "today" ? 1
+    : period === "3d" ? 3
+    : period === "7d" ? 7
+    : period === "30d" || period === "thisMonth" || period === "lastMonth" ? 30
+    : 0;
   const [loading, setLoading]           = useState(true);
   const [refreshing, setRefreshing]     = useState(false);
   const [error, setError]               = useState<string | null>(null);
@@ -110,8 +108,8 @@ export default function OverviewPage() {
       const [ov, allTimeOv, ts, ms] = await Promise.all([
         stats.overview(period),
         period === "allTime" ? Promise.resolve(null) : stats.overview("allTime"),
-        stats.timeseries("daily", CHART_DAYS[chartPeriod], undefined, chartPeriod),
-        stats.byModel(modelChartDays),
+        stats.timeseries("daily", CHART_DAYS[period], undefined, period),
+        stats.byModel(modelChartDays, undefined, period === "allTime" ? undefined : period),
       ]);
       setOverview(ov);
       hasOverviewRef.current = true;
@@ -128,7 +126,7 @@ export default function OverviewPage() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [period, chartPeriod, modelChartDays]);
+  }, [period, modelChartDays]);
 
   const loadRecentLogs = useCallback(async (page: number) => {
     const safePage = Math.max(1, Math.min(page, RECENT_MAX_PAGES));
@@ -464,7 +462,6 @@ export default function OverviewPage() {
               <CardTitle className="text-base font-medium">
                 {chartMetric === "prompts" ? "Prompts Over Time" : "API Calls Over Time"}
               </CardTitle>
-              <PeriodSelector value={chartPeriod} onChange={setChartPeriod} />
             </div>
             <div className="inline-flex rounded-lg border border-border/60 p-0.5 bg-accent/20">
               {([
@@ -515,24 +512,7 @@ export default function OverviewPage() {
         {/* Token Usage by Model */}
         <Card className="border-border/50">
           <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base font-medium">Token Usage by Model</CardTitle>
-              <div className="flex gap-1">
-                {[{ label: "1d", days: 1 }, { label: "7d", days: 7 }, { label: "30d", days: 30 }, { label: "All", days: 0 }].map((o) => (
-                  <button
-                    key={o.days}
-                    onClick={() => setModelChartDays(o.days)}
-                    className={`px-2 py-1 text-xs rounded transition-colors ${
-                      modelChartDays === o.days
-                        ? "bg-accent text-accent-foreground font-medium"
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    {o.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <CardTitle className="text-base font-medium">Token Usage by Model</CardTitle>
           </CardHeader>
           <CardContent>
             <ChartBox>
