@@ -1,5 +1,9 @@
 import { sql, type SQL } from "drizzle-orm";
-import { getTokenMultipliers, type TokenMultiplierOpts } from "./token-multiplier.js";
+import {
+  getTokenMultipliers,
+  sqlMultiplierExpr,
+  type TokenMultiplierOpts,
+} from "./token-multiplier.js";
 import {
   type TokenLimitWeightMode,
   type HopWeightRange,
@@ -140,69 +144,88 @@ export function turnCountSql(whereCondition: SQL | undefined): SQL<number> {
 }
 
 /**
- * Input tokens for stats display (× INPUT_TOKEN_MULTIPLIER) — respects token_input_mode.
+ * Input tokens for stats display (× multipliers, per-model patterns) — respects token_input_mode.
  */
 export function turnPromptTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
-  const { input } = getTokenMultipliers(opts);
+  const min = sql.raw(sqlMultiplierExpr("input", "model", opts));
   if (tokenInputModeCache === "full") {
-    return sql<number>`COALESCE((SELECT SUM(COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) * ${input} FROM request_logs WHERE ${whereCondition!}), 0)`;
+    return sql<number>`COALESCE((SELECT SUM((COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) * ${min}) FROM request_logs WHERE ${whereCondition!}), 0)`;
   }
   if (tokenInputModeCache === "billable") {
+    // Turn-level billable has no single model; use global fallback via orphan model ''.
+    const { input } = getTokenMultipliers(opts);
     return sql<number>`COALESCE((SELECT SUM(sum_delta) * ${input} FROM (SELECT GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
   }
-  // per_turn_peak
-  return sql<number>`COALESCE((SELECT SUM(peak) * ${input} FROM (SELECT MAX(COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) as peak FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
+  // per_turn_peak — multiply using the peak hop's model
+  return sql<number>`COALESCE((SELECT SUM(peak * ${min}) FROM (
+    SELECT DISTINCT ON (turn_id)
+      (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 as peak,
+      model
+    FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL
+    ORDER BY turn_id, (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) DESC, id ASC
+  ) t), 0)`;
 }
 
 /** Always peak input (for admin notes), ignoring token_input_mode. */
 export function peakPromptTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
-  const { input } = getTokenMultipliers(opts);
-  return sql<number>`COALESCE((SELECT SUM(peak) * ${input} FROM (SELECT MAX(COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) as peak FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
+  const min = sql.raw(sqlMultiplierExpr("input", "model", opts));
+  return sql<number>`COALESCE((SELECT SUM(peak * ${min}) FROM (
+    SELECT DISTINCT ON (turn_id)
+      (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 as peak,
+      model
+    FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL
+    ORDER BY turn_id, (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) DESC, id ASC
+  ) t), 0)`;
 }
 
 /** Billable prompt only (excludes cache), × input multiplier. Peak mode: from peak hop per turn. */
 export function turnBillablePromptTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
-  const { input } = getTokenMultipliers(opts);
+  const min = sql.raw(sqlMultiplierExpr("input", "model", opts));
   if (tokenInputModeCache === "per_turn_peak") {
-    return sql<number>`COALESCE((SELECT SUM(p) * ${input} FROM (
-      SELECT DISTINCT ON (turn_id) COALESCE(prompt_tokens, 0) as p
+    return sql<number>`COALESCE((SELECT SUM(p * ${min}) FROM (
+      SELECT DISTINCT ON (turn_id) COALESCE(prompt_tokens, 0)::float8 as p, model
       FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL
-      ORDER BY turn_id, (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) DESC
+      ORDER BY turn_id, (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) DESC, id ASC
     ) t), 0)`;
   }
-  return sql<number>`COALESCE((SELECT SUM(COALESCE(prompt_tokens, 0)) * ${input} FROM request_logs WHERE ${whereCondition!}), 0)`;
+  return sql<number>`COALESCE((SELECT SUM(COALESCE(prompt_tokens, 0) * ${min}) FROM request_logs WHERE ${whereCondition!}), 0)`;
 }
 
 /** Cached tokens sum, × input multiplier. Peak mode: from peak hop per turn. */
 export function turnCachedTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
-  const { input } = getTokenMultipliers(opts);
+  const min = sql.raw(sqlMultiplierExpr("input", "model", opts));
   if (tokenInputModeCache === "per_turn_peak") {
-    return sql<number>`COALESCE((SELECT SUM(c) * ${input} FROM (
-      SELECT DISTINCT ON (turn_id) COALESCE(cached_tokens, 0) as c
+    return sql<number>`COALESCE((SELECT SUM(c * ${min}) FROM (
+      SELECT DISTINCT ON (turn_id) COALESCE(cached_tokens, 0)::float8 as c, model
       FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL
-      ORDER BY turn_id, (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) DESC
+      ORDER BY turn_id, (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) DESC, id ASC
     ) t), 0)`;
   }
-  return sql<number>`COALESCE((SELECT SUM(COALESCE(cached_tokens, 0)) * ${input} FROM request_logs WHERE ${whereCondition!}), 0)`;
+  return sql<number>`COALESCE((SELECT SUM(COALESCE(cached_tokens, 0) * ${min}) FROM request_logs WHERE ${whereCondition!}), 0)`;
 }
 
-/** Completion tokens: SUM(completion) per turn, then SUM × OUTPUT multiplier */
+/** Completion tokens: per-hop × OUTPUT multiplier (pattern-aware). */
 export function turnCompletionTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
-  const { output } = getTokenMultipliers(opts);
-  return sql<number>`COALESCE((SELECT SUM(sum_c) * ${output} FROM (SELECT SUM(completion_tokens) as sum_c FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
+  const mout = sql.raw(sqlMultiplierExpr("output", "model", opts));
+  return sql<number>`COALESCE((SELECT SUM(COALESCE(completion_tokens, 0) * ${mout}) FROM request_logs WHERE ${whereCondition!}), 0)`;
 }
 
 /** Total: mode-aware input + completion, with multipliers. */
 export function turnTotalTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
-  const { input, output } = getTokenMultipliers(opts);
+  const min = sql.raw(sqlMultiplierExpr("input", "model", opts));
+  const mout = sql.raw(sqlMultiplierExpr("output", "model", opts));
   if (tokenInputModeCache === "full") {
-    return sql<number>`COALESCE((SELECT SUM((COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) * ${input} + COALESCE(completion_tokens, 0) * ${output}) FROM request_logs WHERE ${whereCondition!}), 0)`;
+    return sql<number>`COALESCE((SELECT SUM((COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) * ${min} + COALESCE(completion_tokens, 0) * ${mout}) FROM request_logs WHERE ${whereCondition!}), 0)`;
   }
   if (tokenInputModeCache === "billable") {
+    const { input, output } = getTokenMultipliers(opts);
     return sql<number>`COALESCE((SELECT SUM(sum_delta * ${input} + sum_c * ${output}) FROM (SELECT GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta, SUM(completion_tokens) as sum_c FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
   }
-  // per_turn_peak
-  return sql<number>`COALESCE((SELECT SUM(peak * ${input} + sum_c * ${output}) FROM (SELECT MAX(COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) as peak, SUM(completion_tokens) as sum_c FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
+  // per_turn_peak input (peak hop model) + full completion per hop
+  return sql<number>`(
+    ${peakPromptTokensSql(whereCondition, opts)}
+    + ${turnCompletionTokensSql(whereCondition, opts)}
+  )`;
 }
 
 /**
@@ -210,8 +233,8 @@ export function turnTotalTokensSql(whereCondition: SQL | undefined, opts?: Token
  * Independent of token_input_mode — for admin comparison only.
  */
 export function hopFullInputTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
-  const { input } = getTokenMultipliers(opts);
-  return sql<number>`COALESCE((SELECT SUM(COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) * ${input} FROM request_logs WHERE ${whereCondition!}), 0)`;
+  const min = sql.raw(sqlMultiplierExpr("input", "model", opts));
+  return sql<number>`COALESCE((SELECT SUM((COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) * ${min}) FROM request_logs WHERE ${whereCondition!}), 0)`;
 }
 
 /**
@@ -265,13 +288,14 @@ export function weightedHopInputTokensSql(
   if (tokenLimitWeightModeCache === "full") {
     return hopFullInputTokensSql(whereCondition, opts);
   }
-  const { input } = getTokenMultipliers(opts);
+  const min = sql.raw(sqlMultiplierExpr("input", "model", opts));
   const w = inputHopWeightFractionSql();
   return sql<number>`COALESCE((
-    SELECT SUM(inn * (${w}) * ${input})
+    SELECT SUM(inn * (${w}) * ${min})
     FROM (
       SELECT
         (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
+        model,
         ROW_NUMBER() OVER (
           PARTITION BY COALESCE(turn_id, 'orphan-' || id::text)
           ORDER BY created_at ASC, id ASC
@@ -291,7 +315,8 @@ export function weightedHopTotalTokensSql(
   whereCondition: SQL | undefined,
   opts?: TokenMultiplierOpts,
 ): SQL<number> {
-  const { input, output } = getTokenMultipliers(opts);
+  const min = sql.raw(sqlMultiplierExpr("input", "model", opts));
+  const mout = sql.raw(sqlMultiplierExpr("output", "model", opts));
   if (tokenLimitWeightModeCache === "peak") {
     return sql<number>`(
       ${peakPromptTokensSql(whereCondition, opts)}
@@ -301,8 +326,8 @@ export function weightedHopTotalTokensSql(
   if (tokenLimitWeightModeCache === "full") {
     return sql<number>`COALESCE((
       SELECT SUM(
-        (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) * ${input}
-        + COALESCE(completion_tokens, 0) * ${output}
+        (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) * ${min}
+        + COALESCE(completion_tokens, 0) * ${mout}
       )
       FROM request_logs WHERE ${whereCondition!}
     ), 0)`;
@@ -310,13 +335,14 @@ export function weightedHopTotalTokensSql(
   const w = inputHopWeightFractionSql();
   return sql<number>`COALESCE((
     SELECT SUM(
-      (inn * (${w})) * ${input}
-      + outt * ${output}
+      (inn * (${w})) * ${min}
+      + outt * ${mout}
     )
     FROM (
       SELECT
         (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
         COALESCE(completion_tokens, 0)::float8 AS outt,
+        model,
         ROW_NUMBER() OVER (
           PARTITION BY COALESCE(turn_id, 'orphan-' || id::text)
           ORDER BY created_at ASC, id ASC
@@ -347,7 +373,8 @@ export function modelLimitCreditBreakdownSql(
   extraWhere: SQL,
   opts?: TokenMultiplierOpts & { limit?: number },
 ): SQL {
-  const { input, output } = getTokenMultipliers(opts);
+  const min = sql.raw(sqlMultiplierExpr("input", "raw_model", opts));
+  const mout = sql.raw(sqlMultiplierExpr("output", "raw_model", opts));
   const lim =
     opts?.limit && opts.limit > 0 ? sql`LIMIT ${opts.limit}` : sql``;
   const displayModel = sql.raw(DISPLAY_MODEL_SQL_EXPR);
@@ -357,12 +384,13 @@ export function modelLimitCreditBreakdownSql(
       SELECT
         model,
         COUNT(DISTINCT turn_key)::int as requests,
-        COALESCE(SUM(inn * ${input}), 0) as "promptTokens",
-        COALESCE(SUM(outt * ${output}), 0) as "completionTokens",
-        COALESCE(SUM(inn * ${input} + outt * ${output}), 0) as tokens
+        COALESCE(SUM(inn * ${min}), 0) as "promptTokens",
+        COALESCE(SUM(outt * ${mout}), 0) as "completionTokens",
+        COALESCE(SUM(inn * ${min} + outt * ${mout}), 0) as tokens
       FROM (
         SELECT
           ${displayModel} as model,
+          model as raw_model,
           COALESCE(turn_id, 'orphan-' || id::text) as turn_key,
           (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
           COALESCE(completion_tokens, 0)::float8 AS outt
@@ -381,12 +409,13 @@ export function modelLimitCreditBreakdownSql(
     SELECT
       model,
       COUNT(DISTINCT turn_key)::int as requests,
-      COALESCE(SUM(inn * (${sql.raw(w)}) * ${input}), 0) as "promptTokens",
-      COALESCE(SUM(outt * ${output}), 0) as "completionTokens",
-      COALESCE(SUM(inn * (${sql.raw(w)}) * ${input} + outt * ${output}), 0) as tokens
+      COALESCE(SUM(inn * (${sql.raw(w)}) * ${min}), 0) as "promptTokens",
+      COALESCE(SUM(outt * ${mout}), 0) as "completionTokens",
+      COALESCE(SUM(inn * (${sql.raw(w)}) * ${min} + outt * ${mout}), 0) as tokens
     FROM (
       SELECT
         ${displayModel} as model,
+        model as raw_model,
         COALESCE(turn_id, 'orphan-' || id::text) as turn_key,
         (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
         COALESCE(completion_tokens, 0)::float8 AS outt,

@@ -84,8 +84,6 @@ export default function KeyDetailPage() {
     : period === "30d" || period === "thisMonth" || period === "lastMonth" ? "month"
     : "allTime";
 
-  // Logs period filter
-  const [logsPeriod, setLogsPeriod] = useState<1 | 7 | 30 | 0>(0); // 0 = all
   const [expandedLogId, setExpandedLogId] = useState<number | null>(null);
 
   // Per-key overview charts (same metrics as admin Overview)
@@ -94,8 +92,7 @@ export default function KeyDetailPage() {
   const [keyChartModels, setKeyChartModels] = useState<any[]>([]);
   const [chartsLoading, setChartsLoading] = useState(false);
 
-  // Models tab state
-  const [modelTabDays, setModelTabDays] = useState(0); // 0 = all time
+  // Models tab state (period follows page `period`)
   const [modelTabData, setModelTabData] = useState<any[]>([]);
   const [modelTabSort, setModelTabSort] = useState<"tokens" | "requests">("tokens");
   const [modelTabLoading, setModelTabLoading] = useState(false);
@@ -144,23 +141,28 @@ export default function KeyDetailPage() {
   // Soft refresh only — avoid hammering /keys on every proxy hop
   useRealtimeSSE(handleSSEMessage, 5000);
 
-  // Load per-key model breakdown
+  // Load per-key model breakdown (same period as Usage cards/charts)
   const loadModelData = useCallback(async () => {
     if (!id) return;
     setModelTabLoading(true);
     try {
-      const data = await stats.byModel(modelTabDays, parseInt(id));
+      const days = KEY_CHART_DAYS[period];
+      const data = await stats.byModel(
+        days <= 1 ? 1 : days >= 90 ? 0 : days,
+        parseInt(id),
+        period === "allTime" ? undefined : period,
+      );
       const sorted = [...data].sort((a, b) =>
         modelTabSort === "tokens" ? b.tokens - a.tokens : b.requests - a.requests
       );
       setModelTabData(sorted);
     } catch {}
     setModelTabLoading(false);
-  }, [id, modelTabDays, modelTabSort]);
+  }, [id, period, modelTabSort]);
 
   useEffect(() => { void loadModelData(); }, [loadModelData]);
 
-  const loadLogs = useCallback(async (period: 0 | 1 | 7 | 30 = 0) => {
+  const loadLogs = useCallback(async () => {
     if (!id) return;
     setKeyLogsLoading(true);
     setKeyLogsError(null);
@@ -168,17 +170,8 @@ export default function KeyDetailPage() {
       const params: Record<string, string> = {
         api_key_id: id,
         limit: "100",
-        // Full rows so expand can show error / request / response previews (like portal Activity)
+        period,
       };
-      if (period === 0) {
-        params.period = "allTime";
-      } else if (period === 1) {
-        params.period = "today";
-      } else if (period === 7) {
-        params.period = "7d";
-      } else if (period === 30) {
-        params.period = "30d";
-      }
       const l = await logs.list(params);
       setKeyLogs(Array.isArray(l?.data) ? l.data : []);
     } catch (err: any) {
@@ -188,9 +181,12 @@ export default function KeyDetailPage() {
     } finally {
       setKeyLogsLoading(false);
     }
-  }, [id]);
+  }, [id, period]);
 
-  useEffect(() => { void loadLogs(logsPeriod); }, [logsPeriod, loadLogs]);
+  useEffect(() => {
+    setExpandedLogId(null);
+    void loadLogs();
+  }, [loadLogs]);
 
   const loadKeyCharts = useCallback(async () => {
     if (!id) return;
@@ -260,7 +256,7 @@ export default function KeyDetailPage() {
     } catch (err) {
       console.error("[KeyDetail] Failed to load devices:", err);
     }
-    void loadLogs(logsPeriod);
+    void loadLogs();
     try {
       const ml = await keys.getModelLimits(parseInt(id));
       setKeyModelLimits(ml.data || []);
@@ -455,7 +451,7 @@ export default function KeyDetailPage() {
 
   const handleExportLogs = () => {
     const dateStr = new Date().toISOString().split("T")[0];
-    const periodLabel = logsPeriod === 0 ? "All Time" : logsPeriod === 1 ? "Today" : `Last ${logsPeriod} Days`;
+    const periodLabel = period;
 
     const sheets = [];
 
@@ -1904,15 +1900,9 @@ export API_TIMEOUT_MS=500000`}
             <CardHeader className="flex flex-row items-center justify-between pb-2 flex-wrap gap-2">
               <div className="flex items-center gap-2 flex-wrap">
                 <CardTitle className="text-base">Request Logs</CardTitle>
-                <div className="flex gap-1">
-                  {([{l:"Today",v:1},{l:"7 Days",v:7},{l:"30 Days",v:30},{l:"All",v:0}] as const).map(o => (
-                    <button key={o.v} onClick={() => { setLogsPeriod(o.v as 0|1|7|30); setExpandedLogId(null); }}
-                      className={`px-2 py-0.5 text-xs rounded transition-colors ${logsPeriod === o.v ? "bg-primary text-primary-foreground font-medium" : "text-muted-foreground hover:text-foreground border border-border/50"}`}>
-                      {o.l}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-[11px] text-muted-foreground w-full sm:w-auto">Click a row to inspect error / request / response</p>
+                <p className="text-[11px] text-muted-foreground w-full sm:w-auto">
+                  Same period as Usage above · click a row to inspect error / request / response
+                </p>
               </div>
               <Button variant="outline" size="sm" onClick={handleExportLogs}>
                 <Download className="h-4 w-4 mr-2" /> Export XLSX
@@ -2286,17 +2276,8 @@ export API_TIMEOUT_MS=500000`}
         <TabsContent value="models">
           {/* Controls */}
           <div className="flex flex-wrap items-center gap-3 mb-4">
-            {/* Period toggle */}
-            <div className="flex gap-1">
-              {([{ label: "Today", days: 1 }, { label: "7 Days", days: 7 }, { label: "30 Days", days: 30 }, { label: "All Time", days: 0 }]).map(o => (
-                <button key={o.days} onClick={() => setModelTabDays(o.days)}
-                  className={`px-2 py-1 text-xs rounded transition-colors ${modelTabDays === o.days ? "bg-accent text-accent-foreground font-medium" : "text-muted-foreground hover:text-foreground"}`}>
-                  {o.label}
-                </button>
-              ))}
-            </div>
-            {/* Sort toggle */}
-            <div className="flex gap-1 ml-2">
+            <p className="text-[11px] text-muted-foreground">Same period as Usage above</p>
+            <div className="flex gap-1 ml-auto">
               {(["tokens", "requests"] as const).map(s => (
                 <button key={s} onClick={() => setModelTabSort(s)}
                   className={`px-2 py-1 text-xs rounded transition-colors ${modelTabSort === s ? "bg-primary text-primary-foreground font-medium" : "text-muted-foreground hover:text-foreground"}`}>

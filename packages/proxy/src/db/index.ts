@@ -210,9 +210,15 @@ export async function initializeDatabase() {
 		await refreshUpstreamScrubSecretsFromDb();
 	} catch (_) {}
 	try {
+		await pool.query(
+			`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS token_multiplier_rules text NOT NULL DEFAULT '[]'`,
+		);
+	} catch (_) {}
+	try {
 		const { setTokenInputModeCache, setTokenLimitWeightConfigCache } = await import('../utils/counting.js');
+		const { setTokenMultiplierRulesCache } = await import('../utils/token-multiplier.js');
 		const modeRow = await pool.query(
-			`SELECT token_input_mode, token_limit_weight_percent, token_limit_weight_mode, token_limit_weight_custom FROM admin_config LIMIT 1`,
+			`SELECT token_input_mode, token_limit_weight_percent, token_limit_weight_mode, token_limit_weight_custom, token_multiplier_rules FROM admin_config LIMIT 1`,
 		);
 		setTokenInputModeCache(modeRow.rows[0]?.token_input_mode);
 		setTokenLimitWeightConfigCache({
@@ -220,6 +226,7 @@ export async function initializeDatabase() {
 			percent: modeRow.rows[0]?.token_limit_weight_percent,
 			custom: modeRow.rows[0]?.token_limit_weight_custom,
 		});
+		setTokenMultiplierRulesCache(modeRow.rows[0]?.token_multiplier_rules);
 	} catch (_) {}
 
 	// Add-ons (assignable model access + quota packs)

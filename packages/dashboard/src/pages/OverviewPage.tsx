@@ -137,7 +137,7 @@ export default function OverviewPage() {
         page: String(safePage),
         limit: String(RECENT_PAGE_SIZE),
         lite: "1",
-        period: "7d",
+        period,
       });
       const rows = Array.isArray(lg?.data) ? lg.data : [];
       setRecentLogs(
@@ -160,7 +160,7 @@ export default function OverviewPage() {
     } finally {
       setRecentLoading(false);
     }
-  }, []);
+  }, [period]);
 
   useEffect(() => { void loadData(); }, [loadData]);
   useEffect(() => { void loadRecentLogs(1); }, [loadRecentLogs]);
@@ -645,7 +645,7 @@ export default function OverviewPage() {
             <p className="text-xs text-muted-foreground">
               {recentLoading
                 ? "Loading…"
-                : `Page ${recentPage} of ${recentTotalPages} · ${formatNumber(recentTotal)} in last 7d · ${RECENT_PAGE_SIZE}/page`}
+                : `Page ${recentPage} of ${recentTotalPages} · ${formatNumber(recentTotal)} in selected period · ${RECENT_PAGE_SIZE}/page`}
               {recentTotalPages >= RECENT_MAX_PAGES ? ` (max ${RECENT_MAX_PAGES} pages)` : ""}
             </p>
             <div className="flex gap-1">

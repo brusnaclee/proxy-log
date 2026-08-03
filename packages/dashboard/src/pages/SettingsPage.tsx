@@ -59,6 +59,10 @@ export default function SettingsPage() {
   const [globalDailyOutputTokenLimit, setGlobalDailyOutputTokenLimit] = useState(0);
   const [tokenSaverRtkEnabled, setTokenSaverRtkEnabled] = useState(true);
   const [tokenInputMode, setTokenInputMode] = useState<"per_turn_peak" | "full" | "billable">("per_turn_peak");
+  const [tokenMultiplierGlobal, setTokenMultiplierGlobal] = useState({ input: 1, output: 1 });
+  const [tokenMultiplierRules, setTokenMultiplierRules] = useState<
+    Array<{ pattern: string; input: string; output: string }>
+  >([]);
   const [tokenSaverRtkMaxChars, setTokenSaverRtkMaxChars] = useState(2000);
   const [tokenSaverRtkMode, setTokenSaverRtkMode] = useState("preset");
   const [tokenSaverRtkLevel, setTokenSaverRtkLevel] = useState("balanced");
@@ -225,6 +229,19 @@ export default function SettingsPage() {
           ? g.tokenInputMode
           : "per_turn_peak",
       );
+      setTokenMultiplierGlobal({
+        input: Number(g.tokenMultiplierGlobal?.input) || 1,
+        output: Number(g.tokenMultiplierGlobal?.output) || 1,
+      });
+      setTokenMultiplierRules(
+        Array.isArray(g.tokenMultiplierRules)
+          ? g.tokenMultiplierRules.map((r) => ({
+              pattern: String(r.pattern || ""),
+              input: r.input == null ? "" : String(r.input),
+              output: r.output == null ? "" : String(r.output),
+            }))
+          : [],
+      );
       setTokenSaverRtkEnabled(g.tokenSaverRtkEnabled ?? true);
       setTokenSaverRtkMaxChars(g.tokenSaverRtkMaxChars ?? 2000);
       setTokenSaverRtkMode(g.tokenSaverRtkMode || "preset");
@@ -359,6 +376,13 @@ export default function SettingsPage() {
         tokenLimitWeightPercent,
         tokenLimitWeightMode,
         tokenLimitWeightCustom,
+        tokenMultiplierRules: tokenMultiplierRules
+          .map((r) => ({
+            pattern: r.pattern.trim(),
+            input: r.input.trim() === "" ? null : Number(r.input),
+            output: r.output.trim() === "" ? null : Number(r.output),
+          }))
+          .filter((r) => r.pattern),
         addonRequiredModels,
         tokenSaverRtkEnabled, tokenSaverRtkMaxChars,
         tokenSaverRtkMode, tokenSaverRtkLevel, tokenSaverRtkCustom,
@@ -921,6 +945,83 @@ export default function SettingsPage() {
                     Peak/full/billable only changes how input is shown in analytics, Discord, and Key Detail.
                   </p>
                 </div>
+
+                <div className="md:col-span-2 space-y-2 border border-border/50 rounded-lg p-3">
+                  <div>
+                    <Label className="text-sm font-medium">Token multipliers (quota credit)</Label>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      Global base from env: input <b>{tokenMultiplierGlobal.input}×</b> · output{" "}
+                      <b>{tokenMultiplierGlobal.output}×</b>. Pattern rules override per model substring
+                      (first match wins). Empty In/Out = inherit global. Applies to limit gates + stats
+                      (raw logs stay unscaled). Trial keys always 1×.
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    {tokenMultiplierRules.map((row, idx) => (
+                      <div key={idx} className="grid grid-cols-[1fr_72px_72px_auto] gap-2 items-center">
+                        <Input
+                          value={row.pattern}
+                          placeholder="pattern e.g. claude"
+                          onChange={(e) => {
+                            const next = [...tokenMultiplierRules];
+                            next[idx] = { ...next[idx], pattern: e.target.value };
+                            setTokenMultiplierRules(next);
+                          }}
+                        />
+                        <Input
+                          type="number"
+                          min={0}
+                          step="any"
+                          value={row.input}
+                          placeholder="In"
+                          title="Input multiplier (blank = global)"
+                          onChange={(e) => {
+                            const next = [...tokenMultiplierRules];
+                            next[idx] = { ...next[idx], input: e.target.value };
+                            setTokenMultiplierRules(next);
+                          }}
+                        />
+                        <Input
+                          type="number"
+                          min={0}
+                          step="any"
+                          value={row.output}
+                          placeholder="Out"
+                          title="Output multiplier (blank = global)"
+                          onChange={(e) => {
+                            const next = [...tokenMultiplierRules];
+                            next[idx] = { ...next[idx], output: e.target.value };
+                            setTokenMultiplierRules(next);
+                          }}
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() =>
+                            setTokenMultiplierRules(tokenMultiplierRules.filter((_, i) => i !== idx))
+                          }
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setTokenMultiplierRules([
+                        ...tokenMultiplierRules,
+                        { pattern: "", input: "", output: "" },
+                      ])
+                    }
+                  >
+                    Add pattern rule
+                  </Button>
+                </div>
+
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <Label>Daily Input Token Limit</Label>

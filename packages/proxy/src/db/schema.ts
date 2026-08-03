@@ -87,6 +87,12 @@ export const adminConfig = pgTable('admin_config', {
 	monitorAutoMode: text('monitor_auto_mode').notNull().default('notif_only'),
 	/** full = prompt_tokens+cached_tokens (match upstream In); billable = net context_delta */
 	tokenInputMode: text('token_input_mode').notNull().default('per_turn_peak'),
+	/**
+	 * JSON array of per-model token multiplier rules (first match wins).
+	 * Example: [{"pattern":"claude","input":3},{"pattern":"gpt","input":2}]
+	 * Omitted input/output inherits env INPUT/OUTPUT_TOKEN_MULTIPLIER.
+	 */
+	tokenMultiplierRules: text('token_multiplier_rules').notNull().default('[]'),
 	/** JSON string array of model patterns that require an active add-on. Empty = nothing hard-locked. */
 	addonRequiredModels: text('addon_required_models').notNull().default('[]'),
 	/** Discord Pro role — display/social only; no proxy perk */

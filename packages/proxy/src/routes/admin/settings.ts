@@ -7,6 +7,12 @@ import { refreshModelCatalog, getModelCatalogResponse } from "../../utils/model-
 import { configCache, apiKeyCache, statsCache } from "../../utils/cache.js";
 import { enrichModelLimitsWithCatalog } from "../../utils/model-limits-enrich.js";
 import { normalizeTokenInputMode, normalizeTokenLimitWeightPercent, normalizeTokenLimitWeightMode, normalizeHopWeightRanges, serializeHopWeightRanges } from "../../utils/counting.js";
+import {
+  getGlobalTokenMultipliers,
+  normalizeTokenMultiplierRules,
+  serializeTokenMultiplierRules,
+  setTokenMultiplierRulesCache,
+} from "../../utils/token-multiplier.js";
 import { destroyAllAuthSessions } from "../../utils/auth-sessions.js";
 import { destroySession } from "../../middleware/session.js";
 import { authSessions } from "../../db/schema.js";
@@ -38,6 +44,8 @@ settings.get("/settings/global", async (c) => {
     tokenLimitWeightPercent: normalizeTokenLimitWeightPercent((config as any).tokenLimitWeightPercent ?? 100),
     tokenLimitWeightMode: normalizeTokenLimitWeightMode((config as any).tokenLimitWeightMode),
     tokenLimitWeightCustom: normalizeHopWeightRanges((config as any).tokenLimitWeightCustom),
+    tokenMultiplierGlobal: getGlobalTokenMultipliers(),
+    tokenMultiplierRules: normalizeTokenMultiplierRules((config as any).tokenMultiplierRules),
     addonRequiredModels: (() => {
       try {
         const parsed = JSON.parse((config as any).addonRequiredModels || "[]");
@@ -118,6 +126,9 @@ settings.put("/settings/global", async (c) => {
   if (body.tokenLimitWeightCustom !== undefined) {
     updates.tokenLimitWeightCustom = serializeHopWeightRanges(body.tokenLimitWeightCustom);
   }
+  if (body.tokenMultiplierRules !== undefined) {
+    updates.tokenMultiplierRules = serializeTokenMultiplierRules(body.tokenMultiplierRules);
+  }
   if (body.addonRequiredModels !== undefined) {
     const raw = body.addonRequiredModels;
     const list = Array.isArray(raw)
@@ -145,7 +156,8 @@ settings.put("/settings/global", async (c) => {
     updates.tokenInputMode !== undefined ||
     updates.tokenLimitWeightPercent !== undefined ||
     updates.tokenLimitWeightMode !== undefined ||
-    updates.tokenLimitWeightCustom !== undefined
+    updates.tokenLimitWeightCustom !== undefined ||
+    updates.tokenMultiplierRules !== undefined
   ) {
     const { setTokenInputModeCache, setTokenLimitWeightConfigCache } = await import("../../utils/counting.js");
     if (updates.tokenInputMode !== undefined) setTokenInputModeCache(updates.tokenInputMode);
@@ -154,7 +166,10 @@ settings.put("/settings/global", async (c) => {
       percent: updates.tokenLimitWeightPercent,
       custom: updates.tokenLimitWeightCustom,
     });
-    statsCache.clear(); // aggregates depend on input mode / weight
+    if (updates.tokenMultiplierRules !== undefined) {
+      setTokenMultiplierRulesCache(updates.tokenMultiplierRules);
+    }
+    statsCache.clear(); // aggregates depend on input mode / weight / multipliers
   }
   return c.json({ success: true, message: "Global settings updated" });
 });

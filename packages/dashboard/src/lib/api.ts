@@ -846,6 +846,10 @@ export interface GlobalSettings {
   /** Flat % for first_rest_flat / flat_all (0–100) */
   tokenLimitWeightPercent?: number;
   tokenLimitWeightCustom?: { fromHop: number; toHop: number; percent: number }[];
+  /** Env base multipliers (read-only from server). */
+  tokenMultiplierGlobal?: { input: number; output: number };
+  /** Per-model pattern multipliers (first match wins). Omit input/output to inherit global. */
+  tokenMultiplierRules?: Array<{ pattern: string; input?: number | null; output?: number | null }>;
   /** Substring patterns that hard-require an add-on. Empty = Phantom open access. */
   addonRequiredModels?: string[];
   tokenSaverRtkEnabled?: boolean;
