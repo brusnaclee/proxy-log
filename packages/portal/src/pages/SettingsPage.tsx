@@ -15,6 +15,7 @@ import {
   CLASSIC_TOKEN_SAVER_LABEL,
 } from "@/lib/token-saver-copy";
 import { ActiveSessionsPanel } from "@/components/ActiveSessionsPanel";
+import { CollapsibleSection } from "@/components/CollapsibleSection";
 
 const REALTIME_KEY = "portal_realtime_enabled";
 
@@ -418,8 +419,7 @@ export default function SettingsPage() {
       <ActiveSessionsPanel />
 
       {/* Account Info */}
-      <div className="bg-card border border-border rounded-xl p-4">
-        <h2 className="text-sm font-medium text-foreground mb-4">{t("Account")}</h2>
+      <CollapsibleSection id="portal-account" title={t("Account")} defaultOpen={true}>
         <div className="space-y-3">
           <div className="flex items-center justify-between py-2 border-b border-border/40">
             <div className="flex items-center gap-3">
@@ -460,17 +460,21 @@ export default function SettingsPage() {
             </div>
           )}
         </div>
-      </div>
+      </CollapsibleSection>
 
       {/* Token Saver — Groupy + classic */}
-      <div className="bg-card border border-border rounded-xl p-4 border-primary/20">
-        <div className="flex items-center justify-between gap-2 mb-1">
-          <h2 className="text-sm font-medium text-foreground">{t("Token Saver")}</h2>
+      <CollapsibleSection
+        id="portal-token-saver"
+        title={t("Token Saver")}
+        description={TOKEN_SAVER_INTRO.short}
+        defaultOpen={false}
+        className="border-primary/20"
+        badge={
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
             Anti-Waste + Compact + Batch ON
           </span>
-        </div>
-        <p className="text-xs text-muted-foreground mb-4">{TOKEN_SAVER_INTRO.short}</p>
+        }
+      >
         {tsSuccess && (
           <div className="flex items-center gap-2 p-3 bg-green-400/10 border border-green-400/20 rounded-lg text-green-400 text-sm mb-3">
             <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
@@ -593,11 +597,10 @@ export default function SettingsPage() {
         >
           {tsSaving ? "Saving..." : t("Save")}
         </button>
-      </div>
+      </CollapsibleSection>
 
       {/* Language toggle */}
-      <div className="bg-card border border-border rounded-xl p-4">
-        <h2 className="text-sm font-medium text-foreground mb-4">{t("Language")}</h2>
+      <CollapsibleSection id="portal-language" title={t("Language")} icon={<Globe className="w-4 h-4 text-muted-foreground" />} defaultOpen={false}>
         <div className="flex items-center gap-2">
           {(["id", "en"] as Lang[]).map((l) => (
             <button
@@ -614,18 +617,16 @@ export default function SettingsPage() {
             </button>
           ))}
         </div>
-      </div>
+      </CollapsibleSection>
 
       {/* Webhook URL */}
-      <div className="bg-card border border-border rounded-xl p-4">
-        <div className="flex items-center gap-2 mb-2">
-          <Webhook className="w-4 h-4 text-muted-foreground" />
-          <h2 className="text-sm font-medium text-foreground">{t("Webhook URL")}</h2>
-        </div>
-        <p className="text-xs text-muted-foreground mb-4">
-          Receive a webhook notification when your key is rotated or other account events occur.
-        </p>
-
+      <CollapsibleSection
+        id="portal-webhook"
+        title={t("Webhook URL")}
+        description="Receive a webhook notification when your key is rotated or other account events occur."
+        icon={<Webhook className="w-4 h-4 text-muted-foreground" />}
+        defaultOpen={false}
+      >
         {webhookSuccess && (
           <div className="flex items-center gap-2 p-3 bg-green-400/10 border border-green-400/20 rounded-lg text-green-400 text-sm mb-3">
             <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
@@ -668,23 +669,24 @@ export default function SettingsPage() {
             )}
           </div>
         </form>
-      </div>
+      </CollapsibleSection>
 
       {/* Live SSE toggle */}
-      <div className="bg-card border border-border rounded-xl p-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-start gap-3">
-            <Radio className="w-4 h-4 text-muted-foreground mt-0.5" />
-            <div>
-              <h2 className="text-sm font-medium text-foreground">{t("Live Updates")}</h2>
-              <p className="text-xs text-muted-foreground mt-1">
-                Enable server-sent events to receive real-time log updates on the Activity page.
-                Streams from <code className="font-mono text-xs">/portal/api/logs/stream</code>.
-                If the endpoint is unavailable it will silently deactivate.
-              </p>
-            </div>
-          </div>
+      <CollapsibleSection
+        id="portal-live-updates"
+        title={t("Live Updates")}
+        description={
+          <>
+            Enable server-sent events to receive real-time log updates on the Activity page.
+            Streams from <code className="font-mono text-xs">/portal/api/logs/stream</code>.
+            If the endpoint is unavailable it will silently deactivate.
+          </>
+        }
+        icon={<Radio className="w-4 h-4 text-muted-foreground" />}
+        defaultOpen={false}
+        headerActions={
           <button
+            type="button"
             onClick={() => toggleRealtime(!realtimeEnabled)}
             className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
               realtimeEnabled ? "bg-primary" : "bg-muted"
@@ -696,21 +698,30 @@ export default function SettingsPage() {
               realtimeEnabled ? "translate-x-6" : "translate-x-1"
             }`} />
           </button>
-        </div>
+        }
+      >
         {realtimeEnabled && (
-          <div className="mt-3 flex items-center gap-1.5 text-xs text-primary">
+          <div className="flex items-center gap-1.5 text-xs text-primary">
             <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
             Live updates active
           </div>
         )}
-      </div>
+      </CollapsibleSection>
 
       {/* Password Management */}
-      <div className="bg-card border border-border rounded-xl p-4">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-medium text-foreground">{t("Portal Password")}</h2>
-          {passwordState === "set" && (
+      <CollapsibleSection
+        id="portal-password"
+        title={t("Portal Password")}
+        description={
+          passwordState === "none"
+            ? "Set a password to secure your portal session. You can login with either your API key or password."
+            : "Update your password for portal login."
+        }
+        defaultOpen={false}
+        headerActions={
+          passwordState === "set" ? (
             <button
+              type="button"
               onClick={handleRemovePassword}
               disabled={saving}
               className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1"
@@ -718,15 +729,9 @@ export default function SettingsPage() {
               <Trash2 className="w-3 h-3" />
               {t("Remove password")}
             </button>
-          )}
-        </div>
-
-        <p className="text-sm text-muted-foreground mb-4">
-          {passwordState === "none"
-            ? "Set a password to secure your portal session. You can login with either your API key or password."
-            : "Update your password for portal login."}
-        </p>
-
+          ) : null
+        }
+      >
         <form onSubmit={handleSetPassword} className="space-y-4">
           {passwordState === "changing" && (
             <div>
@@ -803,13 +808,14 @@ export default function SettingsPage() {
 
         {passwordState === "set" && (
           <button
+            type="button"
             onClick={() => setPasswordState("changing")}
             className="mt-4 text-sm text-muted-foreground hover:text-foreground"
           >
             {t("Change password")}
           </button>
         )}
-      </div>
+      </CollapsibleSection>
     </div>
   );
 }

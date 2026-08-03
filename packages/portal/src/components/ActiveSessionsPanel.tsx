@@ -3,6 +3,7 @@ import { Monitor, Smartphone, Tablet, Bot, Shield, Trash2, RefreshCw, LogOut } f
 import { api, type PortalSessionRow } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { useNotify } from "@/components/Notify";
+import { CollapsibleSection } from "@/components/CollapsibleSection";
 
 function DeviceIcon({ cls }: { cls?: string | null }) {
   if (cls === "mobile") return <Smartphone className="w-4 h-4" />;
@@ -89,20 +90,17 @@ export function ActiveSessionsPanel() {
   }
 
   return (
-    <div className="bg-card border border-border rounded-xl p-4 border-emerald-500/20">
-      <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
-        <div>
-          <h2 className="text-sm font-medium text-foreground flex items-center gap-2">
-            <Shield className="w-4 h-4 text-emerald-400" />
-            {t("Active sessions")}
-          </h2>
-          <p className="text-xs text-muted-foreground mt-1 max-w-xl">
-            {t(
-              "Devices signed into your portal. Sessions expire after 3 days. Changing password or revoking all signs every device out.",
-            )}
-          </p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
+    <CollapsibleSection
+      id="portal-active-sessions"
+      title={t("Active sessions")}
+      description={t(
+        "Devices signed into your portal. Sessions expire after 3 days. Changing password or revoking all signs every device out.",
+      )}
+      icon={<Shield className="w-4 h-4 text-emerald-400" />}
+      defaultOpen={true}
+      className="border-emerald-500/20"
+      headerActions={
+        <>
           <button
             type="button"
             onClick={() => void load()}
@@ -126,9 +124,9 @@ export function ActiveSessionsPanel() {
             <LogOut className="w-3.5 h-3.5" />
             {t("Sign out everywhere")}
           </button>
-        </div>
-      </div>
-
+        </>
+      }
+    >
       {loading && <p className="text-xs text-muted-foreground">{t("Loading…")}</p>}
       {!loading && rows.length === 0 && (
         <p className="text-xs text-muted-foreground">
@@ -176,6 +174,6 @@ export function ActiveSessionsPanel() {
           </div>
         ))}
       </div>
-    </div>
+    </CollapsibleSection>
   );
 }

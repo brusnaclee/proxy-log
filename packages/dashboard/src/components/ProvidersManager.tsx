@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNotify } from "@/components/Notify";
 import { request } from "@/lib/api";
-import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
+import { CollapsibleCard } from "@/components/CollapsibleCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -356,15 +356,13 @@ export function ProvidersManager() {
   };
 
   return (
-    <Card className="border-border/50 mt-6">
-      <CardHeader>
-        <CardTitle className="text-base">Upstream Providers</CardTitle>
-        <CardDescription>
-          Add upstream + valid API key ? auto-fetch /models into Model Monitor.
-          Key badge shows Valid when probe OK; catalog count shows models ready to Publish ON.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
+    <CollapsibleCard
+      id="settings-upstream-providers"
+      title="Upstream Providers"
+      description="Add upstream + valid API key ? auto-fetch /models into Model Monitor. Key badge shows Valid when probe OK; catalog count shows models ready to Publish ON."
+      defaultOpen={false}
+      className="mt-6"
+    >
         <div className="space-y-4">
           <div className="grid grid-cols-7 gap-2 border-b border-border/50 pb-2 mb-2 text-sm font-medium text-muted-foreground">
             <div className="col-span-1">Name</div>
@@ -735,7 +733,7 @@ export function ProvidersManager() {
                                     notify.error("Check failed: " + e.message);
                                   }
                                 }}
-                                title="Check key · auto-sync /models to Model Monitor"
+                                title="Check key ? auto-sync /models to Model Monitor"
                               >
                                 <RotateCcw className="w-3 h-3" />
                               </Button>
@@ -992,7 +990,6 @@ export function ProvidersManager() {
             <Input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-..." type="password" />
           </div>
         </div>
-      </CardContent>
-    </Card>
+    </CollapsibleCard>
   );
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { settings, logs } from "@/lib/api";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { CollapsibleCard } from "@/components/CollapsibleCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -486,14 +486,12 @@ export default function SettingsPage() {
 
       <div className="space-y-8 max-w-2xl">
       {/* Token Saver — Groupy + classic */}
-      <Card className="border-border/50">
-        <CardHeader>
-          <CardTitle className="text-base">Token Saver</CardTitle>
-          <CardDescription className="text-xs">
-            See <code className="text-xs">docs/features/token_saver.md</code>
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
+      <CollapsibleCard
+        id="settings-token-saver"
+        title="Token Saver"
+        description={<span>See <code className="text-xs">docs/features/token_saver.md</code></span>}
+        defaultOpen={false}
+      >
           <TokenSaverAdminPanel
             state={{
               tokenSaverAntiWasteEnabled,
@@ -567,18 +565,16 @@ export default function SettingsPage() {
               map[key]?.(value);
             }}
           />
-        </CardContent>
-      </Card>
+      </CollapsibleCard>
 
       {/* Global & Upstream Configuration */}
-      <Card className="border-border/50">
-        <CardHeader>
-          <CardTitle className="text-base">Upstream API Configuration</CardTitle>
-          <CardDescription>
-            Configure the upstream AI API endpoint that requests will be forwarded to
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <CollapsibleCard
+        id="settings-upstream-api"
+        title="Upstream API Configuration"
+        description="Configure the upstream AI API endpoint that requests will be forwarded to"
+        defaultOpen={false}
+        contentClassName="space-y-4"
+      >
           <div>
             <div className="flex items-center justify-between p-4 border border-border/50 rounded-lg mb-6">
               <div>
@@ -1532,15 +1528,15 @@ export default function SettingsPage() {
               </p>
             )}
           </div>
-        </CardContent>
-      </Card>
+      </CollapsibleCard>
 
-      <Card className="border-border/50">
-        <CardHeader>
-          <CardTitle className="text-base">Bot & Monitor Configuration</CardTitle>
-          <CardDescription>Configure Discord Bot and Tokito Model Monitoring (Settings apply to proxy and bot logic)</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <CollapsibleCard
+        id="settings-bot-monitor"
+        title="Bot & Monitor Configuration"
+        description="Configure Discord Bot and Tokito Model Monitoring (Settings apply to proxy and bot logic)"
+        defaultOpen={false}
+        contentClassName="space-y-4"
+      >
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <Label>Discord Bot Token</Label>
@@ -1667,8 +1663,7 @@ export default function SettingsPage() {
               ))}
             </div>
           </div>
-        </CardContent>
-      </Card>
+      </CollapsibleCard>
 
       <div className="flex justify-end">
         <Button onClick={handleSaveSettings} disabled={loading} className="w-full md:w-auto">
@@ -1678,12 +1673,13 @@ export default function SettingsPage() {
       </div>
 
       {/* Change Password */}
-      <Card className="border-border/50">
-        <CardHeader>
-          <CardTitle className="text-base">Change Admin Password</CardTitle>
-          <CardDescription>Update your dashboard login password</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <CollapsibleCard
+        id="settings-admin-password"
+        title="Change Admin Password"
+        description="Update your dashboard login password"
+        defaultOpen={false}
+        contentClassName="space-y-4"
+      >
           <div>
             <Label>Current Password</Label>
             <Input
@@ -1717,19 +1713,19 @@ export default function SettingsPage() {
           >
             Change Password
           </Button>
-        </CardContent>
-      </Card>
+      </CollapsibleCard>
 
       {/* Danger Zone */}
-      <Card className="border-red-500/30">
-        <CardHeader>
-          <CardTitle className="text-base text-red-400 flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4" />
-            Danger Zone
-          </CardTitle>
-          <CardDescription>Destructive actions that cannot be undone</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <CollapsibleCard
+        id="settings-danger-zone"
+        title="Danger Zone"
+        description="Destructive actions that cannot be undone"
+        icon={<AlertTriangle className="h-4 w-4" />}
+        titleClassName="text-red-400"
+        className="border-red-500/30"
+        defaultOpen={false}
+        contentClassName="space-y-4"
+      >
           <div className="flex items-center justify-between p-4 border border-red-500/20 rounded-lg">
             <div>
               <p className="text-sm font-medium">Clear Logs &amp; Sessions</p>
@@ -1760,8 +1756,7 @@ export default function SettingsPage() {
               <AlertTriangle className="h-3 w-3 mr-1" /> Nuke Database
             </Button>
           </div>
-        </CardContent>
-      </Card>
+      </CollapsibleCard>
 
       {/* Clear Logs Dialog */}
       </div>

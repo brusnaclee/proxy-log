@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { auditLogsApi, type AdminAuditRow } from "@/lib/api";
 import { formatLogTimeLine } from "@/lib/log-time";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { CollapsibleCard } from "@/components/CollapsibleCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useNotify } from "@/components/Notify";
@@ -38,18 +38,14 @@ export function AdminAuditLogPanel() {
   }, [load]);
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2">
-          <ScrollText className="h-4 w-4" />
-          Admin audit log
-        </CardTitle>
-        <CardDescription>
-          Append-only record of admin logins and mutating actions (providers, keys, models, settings, …).
-          Entries cannot be deleted from the UI. Passwords and API keys are redacted.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
+    <CollapsibleCard
+      id="admin-log-audit"
+      title="Admin audit log"
+      description="Append-only record of admin logins and mutating actions (providers, keys, models, settings, …). Entries cannot be deleted from the UI. Passwords and API keys are redacted."
+      icon={<ScrollText className="h-4 w-4" />}
+      defaultOpen={false}
+      contentClassName="space-y-3"
+    >
         <div className="flex flex-wrap gap-2 items-end">
           <div className="flex gap-1.5 flex-wrap">
             {[
@@ -146,7 +142,6 @@ export function AdminAuditLogPanel() {
             </Button>
           </div>
         </div>
-      </CardContent>
-    </Card>
+    </CollapsibleCard>
   );
 }
