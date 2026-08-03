@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { addonAssignments, addons, adminConfig, type Addon } from "../db/schema.js";
 import { normalizeModelForLimit } from "./rate-limit.js";
@@ -62,17 +62,29 @@ function getAccessMode(a: Addon): AccessMode {
  * Active add-on assignments for a Discord user and/or API key.
  * Role-based eligibility is resolved separately by the bot when assigning;
  * at request time we only honor explicit assignment rows.
+ *
+ * Matching is fail-open across ownership shapes:
+ *   - assignment.discord_user_id = user
+ *   - assignment.api_key_id = given key
+ *   - assignment.api_key_id on ANY sibling key of the same Discord user
+ * Expiry uses SQL NOW() so JS/DB timezone binding cannot false-miss an active pack.
  */
 export async function getActiveAddonsForUser(opts: {
   discordUserId?: string | null;
   apiKeyId?: number | null;
 }): Promise<ActiveAddon[]> {
-  const now = new Date();
   const conditions = [eq(addonAssignments.isActive, true), eq(addons.isActive, true)];
 
   const ownerParts = [];
   if (opts.discordUserId) {
     ownerParts.push(eq(addonAssignments.discordUserId, opts.discordUserId));
+    // Assignments linked only by api_key_id still count for that Discord account
+    ownerParts.push(
+      sql`${addonAssignments.apiKeyId} IN (
+        SELECT id FROM api_keys
+        WHERE discord_user_id = ${opts.discordUserId}
+      )`,
+    );
   }
   if (opts.apiKeyId && opts.apiKeyId > 0) {
     ownerParts.push(eq(addonAssignments.apiKeyId, opts.apiKeyId));
@@ -92,8 +104,8 @@ export async function getActiveAddonsForUser(opts: {
       and(
         ...conditions,
         or(...ownerParts),
-        sql`${addonAssignments.startsAt} <= ${now}`,
-        or(isNull(addonAssignments.expiresAt), gt(addonAssignments.expiresAt, now)),
+        sql`${addonAssignments.startsAt} <= NOW()`,
+        or(isNull(addonAssignments.expiresAt), sql`${addonAssignments.expiresAt} > NOW()`),
       ),
     );
 
@@ -109,6 +121,24 @@ export async function getActiveAddonsForUser(opts: {
     }
   }
   return Array.from(byId.values());
+}
+
+/** Distinct Discord role IDs attached to active add-on catalog packs (e.g. vibecode). */
+export async function listActiveAddonDiscordRoleIds(): Promise<Set<string>> {
+  const rows = await db
+    .select({ roleId: addons.discordRoleId })
+    .from(addons)
+    .where(
+      and(
+        eq(addons.isActive, true),
+        sql`${addons.discordRoleId} IS NOT NULL AND TRIM(${addons.discordRoleId}) <> ''`,
+      ),
+    );
+  return new Set(
+    rows
+      .map((r) => String(r.roleId || "").trim())
+      .filter((id) => /^\d{15,25}$/.test(id)),
+  );
 }
 
 export type AddonHistoryRow = {

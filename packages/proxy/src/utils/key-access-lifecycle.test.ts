@@ -36,6 +36,25 @@ describe("key access stay-alive policy", () => {
 			true,
 		);
 	});
+	it("keeps Pro/Premium user while add-on is active (no Phantom)", () => {
+		assert.equal(
+			shouldKeepKeyAccess({ hasPhantom: false, hasStaff: false, hasActiveAddon: true }),
+			true,
+		);
+	});
+	it("Pro-only without add-on may be disabled when roles confirmed", () => {
+		assert.equal(
+			canDisableKeyAccess({
+				rolesConfirmed: true,
+				shouldKeep: shouldKeepKeyAccess({
+					hasPhantom: false,
+					hasStaff: false,
+					hasActiveAddon: false,
+				}),
+			}),
+			true,
+		);
+	});
 });
 
 describe("fail-open disable guard", () => {

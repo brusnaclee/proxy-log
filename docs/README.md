@@ -31,6 +31,7 @@ Deep dives into specific functionalities and integrations.
 - [Discord Bot Integration](features/discord_bot_integration.md)
 - [Rate Limiting and Tokens](features/rate_limiting_and_tokens.md)
 - [Usage Display Sync (shared vs per-key)](features/usage_display_sync.md)
+- [Key Access Lifecycle (Phantom / Pro / Add-on)](features/key_access_lifecycle.md)
 - [Token Input Modes (peak / full / billable)](features/token_input_modes.md)
 - [Custom Models per Provider](features/custom_models.md)
 - [Quota Guard](features/quota_guard.md)

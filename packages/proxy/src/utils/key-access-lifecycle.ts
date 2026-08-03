@@ -12,7 +12,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { adminConfig, apiKeys } from "../db/schema.js";
-import { getActiveAddonsForUser } from "./addons.js";
+import { getActiveAddonsForUser, listActiveAddonDiscordRoleIds } from "./addons.js";
 import {
 	fetchDiscordMemberRoleIds,
 	parseRoleLimitModes,
@@ -214,15 +214,22 @@ export async function syncUserKeyAccess(
 	}
 
 	const activeAddons = await getActiveAddonsForUser({ discordUserId: uid });
-	const hasActiveAddon = activeAddons.length > 0;
-
 	const r = await resolveRolesForUser(uid, opts?.roleIds, opts?.rolesKnown);
 	const { hasPhantom, hasStaff, rolesConfirmed, resolved } = r;
+
+	// Belt-and-suspenders: Discord pack role (e.g. vibecode) also counts as
+	// active add-on keep — even if assignment row lookup briefly misses.
+	const addonRoleIds = await listActiveAddonDiscordRoleIds();
+	const hasAddonDiscordRole = r.roleIds.some((id) => addonRoleIds.has(String(id)));
+	const hasActiveAddon = activeAddons.length > 0 || hasAddonDiscordRole;
 
 	const accountTier =
 		resolved.primary === "none"
 			? hasActiveAddon
-				? "premium"
+				? // Keep existing Pro/Premium tier when roles weren't returned but pack is active
+					(["pro", "premium"].includes(String(keys[0]?.accountTier || ""))
+						? String(keys[0]?.accountTier)
+						: "premium")
 				: ""
 			: resolved.primary === "staff"
 				? "staff"
@@ -231,7 +238,12 @@ export async function syncUserKeyAccess(
 		(b) => b && b !== "none" && b !== "admin_override",
 	);
 	if (hasActiveAddon && !badges.includes("addon")) badges.push("addon");
-	const limitMode = resolved.limitMode;
+	// Pro/Premium with pack: zero_unless_addon base stays 0; pack supplies quota until expiry
+	const limitMode =
+		resolved.primary === "none" && hasActiveAddon
+			? (keys[0]?.roleLimitMode as "follow_global" | "zero_unless_addon") ||
+				"zero_unless_addon"
+			: resolved.limitMode;
 	const badgesJson = JSON.stringify(badges);
 
 	// Only rewrite badges/tier when Discord roles are confirmed — never wipe on fetch failure
@@ -321,6 +333,31 @@ export async function syncUserKeyAccess(
 		canDisableKeyAccess({ rolesConfirmed, shouldKeep }) &&
 		anyActive
 	) {
+		// Final DB re-check right before disable — never kill a live pack
+		const recheck = await getActiveAddonsForUser({ discordUserId: uid });
+		if (recheck.length > 0) {
+			console.warn(
+				`[key-access] abort disable for ${uid}: recheck found ${recheck.length} active add-on(s)`,
+			);
+			if (anyInactive) {
+				await db
+					.update(apiKeys)
+					.set({ isActive: true, updatedAt: new Date() })
+					.where(and(eq(apiKeys.discordUserId, uid), eq(apiKeys.isTrial, false)));
+			}
+			return {
+				discordUserId: uid,
+				shouldKeep: true,
+				hasPhantom,
+				hasStaff,
+				hasActiveAddon: true,
+				rolesConfirmed,
+				action: anyInactive ? "enabled" : "unchanged",
+				keyIds,
+				reason: "active add-on (pre-disable recheck)",
+			};
+		}
+
 		await db
 			.update(apiKeys)
 			.set({ isActive: false, updatedAt: new Date() })
