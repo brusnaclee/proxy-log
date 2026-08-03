@@ -1042,8 +1042,6 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
       contextTokens: todayStats?.contextTokens || 0,
       estimatedCost: todayStats?.estimatedCost || 0,
       topModels: todayModels,
-      tokenAccountingNote:
-        "Input/Total = limit credit (hop-weighted). Top Models use the same credit.",
     },
     month: {
       requests: monthStats?.requests || 0,
@@ -1056,8 +1054,6 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
       contextTokens: monthStats?.contextTokens || 0,
       estimatedCost: monthStats?.estimatedCost || 0,
       topModels: monthModels,
-      tokenAccountingNote:
-        "Input/Total = limit credit (hop-weighted). Top Models use the same credit.",
     },
   });
 });

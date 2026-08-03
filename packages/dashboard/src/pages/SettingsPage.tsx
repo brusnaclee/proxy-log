@@ -950,10 +950,11 @@ export default function SettingsPage() {
                   <div>
                     <Label className="text-sm font-medium">Token multipliers (quota credit)</Label>
                     <p className="text-[10px] text-muted-foreground mt-0.5">
-                      Global base from env: input <b>{tokenMultiplierGlobal.input}×</b> · output{" "}
+                      <b>Admin only</b> — never shown on client portal or Discord. Global base from env:
+                      input <b>{tokenMultiplierGlobal.input}×</b> · output{" "}
                       <b>{tokenMultiplierGlobal.output}×</b>. Pattern rules override per model substring
-                      (first match wins). Empty In/Out = inherit global. Applies to limit gates + stats
-                      (raw logs stay unscaled). Trial keys always 1×.
+                      (first match wins). Empty In/Out = inherit global. Applies to gates + all user-facing
+                      stats as the only numbers they see. Trial keys always 1×.
                     </p>
                   </div>
                   <div className="space-y-2">

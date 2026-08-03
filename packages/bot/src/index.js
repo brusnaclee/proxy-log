@@ -6225,11 +6225,7 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 			);
 		}
 		if (p.topModels && p.topModels.length > 0) {
-			lines.push(
-				lang === 'id'
-					? '\n**Top Models** _(limit credit)_:'
-					: '\n**Top Models** _(toward limit)_:',
-			);
+			lines.push('\n**Top Models**:');
 			p.topModels.forEach((m) => {
 				const req = Number(m.requests ?? m.count ?? 0);
 				lines.push(

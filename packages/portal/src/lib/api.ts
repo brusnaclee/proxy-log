@@ -155,10 +155,6 @@ export interface MeResponse {
     inputUsed?: number;
     outputUsed?: number;
   }>;
-  multipliers?: {
-    input: number;
-    output: number;
-  };
   deviceUsage?: {
     used: number;
     max: number;

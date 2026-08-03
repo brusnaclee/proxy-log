@@ -9,6 +9,7 @@ import { generateApiKey, getKeyPrefix, sha256, maskKey } from "../../utils/crypt
 import { createPortalSession, destroyPortalSession, getPortalDiscordUserId, resolvePortalDiscordUserId, getPortalSessionRawId } from "../../middleware/portal-session.js";
 import { destroyAllAuthSessions, destroyAuthSessionById, destroyOtherAuthSessions, listAuthSessions } from "../../utils/auth-sessions.js";
 import { resolvePeriodRange, chartDaysForPeriod, type PeriodKey, turnCountSql, hopCountSql, peakPromptTokensSql, turnCompletionTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, hopFullInputTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, modelLimitCreditBreakdownSql, hopWeightedTimeseriesSql, BILLABLE_LOG_SQL } from "../../utils/counting.js";
+import { resolveTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { getRecapWindow } from "../../utils/recap-window.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
@@ -834,7 +835,6 @@ portal.get("/stats/overview", async (c) => {
     sessions: Number(sessionCount?.count) || 0,
     toolCalls: Number(toolCount?.count) || 0,
     cost: { prompt: promptCost, completion: completionCost, total: promptCost + completionCost },
-    tokenAccountingNote: "Input/Total = limit credit (hop-weighted), sama dengan bar Usage Today.",
   });
 });
 
@@ -1428,6 +1428,8 @@ portal.get("/logs", async (c) => {
     range.end ? sql`created_at <= ${range.end}` : sql`1=1`,
   );
 
+  const isTrial = await statsIsTrial(discordUserId);
+
   const rows = await db.select({
     id: requestLogs.id,
     model: requestLogs.model,
@@ -1450,9 +1452,11 @@ portal.get("/logs", async (c) => {
 
   return c.json({
     data: rows.map(r => {
-      const billable = Number(r.promptTokens) || 0;
-      const cached = Number(r.cachedTokens) || 0;
-      const completion = Number(r.completionTokens) || 0;
+      // Same scaled numbers as Overview / gates (never expose raw upstream counts).
+      const { input, output } = resolveTokenMultipliers(r.model, { isTrial });
+      const billable = Math.round((Number(r.promptTokens) || 0) * input);
+      const cached = Math.round((Number(r.cachedTokens) || 0) * input);
+      const completion = Math.round((Number(r.completionTokens) || 0) * output);
       const inputTokens = billable + cached;
       return {
         ...r,
