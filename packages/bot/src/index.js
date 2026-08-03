@@ -425,7 +425,9 @@ async function sendApiCredentialsDm(userId, apiKey, endpoint) {
 			`**Peraturan Penggunaan:**\n` +
 			`• Maksimal device mengikuti setting akun (sering 1 device)\n` +
 			`• Device baru berlebih → key di-rotate otomatis + Discord DM key baru\n` +
-			`• Pesan How to Use lama bisa berisi key usang — pakai Primary di portal bila ragu\n\n` +
+			`• Pesan How to Use lama bisa berisi key usang — pakai Primary di portal bila ragu\n` +
+			`• Limit prompt/API/token **shared** per akun Discord — key tambahan tidak menambah kuota\n` +
+			`• Cek usage: tombol **Usage** di Discord, atau portal Keys (expand card = stats key ini + pool shared)\n\n` +
 			`Simpan key ini baik-baik. Jika bocor, hubungi admin untuk rotate key.`,
 		0x57f287,
 	);
@@ -6340,12 +6342,20 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 	const perKeyBlock =
 		keysToday.length >= 2
 			? (lang === 'id'
-					? `\n\n**🔑 Per key hari ini** _(kontribusi; sisa = shared akun)_\n`
-					: `\n\n**🔑 Per key today** _(contribution; remaining = shared account)_\n`) +
+					? `\n\n**🔑 Per key hari ini** _(kontribusi saja — limit & sisa = shared akun)_\n`
+					: `\n\n**🔑 Per key today** _(contribution only — limits & remaining = shared account)_\n`) +
 				keysToday
 					.map((k) => {
 						const mark = k.isPrimary ? ' ★' : '';
-						return `- \`${k.name}\`${mark}: **${Number(k.requests || 0).toLocaleString()}** prompts · ${formatTokens(k.tokens || 0)} tok`;
+						const api =
+							typeof k.apiCalls === 'number'
+								? ` · **${Number(k.apiCalls).toLocaleString()}** API`
+								: '';
+						const io =
+							k.promptTokens != null || k.completionTokens != null
+								? ` · In ${formatTokens(k.promptTokens || 0)} / Out ${formatTokens(k.completionTokens || 0)}`
+								: '';
+						return `- \`${k.name}\`${mark}: **${Number(k.requests || 0).toLocaleString()}** prompts${api}${io} · total ${formatTokens(k.tokens || 0)}`;
 					})
 					.join('\n')
 			: '';
@@ -6353,8 +6363,8 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 	const sharedNote =
 		(data.accountKeyCount || 0) > 1
 			? lang === 'id'
-				? `\n-# Shared akun · ${data.accountKeyCount} keys — angka Remaining di atas = pool bersama.`
-				: `\n-# Shared account · ${data.accountKeyCount} keys — Remaining above = shared pool.`
+				? `\n-# Shared akun · ${data.accountKeyCount} keys — angka Remaining / Today di atas = pool bersama. Breakdown per key di bawah.`
+				: `\n-# Shared account · ${data.accountKeyCount} keys — Remaining / Today above = shared pool. Per-key breakdown below.`
 			: '';
 
 	const limitSection = trialUser
@@ -6410,7 +6420,14 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 		.setColor(isActive ? 0x57f287 : 0xff6b6b)
 		.addFields(
 			{
-				name: lang === 'id' ? '📅 Hari Ini' : '📅 Today',
+				name:
+					(data.accountKeyCount || 0) > 1
+						? lang === 'id'
+							? '📅 Hari Ini (shared semua key)'
+							: '📅 Today (shared all keys)'
+						: lang === 'id'
+							? '📅 Hari Ini'
+							: '📅 Today',
 				value: periodField(today),
 				inline: true,
 			},

@@ -18,7 +18,7 @@ import {
 } from "../../utils/rate-limit.js";
 import { isInternalRequest } from "../../middleware/session.js";
 import { configCache } from "../../utils/cache.js";
-import { BILLABLE_LOG_SQL, VALID_LOG_SQL, turnCountSql, turnPromptTokensSql, peakPromptTokensSql, turnCompletionTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, modelLimitCreditBreakdownSql, normalizeTokenLimitWeightPercent } from "../../utils/counting.js";
+import { BILLABLE_LOG_SQL, VALID_LOG_SQL, turnCountSql, hopCountSql, turnPromptTokensSql, peakPromptTokensSql, turnCompletionTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, modelLimitCreditBreakdownSql, normalizeTokenLimitWeightPercent } from "../../utils/counting.js";
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import {
   getAccountUsageAggregates,
@@ -715,12 +715,14 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     });
   }
 
-  // Per-key contribution today (when multi-key account)
+  // Per-key contribution today (when multi-key account).
+  // Limits/remaining stay account-shared — these rows are contribution only.
   let keysToday: Array<{
     keyId: number;
     name: string;
     isPrimary: boolean;
     requests: number;
+    apiCalls: number;
     tokens: number;
     promptTokens: number;
     completionTokens: number;
@@ -742,6 +744,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
           await db
             .select({
               requests: turnCountSql(whereClause!),
+              apiCalls: hopCountSql(whereHops!),
               tokens: weightedHopTotalTokensSql(whereHops!, tmOpts),
               promptTokens: weightedHopInputTokensSql(whereHops!, tmOpts),
               completionTokens: turnCompletionTokensSql(whereHops!, tmOpts),
@@ -754,6 +757,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
           name: ak.name || `key-${ak.id}`,
           isPrimary: ak.id === keyId || ak.provisionedBy === "discord",
           requests: Number(s?.requests) || 0,
+          apiCalls: Number(s?.apiCalls) || 0,
           tokens: Number(s?.tokens) || 0,
           promptTokens: Number(s?.promptTokens) || 0,
           completionTokens: Number(s?.completionTokens) || 0,

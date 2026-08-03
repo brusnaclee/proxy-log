@@ -36,6 +36,7 @@ import {
   pickPrimaryNonTrialKey,
   sortKeysPrimaryFirst,
 } from "../../utils/api-key-primary.js";
+import { listAccountDevices } from "../../utils/account-devices.js";
 
 const portal = new Hono();
 
@@ -1358,25 +1359,30 @@ portal.get("/keys/:id/devices", async (c) => {
   const key = (await db.select().from(apiKeys).where(and(eq(apiKeys.id, keyId), eq(apiKeys.discordUserId, discordUserId)))).find(Boolean);
   if (!key) return c.json({ error: "Key not found" }, 404);
 
-  // Account-scoped: device slots are shared across the account's keys, so a
-  // device held by a sibling key still has to be visible here.
-  const devs = (await listAccountDevices(keyId)).slice(0, 50);
-  return c.json(devs.map(d => ({
-    fingerprint: d.fingerprint,
-    fingerprintShort: d.fingerprint.substring(0, 12),
-    deviceName: d.deviceName,
-    ideDetected: d.ideDetected,
-    osDetected: d.osDetected,
-    ipAddress: d.ipAddress,
-    userAgentRaw: d.userAgentRaw ? d.userAgentRaw.substring(0, 80) : null,
-    requestCount: d.requestCount,
-    lastSeen: d.lastSeen,
-    firstSeen: d.firstSeen,
-    isBlocked: d.isBlocked,
-    ownerKeyId: d.ownerKeyId,
-    ownerKeyName: d.ownerKeyName,
-    isCurrentKey: d.isCurrentKey,
-  })));
+  try {
+    // Account-scoped: device slots are shared across the account's keys, so a
+    // device held by a sibling key still has to be visible here.
+    const devs = (await listAccountDevices(keyId)).slice(0, 50);
+    return c.json(devs.map(d => ({
+      fingerprint: d.fingerprint,
+      fingerprintShort: String(d.fingerprint || "").substring(0, 12),
+      deviceName: d.deviceName,
+      ideDetected: d.ideDetected,
+      osDetected: d.osDetected,
+      ipAddress: d.ipAddress,
+      userAgentRaw: d.userAgentRaw ? d.userAgentRaw.substring(0, 80) : null,
+      requestCount: d.requestCount,
+      lastSeen: d.lastSeen,
+      firstSeen: d.firstSeen,
+      isBlocked: d.isBlocked,
+      ownerKeyId: d.ownerKeyId,
+      ownerKeyName: d.ownerKeyName,
+      isCurrentKey: d.isCurrentKey,
+    })));
+  } catch (err: any) {
+    console.error("[portal] listAccountDevices failed:", keyId, err?.message || err);
+    return c.json({ error: err?.message || "Failed to load devices" }, 500);
+  }
 });
 
 portal.delete("/keys/:id/devices/:fingerprint", async (c) => {

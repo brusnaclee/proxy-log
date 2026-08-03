@@ -456,19 +456,27 @@ export default function KeysPage() {
                       ? ` · ${formatNumber(key.tokensToday)} tok`
                       : ""}{" "}
                     today
+                    {(user?.keyCount || 0) > 1
+                      ? lang === "id"
+                        ? " · kontribusi key ini"
+                        : " · this key"
+                      : ""}
                   </span>
                 </div>
 
-                {/* Devices toggle */}
+                {/* Expand: usage detail + devices */}
                 <button
                   onClick={() => loadDevices(key.id)}
                   className="flex items-center gap-1.5 mt-3 text-xs text-primary hover:underline"
                 >
                   {loadingDevices[key.id] ? (
-                    <span>Loading {t("Devices").toLowerCase()}...</span>
+                    <span>Loading...</span>
                   ) : (
                     <>
-                      <span>{devices[key.id]?.length ?? 0} {t("Devices").toLowerCase()}</span>
+                      <span>
+                        {expandedKey === key.id ? t("Hide details") : t("Show usage & devices")}
+                        {devices[key.id] ? ` · ${devices[key.id].length} ${t("Devices").toLowerCase()}` : ""}
+                      </span>
                       {expandedKey === key.id ? (
                         <ChevronUp className="w-3 h-3" />
                       ) : (
@@ -479,11 +487,59 @@ export default function KeysPage() {
                 </button>
               </div>
 
-              {/* Devices list */}
+              {/* Expanded: this-key stats + shared pool + devices */}
               {expandedKey === key.id && (
                 <div className="border-t border-border bg-accent/30">
+                  <div className="p-4 space-y-3 border-b border-border/60">
+                    <div>
+                      <p className="text-xs font-medium text-foreground mb-1">{t("This key today")}</p>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground font-mono">
+                        <span>{key.requestsToday.toLocaleString()} prompts</span>
+                        {typeof key.apiCallsToday === "number" && (
+                          <span>{key.apiCallsToday.toLocaleString()} API</span>
+                        )}
+                        {typeof key.inputToday === "number" && (
+                          <span>In {formatNumber(key.inputToday)}</span>
+                        )}
+                        {typeof key.outputToday === "number" && (
+                          <span>Out {formatNumber(key.outputToday)}</span>
+                        )}
+                        {typeof key.tokensToday === "number" && (
+                          <span>Total {formatNumber(key.tokensToday)}</span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        {t("Contribution only — limits stay on the shared account pool.")}
+                      </p>
+                    </div>
+
+                    {user?.limits && (user.keyCount || 0) > 1 && (
+                      <div>
+                        <p className="text-xs font-medium text-foreground mb-1">{t("Account shared today")}</p>
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground font-mono">
+                          <span>{(user.usageToday?.promptCount || 0).toLocaleString()} prompts</span>
+                          <span>{(user.usageToday?.apiCallCount || 0).toLocaleString()} API</span>
+                          <span>In {formatNumber(user.usageToday?.promptTokens || 0)}</span>
+                          <span>Out {formatNumber(user.usageToday?.completionTokens || 0)}</span>
+                          {user.limits.promptLimit > 0 && (
+                            <span>
+                              pool {Math.max(0, user.limits.promptLimit - (user.usageToday?.promptCount || 0))}
+                              /{user.limits.promptLimit} prompts left
+                            </span>
+                          )}
+                          {(user.limits.rateLimit || 0) > 0 && (
+                            <span>
+                              {Math.max(0, (user.limits.rateLimit || 0) - (user.usageToday?.apiCallCount || 0))}
+                              /{user.limits.rateLimit} API left
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   {loadingDevices[key.id] ? (
-                    <div className="p-4 text-sm text-muted-foreground">Loading...</div>
+                    <div className="p-4 text-sm text-muted-foreground">Loading {t("Devices").toLowerCase()}...</div>
                   ) : deviceError[key.id] ? (
                     <div className="p-4 text-sm text-red-400">{deviceError[key.id]}</div>
                   ) : !devices[key.id]?.length ? (
