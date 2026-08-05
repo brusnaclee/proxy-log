@@ -1,16 +1,29 @@
 import { formatNumber, formatInputBreakdown } from "@/lib/utils";
 import type { LiveUsagePayload } from "@/lib/api";
 
-function formatReset(iso?: string | null) {
-  if (!iso) return "";
-  try {
-    const d = new Date(iso);
-    const hh = String(d.getHours()).padStart(2, "0");
-    const mm = String(d.getMinutes()).padStart(2, "0");
-    return `Resets ${hh}:${mm}`;
-  } catch {
-    return "";
+function formatReset(iso?: string | null, windowFallback?: string | null) {
+  if (iso) {
+    try {
+      const d = new Date(iso);
+      if (!Number.isNaN(d.getTime())) {
+        const hh = String(d.getHours()).padStart(2, "0");
+        const mm = String(d.getMinutes()).padStart(2, "0");
+        const diffMs = d.getTime() - Date.now();
+        let rel = "";
+        if (diffMs > 60_000) {
+          const mins = Math.round(diffMs / 60_000);
+          rel = mins < 60 ? ` · in ${mins}m` : ` · in ${(mins / 60).toFixed(mins % 60 === 0 ? 0 : 1)}h`;
+        } else if (diffMs > 0) {
+          rel = " · soon";
+        }
+        return `Resets ${hh}:${mm}${rel}`;
+      }
+    } catch {
+      /* fall through */
+    }
   }
+  if (windowFallback) return `Resets ${windowFallback} after first use`;
+  return "";
 }
 
 function sourceLabel(src?: string) {
@@ -140,7 +153,7 @@ export function LiveUsageCard({
       remaining: remaining.prompt,
       sublabel: "1 per user prompt · last window",
       source: sourceLabel(limits.promptLimitSource),
-      reset: formatReset(promptResetAt),
+      reset: formatReset(promptResetAt, limits.promptLimitWindow),
     });
   }
   if ((limits.apiCallLimit || 0) > 0) {
@@ -154,7 +167,7 @@ export function LiveUsageCard({
           ? `${formatNumber(usageToday.apiCallCount ?? 0)} in window · ${formatNumber(usageToday.hopCount || 0)} hops today`
           : "every upstream hop · last window",
       source: sourceLabel(limits.apiCallLimitSource),
-      reset: formatReset(apiCallResetAt),
+      reset: formatReset(apiCallResetAt, limits.apiCallLimitWindow || "5h"),
     });
   }
   if (limits.dailyInputTokenLimit > 0) {
@@ -432,14 +445,20 @@ export function LiveUsageCard({
           </p>
           {modelLimits.slice(0, 8).map((m) => (
             <div key={m.model} className="flex items-center justify-between text-xs gap-2">
-              <span className="font-mono text-foreground truncate flex-1">{m.model}</span>
+              <span className="font-mono text-foreground truncate flex-1 min-w-0">{m.model}</span>
               <span
                 className={
-                  m.limit > 0 && m.used >= m.limit ? "text-red-400 shrink-0" : "text-muted-foreground shrink-0"
+                  m.limit > 0 && m.used >= m.limit
+                    ? "text-red-400 shrink-0 text-right"
+                    : "text-muted-foreground shrink-0 text-right"
                 }
               >
                 {m.used} / {m.limit > 0 ? m.limit : "∞"}
                 {m.remaining != null ? ` · ${m.remaining} left` : ""}
+                {(() => {
+                  const r = formatReset(m.resetAt, m.window || limits.perModelPromptLimitWindow);
+                  return r ? ` · ${r}` : "";
+                })()}
               </span>
             </div>
           ))}

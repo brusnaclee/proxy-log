@@ -830,8 +830,9 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     const windowStr = isTrialKey
       ? globalWindow
       : (key.perModelPromptLimitWindow || config?.globalPerModelPromptLimitWindow || "30m");
-    const windowMs = parseRateLimitWindow(windowStr);
-    const resetMs = await getWindowResetMs(promptScopeIds, windowMs, tm.model);
+    const resetMs = mlCheck.resetMs > 0
+      ? mlCheck.resetMs
+      : await getWindowResetMs(promptScopeIds, parseRateLimitWindow(windowStr), tm.model);
     modelUsage.push({
       model: tm.model,
       used: mlCheck.used,
@@ -848,13 +849,23 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   } else if (!bypassPerModelPrompts) {
   for (const am of activeModelLimits) {
     if (!modelUsage.find(m => m.model === am.model)) {
+      const mlCheck = await checkModelPromptLimit(
+        promptScopeIds,
+        am.model,
+        key.perModelPromptLimit || 0,
+        key.perModelPromptLimitWindow || null,
+        config?.globalPerModelPromptLimit || 0,
+        config?.globalPerModelPromptLimitWindow || "30m",
+      );
+      const windowStr = key.perModelPromptLimitWindow || config?.globalPerModelPromptLimitWindow || perModelWindowFallback || "30m";
+      const resetMs = mlCheck.resetMs || 0;
       modelUsage.push({
         model: am.model,
-        used: 0,
-        limit: am.promptLimit,
-        resetMins: 0,
-        resetAt: null,
-        window: perModelWindowFallback
+        used: mlCheck.used,
+        limit: mlCheck.effectiveLimit > 0 ? mlCheck.effectiveLimit : am.promptLimit,
+        resetMins: Math.ceil(resetMs / 60000),
+        resetAt: resetMs > 0 ? new Date(Date.now() + resetMs).toISOString() : null,
+        window: windowStr,
       });
     }
   }

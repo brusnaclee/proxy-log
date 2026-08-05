@@ -410,23 +410,61 @@ export default function OverviewPage() {
                 <p><strong>Status Key:</strong> {searchUserResult.isActive ? 'Aktif' : 'Nonaktif'}</p>
                 <div className="mt-2 space-y-1">
                   <p className="font-semibold">Prompt Limits:</p>
-                  <p>Global: {searchUserResult.promptLimit > 0 ? `${searchUserResult.promptUsed} / ${searchUserResult.promptLimit} (${searchUserResult.promptLimitWindow})` : 'Unlimited'}</p>
+                  <p>
+                    Global: {searchUserResult.promptLimit > 0
+                      ? `${searchUserResult.promptUsed} / ${searchUserResult.promptLimit} (${searchUserResult.promptLimitWindow})`
+                      : "Unlimited"}
+                    {searchUserResult.promptResetAt
+                      ? ` · Resets ${new Date(searchUserResult.promptResetAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                      : searchUserResult.promptLimit > 0
+                        ? ` · Resets ${searchUserResult.promptLimitWindow || "5h"} after first use`
+                        : ""}
+                  </p>
+                  <p>
+                    API: {(searchUserResult.rateLimit || 0) > 0
+                      ? `${searchUserResult.apiCallUsed || 0} / ${searchUserResult.rateLimit} (${searchUserResult.rateLimitWindow || "5h"})`
+                      : "Unlimited"}
+                    {searchUserResult.apiCallResetAt
+                      ? ` · Resets ${new Date(searchUserResult.apiCallResetAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                      : (searchUserResult.rateLimit || 0) > 0
+                        ? ` · Resets ${searchUserResult.rateLimitWindow || "5h"} after first use`
+                        : ""}
+                  </p>
                   <p className="font-semibold mt-1">Per-Model:</p>
                   <ul className="list-disc list-inside pl-4 text-xs">
                     {searchUserResult.modelUsage?.map((m: any) => (
-                      <li key={m.model}><code>{m.model}</code>: {m.used} / {m.limit > 0 ? m.limit : '∞'}</li>
+                      <li key={m.model}>
+                        <code>{m.model}</code>: {m.used} / {m.limit > 0 ? m.limit : "∞"}
+                        {m.resetAt
+                          ? ` · Resets ${new Date(m.resetAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                          : m.window
+                            ? ` · Resets ${m.window} after first use`
+                            : ""}
+                      </li>
                     ))}
                     {(!searchUserResult.modelUsage || searchUserResult.modelUsage.length === 0) && (
-                      <li>Default: {searchUserResult.perModelPromptLimit > 0 ? `${searchUserResult.perModelPromptLimit} (${searchUserResult.perModelPromptLimitWindow})` : 'Unlimited'}</li>
+                      <li>Default: {searchUserResult.perModelPromptLimit > 0 ? `${searchUserResult.perModelPromptLimit} (${searchUserResult.perModelPromptLimitWindow})` : "Unlimited"}</li>
                     )}
                   </ul>
                 </div>
                 <div className="mt-2 space-y-1">
                   <p className="font-semibold">Token Limits (Harian):</p>
-                  <p>Input: {formatNumber(searchUserResult.dailyInputUsed || 0)} / {searchUserResult.dailyInputTokenLimit > 0 ? formatNumber(searchUserResult.dailyInputTokenLimit) : 'Unlimited'}</p>
-                  <p>Output: {formatNumber(searchUserResult.dailyOutputUsed || 0)} / {searchUserResult.dailyOutputTokenLimit > 0 ? formatNumber(searchUserResult.dailyOutputTokenLimit) : 'Unlimited'}</p>
-                  <p>Total: {formatNumber(searchUserResult.dailyTokensUsed || 0)} / {searchUserResult.dailyTokenLimit > 0 ? formatNumber(searchUserResult.dailyTokenLimit) : 'Unlimited'}</p>
-                  <p>Bulanan: {formatNumber(searchUserResult.monthlyTokensUsed || 0)} / {searchUserResult.monthlyTokenLimit > 0 ? formatNumber(searchUserResult.monthlyTokenLimit) : 'Unlimited'}</p>
+                  <p>
+                    Input: {formatNumber(searchUserResult.dailyInputUsed || 0)} / {searchUserResult.dailyInputTokenLimit > 0 ? formatNumber(searchUserResult.dailyInputTokenLimit) : "Unlimited"}
+                    {searchUserResult.dailyResetAt ? ` · Resets ${new Date(searchUserResult.dailyResetAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}
+                  </p>
+                  <p>
+                    Output: {formatNumber(searchUserResult.dailyOutputUsed || 0)} / {searchUserResult.dailyOutputTokenLimit > 0 ? formatNumber(searchUserResult.dailyOutputTokenLimit) : "Unlimited"}
+                    {searchUserResult.dailyResetAt ? ` · Resets ${new Date(searchUserResult.dailyResetAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}
+                  </p>
+                  <p>
+                    Total: {formatNumber(searchUserResult.dailyTokensUsed || 0)} / {searchUserResult.dailyTokenLimit > 0 ? formatNumber(searchUserResult.dailyTokenLimit) : "Unlimited"}
+                    {searchUserResult.dailyResetAt ? ` · Resets ${new Date(searchUserResult.dailyResetAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}
+                  </p>
+                  <p>
+                    Bulanan: {formatNumber(searchUserResult.monthlyTokensUsed || 0)} / {searchUserResult.monthlyTokenLimit > 0 ? formatNumber(searchUserResult.monthlyTokenLimit) : "Unlimited"}
+                    {searchUserResult.monthlyResetAt ? ` · Resets ${new Date(searchUserResult.monthlyResetAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}
+                  </p>
                 </div>
               </div>
             )}

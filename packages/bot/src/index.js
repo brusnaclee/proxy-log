@@ -672,21 +672,26 @@ async function handleAdminCommand(message) {
 				return true;
 			}
 
-			function formatResetTime(isoStr) {
-				if (!isoStr) return '';
-				const unix = Math.floor(new Date(isoStr).getTime() / 1000);
-				return ` (Resets <t:${unix}:t>)`;
+			function formatResetTime(isoStr, windowFallback) {
+				if (isoStr) {
+					const unix = Math.floor(new Date(isoStr).getTime() / 1000);
+					if (Number.isFinite(unix) && unix > 0) {
+						return ` (Resets <t:${unix}:t> · <t:${unix}:R>)`;
+					}
+				}
+				if (windowFallback) return ` (Resets ${windowFallback} after first use)`;
+				return '';
 			}
 
 			const globalLimitStr =
 				data.promptLimit > 0
 					? `${data.promptUsed} / ${data.promptLimit} prompts (${data.promptLimitWindow})` +
-						formatResetTime(data.promptResetAt)
+						formatResetTime(data.promptResetAt, data.promptLimitWindow)
 					: 'Unlimited';
 			const apiCallLimitStr =
 				data.rateLimit > 0
 					? `${data.apiCallUsed || 0} / ${data.rateLimit} API calls (${data.rateLimitWindow})` +
-						formatResetTime(data.apiCallResetAt)
+						formatResetTime(data.apiCallResetAt, data.rateLimitWindow || '5h')
 					: 'Unlimited';
 
 			let modelLimitStr = '';
@@ -699,7 +704,7 @@ async function handleAdminCommand(message) {
 						.map(
 							(m) =>
 								`  • ${m.model}: ${m.used} / ${m.limit > 0 ? m.limit : '∞'}` +
-								formatResetTime(m.resetAt),
+								formatResetTime(m.resetAt, m.window || data.perModelPromptLimitWindow),
 						)
 						.join('\n');
 				}
@@ -722,8 +727,8 @@ async function handleAdminCommand(message) {
 					`ℹ️ *1 prompt = 1 user turn. Tool hops = API calls. Token limit: hop pertama 100%, hop berikutnya % weight (${data.hopWeightPercent ?? 100}%).*\n` +
 					`Daily Token Limits:\n` +
 					`  • Total: ${data.dailyTokenLimit > 0 ? `${formatTokens(data.dailyTokensUsed)} / ${formatTokens(data.dailyTokenLimit)}` : `${formatTokens(data.dailyTokensUsed)} / ∞`}${formatResetTime(data.dailyResetAt)}\n` +
-					`  • Input: ${data.dailyInputTokenLimit > 0 ? `${formatTokens(data.dailyInputUsed)} / ${formatTokens(data.dailyInputTokenLimit)}` : `${formatTokens(data.dailyInputUsed)} / ∞`}\n` +
-					`  • Output: ${data.dailyOutputTokenLimit > 0 ? `${formatTokens(data.dailyOutputUsed)} / ${formatTokens(data.dailyOutputTokenLimit)}` : `${formatTokens(data.dailyOutputUsed)} / ∞`}`,
+					`  • Input: ${data.dailyInputTokenLimit > 0 ? `${formatTokens(data.dailyInputUsed)} / ${formatTokens(data.dailyInputTokenLimit)}` : `${formatTokens(data.dailyInputUsed)} / ∞`}${formatResetTime(data.dailyResetAt)}\n` +
+					`  • Output: ${data.dailyOutputTokenLimit > 0 ? `${formatTokens(data.dailyOutputUsed)} / ${formatTokens(data.dailyOutputTokenLimit)}` : `${formatTokens(data.dailyOutputUsed)} / ∞`}${formatResetTime(data.dailyResetAt)}`,
 			);
 			return true;
 		}
@@ -6107,23 +6112,31 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 	} = data;
 	const displayName = discordUsername || `User ${discordUserId}`;
 
-	function formatResetTime(isoStr) {
-		if (!isoStr) return '';
-		const unix = Math.floor(new Date(isoStr).getTime() / 1000);
-		return ` — Resets <t:${unix}:t> (<t:${unix}:R>)`;
+	function formatResetTime(isoStr, windowFallback) {
+		if (isoStr) {
+			const unix = Math.floor(new Date(isoStr).getTime() / 1000);
+			if (Number.isFinite(unix) && unix > 0) {
+				return ` — Resets <t:${unix}:t> (<t:${unix}:R>)`;
+			}
+		}
+		// No open window yet (0 used) — still tell users the cliff length
+		if (windowFallback) {
+			return ` — Resets ${windowFallback} after first use`;
+		}
+		return '';
 	}
 
 	const globalLimitStr =
 		promptLimit > 0
 			? `**${promptUsed} / ${promptLimit}** prompts (${promptLimitWindow})` +
 				(promptUsed >= promptLimit ? ' 🔴' : '') +
-				formatResetTime(data.promptResetAt)
+				formatResetTime(data.promptResetAt, promptLimitWindow)
 			: '**Unlimited**';
 	const apiCallLimitStr =
 		(data.rateLimit || 0) > 0
 			? `**${data.apiCallUsed || 0} / ${data.rateLimit}** API calls (${data.rateLimitWindow || '5h'})` +
 				((data.apiCallUsed || 0) >= data.rateLimit ? ' 🔴' : '') +
-				formatResetTime(data.apiCallResetAt)
+				formatResetTime(data.apiCallResetAt, data.rateLimitWindow || '5h')
 			: '**Unlimited**';
 
 	let modelLimitStr = '';
@@ -6135,19 +6148,24 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 					(m) =>
 						`- \`${m.model}\`: **${m.used} / ${m.limit > 0 ? m.limit : '∞'}**` +
 						(m.limit > 0 && m.used >= m.limit ? ' 🔴' : '') +
-						formatResetTime(m.resetAt),
+						formatResetTime(
+							m.resetAt,
+							m.window || perModelPromptLimitWindow || promptLimitWindow,
+						),
 				)
 				.join('\n');
 		} else {
 			modelLimitStr =
 				perModelPromptLimit > 0
-					? `Default: **${perModelPromptLimit}** prompts (${perModelPromptLimitWindow})`
+					? `Default: **${perModelPromptLimit}** prompts (${perModelPromptLimitWindow})` +
+						formatResetTime(null, perModelPromptLimitWindow)
 					: '**Unlimited**';
 		}
 	} else {
 		modelLimitStr =
 			perModelPromptLimit > 0
-				? `Default: **${perModelPromptLimit}** prompts (${perModelPromptLimitWindow})`
+				? `Default: **${perModelPromptLimit}** prompts (${perModelPromptLimitWindow})` +
+					formatResetTime(null, perModelPromptLimitWindow)
 				: '**Unlimited**';
 	}
 
