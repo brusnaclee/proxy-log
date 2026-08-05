@@ -456,7 +456,8 @@ export function LiveUsageCard({
                 {m.used} / {m.limit > 0 ? m.limit : "∞"}
                 {m.remaining != null ? ` · ${m.remaining} left` : ""}
                 {(() => {
-                  const r = formatReset(m.resetAt, m.window || limits.perModelPromptLimitWindow);
+                  // Per-model = 00:00 WIB (same as daily tokens), not rolling "after first use"
+                  const r = formatReset(m.resetAt || dailyResetAt);
                   return r ? ` · ${r}` : "";
                 })()}
               </span>

@@ -704,7 +704,7 @@ async function handleAdminCommand(message) {
 						.map(
 							(m) =>
 								`  • ${m.model}: ${m.used} / ${m.limit > 0 ? m.limit : '∞'}` +
-								formatResetTime(m.resetAt, m.window || data.perModelPromptLimitWindow),
+								formatResetTime(m.resetAt || data.dailyResetAt),
 						)
 						.join('\n');
 				}
@@ -6139,6 +6139,7 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 				formatResetTime(data.apiCallResetAt, data.rateLimitWindow || '5h')
 			: '**Unlimited**';
 
+	// Per-model = calendar day (00:00 WIB), same cliff as daily tokens — never "after first use"
 	let modelLimitStr = '';
 	if (modelUsage && modelUsage.length > 0) {
 		const activeModels = modelUsage.filter((m) => m.used > 0 || m.limit > 0);
@@ -6148,24 +6149,21 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 					(m) =>
 						`- \`${m.model}\`: **${m.used} / ${m.limit > 0 ? m.limit : '∞'}**` +
 						(m.limit > 0 && m.used >= m.limit ? ' 🔴' : '') +
-						formatResetTime(
-							m.resetAt,
-							m.window || perModelPromptLimitWindow || promptLimitWindow,
-						),
+						formatResetTime(m.resetAt || data.dailyResetAt),
 				)
 				.join('\n');
 		} else {
 			modelLimitStr =
 				perModelPromptLimit > 0
-					? `Default: **${perModelPromptLimit}** prompts (${perModelPromptLimitWindow})` +
-						formatResetTime(null, perModelPromptLimitWindow)
+					? `Default: **${perModelPromptLimit}** prompts (${perModelPromptLimitWindow || '1d'})` +
+						formatResetTime(data.dailyResetAt)
 					: '**Unlimited**';
 		}
 	} else {
 		modelLimitStr =
 			perModelPromptLimit > 0
-				? `Default: **${perModelPromptLimit}** prompts (${perModelPromptLimitWindow})` +
-					formatResetTime(null, perModelPromptLimitWindow)
+				? `Default: **${perModelPromptLimit}** prompts (${perModelPromptLimitWindow || '1d'})` +
+					formatResetTime(data.dailyResetAt)
 				: '**Unlimited**';
 	}
 

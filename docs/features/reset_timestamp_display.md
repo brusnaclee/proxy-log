@@ -10,7 +10,7 @@ How “when does this meter reset?” is shown on Discord, portal, and admin.
 | Monthly | 1st next month WIB | `monthlyResetAt` |
 | Global prompts | Fixed/sliding **prompt window** (e.g. 5h) from first counted turn | `promptResetAt` when window open; else UI fallback “Resets {window} after first use” |
 | API calls | Same style for hop window | `apiCallResetAt` + same fallback |
-| Per-model prompts | Per-rule window (tease / override) | `modelUsage[].resetAt` / `modelUsageLimits[].resetAt` + `window` fallback |
+| Per-model prompts | **Calendar day 00:00 WIB** (`1d` window) | Gate counts since WIB midnight; UI shows `resetAt` or `dailyResetAt` — **never** “after first use” |
 
 ## Surfaces
 

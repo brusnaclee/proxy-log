@@ -461,7 +461,8 @@ export default function OverviewPage() {
             <div className="pt-2 border-t border-border/50 space-y-1.5">
               <p className="text-xs text-muted-foreground">{t("Per-Model Prompt")}</p>
               {modelLimits.slice(0, 8).map((m) => {
-                const reset = formatReset(m.resetAt, m.window || limits.perModelPromptLimitWindow);
+                // Per-model = 00:00 WIB (same as daily tokens), not rolling "after first use"
+                const reset = formatReset(m.resetAt || user.dailyResetAt);
                 return (
                   <div key={m.model} className="flex items-center justify-between text-xs gap-2">
                     <span className="font-mono text-foreground truncate flex-1 min-w-0">{m.model}</span>

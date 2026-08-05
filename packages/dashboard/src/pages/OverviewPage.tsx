@@ -435,11 +435,9 @@ export default function OverviewPage() {
                     {searchUserResult.modelUsage?.map((m: any) => (
                       <li key={m.model}>
                         <code>{m.model}</code>: {m.used} / {m.limit > 0 ? m.limit : "∞"}
-                        {m.resetAt
-                          ? ` · Resets ${new Date(m.resetAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-                          : m.window
-                            ? ` · Resets ${m.window} after first use`
-                            : ""}
+                        {(m.resetAt || searchUserResult.dailyResetAt)
+                          ? ` · Resets ${new Date(m.resetAt || searchUserResult.dailyResetAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                          : ""}
                       </li>
                     ))}
                     {(!searchUserResult.modelUsage || searchUserResult.modelUsage.length === 0) && (

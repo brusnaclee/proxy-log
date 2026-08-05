@@ -94,6 +94,30 @@ export function parseRateLimitWindow(windowStr: string | null | undefined): numb
   }
 }
 
+/** `1d` per-model windows use calendar midnight WIB, not a sliding 24h from first use. */
+export function isCalendarDayWindow(windowStr: string | null | undefined): boolean {
+  return /^1d$/i.test(String(windowStr || "").trim());
+}
+
+const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
+
+/** Start of today in Asia/Jakarta, as a UTC Date. */
+export function wibTodayStartDate(nowMs = Date.now()): Date {
+  const wibNow = new Date(nowMs + WIB_OFFSET_MS);
+  const midnightWibUtc = Date.UTC(
+    wibNow.getUTCFullYear(),
+    wibNow.getUTCMonth(),
+    wibNow.getUTCDate(),
+  );
+  return new Date(midnightWibUtc - WIB_OFFSET_MS);
+}
+
+/** Ms until next 00:00 Asia/Jakarta. */
+export function msUntilNextWibMidnight(nowMs = Date.now()): number {
+  const start = wibTodayStartDate(nowMs).getTime();
+  return Math.max(0, start + 24 * 60 * 60 * 1000 - nowMs);
+}
+
 /**
  * Normalize model name for per-model limit matching.
  * Strips provider prefixes and extracts base model from auto patterns.
@@ -594,12 +618,16 @@ export async function checkModelPromptLimit(
       : getModelMatchCondition(normalizedModel);
 
   // Key-scoped overrides: fixed cliff via prompt_window_start.
-  // Global overrides: always per-key sliding window — a shared global
-  // prompt_window_start was resetting everyone's count when any user opened a new window.
+  // Global overrides: per-key sliding window — except `1d`, which is calendar
+  // midnight WIB (same cliff as daily token meters).
   let windowStartDate: Date;
   let resetMs = windowMs;
   let useSlidingReset = true;
-  if (source === "override" && activeOverride && activeOverride.scope === "key") {
+  if (isCalendarDayWindow(effectiveWindow)) {
+    windowStartDate = wibTodayStartDate(nowMs);
+    resetMs = msUntilNextWibMidnight(nowMs);
+    useSlidingReset = false;
+  } else if (source === "override" && activeOverride && activeOverride.scope === "key") {
     const fixed = resolveFixedWindow(activeOverride.promptWindowStart, windowMs, nowMs);
     if (!fixed.active) {
       return {
@@ -662,6 +690,11 @@ export async function getWindowResetMs(apiKeyId: number | number[], windowMs: nu
 
   const nowMs = Date.now();
   const apiKeyIds = normalizeKeyIds(apiKeyId);
+
+  // Per-model `1d` = calendar midnight WIB (matches checkModelPromptLimit).
+  if (model && windowMs === 24 * 60 * 60 * 1000) {
+    return msUntilNextWibMidnight(nowMs);
+  }
 
   if (model) {
     const normalizedModel = await normalizeModelForLimit(model);
