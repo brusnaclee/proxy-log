@@ -14,6 +14,9 @@ export const AMANAI_MODEL_MULTIPLIERS: Record<string, AmanaiMultipliers> = {
 	"amanai/gpt-5.4": { mIn: 3.1, mOut: 15.5, mCache: 0.465 },
 	"amanai/claude-haiku-4.5": { mIn: 5.499705, mOut: 27.498525, mCache: 0.824956 },
 	"amanai/claude-sonnet-4.6": { mIn: 12.099791, mOut: 60.498955, mCache: 1.814969 },
+	"amanai/qwen3.8-max-preview": { mIn: 6.03472, mOut: 30.1736, mCache: 0.905208 },
+	"amanai/deepseek-v4-flash": { mIn: 1.5705, mOut: 7.8525, mCache: 0.235575 },
+	"amanai/deepseek-v4-flash-0731": { mIn: 1.5705, mOut: 7.8525, mCache: 0.235575 },
 };
 
 export function resolveAmanaiMultipliers(model: string): AmanaiMultipliers | null {
