@@ -286,7 +286,7 @@ async function fetchTotals(keyIds: number[], start: Date, end: Date, tmOpts?: To
   };
 }
 
-/** Per-model breakdown with latency — hop-weighted input like dashboard Top Models. */
+/** Per-model breakdown with latency — same limit-credit meter as dashboard Top Models. */
 async function fetchModels(keyIds: number[], start: Date, end: Date, tmOpts?: TokenMultiplierOpts): Promise<ModelStat[]> {
   const { input, output } = getTokenMultipliers(tmOpts);
   const w = hopWeightExprSql();
@@ -294,8 +294,14 @@ async function fetchModels(keyIds: number[], start: Date, end: Date, tmOpts?: To
   const rows = (await db.execute(sql`
     SELECT model,
       COUNT(DISTINCT turn_key)::int AS requests,
-      COALESCE(SUM(inn * (${sql.raw(w)}) * ${input}), 0) AS input_tokens,
-      COALESCE(SUM(outt * ${output}), 0) AS output_tokens,
+      COALESCE(SUM(
+        CASE WHEN COALESCE(uc, 0) > 0 THEN uc * (${sql.raw(w)})
+             ELSE inn * (${sql.raw(w)}) * ${input} END
+      ), 0) AS input_tokens,
+      COALESCE(SUM(
+        CASE WHEN COALESCE(uc, 0) > 0 THEN 0::float8
+             ELSE outt * ${output} END
+      ), 0) AS output_tokens,
       COALESCE(AVG(NULLIF(avg_lat, 0)), 0) AS avg_lat
     FROM (
       SELECT
@@ -303,6 +309,7 @@ async function fetchModels(keyIds: number[], start: Date, end: Date, tmOpts?: To
         COALESCE(turn_id, 'orphan-' || id::text) AS turn_key,
         (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
         COALESCE(completion_tokens, 0)::float8 AS outt,
+        COALESCE(upstream_credits, 0)::float8 AS uc,
         NULLIF(latency_ms, 0)::float8 AS avg_lat,
         ROW_NUMBER() OVER (
           PARTITION BY COALESCE(turn_id, 'orphan-' || id::text)
@@ -385,12 +392,16 @@ async function fetchPerDay(keyIds: number[], start: Date, end: Date, tmOpts?: To
   const rows = (await db.execute(sql`
     SELECT day,
       COUNT(DISTINCT turn_key)::int AS requests,
-      COALESCE(SUM(inn * (${sql.raw(w)}) * ${input} + outt * ${output}), 0) AS tokens
+      COALESCE(SUM(
+        CASE WHEN COALESCE(uc, 0) > 0 THEN uc * (${sql.raw(w)})
+             ELSE inn * (${sql.raw(w)}) * ${input} + outt * ${output} END
+      ), 0) AS tokens
     FROM (
       SELECT to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') AS day,
         COALESCE(turn_id, 'orphan-' || id::text) AS turn_key,
         (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
         COALESCE(completion_tokens, 0)::float8 AS outt,
+        COALESCE(upstream_credits, 0)::float8 AS uc,
         ROW_NUMBER() OVER (
           PARTITION BY COALESCE(turn_id, 'orphan-' || id::text)
           ORDER BY created_at ASC, id ASC
@@ -579,12 +590,14 @@ async function fetchKeyBreakdown(keyIds: number[], start: Date, end: Date, tmOpt
     LEFT JOIN (
       SELECT api_key_id,
         turn_key,
-        (inn * (${sql.raw(w)}) * ${input} + outt * ${output}) AS credit
+        CASE WHEN COALESCE(uc, 0) > 0 THEN uc * (${sql.raw(w)})
+             ELSE inn * (${sql.raw(w)}) * ${input} + outt * ${output} END AS credit
       FROM (
         SELECT api_key_id,
           COALESCE(turn_id, 'orphan-' || id::text) AS turn_key,
           (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
           COALESCE(completion_tokens, 0)::float8 AS outt,
+          COALESCE(upstream_credits, 0)::float8 AS uc,
           ROW_NUMBER() OVER (
             PARTITION BY api_key_id, COALESCE(turn_id, 'orphan-' || id::text)
             ORDER BY created_at ASC, id ASC
@@ -734,13 +747,20 @@ export async function getMonthLeaderboard(yearMonth: string): Promise<{
         k.discord_user_id AS discord_user_id,
         k.discord_username AS discord_username,
         k.name AS api_key_name,
-        (hops.inn * (${sql.raw(w)}) * CASE WHEN COALESCE(a.trial_only, false) THEN 1 ELSE ${input} END) AS input_credit,
-        (hops.outt * CASE WHEN COALESCE(a.trial_only, false) THEN 1 ELSE ${output} END) AS output_credit
+        (CASE
+          WHEN COALESCE(hops.uc, 0) > 0 THEN hops.uc * (${sql.raw(w)})
+          ELSE hops.inn * (${sql.raw(w)}) * CASE WHEN COALESCE(a.trial_only, false) THEN 1 ELSE ${input} END
+        END) AS input_credit,
+        (CASE
+          WHEN COALESCE(hops.uc, 0) > 0 THEN 0::float8
+          ELSE hops.outt * CASE WHEN COALESCE(a.trial_only, false) THEN 1 ELSE ${output} END
+        END) AS output_credit
       FROM (
         SELECT api_key_id,
           turn_id,
           (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
           COALESCE(completion_tokens, 0)::float8 AS outt,
+          COALESCE(upstream_credits, 0)::float8 AS uc,
           ROW_NUMBER() OVER (
             PARTITION BY api_key_id, COALESCE(turn_id, 'orphan-' || id::text)
             ORDER BY created_at ASC, id ASC
@@ -824,11 +844,15 @@ async function fetchPerDayTokens(keyIds: number[], start: Date, end: Date): Prom
   const where = billableWhere(keyIds, start, end);
   const rows = (await db.execute(sql`
     SELECT day,
-      COALESCE(SUM(inn * (${sql.raw(w)}) * ${input} + outt * ${output}), 0) AS tokens
+      COALESCE(SUM(
+        CASE WHEN COALESCE(uc, 0) > 0 THEN uc * (${sql.raw(w)})
+             ELSE inn * (${sql.raw(w)}) * ${input} + outt * ${output} END
+      ), 0) AS tokens
     FROM (
       SELECT to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') AS day,
         (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
         COALESCE(completion_tokens, 0)::float8 AS outt,
+        COALESCE(upstream_credits, 0)::float8 AS uc,
         ROW_NUMBER() OVER (
           PARTITION BY COALESCE(turn_id, 'orphan-' || id::text)
           ORDER BY created_at ASC, id ASC

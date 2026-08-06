@@ -490,41 +490,44 @@ internal.get("/internal/stats/ranking", async (c) => {
   const monthDate = monthStartFinal;
 
   async function getTopModelsByRequests(since: Date) {
-    const rows = sanitizeRows((await db.execute(sql`
-      SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta * ${tmInput} + sum_c * ${tmOutput}), 0) as tokens
-      FROM (
-        SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
-          turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
-        FROM request_logs WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299
-        GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
-        UNION ALL
-        SELECT TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
-          turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
-        FROM request_logs WHERE model LIKE 'auto (%)%' AND created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299
-        GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
-      )
-      GROUP BY model ORDER BY count DESC LIMIT 10
-    `)).rows as any[], ['count', 'tokens']);
-    return rows as any[];
+    const rows = sanitizeRows(
+      (
+        await db.execute(
+          modelLimitCreditBreakdownSql(
+            sql`created_at >= ${since} AND status_code BETWEEN 200 AND 299`,
+            { limit: 10 },
+          ),
+        )
+      ).rows as any[],
+      ["requests", "promptTokens", "completionTokens", "tokens"],
+    );
+    return rows
+      .map((r: any) => ({
+        model: r.model,
+        count: Number(r.requests) || 0,
+        tokens: Math.round(Number(r.tokens) || 0),
+      }))
+      .sort((a, b) => b.count - a.count || b.tokens - a.tokens)
+      .slice(0, 10);
   }
 
   async function getTopModelsByTokens(since: Date) {
-    const rows = (await db.execute(sql`
-      SELECT model, COUNT(*) as count, COALESCE(SUM(sum_delta * ${tmInput} + sum_c * ${tmOutput}), 0) as tokens
-      FROM (
-        SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
-          turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
-        FROM request_logs WHERE created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299
-        GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
-        UNION ALL
-        SELECT TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
-          turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
-        FROM request_logs WHERE model LIKE 'auto (%)%' AND created_at >= ${since} AND turn_id IS NOT NULL AND status_code BETWEEN 200 AND 299
-        GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
-      )
-      GROUP BY model ORDER BY tokens DESC LIMIT 10
-    `)).rows;
-    return rows as any[];
+    const rows = sanitizeRows(
+      (
+        await db.execute(
+          modelLimitCreditBreakdownSql(
+            sql`created_at >= ${since} AND status_code BETWEEN 200 AND 299`,
+            { limit: 10 },
+          ),
+        )
+      ).rows as any[],
+      ["requests", "promptTokens", "completionTokens", "tokens"],
+    );
+    return rows.map((r: any) => ({
+      model: r.model,
+      count: Number(r.requests) || 0,
+      tokens: Math.round(Number(r.tokens) || 0),
+    }));
   }
 
   const [

@@ -1,6 +1,7 @@
 /**
  * Transparent Input-toward-limit breakdown from request_logs hops.
- * Shared by live-usage, portal /me, Discord user-detail, admin LiveUsage.
+ * Same meter as gates / Discord Today / portal: upstream_credits when set,
+ * else (prompt+cache)×local input multiplier; hop weights from admin config.
  */
 
 import { sql, type SQL } from "drizzle-orm";
@@ -9,6 +10,7 @@ import {
   getTokenLimitWeightModeSync,
   getTokenLimitWeightPercentSync,
 } from "./counting.js";
+import { sqlMultiplierExpr } from "./token-multiplier.js";
 
 export type InputLimitBreakdown = {
   promptCount: number;
@@ -64,15 +66,22 @@ export async function fetchInputLimitBreakdown(
   const weightMode = getTokenLimitWeightModeSync();
   const restFrac =
     weightMode === "full" ? 1 : weightMode === "flat_all" ? weightPct / 100 : weightPct / 100;
+  const min = sql.raw(sqlMultiplierExpr("input", "model"));
 
   const rows = await db.execute(sql`
     WITH hops AS (
       SELECT
         id,
+        model,
         COALESCE(turn_id, 'orphan-' || id::text) AS turn_key,
         COALESCE(prompt_tokens, 0)::float8 AS billable,
         COALESCE(cached_tokens, 0)::float8 AS cached,
         (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS full_in,
+        COALESCE(upstream_credits, 0)::float8 AS uc,
+        CASE
+          WHEN COALESCE(upstream_credits, 0) > 0 THEN COALESCE(upstream_credits, 0)::float8
+          ELSE (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 * ${min}
+        END AS meter_in,
         ROW_NUMBER() OVER (
           PARTITION BY COALESCE(turn_id, 'orphan-' || id::text)
           ORDER BY created_at ASC, id ASC
@@ -84,8 +93,8 @@ export async function fetchInputLimitBreakdown(
       SELECT
         COALESCE(COUNT(*) FILTER (WHERE rn = 1), 0)::int AS prompt_count,
         COALESCE(COUNT(*), 0)::int AS api_call_count,
-        COALESCE(SUM(full_in) FILTER (WHERE rn = 1), 0)::float8 AS sum_in_prompts,
-        COALESCE(SUM(full_in) FILTER (WHERE rn > 1), 0)::float8 AS sum_in_followups
+        COALESCE(SUM(meter_in) FILTER (WHERE rn = 1), 0)::float8 AS sum_in_prompts,
+        COALESCE(SUM(meter_in) FILTER (WHERE rn > 1), 0)::float8 AS sum_in_followups
       FROM hops
     ),
     turn_peaks AS (
@@ -93,15 +102,17 @@ export async function fetchInputLimitBreakdown(
         turn_key,
         full_in AS peak_full,
         billable AS peak_bill,
-        cached AS peak_cache
+        cached AS peak_cache,
+        meter_in AS peak_meter
       FROM hops
-      ORDER BY turn_key, full_in DESC, id DESC
+      ORDER BY turn_key, meter_in DESC, id DESC
     ),
     peak_agg AS (
       SELECT
         COALESCE(AVG(peak_full), 0)::float8 AS avg_peak_full,
         COALESCE(AVG(peak_bill), 0)::float8 AS avg_peak_bill,
-        COALESCE(AVG(peak_cache), 0)::float8 AS avg_peak_cache
+        COALESCE(AVG(peak_cache), 0)::float8 AS avg_peak_cache,
+        COALESCE(SUM(peak_meter), 0)::float8 AS sum_peak_meter
       FROM turn_peaks
     )
     SELECT
@@ -111,7 +122,8 @@ export async function fetchInputLimitBreakdown(
       hop_agg.sum_in_followups,
       peak_agg.avg_peak_full,
       peak_agg.avg_peak_bill,
-      peak_agg.avg_peak_cache
+      peak_agg.avg_peak_cache,
+      peak_agg.sum_peak_meter
     FROM hop_agg, peak_agg
   `);
 
@@ -130,8 +142,8 @@ export async function fetchInputLimitBreakdown(
     creditPrompts = sumInPromptHops;
     creditFollowUps = sumInFollowUps;
   } else if (weightMode === "peak") {
-    // Peak mode: credit ≈ avg peak × prompts (informational alignment)
-    creditPrompts = Math.round(n(row.avg_peak_full) * promptCount);
+    // Peak mode: sum of per-turn peak meters (same idea as peakPromptTokensSql)
+    creditPrompts = Math.round(n(row.sum_peak_meter));
     creditFollowUps = 0;
   } else {
     creditPrompts = sumInPromptHops;
@@ -189,9 +201,9 @@ export function formatInputLimitExplanation(
     const lines = [
       `${ind}📥 Input menuju limit harian: **${fmtTok(b.inputTowardLimit, lang)}**${lim}`,
       `${ind}`,
-      `${ind}Dari mana angka itu? (dari request aslimu):`,
+      `${ind}Dari mana angka itu? (meter limit = credits Amanai / token×multiplier):`,
       `${ind}• ${b.promptCount} prompt (pesan kamu)`,
-      `${ind}  rata-rata ~${fmtTok(b.avgInPerPrompt, lang)} token × 100% = **${fmtTok(b.creditPrompts, lang)}**`,
+      `${ind}  rata-rata ~${fmtTok(b.avgInPerPrompt, lang)} × 100% = **${fmtTok(b.creditPrompts, lang)}**`,
       `${ind}• ${b.followUpCount} panggilan API lanjutan (AI baca/tulis file dll.)`,
       `${ind}  = ${b.apiCallCount} total API − ${b.promptCount} prompt`,
       `${ind}  rata-rata ~${fmtTok(b.avgInPerFollowUp, lang)} × ${w}% = **${fmtTok(b.creditFollowUps, lang)}**`,
@@ -200,7 +212,7 @@ export function formatInputLimitExplanation(
     if (b.peakFullIn > 0) {
       lines.push(
         `${ind}`,
-        `${ind}📌 Ukuran chat (BUKAN penjumlahan ke limit):`,
+        `${ind}📌 Ukuran chat mentah (BUKAN penjumlahan ke limit):`,
         `${ind}Puncak per giliran ~${fmtTok(b.peakFullIn, lang)} token`,
         `${ind}(~${fmtTok(b.peakBillable, lang)} baru + ~${fmtTok(b.peakCached, lang)} cache/riwayat)`,
       );
@@ -211,18 +223,18 @@ export function formatInputLimitExplanation(
   const lines = [
     `${ind}📥 Input toward your daily limit: **${fmtTok(b.inputTowardLimit, lang)}**${lim}`,
     `${ind}`,
-    `${ind}How we got ${fmtTok(b.inputTowardLimit, lang)} (from your real requests):`,
+    `${ind}How we got ${fmtTok(b.inputTowardLimit, lang)} (limit meter = Amanai credits / scaled tokens):`,
     `${ind}• ${b.promptCount} prompts (your messages)`,
-    `${ind}  avg ~${fmtTok(b.avgInPerPrompt, lang)} tokens each × 100% = **${fmtTok(b.creditPrompts, lang)}**`,
+    `${ind}  avg ~${fmtTok(b.avgInPerPrompt, lang)} each × 100% = **${fmtTok(b.creditPrompts, lang)}**`,
     `${ind}• ${b.followUpCount} follow-up API calls (AI tools: read/write/etc.)`,
     `${ind}  = ${b.apiCallCount} total API calls − ${b.promptCount} prompts`,
-    `${ind}  avg ~${fmtTok(b.avgInPerFollowUp, lang)} tokens each × ${w}% = **${fmtTok(b.creditFollowUps, lang)}**`,
+    `${ind}  avg ~${fmtTok(b.avgInPerFollowUp, lang)} each × ${w}% = **${fmtTok(b.creditFollowUps, lang)}**`,
     `${ind}• Total toward limit: ${fmtTok(b.creditPrompts, lang)} + ${fmtTok(b.creditFollowUps, lang)} = **${fmtTok(b.inputTowardLimit, lang)}**`,
   ];
   if (b.peakFullIn > 0) {
     lines.push(
       `${ind}`,
-      `${ind}📌 Chat size note (does NOT add up to the limit number):`,
+      `${ind}📌 Chat size note (raw tokens — does NOT add up to the limit number):`,
       `${ind}A typical turn peaks around ~${fmtTok(b.peakFullIn, lang)} tokens`,
       `${ind}(~${fmtTok(b.peakBillable, lang)} new + ~${fmtTok(b.peakCached, lang)} cache/history)`,
     );
