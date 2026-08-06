@@ -69,4 +69,41 @@ describe("quota-reservation", () => {
 			true,
 		);
 	});
+
+	it("after success-release, dbUsed alone must not double-count with reserved", () => {
+		const key = globalPromptBucketKey([431]) + ":dbl-" + Date.now();
+		const windowMs = 5 * 60 * 60 * 1000;
+		const limit = 50;
+		// Simulate 30 logged turns + 20 still reserved (pre-fix bug state)
+		for (let i = 0; i < 20; i++) {
+			assert.equal(
+				tryReserveTurn({
+					scopeKey: key,
+					turnId: `ghost-${i}`,
+					limit,
+					dbUsed: 30,
+					windowMs,
+				}),
+				true,
+			);
+		}
+		assert.equal(countReserved(key, windowMs), 20);
+		assert.equal(30 + countReserved(key, windowMs), 50);
+		// After each turn is logged, reservation must be released
+		for (let i = 0; i < 20; i++) {
+			releaseReservedTurn(key, `ghost-${i}`);
+		}
+		assert.equal(countReserved(key, windowMs), 0);
+		assert.equal(30 + countReserved(key, windowMs), 30);
+		assert.equal(
+			tryReserveTurn({
+				scopeKey: key,
+				turnId: "next",
+				limit,
+				dbUsed: 30,
+				windowMs,
+			}),
+			true,
+		);
+	});
 });

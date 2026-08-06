@@ -28,6 +28,31 @@ const CHART_DAYS: Record<LocalPeriodKey, number> = {
   allTime:   90,
 };
 
+/** Match LiveUsageCard / gate: always Asia/Jakarta clock, skip stale timestamps. */
+function formatResetWib(iso?: string | null, windowFallback?: string | null): string {
+  if (iso) {
+    const d = new Date(iso);
+    if (!Number.isNaN(d.getTime())) {
+      const diffMs = d.getTime() - Date.now();
+      if (diffMs <= 0) {
+        return windowFallback ? `Resets ${windowFallback} after first use` : "";
+      }
+      const wib = new Date(d.getTime() + 7 * 60 * 60 * 1000);
+      const hh = String(wib.getUTCHours()).padStart(2, "0");
+      const mm = String(wib.getUTCMinutes()).padStart(2, "0");
+      const mins = Math.round(diffMs / 60_000);
+      const rel =
+        diffMs > 60_000
+          ? mins < 60
+            ? ` · in ${mins}m`
+            : ` · in ${(mins / 60).toFixed(mins % 60 === 0 ? 0 : 1)}h`
+          : " · soon";
+      return `Resets ≈ ${hh}:${mm} WIB${rel}`;
+    }
+  }
+  return windowFallback ? `Resets ${windowFallback} after first use` : "";
+}
+
 const TOOLTIP_STYLE = {
   backgroundColor: "hsl(var(--card))",
   border: "1px solid hsl(var(--border))",
@@ -414,29 +439,25 @@ export default function OverviewPage() {
                     Global: {searchUserResult.promptLimit > 0
                       ? `${searchUserResult.promptUsed} / ${searchUserResult.promptLimit} (${searchUserResult.promptLimitWindow})`
                       : "Unlimited"}
-                    {searchUserResult.promptResetAt
-                      ? ` · Resets ${new Date(searchUserResult.promptResetAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-                      : searchUserResult.promptLimit > 0
-                        ? ` · Resets ${searchUserResult.promptLimitWindow || "5h"} after first use`
-                        : ""}
+                    {searchUserResult.promptLimit > 0
+                      ? ` · ${formatResetWib(searchUserResult.promptResetAt, searchUserResult.promptLimitWindow || "5h")}`
+                      : ""}
                   </p>
                   <p>
                     API: {(searchUserResult.rateLimit || 0) > 0
                       ? `${searchUserResult.apiCallUsed || 0} / ${searchUserResult.rateLimit} (${searchUserResult.rateLimitWindow || "5h"})`
                       : "Unlimited"}
-                    {searchUserResult.apiCallResetAt
-                      ? ` · Resets ${new Date(searchUserResult.apiCallResetAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-                      : (searchUserResult.rateLimit || 0) > 0
-                        ? ` · Resets ${searchUserResult.rateLimitWindow || "5h"} after first use`
-                        : ""}
+                    {(searchUserResult.rateLimit || 0) > 0
+                      ? ` · ${formatResetWib(searchUserResult.apiCallResetAt, searchUserResult.rateLimitWindow || "5h")}`
+                      : ""}
                   </p>
                   <p className="font-semibold mt-1">Per-Model:</p>
                   <ul className="list-disc list-inside pl-4 text-xs">
                     {searchUserResult.modelUsage?.map((m: any) => (
                       <li key={m.model}>
                         <code>{m.model}</code>: {m.used} / {m.limit > 0 ? m.limit : "∞"}
-                        {(m.resetAt || searchUserResult.dailyResetAt)
-                          ? ` · Resets ${new Date(m.resetAt || searchUserResult.dailyResetAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                        {m.limit > 0
+                          ? ` · ${formatResetWib(m.resetAt || searchUserResult.dailyResetAt)}`
                           : ""}
                       </li>
                     ))}
@@ -449,19 +470,19 @@ export default function OverviewPage() {
                   <p className="font-semibold">Token Limits (Harian):</p>
                   <p>
                     Input: {formatNumber(searchUserResult.dailyInputUsed || 0)} / {searchUserResult.dailyInputTokenLimit > 0 ? formatNumber(searchUserResult.dailyInputTokenLimit) : "Unlimited"}
-                    {searchUserResult.dailyResetAt ? ` · Resets ${new Date(searchUserResult.dailyResetAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}
+                    {searchUserResult.dailyResetAt ? ` · ${formatResetWib(searchUserResult.dailyResetAt)}` : ""}
                   </p>
                   <p>
                     Output: {formatNumber(searchUserResult.dailyOutputUsed || 0)} / {searchUserResult.dailyOutputTokenLimit > 0 ? formatNumber(searchUserResult.dailyOutputTokenLimit) : "Unlimited"}
-                    {searchUserResult.dailyResetAt ? ` · Resets ${new Date(searchUserResult.dailyResetAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}
+                    {searchUserResult.dailyResetAt ? ` · ${formatResetWib(searchUserResult.dailyResetAt)}` : ""}
                   </p>
                   <p>
                     Total: {formatNumber(searchUserResult.dailyTokensUsed || 0)} / {searchUserResult.dailyTokenLimit > 0 ? formatNumber(searchUserResult.dailyTokenLimit) : "Unlimited"}
-                    {searchUserResult.dailyResetAt ? ` · Resets ${new Date(searchUserResult.dailyResetAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}
+                    {searchUserResult.dailyResetAt ? ` · ${formatResetWib(searchUserResult.dailyResetAt)}` : ""}
                   </p>
                   <p>
                     Bulanan: {formatNumber(searchUserResult.monthlyTokensUsed || 0)} / {searchUserResult.monthlyTokenLimit > 0 ? formatNumber(searchUserResult.monthlyTokenLimit) : "Unlimited"}
-                    {searchUserResult.monthlyResetAt ? ` · Resets ${new Date(searchUserResult.monthlyResetAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}
+                    {searchUserResult.monthlyResetAt ? ` · ${formatResetWib(searchUserResult.monthlyResetAt)}` : ""}
                   </p>
                 </div>
               </div>

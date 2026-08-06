@@ -3,6 +3,11 @@
  * requests all read the same DB DISTINCT turn_id count before inserts flush
  * (async log writer), allowing per-model / global prompt caps to be exceeded.
  *
+ * Lifecycle: reserve at gate → hold while upstream runs → release on failure
+ * immediately, or on success **after** the turn row is inserted. Keeping a
+ * reservation after the DB insert makes `dbUsed + reserved` double-count and
+ * shows 50/50 on the client while dashboards (DB-only) still show e.g. 30/50.
+ *
  * Node is single-threaded: check DB → tryReserve is atomic vs other requests
  * after each await returns.
  */

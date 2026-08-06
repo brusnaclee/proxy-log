@@ -6,17 +6,24 @@ function formatReset(iso?: string | null, windowFallback?: string | null) {
     try {
       const d = new Date(iso);
       if (!Number.isNaN(d.getTime())) {
-        const hh = String(d.getHours()).padStart(2, "0");
-        const mm = String(d.getMinutes()).padStart(2, "0");
         const diffMs = d.getTime() - Date.now();
+        // Stale/expired timestamp — don't show a clock that looks like "midnight"
+        if (diffMs <= 0) {
+          if (windowFallback) return `Resets ${windowFallback} after first use`;
+          return "";
+        }
+        // Always Asia/Jakarta — matches gate `formatResetEta` (≈ HH:MM WIB)
+        const wib = new Date(d.getTime() + 7 * 60 * 60 * 1000);
+        const hh = String(wib.getUTCHours()).padStart(2, "0");
+        const mm = String(wib.getUTCMinutes()).padStart(2, "0");
         let rel = "";
         if (diffMs > 60_000) {
           const mins = Math.round(diffMs / 60_000);
           rel = mins < 60 ? ` · in ${mins}m` : ` · in ${(mins / 60).toFixed(mins % 60 === 0 ? 0 : 1)}h`;
-        } else if (diffMs > 0) {
+        } else {
           rel = " · soon";
         }
-        return `Resets ${hh}:${mm}${rel}`;
+        return `Resets ≈ ${hh}:${mm} WIB${rel}`;
       }
     } catch {
       /* fall through */

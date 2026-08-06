@@ -36,8 +36,11 @@ Reuse helpers in `packages/proxy/src/utils/counting.ts` + rate-limit windows:
 | Prompt window | `checkPromptLimit` | Account key ids; cliff or sliding fallback |
 | API window | `checkApiCallLimit` | Same account key ids |
 | Devices | `listAccountDevices` / gate `countDistinctMachines` | Account-scoped slots |
+| In-flight prompts | `tryReserveTurn` / `countReserved` | Gate-only; **must release after DB insert** or `dbUsed+reserved` double-counts vs dashboard |
 
 Daily cutover: **midnight WIB** (`wibTodayStartDate` / period helpers).
+
+Prompt/API **5h** reset label: show `≈ HH:MM WIB` (+ relative), never bare `00:18` without `WIB` (easy to confuse with calendar midnight). Token / `1d` per-model: `00:00 WIB`.
 
 Do **not** invent a second formula in the bot or React — call the same internal/portal payloads.
 

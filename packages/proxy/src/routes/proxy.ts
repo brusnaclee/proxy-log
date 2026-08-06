@@ -3835,7 +3835,8 @@ proxy.all('/*', async (c) => {
 	// Check for infinite tool loops removed as per user request to act as pure pass-through
 	// Anti-waste (dedupe/nudge/short-circuit) runs later — after isStreaming is known — without hard 429.
 
-	// Soft prompt reservations for this request (released on empty / final non-2xx).
+	// Soft prompt reservations for this request (released on empty / final non-2xx,
+	// and on success after the turn is inserted — see persistLogAndSession).
 	const promptReservations: Array<{ scopeKey: string; turnId: string }> = [];
 	const releasePromptReservations = () => {
 		if (promptReservations.length) {
@@ -4657,6 +4658,12 @@ proxy.all('/*', async (c) => {
 			logEntry.isCountedRequest = counted ? true : false;
 			logEntry.isBillableToken = isBillableToken ? true : false;
 			await tx.insert(requestLogs).values(logEntry);
+			// Reservations only cover the async-log race. Once the turn is in DB,
+			// drop them — otherwise gate uses dbUsed+reserved and double-counts
+			// (dashboard shows 30/50 while client sees 50/50).
+			if (shouldCountRequest) {
+				releasePromptReservations();
+			}
 			logEmitter.emit({
 				...logEntry,
 				createdAt: logEntry.createdAt || new Date().toISOString(),
