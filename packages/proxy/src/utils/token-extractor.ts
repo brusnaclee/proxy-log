@@ -79,36 +79,76 @@ function appendToolArg(acc: CompletionAccumulator, idx: any, fragment: string) {
 
 function captureUsage(acc: CompletionAccumulator, usage: any) {
   if (!usage || typeof usage !== "object") return;
-  const prompt =
-    typeof usage.prompt_tokens === "number"
-      ? usage.prompt_tokens
-      : typeof usage.input_tokens === "number"
-        ? usage.input_tokens
-        : acc.usage.prompt_tokens;
-  const completion =
-    typeof usage.completion_tokens === "number"
-      ? usage.completion_tokens
-      : typeof usage.output_tokens === "number"
+
+  // Anthropic-native fields on the raw event (passthrough path)
+  let normalized = usage;
+  if (
+    usage.input_tokens != null ||
+    usage.cache_read_input_tokens != null ||
+    usage.cache_creation_input_tokens != null
+  ) {
+    const input = Number(usage.input_tokens) || 0;
+    const cached = Number(usage.cache_read_input_tokens) || 0;
+    const created = Number(usage.cache_creation_input_tokens) || 0;
+    const output =
+      typeof usage.output_tokens === "number"
         ? usage.output_tokens
-        : acc.usage.completion_tokens;
-  const next: UpstreamUsage = {
-    prompt_tokens: prompt,
-    completion_tokens: completion,
-    total_tokens: typeof usage.total_tokens === "number" ? usage.total_tokens : acc.usage.total_tokens,
-  };
-  // Extract cached_tokens from prompt_tokens_details
-  if (usage.prompt_tokens_details?.cached_tokens != null) {
-    next.cached_tokens = usage.prompt_tokens_details.cached_tokens;
-  } else if (typeof usage.cached_tokens === "number") {
-    next.cached_tokens = usage.cached_tokens;
-  } else if (typeof usage.cache_read_input_tokens === "number") {
-    next.cached_tokens = usage.cache_read_input_tokens;
+        : typeof usage.completion_tokens === "number"
+          ? usage.completion_tokens
+          : undefined;
+    normalized = {
+      ...(typeof output === "number" ? { completion_tokens: output } : {}),
+      prompt_tokens: input + cached + created,
+      ...(cached > 0 ? { prompt_tokens_details: { cached_tokens: cached } } : {}),
+      ...(typeof output === "number"
+        ? { total_tokens: input + cached + created + output }
+        : {}),
+    };
   }
-  // Extract reasoning_tokens from completion_tokens_details
-  if (usage.completion_tokens_details?.reasoning_tokens != null) {
-    next.reasoning_tokens = usage.completion_tokens_details.reasoning_tokens;
+
+  const next: UpstreamUsage = { ...acc.usage };
+
+  if (typeof normalized.prompt_tokens === "number") {
+    next.prompt_tokens = normalized.prompt_tokens;
   }
-  if (next.prompt_tokens != null || next.completion_tokens != null || next.total_tokens != null) {
+  if (typeof normalized.completion_tokens === "number") {
+    next.completion_tokens = normalized.completion_tokens;
+  } else if (typeof normalized.output_tokens === "number") {
+    next.completion_tokens = normalized.output_tokens;
+  }
+  if (typeof normalized.total_tokens === "number") {
+    next.total_tokens = normalized.total_tokens;
+  }
+
+  if (normalized.prompt_tokens_details?.cached_tokens != null) {
+    next.cached_tokens = Number(normalized.prompt_tokens_details.cached_tokens) || 0;
+  } else if (typeof normalized.cached_tokens === "number") {
+    next.cached_tokens = normalized.cached_tokens;
+  } else if (typeof normalized.cache_read_input_tokens === "number") {
+    next.cached_tokens = normalized.cache_read_input_tokens;
+  }
+  // Keep prior cache if this chunk omitted it (e.g. output-only message_delta)
+  if (next.cached_tokens == null && acc.usage.cached_tokens != null) {
+    next.cached_tokens = acc.usage.cached_tokens;
+  }
+
+  if (normalized.completion_tokens_details?.reasoning_tokens != null) {
+    next.reasoning_tokens = normalized.completion_tokens_details.reasoning_tokens;
+  }
+
+  if (
+    next.prompt_tokens != null ||
+    next.completion_tokens != null ||
+    next.total_tokens != null ||
+    next.cached_tokens != null
+  ) {
+    if (
+      next.total_tokens == null &&
+      next.prompt_tokens != null &&
+      next.completion_tokens != null
+    ) {
+      next.total_tokens = next.prompt_tokens + next.completion_tokens;
+    }
     acc.usage = next;
     acc.hadUsage = true;
   }
@@ -118,6 +158,14 @@ export function consumeStreamPayload(acc: CompletionAccumulator, data: any): voi
   if (!data || typeof data !== "object") return;
 
   if (data.usage) captureUsage(acc, data.usage);
+  // Anthropic message_start nests usage under message.usage
+  if (data.message?.usage) captureUsage(acc, data.message.usage);
+  if (data.type === "message_start" && data.message?.usage) {
+    captureUsage(acc, data.message.usage);
+  }
+  if (data.type === "message_delta" && data.usage) {
+    captureUsage(acc, data.usage);
+  }
 
   const choices = Array.isArray(data.choices) ? data.choices : [];
   for (const choice of choices) {

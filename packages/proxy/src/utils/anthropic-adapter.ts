@@ -251,17 +251,45 @@ interface OpenAIResponse {
   };
 }
 
-/** Map Anthropic cache_read into OpenAI cached_tokens (Continue / OpenAI clients). */
-export function anthropicUsageToOpenAI(usage: AnthropicResponse["usage"] | null | undefined): OpenAIResponse["usage"] {
-  const input = Number(usage?.input_tokens) || 0;
-  const output = Number(usage?.output_tokens) || 0;
-  const cached = Number(usage?.cache_read_input_tokens) || 0;
-  return {
-    prompt_tokens: input,
-    completion_tokens: output,
-    total_tokens: input + output,
-    ...(cached > 0 ? { prompt_tokens_details: { cached_tokens: cached } } : {}),
+/** Map Anthropic usage into OpenAI-shaped usage for clients + token-extractor.
+ *
+ * Anthropic: `input_tokens` is the *uncached remainder*; cache is separate.
+ * OpenAI: `prompt_tokens` is full input; `prompt_tokens_details.cached_tokens` is cache.
+ * So prompt_tokens = input + cache_read + cache_creation.
+ * Partial deltas (output-only) omit prompt fields so merge does not wipe earlier input/cache.
+ */
+export function anthropicUsageToOpenAI(usage: AnthropicResponse["usage"] | null | undefined): OpenAIResponse["usage"] | Record<string, never> {
+  if (!usage || typeof usage !== "object") return {};
+  const hasInputSide =
+    usage.input_tokens != null ||
+    usage.cache_read_input_tokens != null ||
+    usage.cache_creation_input_tokens != null;
+  const hasOutput = usage.output_tokens != null;
+  const input = Number(usage.input_tokens) || 0;
+  const output = Number(usage.output_tokens) || 0;
+  const cached = Number(usage.cache_read_input_tokens) || 0;
+  const created = Number(usage.cache_creation_input_tokens) || 0;
+  const out: OpenAIResponse["usage"] = {
+    prompt_tokens: 0,
+    completion_tokens: 0,
+    total_tokens: 0,
   };
+  if (hasInputSide) {
+    out.prompt_tokens = input + cached + created;
+    if (cached > 0) out.prompt_tokens_details = { cached_tokens: cached };
+  }
+  if (hasOutput) {
+    out.completion_tokens = output;
+  }
+  if (!hasInputSide && !hasOutput) return {};
+  // Drop zero prompt_tokens key when input side absent so captureUsage keeps prior
+  if (!hasInputSide) {
+    const { prompt_tokens: _p, ...rest } = out as any;
+    rest.total_tokens = (rest.completion_tokens || 0);
+    return rest;
+  }
+  out.total_tokens = (out.prompt_tokens || 0) + (out.completion_tokens || 0);
+  return out;
 }
 
 export function convertResponseToOpenAI(anthropic: AnthropicResponse): OpenAIResponse {
@@ -391,10 +419,13 @@ export function convertStreamEvent(line: string, state: StreamState): string[] {
 
   switch (eventType) {
     case "message_start": {
-      // Emit initial chunk with role
+      // Emit initial chunk with role (+ input/cache usage when present)
       state.id = data.message?.id || state.id;
       state.model = data.message?.model || state.model;
-      const chunk = {
+      const startUsage = data.message?.usage
+        ? anthropicUsageToOpenAI(data.message.usage)
+        : undefined;
+      const chunk: Record<string, unknown> = {
         id: state.id,
         object: "chat.completion.chunk",
         created: Math.floor(Date.now() / 1000),
@@ -405,6 +436,9 @@ export function convertStreamEvent(line: string, state: StreamState): string[] {
           finish_reason: null,
         }],
       };
+      if (startUsage && Object.keys(startUsage).length > 0) {
+        chunk.usage = startUsage;
+      }
       lines_out.push(`data: ${JSON.stringify(chunk)}`);
       break;
     }
