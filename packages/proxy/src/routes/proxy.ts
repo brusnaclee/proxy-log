@@ -43,6 +43,8 @@ import {
 	applyAmanaiCompatShaping,
 	providerIsAmanaiCompat,
 } from '../utils/amanai-compat.js';
+import { computeUpstreamCreditsForHop } from '../utils/amanai-credits.js';
+import { scheduleAmanaiUsageEnrich } from '../utils/amanai-usage-sync.js';
 import { sanitizeUpstreamHeaders } from '../utils/upstream-headers.js';
 import {
 	buildCachedRoundTripResponse,
@@ -302,6 +304,46 @@ function openaiBodyBytesForProvider(
 		? applyAmanaiCompatShaping(body, 'openai')
 		: body;
 	return new TextEncoder().encode(JSON.stringify(shaped));
+}
+
+/** Attach Amanai credit meter on Compat=amanai hops (anti-boncos). */
+function applyUpstreamCreditsToLogEntry(
+	entry: Record<string, any>,
+	provider: { compatProfile?: string | null } | null | undefined,
+): number {
+	const credits = computeUpstreamCreditsForHop({
+		model: String(entry.model || ''),
+		promptTokens: Number(entry.promptTokens) || 0,
+		cachedTokens: Number(entry.cachedTokens) || 0,
+		completionTokens: Number(entry.completionTokens) || 0,
+		amanaiCompat: providerIsAmanaiCompat(provider),
+	});
+	entry.upstreamCredits = credits;
+	return credits;
+}
+
+/** Best-effort OpenAI-path cache enrich when usage omitted cache_read. */
+function maybeScheduleAmanaiEnrich(opts: {
+	logId?: number | null;
+	provider: { id?: number | null; endpointType?: string | null; compatProfile?: string | null } | null | undefined;
+	model: string;
+	promptTokens: number;
+	cachedTokens: number;
+	completionTokens: number;
+	upstreamCredits: number;
+}): void {
+	const { provider } = opts;
+	if (!provider || !providerIsAmanaiCompat(provider)) return;
+	if ((opts.upstreamCredits || 0) <= 0) return;
+	if ((opts.cachedTokens || 0) > 0) return;
+	if (String(provider.endpointType || '') === 'anthropic') return;
+	scheduleAmanaiUsageEnrich({
+		logId: opts.logId,
+		providerId: provider.id,
+		model: opts.model,
+		promptTokens: opts.promptTokens,
+		completionTokens: opts.completionTokens,
+	});
 }
 
 function backfillOpenAIMessageContent<T extends { content?: unknown; reasoning_content?: unknown; reasoning?: unknown } | null | undefined>(
@@ -3238,7 +3280,7 @@ proxy.all('/*', async (c) => {
 								);
 								const latencyMs = Date.now() - startTime;
 								enqueueLogWrite(async (tx) => {
-									await tx.insert(requestLogs).values({
+									const autoLogEntry: Record<string, any> = {
 										apiKeyId: keyRecord.id,
 										apiKeyName: keyRecord.name,
 										userAgentRaw: userAgent || null,
@@ -3273,14 +3315,32 @@ proxy.all('/*', async (c) => {
 											billableTokens.promptTokens,
 											billableTokens.completionTokens,
 										),
+									};
+									const credits = applyUpstreamCreditsToLogEntry(autoLogEntry, providerRow);
+									const inserted = await tx
+										.insert(requestLogs)
+										.values(autoLogEntry)
+										.returning({ id: requestLogs.id });
+									maybeScheduleAmanaiEnrich({
+										logId: inserted[0]?.id,
+										provider: providerRow,
+										model: logModel,
+										promptTokens: billableTokens.promptTokens,
+										cachedTokens: billableTokens.cachedTokens,
+										completionTokens: billableTokens.completionTokens,
+										upstreamCredits: credits,
 									});
 									logEmitter.emit({
-										id: undefined,
+										id: inserted[0]?.id,
 										model: logModel,
 										provider: candidate.provider,
 										statusCode: trialResponse.status,
 										latencyMs,
 										createdAt: new Date().toISOString(),
+										billablePromptTokens: billableTokens.promptTokens,
+										cachedTokens: billableTokens.cachedTokens,
+										upstreamCredits: credits,
+										completionTokens: billableTokens.completionTokens,
 									});
 									// Update session stats for auto model
 									if (autoIsNewPrompt) {
@@ -3403,7 +3463,7 @@ proxy.all('/*', async (c) => {
 					responseJson?.usage?.prompt_tokens_details?.cached_tokens || 0;
 				const billableInput = Math.max(promptTokens - cachedTokens, 0);
 				enqueueLogWrite(async (tx) => {
-					await tx.insert(requestLogs).values({
+					const autoLogEntry: Record<string, any> = {
 						apiKeyId: keyRecord.id,
 						apiKeyName: keyRecord.name,
 						userAgentRaw: userAgent || null,
@@ -3438,6 +3498,20 @@ proxy.all('/*', async (c) => {
 						),
 						isCountedRequest: markPromptCountedTurn(autoTurnId),
 						isBillableToken: true,
+					};
+					const credits = applyUpstreamCreditsToLogEntry(autoLogEntry, providerRow);
+					const inserted = await tx
+						.insert(requestLogs)
+						.values(autoLogEntry)
+						.returning({ id: requestLogs.id });
+					maybeScheduleAmanaiEnrich({
+						logId: inserted[0]?.id,
+						provider: providerRow,
+						model: `auto (${candidate.modelId})`,
+						promptTokens: billableInput,
+						cachedTokens,
+						completionTokens,
+						upstreamCredits: credits,
 					});
 					logEmitter.emit({
 						model: `auto (${candidate.modelId})`,
@@ -3445,6 +3519,10 @@ proxy.all('/*', async (c) => {
 						statusCode: 200,
 						latencyMs,
 						createdAt: new Date().toISOString(),
+						billablePromptTokens: billableInput,
+						cachedTokens,
+						upstreamCredits: credits,
+						completionTokens,
 					});
 					// Update session stats for auto model (non-streaming)
 					if (autoIsNewPrompt) {
@@ -4669,7 +4747,21 @@ proxy.all('/*', async (c) => {
 		enqueueLogWrite(async (tx) => {
 			logEntry.isCountedRequest = counted ? true : false;
 			logEntry.isBillableToken = isBillableToken ? true : false;
-			await tx.insert(requestLogs).values(logEntry);
+			const credits = applyUpstreamCreditsToLogEntry(logEntry, targetProvider);
+			const inserted = await tx
+				.insert(requestLogs)
+				.values(logEntry)
+				.returning({ id: requestLogs.id });
+			const logId = inserted[0]?.id ?? null;
+			maybeScheduleAmanaiEnrich({
+				logId,
+				provider: targetProvider,
+				model: String(logEntry.model || ''),
+				promptTokens: Number(logEntry.promptTokens) || 0,
+				cachedTokens: Number(logEntry.cachedTokens) || 0,
+				completionTokens: Number(logEntry.completionTokens) || 0,
+				upstreamCredits: credits,
+			});
 			// Reservations only cover the async-log race. Once the turn is in DB,
 			// drop them — otherwise gate uses dbUsed+reserved and double-counts
 			// (dashboard shows 30/50 while client sees 50/50).
@@ -4678,6 +4770,7 @@ proxy.all('/*', async (c) => {
 			}
 			logEmitter.emit({
 				...logEntry,
+				id: logId,
 				createdAt: logEntry.createdAt || new Date().toISOString(),
 				toolsUsed: parseToolJson(logEntry.toolsUsed),
 				isTrial: !!keyRecord.isTrial,
@@ -4686,6 +4779,7 @@ proxy.all('/*', async (c) => {
 				// Dashboard expects billable + full input split (same as mapTimelineRow)
 				billablePromptTokens: logEntry.promptTokens || 0,
 				cachedTokens: logEntry.cachedTokens || 0,
+				upstreamCredits: credits,
 				inputTokens:
 					(Number(logEntry.promptTokens) || 0) + (Number(logEntry.cachedTokens) || 0),
 				promptTokens:

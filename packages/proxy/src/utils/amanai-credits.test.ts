@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+	computeUpstreamCreditsForHop,
 	estimateAmanaiCredits,
 	estimateAmanaiCreditsForLogRow,
 	resolveAmanaiMultipliers,
@@ -38,6 +39,12 @@ describe("amanai credits", () => {
 		assert.equal(m!.mIn, 6.03472);
 	});
 
+	it("resolves auto (model) labels", () => {
+		const m = resolveAmanaiMultipliers("auto (glm-5.1) [stream]");
+		assert.ok(m);
+		assert.equal(m!.mIn, 4.2273);
+	});
+
 	it("estimates from log row (billable + cache)", () => {
 		const { credits, multipliers } = estimateAmanaiCreditsForLogRow({
 			model: "amanai/glm-5.2",
@@ -47,5 +54,30 @@ describe("amanai credits", () => {
 		});
 		assert.ok(multipliers);
 		assert.ok(credits >= 1000);
+	});
+
+	it("computeUpstreamCreditsForHop returns 0 when not amanai compat", () => {
+		assert.equal(
+			computeUpstreamCreditsForHop({
+				model: "amanai/glm-5.2",
+				promptTokens: 1000,
+				cachedTokens: 0,
+				completionTokens: 10,
+				amanaiCompat: false,
+			}),
+			0,
+		);
+	});
+
+	it("computeUpstreamCreditsForHop meters Claude-scale input", () => {
+		const c = computeUpstreamCreditsForHop({
+			model: "amanai/claude-sonnet-4.6",
+			promptTokens: 60000,
+			cachedTokens: 0,
+			completionTokens: 11,
+			amanaiCompat: true,
+		});
+		// ~60k * 12.1 + 11 * 60.5 ≈ 726k+ — far above raw 60k tokens
+		assert.ok(c > 500_000, `expected >500k credits, got ${c}`);
 	});
 });

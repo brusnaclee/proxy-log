@@ -302,6 +302,7 @@ export default function SessionDetailPage() {
                           (row as any).billablePromptTokens,
                           (row as any).cachedTokens,
                           row.promptTokens,
+                          (row as any).upstreamCredits,
                         );
                         return (
                           <>

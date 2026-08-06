@@ -112,6 +112,16 @@ export function getTokenInputModeSync(): TokenInputMode {
 }
 
 /**
+ * Limit-meter input per hop (SQL expr, no alias):
+ * Compat=amanai rows store upstream_credits — use that (already includes Amanai rates + out).
+ * Else classic prompt+cache.
+ */
+export const LIMIT_INPUT_SQL = `CASE WHEN COALESCE(upstream_credits, 0) > 0 THEN COALESCE(upstream_credits, 0)::float8 ELSE (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 END`;
+
+/** Output toward limits: 0 when upstream_credits set (already folded into credits). */
+export const LIMIT_OUTPUT_SQL = `CASE WHEN COALESCE(upstream_credits, 0) > 0 THEN 0::float8 ELSE COALESCE(completion_tokens, 0)::float8 END`;
+
+/**
  * SQL expr for input inside GROUP BY turn_id — mode-aware (stats display).
  * Outer queries SUM() these per-turn values.
  */
@@ -149,32 +159,44 @@ export function turnCountSql(whereCondition: SQL | undefined): SQL<number> {
 export function turnPromptTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
   const min = sql.raw(sqlMultiplierExpr("input", "model", opts));
   if (tokenInputModeCache === "full") {
-    return sql<number>`COALESCE((SELECT SUM((COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) * ${min}) FROM request_logs WHERE ${whereCondition!}), 0)`;
+    return sql<number>`COALESCE((SELECT SUM(
+      CASE WHEN COALESCE(upstream_credits, 0) > 0 THEN COALESCE(upstream_credits, 0)::float8
+           ELSE (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 * ${min} END
+    ) FROM request_logs WHERE ${whereCondition!}), 0)`;
   }
   if (tokenInputModeCache === "billable") {
     // Turn-level billable has no single model; use global fallback via orphan model ''.
     const { input } = getTokenMultipliers(opts);
-    return sql<number>`COALESCE((SELECT SUM(sum_delta) * ${input} FROM (SELECT GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) as sum_delta FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id)), 0)`;
+    return sql<number>`COALESCE((SELECT SUM(
+      CASE WHEN MAX(COALESCE(upstream_credits, 0)) > 0 THEN MAX(COALESCE(upstream_credits, 0))::float8
+           ELSE GREATEST(0, COALESCE(SUM(context_delta_tokens), 0)) * ${input} END
+    ) FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL GROUP BY turn_id), 0)`;
   }
-  // per_turn_peak — multiply using the peak hop's model
-  return sql<number>`COALESCE((SELECT SUM(peak * ${min}) FROM (
+  // per_turn_peak — multiply using the peak hop's model (credits pass through)
+  return sql<number>`COALESCE((SELECT SUM(
+    CASE WHEN COALESCE(uc, 0) > 0 THEN uc::float8 ELSE peak * ${min} END
+  ) FROM (
     SELECT DISTINCT ON (turn_id)
       (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 as peak,
+      COALESCE(upstream_credits, 0)::float8 as uc,
       model
     FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL
-    ORDER BY turn_id, (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) DESC, id ASC
+    ORDER BY turn_id, (${sql.raw(LIMIT_INPUT_SQL)}) DESC, id ASC
   ) t), 0)`;
 }
 
 /** Always peak input (for admin notes), ignoring token_input_mode. */
 export function peakPromptTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
   const min = sql.raw(sqlMultiplierExpr("input", "model", opts));
-  return sql<number>`COALESCE((SELECT SUM(peak * ${min}) FROM (
+  return sql<number>`COALESCE((SELECT SUM(
+    CASE WHEN COALESCE(uc, 0) > 0 THEN uc::float8 ELSE peak * ${min} END
+  ) FROM (
     SELECT DISTINCT ON (turn_id)
       (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 as peak,
+      COALESCE(upstream_credits, 0)::float8 as uc,
       model
     FROM request_logs WHERE ${whereCondition!} AND turn_id IS NOT NULL
-    ORDER BY turn_id, (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) DESC, id ASC
+    ORDER BY turn_id, (${sql.raw(LIMIT_INPUT_SQL)}) DESC, id ASC
   ) t), 0)`;
 }
 
@@ -204,10 +226,13 @@ export function turnCachedTokensSql(whereCondition: SQL | undefined, opts?: Toke
   return sql<number>`COALESCE((SELECT SUM(COALESCE(cached_tokens, 0) * ${min}) FROM request_logs WHERE ${whereCondition!}), 0)`;
 }
 
-/** Completion tokens: per-hop × OUTPUT multiplier (pattern-aware). */
+/** Completion tokens: per-hop × OUTPUT multiplier (pattern-aware). Skip when upstream_credits set. */
 export function turnCompletionTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
   const mout = sql.raw(sqlMultiplierExpr("output", "model", opts));
-  return sql<number>`COALESCE((SELECT SUM(COALESCE(completion_tokens, 0) * ${mout}) FROM request_logs WHERE ${whereCondition!}), 0)`;
+  return sql<number>`COALESCE((SELECT SUM(
+    CASE WHEN COALESCE(upstream_credits, 0) > 0 THEN 0::float8
+         ELSE COALESCE(completion_tokens, 0) * ${mout} END
+  ) FROM request_logs WHERE ${whereCondition!}), 0)`;
 }
 
 /** Total: mode-aware input + completion, with multipliers. */
@@ -234,7 +259,10 @@ export function turnTotalTokensSql(whereCondition: SQL | undefined, opts?: Token
  */
 export function hopFullInputTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
   const min = sql.raw(sqlMultiplierExpr("input", "model", opts));
-  return sql<number>`COALESCE((SELECT SUM((COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) * ${min}) FROM request_logs WHERE ${whereCondition!}), 0)`;
+  return sql<number>`COALESCE((SELECT SUM(
+    CASE WHEN COALESCE(upstream_credits, 0) > 0 THEN COALESCE(upstream_credits, 0)::float8
+         ELSE (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) * ${min} END
+  ) FROM request_logs WHERE ${whereCondition!}), 0)`;
 }
 
 /**
@@ -291,10 +319,14 @@ export function weightedHopInputTokensSql(
   const min = sql.raw(sqlMultiplierExpr("input", "model", opts));
   const w = inputHopWeightFractionSql();
   return sql<number>`COALESCE((
-    SELECT SUM(inn * (${w}) * ${min})
+    SELECT SUM(
+      CASE WHEN COALESCE(uc, 0) > 0 THEN uc * (${w})
+           ELSE inn * (${w}) * ${min} END
+    )
     FROM (
       SELECT
         (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
+        COALESCE(upstream_credits, 0)::float8 AS uc,
         model,
         ROW_NUMBER() OVER (
           PARTITION BY COALESCE(turn_id, 'orphan-' || id::text)
@@ -326,8 +358,9 @@ export function weightedHopTotalTokensSql(
   if (tokenLimitWeightModeCache === "full") {
     return sql<number>`COALESCE((
       SELECT SUM(
-        (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) * ${min}
-        + COALESCE(completion_tokens, 0) * ${mout}
+        CASE WHEN COALESCE(upstream_credits, 0) > 0 THEN COALESCE(upstream_credits, 0)::float8
+             ELSE (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) * ${min}
+                  + COALESCE(completion_tokens, 0) * ${mout} END
       )
       FROM request_logs WHERE ${whereCondition!}
     ), 0)`;
@@ -335,13 +368,14 @@ export function weightedHopTotalTokensSql(
   const w = inputHopWeightFractionSql();
   return sql<number>`COALESCE((
     SELECT SUM(
-      (inn * (${w})) * ${min}
-      + outt * ${mout}
+      CASE WHEN COALESCE(uc, 0) > 0 THEN uc * (${w})
+           ELSE (inn * (${w})) * ${min} + outt * ${mout} END
     )
     FROM (
       SELECT
         (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
         COALESCE(completion_tokens, 0)::float8 AS outt,
+        COALESCE(upstream_credits, 0)::float8 AS uc,
         model,
         ROW_NUMBER() OVER (
           PARTITION BY COALESCE(turn_id, 'orphan-' || id::text)
@@ -381,17 +415,28 @@ export function hopWeightedTimeseriesSql(
         period_group as period,
         COUNT(DISTINCT turn_key)::int as requests,
         COALESCE(SUM(hop_count), 0)::int as "apiCalls",
-        COALESCE(SUM(peak_in * ${min}), 0) as "promptTokens",
-        COALESCE(SUM(out_sum * ${mout}), 0) as "completionTokens",
-        COALESCE(SUM(peak_in * ${min} + out_sum * ${mout}), 0) as tokens
+        COALESCE(SUM(
+          CASE WHEN COALESCE(peak_uc, 0) > 0 THEN peak_uc ELSE peak_in * ${min} END
+        ), 0) as "promptTokens",
+        COALESCE(SUM(
+          CASE WHEN COALESCE(peak_uc, 0) > 0 THEN 0 ELSE out_sum * ${mout} END
+        ), 0) as "completionTokens",
+        COALESCE(SUM(
+          CASE WHEN COALESCE(peak_uc, 0) > 0 THEN peak_uc
+               ELSE peak_in * ${min} + out_sum * ${mout} END
+        ), 0) as tokens
       FROM (
         SELECT
           ${groupExpr} as period_group,
           COALESCE(turn_id, 'orphan-' || id::text) as turn_key,
           COUNT(*)::int as hop_count,
           MAX(COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 as peak_in,
-          SUM(COALESCE(completion_tokens, 0))::float8 as out_sum,
-          (ARRAY_AGG(model ORDER BY (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) DESC, id ASC))[1] as model
+          MAX(COALESCE(upstream_credits, 0))::float8 as peak_uc,
+          SUM(
+            CASE WHEN COALESCE(upstream_credits, 0) > 0 THEN 0
+                 ELSE COALESCE(completion_tokens, 0) END
+          )::float8 as out_sum,
+          (ARRAY_AGG(model ORDER BY (${sql.raw(LIMIT_INPUT_SQL)}) DESC, id ASC))[1] as model
         FROM request_logs
         WHERE ${whereExtra}
         GROUP BY ${groupExpr}, COALESCE(turn_id, 'orphan-' || id::text)
@@ -407,15 +452,22 @@ export function hopWeightedTimeseriesSql(
         period_group as period,
         COUNT(DISTINCT turn_key)::int as requests,
         COUNT(*)::int as "apiCalls",
-        COALESCE(SUM(inn * ${min}), 0) as "promptTokens",
-        COALESCE(SUM(outt * ${mout}), 0) as "completionTokens",
-        COALESCE(SUM(inn * ${min} + outt * ${mout}), 0) as tokens
+        COALESCE(SUM(
+          CASE WHEN COALESCE(uc, 0) > 0 THEN uc ELSE inn * ${min} END
+        ), 0) as "promptTokens",
+        COALESCE(SUM(
+          CASE WHEN COALESCE(uc, 0) > 0 THEN 0 ELSE outt * ${mout} END
+        ), 0) as "completionTokens",
+        COALESCE(SUM(
+          CASE WHEN COALESCE(uc, 0) > 0 THEN uc ELSE inn * ${min} + outt * ${mout} END
+        ), 0) as tokens
       FROM (
         SELECT
           ${groupExpr} as period_group,
           COALESCE(turn_id, 'orphan-' || id::text) as turn_key,
           (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
           COALESCE(completion_tokens, 0)::float8 AS outt,
+          COALESCE(upstream_credits, 0)::float8 AS uc,
           model
         FROM request_logs
         WHERE ${whereExtra}
@@ -431,15 +483,23 @@ export function hopWeightedTimeseriesSql(
       period_group as period,
       COUNT(DISTINCT turn_key)::int as requests,
       COUNT(*)::int as "apiCalls",
-      COALESCE(SUM(inn * (${sql.raw(w)}) * ${min}), 0) as "promptTokens",
-      COALESCE(SUM(outt * ${mout}), 0) as "completionTokens",
-      COALESCE(SUM(inn * (${sql.raw(w)}) * ${min} + outt * ${mout}), 0) as tokens
+      COALESCE(SUM(
+        CASE WHEN COALESCE(uc, 0) > 0 THEN uc * (${sql.raw(w)}) ELSE inn * (${sql.raw(w)}) * ${min} END
+      ), 0) as "promptTokens",
+      COALESCE(SUM(
+        CASE WHEN COALESCE(uc, 0) > 0 THEN 0 ELSE outt * ${mout} END
+      ), 0) as "completionTokens",
+      COALESCE(SUM(
+        CASE WHEN COALESCE(uc, 0) > 0 THEN uc * (${sql.raw(w)})
+             ELSE inn * (${sql.raw(w)}) * ${min} + outt * ${mout} END
+      ), 0) as tokens
     FROM (
       SELECT
         ${groupExpr} as period_group,
         COALESCE(turn_id, 'orphan-' || id::text) as turn_key,
         (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
         COALESCE(completion_tokens, 0)::float8 AS outt,
+        COALESCE(upstream_credits, 0)::float8 AS uc,
         model,
         ROW_NUMBER() OVER (
           PARTITION BY COALESCE(turn_id, 'orphan-' || id::text)
@@ -479,16 +539,23 @@ export function modelLimitCreditBreakdownSql(
       SELECT
         model,
         COUNT(DISTINCT turn_key)::int as requests,
-        COALESCE(SUM(inn * ${min}), 0) as "promptTokens",
-        COALESCE(SUM(outt * ${mout}), 0) as "completionTokens",
-        COALESCE(SUM(inn * ${min} + outt * ${mout}), 0) as tokens
+        COALESCE(SUM(
+          CASE WHEN COALESCE(uc, 0) > 0 THEN uc ELSE inn * ${min} END
+        ), 0) as "promptTokens",
+        COALESCE(SUM(
+          CASE WHEN COALESCE(uc, 0) > 0 THEN 0 ELSE outt * ${mout} END
+        ), 0) as "completionTokens",
+        COALESCE(SUM(
+          CASE WHEN COALESCE(uc, 0) > 0 THEN uc ELSE inn * ${min} + outt * ${mout} END
+        ), 0) as tokens
       FROM (
         SELECT
           ${displayModel} as model,
           model as raw_model,
           COALESCE(turn_id, 'orphan-' || id::text) as turn_key,
           (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
-          COALESCE(completion_tokens, 0)::float8 AS outt
+          COALESCE(completion_tokens, 0)::float8 AS outt,
+          COALESCE(upstream_credits, 0)::float8 AS uc
         FROM request_logs
         WHERE ${extraWhere}
       ) hops
@@ -504,9 +571,16 @@ export function modelLimitCreditBreakdownSql(
     SELECT
       model,
       COUNT(DISTINCT turn_key)::int as requests,
-      COALESCE(SUM(inn * (${sql.raw(w)}) * ${min}), 0) as "promptTokens",
-      COALESCE(SUM(outt * ${mout}), 0) as "completionTokens",
-      COALESCE(SUM(inn * (${sql.raw(w)}) * ${min} + outt * ${mout}), 0) as tokens
+      COALESCE(SUM(
+        CASE WHEN COALESCE(uc, 0) > 0 THEN uc * (${sql.raw(w)}) ELSE inn * (${sql.raw(w)}) * ${min} END
+      ), 0) as "promptTokens",
+      COALESCE(SUM(
+        CASE WHEN COALESCE(uc, 0) > 0 THEN 0 ELSE outt * ${mout} END
+      ), 0) as "completionTokens",
+      COALESCE(SUM(
+        CASE WHEN COALESCE(uc, 0) > 0 THEN uc * (${sql.raw(w)})
+             ELSE inn * (${sql.raw(w)}) * ${min} + outt * ${mout} END
+      ), 0) as tokens
     FROM (
       SELECT
         ${displayModel} as model,
@@ -514,6 +588,7 @@ export function modelLimitCreditBreakdownSql(
         COALESCE(turn_id, 'orphan-' || id::text) as turn_key,
         (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
         COALESCE(completion_tokens, 0)::float8 AS outt,
+        COALESCE(upstream_credits, 0)::float8 AS uc,
         ROW_NUMBER() OVER (
           PARTITION BY COALESCE(turn_id, 'orphan-' || id::text)
           ORDER BY created_at ASC, id ASC

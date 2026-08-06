@@ -365,6 +365,17 @@ export async function initializeDatabase() {
 		console.warn('⚠️ providers.compat_profile migration warning:', err?.message || err);
 	}
 
+	// request_logs.upstream_credits — Amanai Pricing v3 meter for Compat=amanai hops
+	try {
+		await pool.query(`
+			ALTER TABLE request_logs
+			ADD COLUMN IF NOT EXISTS upstream_credits INTEGER NOT NULL DEFAULT 0
+		`);
+		console.log('✅ Applied request_logs.upstream_credits migration');
+	} catch (err: any) {
+		console.warn('⚠️ request_logs.upstream_credits migration warning:', err?.message || err);
+	}
+
 	// model_monitor: one row per (model_id, provider) — concurrent sweeps used to insert twins
 	try {
 		await pool.query(`

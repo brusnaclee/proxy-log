@@ -666,6 +666,8 @@ export interface LogEntry {
   promptTokens: number;
   billablePromptTokens?: number;
   cachedTokens?: number;
+  /** Amanai Pricing v3 credits when Compat=amanai (limit meter). */
+  upstreamCredits?: number;
   inputTokens?: number;
   completionTokens: number;
   totalTokens: number;

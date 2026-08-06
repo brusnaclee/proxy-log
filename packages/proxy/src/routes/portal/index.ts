@@ -1483,6 +1483,7 @@ portal.get("/logs", async (c) => {
     completionTokens: requestLogs.completionTokens,
     totalTokens: requestLogs.totalTokens,
     cachedTokens: requestLogs.cachedTokens,
+    upstreamCredits: requestLogs.upstreamCredits,
     ideDetected: requestLogs.ideDetected,
     provider: requestLogs.provider,
     endpointPath: requestLogs.endpointPath,
@@ -1498,6 +1499,26 @@ portal.get("/logs", async (c) => {
 
   return c.json({
     data: rows.map(r => {
+      const uc = Math.max(0, Number(r.upstreamCredits) || 0);
+      // Amanai-compat hops: meter = credits (already includes rates + out). Show raw tokens + credits.
+      if (uc > 0) {
+        const billable = Number(r.promptTokens) || 0;
+        const cached = Number(r.cachedTokens) || 0;
+        const completion = Number(r.completionTokens) || 0;
+        return {
+          ...r,
+          billablePromptTokens: billable,
+          cachedTokens: cached,
+          inputTokens: billable + cached,
+          promptTokens: billable + cached,
+          completionTokens: completion,
+          totalTokens: billable + cached + completion,
+          upstreamCredits: uc,
+          errorMessage: sanitizeErrorMsg(r.errorMessage),
+          requestPreview: sanitizePreview(r.requestPreview),
+          responsePreview: sanitizePreview(r.responsePreview),
+        };
+      }
       // Same scaled numbers as Overview / gates (never expose raw upstream counts).
       const { input, output } = resolveTokenMultipliers(r.model, { isTrial });
       const billable = Math.round((Number(r.promptTokens) || 0) * input);
@@ -1512,6 +1533,7 @@ portal.get("/logs", async (c) => {
         promptTokens: inputTokens,
         completionTokens: completion,
         totalTokens: inputTokens + completion,
+        upstreamCredits: 0,
         errorMessage: sanitizeErrorMsg(r.errorMessage),
         requestPreview: sanitizePreview(r.requestPreview),
         responsePreview: sanitizePreview(r.responsePreview),

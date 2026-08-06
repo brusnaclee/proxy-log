@@ -73,11 +73,13 @@ function mapTimelineRow(row: any) {
   const billable = Number(row.promptTokens) || 0;
   const cached = Number(row.cachedTokens) || 0;
   const completion = Number(row.completionTokens) || 0;
+  const upstreamCredits = Number(row.upstreamCredits) || 0;
   const inputTokens = billable + cached;
   return sanitizeLogPayload({
     ...row,
     billablePromptTokens: billable,
     cachedTokens: cached,
+    upstreamCredits,
     /** Full input (billable + cached) — matches upstream In */
     inputTokens,
     promptTokens: inputTokens,
@@ -108,6 +110,19 @@ function collapseTimelineRows(rows: any[]) {
 
       const mergedTools = new Set<string>([...previous.toolsUsed, ...mapped.toolsUsed]);
       previous.toolsUsed = Array.from(mergedTools);
+      previous.upstreamCredits =
+        (Number(previous.upstreamCredits) || 0) + (Number(mapped.upstreamCredits) || 0);
+      previous.billablePromptTokens =
+        (Number(previous.billablePromptTokens) || 0) + (Number(mapped.billablePromptTokens) || 0);
+      previous.cachedTokens =
+        (Number(previous.cachedTokens) || 0) + (Number(mapped.cachedTokens) || 0);
+      previous.completionTokens =
+        (Number(previous.completionTokens) || 0) + (Number(mapped.completionTokens) || 0);
+      previous.inputTokens =
+        (Number(previous.billablePromptTokens) || 0) + (Number(previous.cachedTokens) || 0);
+      previous.promptTokens = previous.inputTokens;
+      previous.totalTokens =
+        previous.inputTokens + (Number(previous.completionTokens) || 0);
 
       const previousOk = (previous.statusCode || 0) < 400;
       const mappedOk = (mapped.statusCode || 0) < 400;
@@ -215,6 +230,7 @@ logs.get("/logs", async (c) => {
     completionTokens: requestLogs.completionTokens,
     totalTokens: requestLogs.totalTokens,
     cachedTokens: requestLogs.cachedTokens,
+    upstreamCredits: requestLogs.upstreamCredits,
     contextEvent: requestLogs.contextEvent,
     contextDeltaTokens: requestLogs.contextDeltaTokens,
     toolsUsed: requestLogs.toolsUsed,
@@ -322,6 +338,7 @@ logs.get("/logs/sessions/:sessionId", async (c) => {
     completionTokens: requestLogs.completionTokens,
     totalTokens: requestLogs.totalTokens,
     cachedTokens: requestLogs.cachedTokens,
+    upstreamCredits: requestLogs.upstreamCredits,
     contextEvent: requestLogs.contextEvent,
     contextDeltaTokens: requestLogs.contextDeltaTokens,
     toolsUsed: requestLogs.toolsUsed,

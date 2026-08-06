@@ -214,6 +214,11 @@ export const requestLogs = pgTable('request_logs', {
 	statusCode: integer('status_code').default(0),
 	errorMessage: text('error_message'),
 	estimatedCost: integer('estimated_cost').default(0),
+	/**
+	 * Amanai Pricing v3 credits for Compat=amanai hops (anti-boncos meter).
+	 * When > 0, daily/input limits use this instead of (prompt+cache)×local mult.
+	 */
+	upstreamCredits: integer('upstream_credits').notNull().default(0),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
 }, (table) => ({
 	createdAtIdx: index('idx_logs_created_at').on(table.createdAt),

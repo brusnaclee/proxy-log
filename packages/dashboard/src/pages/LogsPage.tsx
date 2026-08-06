@@ -162,6 +162,7 @@ export default function LogsPage() {
         ...newLog,
         billablePromptTokens: Number(newLog?.billablePromptTokens) || billable,
         cachedTokens: cached,
+        upstreamCredits: Number(newLog?.upstreamCredits) || 0,
         inputTokens,
         promptTokens: inputTokens,
         completionTokens: completion,
@@ -397,6 +398,7 @@ export default function LogsPage() {
                                 log.billablePromptTokens,
                                 log.cachedTokens,
                                 log.inputTokens ?? log.promptTokens,
+                                log.upstreamCredits,
                               );
                               return (
                                 <>

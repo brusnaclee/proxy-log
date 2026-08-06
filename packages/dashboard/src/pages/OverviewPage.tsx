@@ -203,6 +203,7 @@ export default function OverviewPage() {
       createdAt: data?.createdAt || data?.created_at || new Date().toISOString(),
       billablePromptTokens: Number(data?.billablePromptTokens) || billable,
       cachedTokens: cached,
+      upstreamCredits: Number(data?.upstreamCredits) || 0,
       inputTokens,
       promptTokens: inputTokens,
       completionTokens: completion,
@@ -657,6 +658,7 @@ export default function OverviewPage() {
                           log.billablePromptTokens,
                           log.cachedTokens,
                           log.inputTokens ?? log.promptTokens,
+                          log.upstreamCredits,
                         );
                         return (
                           <>

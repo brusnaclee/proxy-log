@@ -4080,8 +4080,8 @@ function formatTokens(n) {
 	return String(n);
 }
 
-/** Full input = prompt + cache. label = readable, compact = short. */
-function formatInputBreakdown(billable, cached, fullInput) {
+/** Full input = prompt + cache. Optional Amanai credits. */
+function formatInputBreakdown(billable, cached, fullInput, credits) {
 	const cache = Math.max(0, Number(cached) || 0);
 	const totalNum =
 		fullInput != null && Number.isFinite(Number(fullInput))
@@ -4092,16 +4092,18 @@ function formatInputBreakdown(billable, cached, fullInput) {
 			? Math.max(0, Number(billable))
 			: Math.max(0, totalNum - cache);
 	const total = formatTokens(totalNum);
+	const cred = Math.max(0, Number(credits) || 0);
+	let label = total;
+	let compact = total;
 	if (cache > 0) {
-		return {
-			total,
-			// Cards / embeds: "100K (10K prompt + 90K cache)"
-			label: `${total} (${formatTokens(bill)} prompt + ${formatTokens(cache)} cache)`,
-			// Leaderboard / dense: "100K (10K p + 90K c)" — spaces so p/c don't glue to numbers
-			compact: `${total} (${formatTokens(bill)} p + ${formatTokens(cache)} c)`,
-		};
+		label = `${total} (${formatTokens(bill)} prompt + ${formatTokens(cache)} cache)`;
+		compact = `${total} (${formatTokens(bill)} p + ${formatTokens(cache)} c)`;
 	}
-	return { total, label: total, compact: total };
+	if (cred > 0) {
+		label = `${label} · ${formatTokens(cred)} credits`;
+		compact = `${compact} · ${formatTokens(cred)} cr`;
+	}
+	return { total, label, compact };
 }
 
 function formatCostMicro(microdollars) {
