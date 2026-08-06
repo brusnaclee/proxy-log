@@ -328,7 +328,7 @@ export function TokenSaverAdminPanel({ state, set }: Props) {
           <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
             Kedua arah Stream Translate aktif: request streaming dipaksa non-stream ke upstream, dan
             request non-stream dipaksa streaming. Pastikan ini memang disengaja — untuk hemat biaya
-            (mis. pajak stream amanai) cukup nyalakan Stream → Non-stream saja.
+            (mis. pajak stream di beberapa upstream) cukup nyalakan Stream → Non-stream saja.
           </div>
         )}
       </section>

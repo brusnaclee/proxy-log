@@ -108,9 +108,9 @@ export const TOKEN_SAVER_FEATURES: TokenSaverFeatureCopy[] = [
 		effectLong:
 			"Client tetap kirim stream:true dan tetap menerima SSE seperti biasa — tapi ke upstream, proxy mengirim stream:false, menunggu jawaban penuh, lalu memutarnya sebagai stream sekali kirim (role → content → finish+usage → [DONE]). Berguna untuk upstream yang menagih overhead billing di mode streaming. Tidak berlaku untuk client Anthropic /v1/messages & Responses API (passthrough normal).",
 		exampleShort:
-			"amanai glm-5.2: prompt_tokens stream 2.138 → 136 untuk prompt yang sama (pajak +2000 hilang).",
+			"Beberapa upstream: prompt_tokens stream 2.138 → 136 untuk prompt yang sama (pajak flat hilang).",
 		exampleLong:
-			"amanai menambahkan ~+2000 prompt_tokens flat di setiap request streaming. Dengan toggle ini upstream melihat non-stream sehingga usage yang dilaporkan (dan kuota yang dipotong) kembali normal, sementara client tidak perlu mengubah apa pun.",
+			"Beberapa upstream menambahkan pajak prompt_tokens flat di setiap request streaming. Dengan toggle ini upstream melihat non-stream sehingga usage yang dilaporkan (dan kuota yang dipotong) kembali normal, sementara client tidak perlu mengubah apa pun.",
 		riskShort: "Token pertama datang lebih lambat (jawaban dirakit penuh dulu).",
 		riskLong:
 			"Tidak ada incremental typing — client 'diam' sampai upstream selesai, lalu seluruh jawaban muncul sekaligus. Generasi sangat panjang dibatasi timeout non-stream (~90s per attempt), jadi kurang cocok untuk jawaban super panjang.",
@@ -129,9 +129,9 @@ export const TOKEN_SAVER_FEATURES: TokenSaverFeatureCopy[] = [
 		exampleShort: "Upstream lambat: SSE mengalir jadi koneksi tidak dianggap idle.",
 		exampleLong:
 			"Beberapa upstream memutus koneksi non-stream yang lama diam. Mode streaming mengirim byte terus-menerus sehingga generasi panjang selamat, lalu proxy mengembalikannya sebagai JSON biasa.",
-		riskShort: "Di provider dengan 'pajak stream' (mis. amanai) justru lebih boros.",
+		riskShort: "Di provider dengan 'pajak stream' justru lebih boros.",
 		riskLong:
-			"Kalau upstream menagih overhead di mode streaming (amanai: +2000 prompt_tokens), toggle ini menambah biaya, bukan menghemat. Jangan nyalakan bersamaan dengan Stream → Non-stream untuk provider yang sama.",
+			"Kalau upstream menagih overhead di mode streaming (pajak flat prompt_tokens), toggle ini menambah biaya, bukan menghemat. Jangan nyalakan bersamaan dengan Stream → Non-stream untuk provider yang sama.",
 		intensityHint: "Murni on/off — tidak ada intensity.",
 		safeZone: "Nyalakan hanya jika sering kena timeout non-stream.",
 	},

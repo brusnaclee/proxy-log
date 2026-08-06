@@ -659,8 +659,8 @@ export default function SettingsPage() {
                   <div>
                     <Label>Token limit hop schedule (input)</Label>
                     <p className="text-[10px] text-muted-foreground leading-relaxed mt-1">
-                      Controls daily/monthly <strong>input</strong> credit (gates + admin/client/Discord bars).
-                      Output always 100%. Logs still store full tokens. Amanai-style full In stays admin-only.
+                      Controls daily/monthly <strong>input</strong> toward limits (gates + admin/client/Discord bars).
+                      Output always 100%. Logs still store full tokens. Full-hop In stays admin-only.
                     </p>
                   </div>
                   <div>
@@ -680,7 +680,7 @@ export default function SettingsPage() {
                       <option value="first_rest_flat">Hop 1 = 100%, later hops = flat % (recommended)</option>
                       <option value="flat_all">All hops = flat %</option>
                       <option value="peak">Peak only — MAX context once per prompt</option>
-                      <option value="full">Full hop — 100% every hop (amanai-style limits)</option>
+                      <option value="full">Full hop — 100% every hop (matches upstream In)</option>
                       <option value="custom">Custom ranges (from–to hop → %)</option>
                     </select>
                   </div>
@@ -932,7 +932,7 @@ export default function SettingsPage() {
                     }}
                   >
                     <option value="per_turn_peak">Per-turn peak — MAX context once per prompt (tables/Discord)</option>
-                    <option value="full">Full hop sum — match upstream In / amanai (tables/Discord)</option>
+                    <option value="full">Full hop sum — match upstream In (tables/Discord)</option>
                     <option value="billable">Billable / delta only (legacy tables/Discord)</option>
                   </select>
                   <p className="text-xs text-muted-foreground mt-1">
@@ -1633,17 +1633,17 @@ export default function SettingsPage() {
               <Label className="text-base">Model Monitor Auto Mode</Label>
               <p className="text-xs text-muted-foreground mt-1">
                 Scheduled every 10 minutes. <span className="text-foreground font-medium">Off</span> = no
-                auto probes (no scheduled credit burn). Dashboard <span className="text-foreground font-medium">Test All</span> still
+                auto probes (no scheduled probe cost). Dashboard <span className="text-foreground font-medium">Test All</span> still
                 works manually (probe only; does not flip Published).{" "}
                 <span className="text-foreground font-medium">Notif only / On</span> still POST test
-                chat/completions each cycle — that burns provider credits.
+                chat/completions each cycle — that uses provider quota.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
               {(
                 [
                   { id: "off" as const, label: "Off", desc: "No scheduled probe — Test All still manual" },
-                  { id: "notif_only" as const, label: "Notif only", desc: "STILL probes every 10m (burns credits); heal Online on OK; fail keeps catalog" },
+                  { id: "notif_only" as const, label: "Notif only", desc: "STILL probes every 10m (uses quota); heal Online on OK; fail keeps catalog" },
                   { id: "auto" as const, label: "On (auto)", desc: "Probes every 10m + auto publish ON/OFF" },
                 ]
               ).map((opt) => (

@@ -86,6 +86,7 @@ node scripts/deploy.mjs
 - Follow existing code patterns in the codebase
 - All database migrations use Drizzle ORM schema definitions
 - API endpoints follow REST conventions
+- **Usage metering:** one dual-path formula everywhere — see `.cursor/rules/usage-metering.mdc` (Amanai `upstream_credits` vs classic in×mult + out×mult). Never invent a second meter for Discord/portal/admin/gates/ranking.
 
 ## Important Notes
 
@@ -94,3 +95,4 @@ node scripts/deploy.mjs
 - Custom models can be added per provider via the dashboard
 - The Discord bot shows model status and allows user management
 - All requests are logged to PostgreSQL for analytics
+- Compat=`amanai` hops store `request_logs.upstream_credits` as the limit meter; non-amanai stays local multipliers

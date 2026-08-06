@@ -101,11 +101,8 @@ export default function ActivityPage() {
       `IDE: ${log.ideDetected}`,
       log.endpointPath ? `Endpoint: ${log.endpointPath}` : null,
       `Latency: ${log.latencyMs}ms`,
-      `Input tokens: ${formatInputBreakdown(log.billablePromptTokens, log.cachedTokens, log.promptTokens, log.upstreamCredits).label}`,
+      `Input tokens: ${formatInputBreakdown(log.billablePromptTokens, log.cachedTokens, log.promptTokens).label}`,
       `Output tokens: ${log.completionTokens}`,
-      ...(Number(log.upstreamCredits) > 0
-        ? [`Amanai credits (meter): ${formatNumber(log.upstreamCredits)}`]
-        : []),
       "",
       "=== Error ===",
       log.errorMessage || "(none)",
@@ -260,8 +257,8 @@ export default function ActivityPage() {
                         <td className="px-4 py-3 text-sm text-foreground whitespace-nowrap">
                           {log.latencyMs}ms
                         </td>
-                        <td className="px-4 py-3 text-sm text-muted-foreground hide-mobile" title={formatInputBreakdown(log.billablePromptTokens, log.cachedTokens, log.promptTokens, log.upstreamCredits).label}>
-                          {formatInputBreakdown(log.billablePromptTokens, log.cachedTokens, log.promptTokens, log.upstreamCredits).compact}
+                        <td className="px-4 py-3 text-sm text-muted-foreground hide-mobile" title={formatInputBreakdown(log.billablePromptTokens, log.cachedTokens, log.promptTokens).label}>
+                          {formatInputBreakdown(log.billablePromptTokens, log.cachedTokens, log.promptTokens).compact}
                         </td>
                         <td className="px-4 py-3 text-sm text-muted-foreground hide-mobile">
                           {formatNumber(log.completionTokens || 0)}

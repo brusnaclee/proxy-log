@@ -523,7 +523,7 @@ export function ProvidersManager() {
                         className="px-1 py-0.5 text-xs border border-border rounded bg-background"
                       >
                         <option value="default">default</option>
-                        <option value="amanai">amanai</option>
+                        <option value="amanai">dual+cache</option>
                       </select>
                       <button
                         onClick={() => handleSaveProviderField(p.id)}
@@ -545,10 +545,10 @@ export function ProvidersManager() {
                       <span
                         className={`px-1.5 py-0.5 rounded text-xs ${(p.compatProfile || "default") === "amanai" ? "bg-violet-500/20 text-violet-300" : "bg-muted text-muted-foreground"}`}
                         title={(p.compatProfile || "default") === "amanai"
-                          ? "Amanai compatible: cache_control breakpoints + dual Anthropic + nested model ids"
+                          ? "Dual OpenAI/Anthropic + cache_control breakpoints + nested model ids"
                           : "Default: follow Type only (openai / anthropic / youcom)"}
                       >
-                        {(p.compatProfile || "default") === "amanai" ? "amanai" : "default"}
+                        {(p.compatProfile || "default") === "amanai" ? "dual+cache" : "default"}
                       </span>
                       <button
                         onClick={() => handleEditProviderField(p.id, "compatProfile", p.compatProfile || "default")}
@@ -1039,14 +1039,14 @@ export function ProvidersManager() {
               </select>
             </div>
             <div className="col-span-1">
-              <Label title="default = Type only; amanai = OpenAI/Anthropic + Amanai cache shaping">Compat</Label>
+              <Label title="default = Type only; dual+cache = OpenAI/Anthropic + cache shaping">Compat</Label>
               <select
                 value={compatProfile}
                 onChange={e => setCompatProfile(e.target.value)}
                 className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
               >
                 <option value="default">Default</option>
-                <option value="amanai">Amanai</option>
+                <option value="amanai">Dual + cache</option>
               </select>
             </div>
             <div className="col-span-1">
@@ -1060,7 +1060,7 @@ export function ProvidersManager() {
             </div>
           </div>
           <p className="mt-1 text-[11px] text-muted-foreground">
-            Compat <span className="text-violet-300">amanai</span> injects cache breakpoints for credit savings (cache_read @ 25% of input). Type stays openai/anthropic/youcom.
+            Compat <span className="text-violet-300">dual+cache</span> injects cache breakpoints (cache_read cheaper than fresh input). Type stays openai/anthropic/youcom.
           </p>
           <div className="mt-2">
             <Label>API Key</Label>

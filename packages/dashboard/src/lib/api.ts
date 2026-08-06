@@ -171,7 +171,7 @@ export interface LiveUsagePayload {
     peakPromptTokens?: number;
     billablePromptTokens?: number;
     cachedTokens?: number;
-    /** SUM(prompt+cache) every hop — amanai / provider In. */
+    /** SUM(prompt+cache) every hop — provider full In. */
     fullInputTokens?: number;
     completionTokens: number;
     totalTokens: number;
@@ -272,7 +272,7 @@ export interface LiveUsagePayload {
     /** Hop-weighted input for this pool. */
     inputUsed?: number;
     outputUsed?: number;
-    /** SUM(prompt+cache) every hop — amanai / provider In for this pool. */
+    /** SUM(prompt+cache) every hop — provider full In for this pool. */
     fullInputTokens?: number;
   }>;
 }
@@ -666,7 +666,7 @@ export interface LogEntry {
   promptTokens: number;
   billablePromptTokens?: number;
   cachedTokens?: number;
-  /** Amanai Pricing v3 credits when Compat=amanai (limit meter). */
+  /** Upstream meter units when Compat=dual+cache (limit meter; admin-only). */
   upstreamCredits?: number;
   inputTokens?: number;
   completionTokens: number;

@@ -4080,8 +4080,8 @@ function formatTokens(n) {
 	return String(n);
 }
 
-/** Full input = prompt + cache. Optional Amanai credits. */
-function formatInputBreakdown(billable, cached, fullInput, credits) {
+/** Full input = prompt + cache. Client-facing — no upstream brand/credits wording. */
+function formatInputBreakdown(billable, cached, fullInput) {
 	const cache = Math.max(0, Number(cached) || 0);
 	const totalNum =
 		fullInput != null && Number.isFinite(Number(fullInput))
@@ -4092,18 +4092,14 @@ function formatInputBreakdown(billable, cached, fullInput, credits) {
 			? Math.max(0, Number(billable))
 			: Math.max(0, totalNum - cache);
 	const total = formatTokens(totalNum);
-	const cred = Math.max(0, Number(credits) || 0);
-	let label = total;
-	let compact = total;
 	if (cache > 0) {
-		label = `${total} (${formatTokens(bill)} prompt + ${formatTokens(cache)} cache)`;
-		compact = `${total} (${formatTokens(bill)} p + ${formatTokens(cache)} c)`;
+		return {
+			total,
+			label: `${total} (${formatTokens(bill)} prompt + ${formatTokens(cache)} cache)`,
+			compact: `${total} (${formatTokens(bill)} p + ${formatTokens(cache)} c)`,
+		};
 	}
-	if (cred > 0) {
-		label = `${label} · ${formatTokens(cred)} credits`;
-		compact = `${compact} · ${formatTokens(cred)} cr`;
-	}
-	return { total, label, compact };
+	return { total, label: total, compact: total };
 }
 
 function formatCostMicro(microdollars) {

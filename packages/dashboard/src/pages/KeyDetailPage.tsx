@@ -968,7 +968,7 @@ export API_TIMEOUT_MS=500000`}
                       ? `peak ${formatNumber(peakPromptTokens)}`
                       : null,
                     fullInputTokens > 0
-                      ? `full ${formatNumber(fullInputTokens)} (amanai)`
+                      ? `full ${formatNumber(fullInputTokens)}`
                       : null,
                   ]
                     .filter(Boolean)

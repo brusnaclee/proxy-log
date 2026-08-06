@@ -398,7 +398,6 @@ export default function LogsPage() {
                                 log.billablePromptTokens,
                                 log.cachedTokens,
                                 log.inputTokens ?? log.promptTokens,
-                                log.upstreamCredits,
                               );
                               return (
                                 <>

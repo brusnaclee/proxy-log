@@ -1500,20 +1500,20 @@ portal.get("/logs", async (c) => {
   return c.json({
     data: rows.map(r => {
       const uc = Math.max(0, Number(r.upstreamCredits) || 0);
-      // Amanai-compat hops: meter = credits (already includes rates + out). Show raw tokens + credits.
+      // Compat meter hops: limits use upstream meter; activity shows raw prompt/cache/out (no brand wording).
+      const { upstreamCredits: _dropCredits, ...rest } = r as typeof r & { upstreamCredits?: number };
       if (uc > 0) {
         const billable = Number(r.promptTokens) || 0;
         const cached = Number(r.cachedTokens) || 0;
         const completion = Number(r.completionTokens) || 0;
         return {
-          ...r,
+          ...rest,
           billablePromptTokens: billable,
           cachedTokens: cached,
           inputTokens: billable + cached,
           promptTokens: billable + cached,
           completionTokens: completion,
           totalTokens: billable + cached + completion,
-          upstreamCredits: uc,
           errorMessage: sanitizeErrorMsg(r.errorMessage),
           requestPreview: sanitizePreview(r.requestPreview),
           responsePreview: sanitizePreview(r.responsePreview),
@@ -1526,14 +1526,13 @@ portal.get("/logs", async (c) => {
       const completion = Math.round((Number(r.completionTokens) || 0) * output);
       const inputTokens = billable + cached;
       return {
-        ...r,
+        ...rest,
         billablePromptTokens: billable,
         cachedTokens: cached,
         inputTokens,
         promptTokens: inputTokens,
         completionTokens: completion,
         totalTokens: inputTokens + completion,
-        upstreamCredits: 0,
         errorMessage: sanitizeErrorMsg(r.errorMessage),
         requestPreview: sanitizePreview(r.requestPreview),
         responsePreview: sanitizePreview(r.responsePreview),

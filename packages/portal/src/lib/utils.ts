@@ -10,19 +10,17 @@ export function formatNumber(n: number): string {
   return n.toLocaleString();
 }
 
-/** Full input = prompt (billable) + cache. Optional Amanai credits meter. */
+/** Full input = prompt (billable) + cache. Client-facing — no upstream brand/credits wording. */
 export function formatInputBreakdown(
   billable: number | undefined | null,
   cached: number | undefined | null,
   fullInput?: number | undefined | null,
-  credits?: number | undefined | null,
 ): { total: string; label: string; compact: string; totalNum: number } {
   const cache = Math.max(0, Number(cached) || 0);
   const hasBillable = billable != null && Number.isFinite(Number(billable));
   const hasFull = fullInput != null && Number.isFinite(Number(fullInput));
   const billRaw = hasBillable ? Math.max(0, Number(billable)) : null;
   const fullRaw = hasFull ? Math.max(0, Number(fullInput)) : null;
-  const cred = Math.max(0, Number(credits) || 0);
 
   let bill: number;
   let totalNum: number;
@@ -40,20 +38,15 @@ export function formatInputBreakdown(
   }
 
   const total = formatNumber(totalNum);
-  let label: string;
-  let compact: string;
   if (cache > 0) {
-    label = `${total} (${formatNumber(bill)} prompt + ${formatNumber(cache)} cache)`;
-    compact = `${total} (${formatNumber(bill)} p + ${formatNumber(cache)} c)`;
-  } else {
-    label = total;
-    compact = total;
+    return {
+      totalNum,
+      total,
+      label: `${total} (${formatNumber(bill)} prompt + ${formatNumber(cache)} cache)`,
+      compact: `${total} (${formatNumber(bill)} p + ${formatNumber(cache)} c)`,
+    };
   }
-  if (cred > 0) {
-    label = `${label} · ${formatNumber(cred)} credits`;
-    compact = `${compact} · ${formatNumber(cred)} cr`;
-  }
-  return { totalNum, total, label, compact };
+  return { totalNum, total, label: total, compact: total };
 }
 
 export function formatCost(microDollars: number | undefined | null): string {

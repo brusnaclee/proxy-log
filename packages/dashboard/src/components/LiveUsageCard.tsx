@@ -364,7 +364,7 @@ export function LiveUsageCard({
               ioBits.push(`Out ${formatNumber(p.outputUsed || 0)}`);
             }
             if ((p.fullInputTokens || 0) > 0) {
-              ioBits.push(`full In ${formatNumber(p.fullInputTokens || 0)} (amanai)`);
+              ioBits.push(`full In ${formatNumber(p.fullInputTokens || 0)}`);
             }
             return (
               <ProgressBar

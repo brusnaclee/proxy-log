@@ -201,7 +201,7 @@ export function formatInputLimitExplanation(
     const lines = [
       `${ind}📥 Input menuju limit harian: **${fmtTok(b.inputTowardLimit, lang)}**${lim}`,
       `${ind}`,
-      `${ind}Dari mana angka itu? (meter limit = credits Amanai / token×multiplier):`,
+      `${ind}Dari mana angka itu? (dari pemakaian menuju limit harian):`,
       `${ind}• ${b.promptCount} prompt (pesan kamu)`,
       `${ind}  rata-rata ~${fmtTok(b.avgInPerPrompt, lang)} × 100% = **${fmtTok(b.creditPrompts, lang)}**`,
       `${ind}• ${b.followUpCount} panggilan API lanjutan (AI baca/tulis file dll.)`,
@@ -223,7 +223,7 @@ export function formatInputLimitExplanation(
   const lines = [
     `${ind}📥 Input toward your daily limit: **${fmtTok(b.inputTowardLimit, lang)}**${lim}`,
     `${ind}`,
-    `${ind}How we got ${fmtTok(b.inputTowardLimit, lang)} (limit meter = Amanai credits / scaled tokens):`,
+    `${ind}How we got ${fmtTok(b.inputTowardLimit, lang)} (from your usage toward the daily limit):`,
     `${ind}• ${b.promptCount} prompts (your messages)`,
     `${ind}  avg ~${fmtTok(b.avgInPerPrompt, lang)} each × 100% = **${fmtTok(b.creditPrompts, lang)}**`,
     `${ind}• ${b.followUpCount} follow-up API calls (AI tools: read/write/etc.)`,

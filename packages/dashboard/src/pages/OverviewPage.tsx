@@ -658,7 +658,6 @@ export default function OverviewPage() {
                           log.billablePromptTokens,
                           log.cachedTokens,
                           log.inputTokens ?? log.promptTokens,
-                          log.upstreamCredits,
                         );
                         return (
                           <>
