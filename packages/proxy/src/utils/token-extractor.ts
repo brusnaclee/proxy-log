@@ -126,6 +126,9 @@ function captureUsage(acc: CompletionAccumulator, usage: any) {
     next.cached_tokens = normalized.cached_tokens;
   } else if (typeof normalized.cache_read_input_tokens === "number") {
     next.cached_tokens = normalized.cache_read_input_tokens;
+  } else if (typeof normalized.cache_read_tokens === "number") {
+    // Amanai /v1/usage recent uses cache_read_tokens; some gateways echo it on usage
+    next.cached_tokens = normalized.cache_read_tokens;
   }
   // Keep prior cache if this chunk omitted it (e.g. output-only message_delta)
   if (next.cached_tokens == null && acc.usage.cached_tokens != null) {
