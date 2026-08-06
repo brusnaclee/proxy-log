@@ -334,7 +334,13 @@ async function runBatch(
 	}
 	await sleep(800);
 	const after = await amanaiUsage();
-	const delta = after.credit_used - before.credit_used;
+	// Amanai often leaves credit_used at 0; burn shows as credit_remaining drop.
+	const deltaFromUsed = after.credit_used - before.credit_used;
+	const deltaFromRemaining =
+		before.credit_remaining > 0 && after.credit_remaining > 0
+			? before.credit_remaining - after.credit_remaining
+			: 0;
+	const delta = deltaFromUsed > 0 ? deltaFromUsed : deltaFromRemaining;
 	return { summary: summarize(label, hops, delta), hops };
 }
 
