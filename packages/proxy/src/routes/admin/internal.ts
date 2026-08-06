@@ -135,7 +135,7 @@ internal.post("/internal/verify-user", async (c) => {
   let created = false;
 
   const [config] = await db.select().from(adminConfig);
-  const maxDevices = config?.globalMaxDevices ?? 1;
+  const maxDevices = config?.globalMaxDevices ?? 2;
 
   if (existingPhantom) {
     keyPlaintext = existingPhantom.key;
@@ -1154,6 +1154,43 @@ internal.get("/internal/pending-notifications", async (c) => {
   }
 
   return c.json({ notifications });
+});
+
+internal.post("/internal/device-challenge/:id/approve", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+  const id = parseInt(c.req.param("id"));
+  const body = await c.req.json<{ token?: string; discordUserId?: string }>();
+  if (!body.token || !body.discordUserId) {
+    return c.json({ error: "token and discordUserId required" }, 400);
+  }
+  const { approveChallenge } = await import("../../utils/device-challenge.js");
+  const result = await approveChallenge(id, body.token, body.discordUserId);
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ success: true });
+});
+
+internal.post("/internal/device-challenge/:id/deny", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+  const id = parseInt(c.req.param("id"));
+  const body = await c.req.json<{ token?: string; discordUserId?: string }>();
+  if (!body.token || !body.discordUserId) {
+    return c.json({ error: "token and discordUserId required" }, 400);
+  }
+  const { denyChallenge } = await import("../../utils/device-challenge.js");
+  const result = await denyChallenge(id, body.token, body.discordUserId);
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ success: true, blacklisted: !!result.blacklisted });
+});
+
+internal.get("/internal/device-challenges/:discordUserId", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+  const discordUserId = c.req.param("discordUserId");
+  const { listPendingChallengesForUser } = await import("../../utils/device-challenge.js");
+  const challenges = await listPendingChallengesForUser(discordUserId);
+  return c.json({ challenges });
 });
 
 /** Pending add-on Discord role grant/revoke jobs for the bot. */

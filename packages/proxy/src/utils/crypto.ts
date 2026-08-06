@@ -39,12 +39,9 @@ function normalizeUserAgent(ua: string): string {
 }
 
 /**
- * OS + arch bucket for machine identity (ignores IDE / client product name).
- *
- * WHY: Cursor / Kilo / OpenCode / Claude Code each send a different User-Agent.
- * We intentionally drop the product name so they map to one slot on the same PC.
- * We do NOT have a real hardware UUID from most IDEs — OS+arch is the best
- * stable signal that does not flip when WiFi or IDE changes.
+ * OS + arch bucket for the machine half of a device slot fingerprint.
+ * Combined with normalized IDE name in generateFingerprint — different IDEs
+ * are different slots even on the same OS/arch.
  */
 export function normalizeMachineOs(os: string): string {
   const o = String(os || "").toLowerCase().replace(/\s+/g, "_");
@@ -95,33 +92,30 @@ export function extractMachineHint(
 }
 
 /**
- * Canonical device fingerprint = machine bucket only.
+ * Canonical device fingerprint = machine bucket + IDE slot.
  *
- * Intentionally ignores:
- * - IP (WiFi / VPN flips)
- * - full User-Agent product name (IDE switches)
- * - x-device-id header (many clients send it intermittently → would split slots)
- *
- * Same laptop on Windows x64 = one fingerprint across all IDEs.
- * Tradeoff: two different Windows x64 PCs look like one machine (acceptable for
- * personal Discord keys with maxDevices=1; abuse is handled by rate limits).
+ * - Same IDE on same OS/arch → same slot (UA version bumps do not split).
+ * - Different IDE (Cursor vs Cline) → different slot (maxDevices counts IDEs).
+ * - IP and raw UA product version are ignored.
  */
 export function generateFingerprint(
   ip: string,
   userAgent: string,
   deviceId: string = "",
   osDetected?: string | null,
+  ideName?: string | null,
 ): string {
   void ip;
   void deviceId;
   const machine = extractMachineHint(userAgent, osDetected);
-  if (machine && machine !== "unknown:") {
-    return sha256(`machine:${machine}`);
-  }
-  // Many IDEs (Kilo / Cline / OpenCode / Roo) omit OS from UA entirely.
-  // Hashing the product name would split one PC into many device slots.
-  // Keep a single shared bucket per key for OS-less clients.
-  return sha256("machine:unknown:shared");
+  const ide = String(ideName || "unknown")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .slice(0, 64) || "unknown";
+  const machinePart =
+    machine && machine !== "unknown:" ? machine : "unknown:shared";
+  return sha256(`slot:${machinePart}|ide:${ide}`);
 }
 
 /** Legacy fingerprints we may still find in DB from older eras. */

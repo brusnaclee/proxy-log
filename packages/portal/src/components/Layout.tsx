@@ -7,6 +7,7 @@ import { useI18n, hydrateLangFromServer } from "@/lib/i18n";
 import { badgeClass, badgeLabel, resolveDisplayBadges, formatAddonExpiry } from "@/lib/account-badge";
 import NotificationBell from "./NotificationBell";
 import RecapGate from "./RecapGate";
+import DeviceChallengeGate from "./DeviceChallengeGate";
 
 export default function Layout() {
   const navigate = useNavigate();
@@ -232,6 +233,7 @@ export default function Layout() {
       </nav>
 
       <RecapGate />
+      <DeviceChallengeGate onResolved={refreshUser} />
     </div>
   );
 }

@@ -7638,6 +7638,34 @@ client.once('clientReady', async () => {
 								'```\n' +
 								`Untuk bantuan setup: klik **How to Use** di DM bot ini.`;
 						}
+					} else if (notif.type === 'device_confirm' && notif.challengeId && notif.token) {
+						title = notif.title || '🔐 Device baru terdeteksi';
+						color = 0xf59e0b;
+						dmText =
+							(notif.message ||
+								`IDE/client baru meminta akses. Konfirmasi dalam 30 menit.`) +
+							`\n\n_Tombol expired setelah 30 menit. Konfirmasi juga tersedia di portal._`;
+						const { ActionRowBuilder, ButtonBuilder, ButtonStyle } =
+							await import('discord.js');
+						const row = new ActionRowBuilder().addComponents(
+							new ButtonBuilder()
+								.setCustomId(`device_chal:yes:${notif.challengeId}:${notif.token}`)
+								.setLabel('Ya itu saya')
+								.setStyle(ButtonStyle.Success),
+							new ButtonBuilder()
+								.setCustomId(`device_chal:no:${notif.challengeId}:${notif.token}`)
+								.setLabel('Bukan saya')
+								.setStyle(ButtonStyle.Danger),
+						);
+						await sendDMToUser(notif.discordUserId, title, dmText, color, [row]);
+						await mirrorThread(title, dmText, color);
+						if (notif.keyId) {
+							await proxyInternal(
+								`/admin/internal/clear-notification/${notif.keyId}`,
+								'POST',
+							);
+						}
+						continue;
 					} else if (
 						notif.type === 'device_limit_rotate' ||
 						notif.type === 'new_device_detected' ||
@@ -7783,6 +7811,56 @@ client.on('interactionCreate', async (interaction) => {
 			interaction.customId === 'ranking_search_user_other'
 		) {
 			await handleRankingSearchOtherButton(interaction);
+			return;
+		}
+
+		// ─── Device challenge confirm (Ya / Bukan saya) ─────────────────────────
+		if (interaction.isButton() && interaction.customId.startsWith('device_chal:')) {
+			const parts = interaction.customId.split(':');
+			// device_chal:yes|no:id:token
+			const action = parts[1];
+			const challengeId = parts[2];
+			const token = parts.slice(3).join(':');
+			try {
+				await interaction.deferReply({ ephemeral: true });
+			} catch {}
+			try {
+				const path =
+					action === 'yes'
+						? `/admin/internal/device-challenge/${challengeId}/approve`
+						: `/admin/internal/device-challenge/${challengeId}/deny`;
+				const res = await proxyInternal(path, 'POST', {
+					token,
+					discordUserId: interaction.user.id,
+				});
+				if (res?.error) {
+					await interaction.editReply({
+						content: `❌ ${res.error}`,
+					});
+					return;
+				}
+				if (action === 'yes') {
+					await interaction.editReply({
+						content:
+							'✅ Device dikonfirmasi. Slot tertua diganti dengan device/IDE baru ini.',
+					});
+				} else {
+					await interaction.editReply({
+						content: res?.blacklisted
+							? '🚫 Device ditolak dan **di-blacklist** (penolakan kedua untuk fingerprint yang sama).'
+							: '🚫 Device ditolak. IDE baru tidak lagi mendapat akses provisional.',
+					});
+				}
+				try {
+					await interaction.message.edit({ components: [] });
+				} catch {}
+			} catch (err) {
+				try {
+					await interaction.editReply({
+						content: `❌ Gagal: ${err?.message || err}`,
+					});
+				} catch {}
+			}
 			return;
 		}
 

@@ -278,9 +278,53 @@ export const devices = pgTable('devices', {
 	lastSeen: timestamp('last_seen').notNull().defaultNow(),
 	requestCount: integer('request_count').notNull().default(0),
 	isBlocked: boolean('is_blocked').notNull().default(false),
+	/** True while waiting for user confirm on a 3rd+ device (maxDevices exceeded). */
+	isProvisional: boolean('is_provisional').notNull().default(false),
 }, (table) => ({
 	apiKeyFingerprintIdx: uniqueIndex('idx_devices_api_key_fingerprint').on(table.apiKeyId, table.fingerprint),
 }));
+
+// ─── Device challenges (max-slot confirm; Discord + portal) ───────────────────
+export const deviceChallenges = pgTable('device_challenges', {
+	id: serial('id').primaryKey(),
+	discordUserId: text('discord_user_id').notNull(),
+	apiKeyId: integer('api_key_id').notNull().references(() => apiKeys.id, { onDelete: 'cascade' }),
+	fingerprint: text('fingerprint').notNull(),
+	ideDetected: text('ide_detected'),
+	userAgentRaw: text('user_agent_raw'),
+	ipAddress: text('ip_address'),
+	/** pending | approved | denied | expired */
+	status: text('status').notNull().default('pending'),
+	token: text('token').notNull(),
+	expiresAt: timestamp('expires_at').notNull(),
+	createdAt: timestamp('created_at').notNull().defaultNow(),
+	resolvedAt: timestamp('resolved_at'),
+}, (table) => ({
+	discordIdx: index('idx_device_challenges_discord').on(table.discordUserId),
+	fpIdx: index('idx_device_challenges_fp').on(table.fingerprint),
+	statusIdx: index('idx_device_challenges_status').on(table.status),
+}));
+
+export type DeviceChallenge = typeof deviceChallenges.$inferSelect;
+
+// ─── Durable user notifications (portal history; survives bot DM clear) ───────
+export const userNotifications = pgTable('user_notifications', {
+	id: serial('id').primaryKey(),
+	discordUserId: text('discord_user_id').notNull(),
+	type: text('type').notNull(),
+	title: text('title').notNull().default(''),
+	message: text('message').notNull().default(''),
+	payload: text('payload').notNull().default('{}'),
+	createdAt: timestamp('created_at').notNull().defaultNow(),
+	readAt: timestamp('read_at'),
+	/** Actions (approve/deny) valid until this time; null = never actionable */
+	actionableUntil: timestamp('actionable_until'),
+}, (table) => ({
+	discordIdx: index('idx_user_notifications_discord').on(table.discordUserId),
+	createdIdx: index('idx_user_notifications_created').on(table.createdAt),
+}));
+
+export type UserNotification = typeof userNotifications.$inferSelect;
 
 // ─── Providers ───────────────────────────────────────────────────────────────
 export const providers = pgTable('providers', {

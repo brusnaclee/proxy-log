@@ -289,6 +289,62 @@ export async function initializeDatabase() {
 		console.warn('⚠️ devices unique index migration warning (may have duplicate data):', err?.message || err);
 	}
 
+	// Device challenges + portal notifications + provisional flag
+	try {
+		await pool.query(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS is_provisional BOOLEAN NOT NULL DEFAULT false`);
+		await pool.query(`
+			CREATE TABLE IF NOT EXISTS device_challenges (
+				id SERIAL PRIMARY KEY,
+				discord_user_id TEXT NOT NULL,
+				api_key_id INTEGER NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+				fingerprint TEXT NOT NULL,
+				ide_detected TEXT,
+				user_agent_raw TEXT,
+				ip_address TEXT,
+				status TEXT NOT NULL DEFAULT 'pending',
+				token TEXT NOT NULL,
+				expires_at TIMESTAMP NOT NULL,
+				created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+				resolved_at TIMESTAMP
+			)
+		`);
+		await pool.query(`CREATE INDEX IF NOT EXISTS idx_device_challenges_discord ON device_challenges (discord_user_id)`);
+		await pool.query(`CREATE INDEX IF NOT EXISTS idx_device_challenges_fp ON device_challenges (fingerprint)`);
+		await pool.query(`CREATE INDEX IF NOT EXISTS idx_device_challenges_status ON device_challenges (status)`);
+		await pool.query(`
+			CREATE TABLE IF NOT EXISTS user_notifications (
+				id SERIAL PRIMARY KEY,
+				discord_user_id TEXT NOT NULL,
+				type TEXT NOT NULL,
+				title TEXT NOT NULL DEFAULT '',
+				message TEXT NOT NULL DEFAULT '',
+				payload TEXT NOT NULL DEFAULT '{}',
+				created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+				read_at TIMESTAMP,
+				actionable_until TIMESTAMP
+			)
+		`);
+		await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_notifications_discord ON user_notifications (discord_user_id)`);
+		await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_notifications_created ON user_notifications (created_at)`);
+		// Default max devices 2 for Discord/trial keys that were still at 1
+		await pool.query(`
+			UPDATE api_keys SET max_devices = 2, updated_at = NOW()
+			WHERE max_devices = 1
+			  AND is_active = true
+			  AND (
+			    provisioned_by IN ('discord-bot', 'trial-bot', 'admin-override')
+			    OR is_trial = true
+			  )
+		`);
+		await pool.query(`
+			UPDATE admin_config SET global_max_devices = 2
+			WHERE global_max_devices IS NULL OR global_max_devices = 0 OR global_max_devices = 1
+		`);
+		console.log('✅ Applied device_challenges / user_notifications / max_devices=2 migration');
+	} catch (err: any) {
+		console.warn('⚠️ device challenge migration warning:', err?.message || err);
+	}
+
 	// model_monitor: one row per (model_id, provider) — concurrent sweeps used to insert twins
 	try {
 		await pool.query(`

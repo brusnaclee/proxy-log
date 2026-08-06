@@ -42,6 +42,7 @@ export default function KeyDetailPage() {
   const navigate = useNavigate();
   const [keyData, setKeyData] = useState<ApiKeyDetail | null>(null);
   const [deviceList, setDeviceList] = useState<any[]>([]);
+  const [deviceChallenges, setDeviceChallenges] = useState<any[]>([]);
   const [keyLogs, setKeyLogs] = useState<LogEntry[]>([]);
   const [keyLogsLoading, setKeyLogsLoading] = useState(false);
   const [keyLogsError, setKeyLogsError] = useState<string | null>(null);
@@ -262,6 +263,12 @@ export default function KeyDetailPage() {
       setDeviceList(d);
     } catch (err) {
       console.error("[KeyDetail] Failed to load devices:", err);
+    }
+    try {
+      const ch = await keys.getDeviceChallenges(parseInt(id));
+      setDeviceChallenges(ch.challenges || []);
+    } catch {
+      setDeviceChallenges([]);
     }
     void loadLogs();
     try {
@@ -1825,8 +1832,61 @@ export API_TIMEOUT_MS=500000`}
         </TabsContent>
 
         {/* Devices Tab */}
-        <TabsContent value="devices">
+        <TabsContent value="devices" className="space-y-4">
+          {deviceChallenges.filter((c) => c.status === "pending").length > 0 && (
+            <Card className="border-border/50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Pending Challenges</CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border/50">
+                        <th className="text-left py-2 px-4 text-muted-foreground font-medium">IDE</th>
+                        <th className="text-left py-2 px-4 text-muted-foreground font-medium">Fingerprint</th>
+                        <th className="text-left py-2 px-4 text-muted-foreground font-medium">Expires</th>
+                        <th className="text-left py-2 px-4 text-muted-foreground font-medium">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {deviceChallenges
+                        .filter((c) => c.status === "pending")
+                        .map((c) => {
+                          const exp = c.expiresAt ? new Date(c.expiresAt).getTime() : 0;
+                          const expired = exp > 0 && exp <= Date.now();
+                          return (
+                            <tr key={c.id} className="border-b border-border/30">
+                              <td className="py-2 px-4">{c.ideDetected || "?"}</td>
+                              <td className="py-2 px-4">
+                                <code className="text-xs font-mono">{String(c.fingerprint || "").slice(0, 16)}…</code>
+                              </td>
+                              <td className="py-2 px-4 text-xs text-muted-foreground">
+                                {c.expiresAt ? formatDate(c.expiresAt) : "—"}
+                                {expired ? " (expired)" : ""}
+                              </td>
+                              <td className="py-2 px-4">
+                                <Badge variant="outline">{expired ? "expired" : "pending"}</Badge>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           <Card className="border-border/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">
+                Registered Devices
+                <span className="ml-2 text-xs font-normal text-muted-foreground">
+                  (slots shared across account · max {keyData?.maxDevices ?? "?"})
+                </span>
+              </CardTitle>
+            </CardHeader>
             <CardContent className="p-0">
               <div className="overflow-x-auto">
               <table className="w-full text-sm min-w-[720px]">
@@ -1848,6 +1908,18 @@ export API_TIMEOUT_MS=500000`}
                     <tr key={d.id} className="border-b border-border/30 hover:bg-accent/30">
                       <td className="py-2 px-4">
                         <code className="text-xs font-mono">{d.fingerprint?.substring(0, 16)}...</code>
+                        <div className="flex flex-wrap gap-1 mt-0.5">
+                          {d.isProvisional && (
+                            <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-500/40">
+                              provisional
+                            </Badge>
+                          )}
+                          {d.isBlocked && (
+                            <Badge variant="outline" className="text-[10px] text-red-500 border-red-500/40">
+                              blocked
+                            </Badge>
+                          )}
+                        </div>
                         {(d.isCurrentKey === false || d.mergedRows > 1) && (
                           <div className="text-[11px] text-muted-foreground mt-0.5">
                             {d.isCurrentKey === false && `via ${d.ownerKeyName || `key #${d.ownerKeyId}`}`}
@@ -1900,6 +1972,47 @@ export API_TIMEOUT_MS=500000`}
               </div>
             </CardContent>
           </Card>
+
+          {deviceChallenges.filter((c) => c.status !== "pending").length > 0 && (
+            <Card className="border-border/50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Challenge History</CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border/50">
+                        <th className="text-left py-2 px-4 text-muted-foreground font-medium">IDE</th>
+                        <th className="text-left py-2 px-4 text-muted-foreground font-medium">Fingerprint</th>
+                        <th className="text-left py-2 px-4 text-muted-foreground font-medium">Status</th>
+                        <th className="text-left py-2 px-4 text-muted-foreground font-medium">Resolved</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {deviceChallenges
+                        .filter((c) => c.status !== "pending")
+                        .slice(0, 20)
+                        .map((c) => (
+                          <tr key={c.id} className="border-b border-border/30">
+                            <td className="py-2 px-4">{c.ideDetected || "?"}</td>
+                            <td className="py-2 px-4">
+                              <code className="text-xs font-mono">{String(c.fingerprint || "").slice(0, 16)}…</code>
+                            </td>
+                            <td className="py-2 px-4">
+                              <Badge variant="outline">{c.status}</Badge>
+                            </td>
+                            <td className="py-2 px-4 text-xs text-muted-foreground">
+                              {c.resolvedAt ? formatDate(c.resolvedAt) : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         {/* Logs Tab */}

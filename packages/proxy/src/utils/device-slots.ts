@@ -1,6 +1,6 @@
 /**
- * Device slot helpers — collapse multi-IDE / legacy fingerprints into one
- * machine slot so maxDevices does not false-rotate keys.
+ * Device slot helpers — fingerprint = machine|ide (IDE change = new slot).
+ * Legacy machine-only / ua: / device: hashes can still be matched for migration.
  */
 
 import { extractMachineHint, generateFingerprint, legacyFingerprintCandidates } from './crypto.js';
@@ -14,8 +14,12 @@ export type DeviceRowLike = {
 	user_agent_raw?: string | null;
 	osDetected?: string | null;
 	os_detected?: string | null;
+	ideDetected?: string | null;
+	ide_detected?: string | null;
 	isBlocked?: boolean | null;
 	is_blocked?: boolean | null;
+	isProvisional?: boolean | null;
+	is_provisional?: boolean | null;
 	lastSeen?: Date | string | null;
 	last_seen?: Date | string | null;
 	requestCount?: number | null;
@@ -24,8 +28,6 @@ export type DeviceRowLike = {
 	ip_address?: string | null;
 	deviceName?: string | null;
 	device_name?: string | null;
-	ideDetected?: string | null;
-	ide_detected?: string | null;
 	firstSeen?: Date | string | null;
 	first_seen?: Date | string | null;
 };
@@ -36,6 +38,14 @@ function uaOf(d: DeviceRowLike): string {
 
 function osOf(d: DeviceRowLike): string {
 	return String(d.osDetected ?? d.os_detected ?? '');
+}
+
+function ideOf(d: DeviceRowLike): string {
+	return String(d.ideDetected ?? d.ide_detected ?? 'unknown');
+}
+
+export function isProvisionalDevice(d: DeviceRowLike): boolean {
+	return Boolean(d.isProvisional ?? d.is_provisional);
 }
 
 export function machineKeyOfDevice(d: DeviceRowLike): string {
@@ -55,6 +65,7 @@ export function normalizeDeviceRow(d: DeviceRowLike): {
 	lastSeen: any;
 	requestCount: number;
 	isBlocked: boolean;
+	isProvisional: boolean;
 } {
 	return {
 		id: d.id,
@@ -69,12 +80,29 @@ export function normalizeDeviceRow(d: DeviceRowLike): {
 		lastSeen: d.lastSeen ?? d.last_seen,
 		requestCount: Number(d.requestCount ?? d.request_count ?? 0),
 		isBlocked: Boolean(d.isBlocked ?? d.is_blocked),
+		isProvisional: isProvisionalDevice(d),
 	};
 }
 
+/** Registered (non-provisional) slots count toward maxDevices. */
+export function countRegisteredSlots(rows: DeviceRowLike[]): number {
+	const fps = new Set<string>();
+	for (const d of rows) {
+		if (isProvisionalDevice(d)) continue;
+		if (d.isBlocked ?? d.is_blocked) continue;
+		fps.add(d.fingerprint);
+	}
+	return fps.size;
+}
+
+/** @deprecated use countRegisteredSlots — kept for older imports */
+export function countDistinctMachines(rows: DeviceRowLike[]): number {
+	return countRegisteredSlots(rows);
+}
+
 /**
- * Pick the existing device row that belongs to the same physical machine,
- * even if its stored fingerprint is from an older era (IP/UA/device-id).
+ * Find an existing row for this request fingerprint (canonical or legacy).
+ * Does NOT merge different IDEs onto one machine.
  */
 export function findSameMachineDevice(
 	rows: DeviceRowLike[],
@@ -83,105 +111,49 @@ export function findSameMachineDevice(
 		userAgent: string;
 		osDetected?: string | null;
 		deviceId?: string;
+		ideName?: string | null;
 	},
 ): DeviceRowLike | null {
-	const machine = extractMachineHint(opts.userAgent, opts.osDetected);
 	const legacy = new Set(
 		legacyFingerprintCandidates(opts.userAgent, opts.deviceId || ''),
 	);
 	legacy.add(opts.canonicalFingerprint);
+	// Also accept recompute from stored-style inputs
+	if (opts.ideName) {
+		legacy.add(
+			generateFingerprint(
+				'',
+				opts.userAgent,
+				opts.deviceId || '',
+				opts.osDetected,
+				opts.ideName,
+			),
+		);
+	}
 
-	// 1) Exact canonical / legacy fingerprint match
 	const byFp = rows.find((d) => legacy.has(d.fingerprint));
 	if (byFp) return byFp;
-
-	// 2) Same OS+arch from stored UA / os_detected
-	if (machine && machine !== 'unknown:') {
-		const byMachine = rows.find((d) => {
-			const hint = machineKeyOfDevice(d);
-			return hint === machine && hint !== 'unknown:';
-		});
-		if (byMachine) return byMachine;
-
-		// OS-less legacy row on an account that already has this machine — absorb it
-		const osLess = rows.find((d) => {
-			const hint = machineKeyOfDevice(d);
-			return !hint || hint === 'unknown:';
-		});
-		if (osLess) return osLess;
-	}
-
-	// 3) Current request is OS-less (Cline/Kilo/OpenCode) but account already has
-	// exactly one known OS+arch slot → same PC, sticky merge (stops IDE-switch rotates).
-	if (!machine || machine === 'unknown:') {
-		const known = rows.filter((d) => {
-			const hint = machineKeyOfDevice(d);
-			return hint && hint !== 'unknown:';
-		});
-		const hints = new Set(known.map((d) => machineKeyOfDevice(d)));
-		if (hints.size === 1 && known.length > 0) {
-			return known[0];
-		}
-		// All-unknown account: prefer any existing unknown/shared row
-		const anyUnknown = rows.find((d) => {
-			const hint = machineKeyOfDevice(d);
-			return !hint || hint === 'unknown:';
-		});
-		if (anyUnknown) return anyUnknown;
-	}
 
 	return null;
 }
 
 /**
- * Count distinct physical machines (not raw fingerprint strings).
- * - Known OS+arch rows collapse by normalized hint.
- * - OS-less / legacy UA rows do NOT add slots when a known machine exists
- *   (Cursor with OS UA + Cline without OS = 1 device).
- * - If the account only has OS-less rows, count as 1 machine (shared bucket),
- *   not N legacy ua: fingerprints.
- */
-export function countDistinctMachines(rows: DeviceRowLike[]): number {
-	const known = new Set<string>();
-	let hasUnknown = false;
-	for (const d of rows) {
-		const hint = machineKeyOfDevice(d);
-		if (hint && hint !== 'unknown:') {
-			known.add(`m:${hint}`);
-		} else {
-			hasUnknown = true;
-		}
-	}
-	if (known.size > 0) return known.size;
-	return hasUnknown ? 1 : 0;
-}
-
-/**
- * Among rows for one account, return ids to delete when consolidating onto
- * the keeper row for the current machine. Keeps other *different* machines.
- * Also drops OS-less / legacy unknown rows when the keeper is a known OS+arch.
+ * Delete duplicate rows with the exact same fingerprint (legacy dupes).
+ * Does not delete other IDEs.
  */
 export function siblingIdsToDeleteOnSameMachine(
 	rows: DeviceRowLike[],
 	keeperId: number,
-	machineHint: string,
+	_machineHint: string,
+	canonicalFingerprint?: string,
 ): number[] {
-	if (!machineHint || machineHint === 'unknown:') {
-		// All-unknown consolidate: delete every other unknown/legacy row
-		return rows
-			.filter((d) => {
-				if (d.id === keeperId) return false;
-				const hint = machineKeyOfDevice(d);
-				return !hint || hint === 'unknown:';
-			})
-			.map((d) => d.id);
-	}
+	if (!canonicalFingerprint) return [];
 	return rows
-		.filter((d) => {
-			if (d.id === keeperId) return false;
-			const hint = machineKeyOfDevice(d);
-			return hint === machineHint || !hint || hint === 'unknown:';
-		})
+		.filter(
+			(d) =>
+				d.id !== keeperId &&
+				d.fingerprint === canonicalFingerprint,
+		)
 		.map((d) => d.id);
 }
 
@@ -189,6 +161,23 @@ export function canonicalFingerprintForRequest(
 	userAgent: string,
 	osDetected?: string | null,
 	deviceId?: string,
+	ideName?: string | null,
 ): string {
-	return generateFingerprint('', userAgent, deviceId || '', osDetected);
+	return generateFingerprint('', userAgent, deviceId || '', osDetected, ideName);
+}
+
+/** Oldest registered (non-provisional) device by lastSeen then firstSeen. */
+export function pickOldestRegistered(rows: DeviceRowLike[]): DeviceRowLike | null {
+	const registered = rows.filter(
+		(d) => !isProvisionalDevice(d) && !(d.isBlocked ?? d.is_blocked),
+	);
+	if (!registered.length) return null;
+	return [...registered].sort((a, b) => {
+		const la = new Date(String(a.lastSeen ?? a.last_seen ?? 0)).getTime();
+		const lb = new Date(String(b.lastSeen ?? b.last_seen ?? 0)).getTime();
+		if (la !== lb) return la - lb;
+		const fa = new Date(String(a.firstSeen ?? a.first_seen ?? 0)).getTime();
+		const fb = new Date(String(b.firstSeen ?? b.first_seen ?? 0)).getTime();
+		return fa - fb;
+	})[0];
 }

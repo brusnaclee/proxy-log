@@ -269,6 +269,7 @@ export interface DeviceInfo {
   lastSeen: string;
   firstSeen: string | null;
   isBlocked: boolean;
+  isProvisional?: boolean;
   /** Key holding the slot — device limits are shared across an account's keys. */
   ownerKeyId: number;
   ownerKeyName: string | null;
@@ -333,13 +334,32 @@ export interface RecapOpenResponse {
 
 export interface NotificationsResponse {
   notifications: Array<{
+    id?: number;
     type: string;
+    title?: string;
+    message?: string;
     keyName?: string;
     keyId?: number;
     rotatedAt?: string;
+    createdAt?: string;
+    actionable?: boolean;
+    expired?: boolean;
+    challengeId?: number | null;
+    token?: string | null;
+    fingerprint?: string | null;
+    ideDetected?: string | null;
+    actionableUntil?: string | null;
     [key: string]: any;
   }>;
   count: number;
+  pendingChallenges?: Array<{
+    id: number;
+    token: string;
+    fingerprint?: string;
+    ideDetected?: string | null;
+    expiresAt?: string;
+    status?: string;
+  }>;
 }
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
@@ -456,6 +476,18 @@ export const keys = {
   deleteDevice: (keyId: number, fingerprint: string) =>
     request<{ success: boolean }>(`/keys/${keyId}/devices/${fingerprint}`, "DELETE"),
 
+  devicePolicyRules: (keyId: number) =>
+    request<{ rules: Array<{ id: number; fingerprint?: string | null; listType: string; label?: string | null }> }>(
+      `/keys/${keyId}/device-policy-rules`,
+      "GET",
+    ),
+
+  unblockDevice: (keyId: number, fingerprint: string) =>
+    request<{ success: boolean }>(
+      `/keys/${keyId}/device-blacklist/${encodeURIComponent(fingerprint)}`,
+      "DELETE",
+    ),
+
   updatePolicies: (keyId: number, data: { devicePolicy?: string; idePolicy?: string }) =>
     request<{ success: boolean }>(`/keys/${keyId}/policies`, "PUT", data),
 };
@@ -488,6 +520,13 @@ export const recap = {
 export const notifications = {
   list: () => request<NotificationsResponse>("/notifications", "GET"),
   dismiss: () => request<{ success: boolean; cleared: number }>("/notifications/dismiss", "POST"),
+};
+
+export const deviceChallenge = {
+  approve: (id: number, token: string) =>
+    request<{ success: boolean }>(`/device-challenge/${id}/approve`, "POST", { token }),
+  deny: (id: number, token: string) =>
+    request<{ success: boolean; blacklisted?: boolean }>(`/device-challenge/${id}/deny`, "POST", { token }),
 };
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
@@ -524,4 +563,4 @@ export const settings = {
 
 // ─── Root export ──────────────────────────────────────────────────────────────
 
-export const api = { me, auth, stats, keys, logs, models, recap, notifications, settings, sessions };
+export const api = { me, auth, stats, keys, logs, models, recap, notifications, deviceChallenge, settings, sessions };

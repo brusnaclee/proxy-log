@@ -547,12 +547,16 @@ export const keys = {
     }>(`/keys/sync-all-roles`, { method: "POST" }),
   getDevices: (id: number) =>
     request<any[]>(`/keys/${id}/devices`),
+  getDeviceChallenges: (id: number) =>
+    request<{ challenges: any[] }>(`/keys/${id}/device-challenges`),
   blockDevice: (keyId: number, fingerprint: string) =>
     request<{ success: boolean }>(`/keys/${keyId}/devices/${fingerprint}/block`, { method: "POST" }),
   allowDevice: (keyId: number, fingerprint: string) =>
     request<{ success: boolean }>(`/keys/${keyId}/devices/${fingerprint}/allow`, { method: "POST" }),
   removeDevice: (keyId: number, fingerprint: string) =>
     request<{ success: boolean }>(`/keys/${keyId}/devices/${fingerprint}`, { method: "DELETE" }),
+  removeDeviceBlacklist: (keyId: number, fingerprint: string) =>
+    request<{ success: boolean }>(`/keys/${keyId}/devices/${encodeURIComponent(fingerprint)}/allow`, { method: "POST" }),
   addDevicePolicyRule: (
     keyId: number,
     data: { targetType: "fingerprint" | "ip"; value: string; listType: "allow" | "block"; label?: string }

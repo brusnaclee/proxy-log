@@ -1043,7 +1043,11 @@ keys.post("/keys/:id/devices/:fingerprint/block", async (c) => {
   ));
 
   const existing = await db.select().from(allowedDevices)
-    .where(and(eq(allowedDevices.apiKeyId, keyId), eq(allowedDevices.fingerprint, fingerprint), eq(allowedDevices.listType, "block")));
+    .where(and(
+      sql`${allowedDevices.apiKeyId} IN ${accountKeyIdsSql(keyId)}`,
+      eq(allowedDevices.fingerprint, fingerprint),
+      eq(allowedDevices.listType, "block"),
+    ));
   const blockExisting = existing[0];
   if (!blockExisting) {
     await db.insert(allowedDevices).values({ apiKeyId: keyId, fingerprint, listType: "block", label: "Blocked via dashboard" });
@@ -1059,7 +1063,12 @@ keys.post("/keys/:id/devices/:fingerprint/allow", async (c) => {
     eq(devices.fingerprint, fingerprint),
     sql`${devices.apiKeyId} IN ${accountKeyIdsSql(keyId)}`,
   ));
-  await db.delete(allowedDevices).where(and(eq(allowedDevices.apiKeyId, keyId), eq(allowedDevices.fingerprint, fingerprint), eq(allowedDevices.listType, "block")));
+  // Remove block rules across all sibling keys (account-scoped blacklist)
+  await db.delete(allowedDevices).where(and(
+    sql`${allowedDevices.apiKeyId} IN ${accountKeyIdsSql(keyId)}`,
+    eq(allowedDevices.fingerprint, fingerprint),
+    eq(allowedDevices.listType, "block"),
+  ));
 
   const existing = await db.select().from(allowedDevices)
     .where(and(eq(allowedDevices.apiKeyId, keyId), eq(allowedDevices.fingerprint, fingerprint), eq(allowedDevices.listType, "allow")));
@@ -1068,6 +1077,32 @@ keys.post("/keys/:id/devices/:fingerprint/allow", async (c) => {
     await db.insert(allowedDevices).values({ apiKeyId: keyId, fingerprint, listType: "allow", label: "Allowed via dashboard" });
   }
   return c.json({ success: true, message: "Device allowed" });
+});
+
+keys.get("/keys/:id/device-challenges", async (c) => {
+  const keyId = parseInt(c.req.param("id"));
+  const [key] = await db.select().from(apiKeys).where(eq(apiKeys.id, keyId)).limit(1);
+  if (!key) return c.json({ error: "API key not found" }, 404);
+  const { deviceChallenges } = await import("../../db/schema.js");
+  const { desc: descq, eq: eqq, inArray: inArr } = await import("drizzle-orm");
+
+  let rows;
+  if (key.discordUserId) {
+    rows = await db
+      .select()
+      .from(deviceChallenges)
+      .where(eqq(deviceChallenges.discordUserId, key.discordUserId))
+      .orderBy(descq(deviceChallenges.createdAt))
+      .limit(50);
+  } else {
+    rows = await db
+      .select()
+      .from(deviceChallenges)
+      .where(inArr(deviceChallenges.apiKeyId, [keyId]))
+      .orderBy(descq(deviceChallenges.createdAt))
+      .limit(50);
+  }
+  return c.json({ challenges: rows });
 });
 
 keys.delete("/keys/:id/devices/:fingerprint", async (c) => {

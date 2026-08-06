@@ -7,6 +7,7 @@ Production and maintenance scripts live under `scripts/` (repo root). Do **not**
 | Script | Purpose |
 |--------|---------|
 | `scripts/deploy.mjs` | SSH deploy (git sync, build, pm2 restart). Needs `DEPLOY_SSH_PASSWORD`. |
+| `packages/proxy/scripts/e2e-device-challenge.ts` | Sandbox E2E for device confirm / deny / blacklist / expire. |
 | `scripts/probe-model-identity.mjs` | Example: list online models + ask each for self-reported identity via the proxy. |
 | `scripts/daily-trim.mjs` | DB / log trim maintenance |
 | `scripts/migrate-sqlite-to-pg.mjs` | One-time SQLite → Postgres migration |

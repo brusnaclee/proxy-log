@@ -35,7 +35,7 @@ Reuse helpers in `packages/proxy/src/utils/counting.ts` + rate-limit windows:
 | Total toward limit | `weightedHopTotalTokensSql` | In + Out credit |
 | Prompt window | `checkPromptLimit` | Account key ids; cliff or sliding fallback |
 | API window | `checkApiCallLimit` | Same account key ids |
-| Devices | `listAccountDevices` / gate `countDistinctMachines` | Account-scoped slots |
+| Devices | `listAccountDevices` / gate `countRegisteredSlots` | Account-scoped slots (machine\|ide fingerprint); provisional excluded from count |
 | In-flight prompts | `tryReserveTurn` / `countReserved` | Gate-only; **must release after DB insert** or `dbUsed+reserved` double-counts vs dashboard |
 
 Daily cutover: **midnight WIB** (`wibTodayStartDate` / period helpers).

@@ -590,8 +590,39 @@ portal.get("/me", async (c) => {
     if (trialRow) trialExpiresAt = trialRow.expiresAt?.toISOString() ?? null;
   }
 
-  // Pending notifications from all keys
+  // Pending notifications: durable user_notifications + legacy key queue
   const pendingNotifications: any[] = [];
+  try {
+    const { listPortalNotifications, listPendingChallengesForUser } = await import(
+      "../../utils/device-challenge.js"
+    );
+    const durable = await listPortalNotifications(discordUserId, 20);
+    const now = Date.now();
+    for (const n of durable) {
+      let payload: any = {};
+      try {
+        payload = JSON.parse(n.payload || "{}");
+      } catch {
+        /* ignore */
+      }
+      const actionableUntil = n.actionableUntil ? new Date(n.actionableUntil).getTime() : 0;
+      const expired = actionableUntil > 0 && actionableUntil <= now;
+      pendingNotifications.push({
+        id: n.id,
+        type: n.type,
+        title: n.title,
+        message: n.message,
+        actionable: n.type === "device_confirm" && !expired && payload.challengeId && payload.token,
+        expired,
+        challengeId: payload.challengeId,
+        token: payload.token,
+        expiresAt: payload.expiresAt,
+      });
+    }
+    (c as any)._pendingChallenges = await listPendingChallengesForUser(discordUserId);
+  } catch {
+    /* ignore */
+  }
   for (const k of userKeys) {
     if (k.pendingNotification) {
       try {
@@ -765,6 +796,15 @@ portal.get("/me", async (c) => {
     })(),
     perModelPromptsBypassedByAddon: quotaStack.bypassPerModelPrompts,
     pendingNotifications,
+    pendingDeviceChallenges: Array.isArray((c as any)._pendingChallenges)
+      ? (c as any)._pendingChallenges.map((ch: any) => ({
+          id: ch.id,
+          token: ch.token,
+          fingerprint: ch.fingerprint,
+          ideDetected: ch.ideDetected,
+          expiresAt: ch.expiresAt,
+        }))
+      : [],
     tokenSaver: await (async () => {
       const { packGlobalTokenSaver, packUserTokenSaverOverrides } = await import("../../utils/token-saver-api.js");
       return {
@@ -1680,42 +1720,145 @@ portal.post("/recap/open", async (c) => {
 
 portal.get("/notifications", async (c) => {
   const discordUserId = getPortalDiscordUserId(c)!;
-  const userKeys = await db.select({
-    id: apiKeys.id,
-    name: apiKeys.name,
-    pendingNotification: apiKeys.pendingNotification,
-  }).from(apiKeys).where(eq(apiKeys.discordUserId, discordUserId));
-
-  const notifications: any[] = [];
-  for (const k of userKeys) {
-    if (k.pendingNotification) {
-      try {
-        const notifs = JSON.parse(k.pendingNotification);
-        if (Array.isArray(notifs)) {
-          notifications.push(...notifs.map((n: any) => ({ ...n, keyId: k.id, keyName: k.name })));
-        }
-      } catch { /* ignore */ }
+  const {
+    listPortalNotifications,
+    listPendingChallengesForUser,
+  } = await import("../../utils/device-challenge.js");
+  const durable = await listPortalNotifications(discordUserId, 50);
+  const pendingChallenges = await listPendingChallengesForUser(discordUserId);
+  const now = Date.now();
+  const notifications = durable.map((n) => {
+    let payload: any = {};
+    try {
+      payload = JSON.parse(n.payload || "{}");
+    } catch {
+      /* ignore */
     }
-  }
+    const actionableUntil = n.actionableUntil
+      ? new Date(n.actionableUntil).getTime()
+      : 0;
+    const expired = actionableUntil > 0 && actionableUntil <= now;
+    const actionable =
+      n.type === "device_confirm" &&
+      !expired &&
+      !!payload.challengeId &&
+      !!payload.token;
+    return {
+      id: n.id,
+      type: n.type,
+      title: n.title,
+      message: n.message,
+      createdAt: n.createdAt,
+      readAt: n.readAt,
+      actionableUntil: n.actionableUntil,
+      expired,
+      actionable,
+      challengeId: payload.challengeId || null,
+      token: payload.token || null,
+      fingerprint: payload.fingerprint || null,
+      ideDetected: payload.ideDetected || null,
+    };
+  });
 
-  return c.json({ notifications, count: notifications.length });
+  return c.json({
+    notifications,
+    count: notifications.length,
+    pendingChallenges: pendingChallenges.map((ch) => ({
+      id: ch.id,
+      token: ch.token,
+      fingerprint: ch.fingerprint,
+      ideDetected: ch.ideDetected,
+      expiresAt: ch.expiresAt,
+      status: ch.status,
+    })),
+  });
 });
 
 portal.post("/notifications/dismiss", async (c) => {
   const discordUserId = getPortalDiscordUserId(c)!;
-  const userKeys = await db.select({ id: apiKeys.id })
+  const { userNotifications } = await import("../../db/schema.js");
+  const { eq: eqq } = await import("drizzle-orm");
+  await db
+    .update(userNotifications)
+    .set({ readAt: new Date() })
+    .where(eqq(userNotifications.discordUserId, discordUserId));
+
+  const userKeys = await db
+    .select({ id: apiKeys.id })
     .from(apiKeys)
     .where(eq(apiKeys.discordUserId, discordUserId));
-
-  let cleared = 0;
   for (const k of userKeys) {
-    await db.update(apiKeys)
+    await db
+      .update(apiKeys)
       .set({ pendingNotification: null, updatedAt: new Date() })
       .where(eq(apiKeys.id, k.id));
-    cleared += 1;
   }
 
-  return c.json({ success: true, cleared });
+  return c.json({ success: true });
+});
+
+portal.post("/device-challenge/:id/approve", async (c) => {
+  const discordUserId = getPortalDiscordUserId(c)!;
+  const id = parseInt(c.req.param("id"));
+  const body = await c.req.json<{ token?: string }>();
+  if (!body.token) return c.json({ error: "token required" }, 400);
+  const { approveChallenge } = await import("../../utils/device-challenge.js");
+  const result = await approveChallenge(id, body.token, discordUserId);
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ success: true });
+});
+
+portal.post("/device-challenge/:id/deny", async (c) => {
+  const discordUserId = getPortalDiscordUserId(c)!;
+  const id = parseInt(c.req.param("id"));
+  const body = await c.req.json<{ token?: string }>();
+  if (!body.token) return c.json({ error: "token required" }, 400);
+  const { denyChallenge } = await import("../../utils/device-challenge.js");
+  const result = await denyChallenge(id, body.token, discordUserId);
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ success: true, blacklisted: !!result.blacklisted });
+});
+
+portal.get("/keys/:id/device-policy-rules", async (c) => {
+  const discordUserId = getPortalDiscordUserId(c)!;
+  const keyId = parseInt(c.req.param("id"));
+  const [key] = await db.select().from(apiKeys).where(eq(apiKeys.id, keyId)).limit(1);
+  if (!key || key.discordUserId !== discordUserId) return c.json({ error: "Not found" }, 404);
+  const { allowedDevices } = await import("../../db/schema.js");
+  const { accountKeyIdsSql } = await import("../../utils/account-devices.js");
+  const rules = await db
+    .select()
+    .from(allowedDevices)
+    .where(sql`${allowedDevices.apiKeyId} IN ${accountKeyIdsSql(keyId)}`);
+  return c.json({ rules });
+});
+
+portal.delete("/keys/:id/device-blacklist/:fingerprint", async (c) => {
+  const discordUserId = getPortalDiscordUserId(c)!;
+  const keyId = parseInt(c.req.param("id"));
+  const fingerprint = decodeURIComponent(c.req.param("fingerprint"));
+  const [key] = await db.select().from(apiKeys).where(eq(apiKeys.id, keyId)).limit(1);
+  if (!key || key.discordUserId !== discordUserId) return c.json({ error: "Not found" }, 404);
+  const { allowedDevices, devices: devicesTable } = await import("../../db/schema.js");
+  const { accountKeyIdsSql } = await import("../../utils/account-devices.js");
+  const { and: andq, eq: eqq } = await import("drizzle-orm");
+  await db.delete(allowedDevices).where(
+    andq(
+      sql`${allowedDevices.apiKeyId} IN ${accountKeyIdsSql(keyId)}`,
+      eqq(allowedDevices.fingerprint, fingerprint),
+      eqq(allowedDevices.listType, "block"),
+    ),
+  );
+  await db
+    .update(devicesTable)
+    .set({ isBlocked: false })
+    .where(
+      andq(
+        sql`${devicesTable.apiKeyId} IN ${accountKeyIdsSql(keyId)}`,
+        eqq(devicesTable.fingerprint, fingerprint),
+      ),
+    );
+  return c.json({ success: true });
 });
 
 // ─── Settings ─────────────────────────────────────────────────────────────────

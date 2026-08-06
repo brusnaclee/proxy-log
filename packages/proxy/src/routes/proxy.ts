@@ -65,6 +65,7 @@ import {
 } from '../utils/crypto.js';
 import {
 	canonicalFingerprintForRequest,
+	countRegisteredSlots,
 	countDistinctMachines,
 	findSameMachineDevice,
 	normalizeDeviceRow,
@@ -1715,10 +1716,15 @@ proxy.all('/*', async (c) => {
 	const osDetected = detectOperatingSystem(userAgent, platformHint);
 	let normalizedIde = normalizeIdeName(ide);
 
-	// Canonical fingerprint = OS+arch only (IDE / device-id / IP ignored).
-	// Cursor→Kilo→OpenCode→Claude Code on the same PC share one slot.
-	const fingerprint = canonicalFingerprintForRequest(userAgent, osDetected, deviceId);
+	// Canonical fingerprint = machine|ide slot (IDE change = new slot).
+	const fingerprint = canonicalFingerprintForRequest(
+		userAgent,
+		osDetected,
+		deviceId,
+		normalizedIde || ide,
+	);
 	const machineHint = extractMachineHint(userAgent, osDetected);
+	let deviceIsProvisional = false;
 
 	// Load account (or key) device rows once — used for merge + count.
 	const accountDeviceRows = keyRecord.discordUserId
@@ -1756,13 +1762,14 @@ proxy.all('/*', async (c) => {
 		)
 		.then((r) => r[0]);
 
-	// Same machine via legacy fingerprint / different IDE UA
+	// Same fingerprint via legacy hash / sibling key
 	if (!existingDevice) {
 		const match = findSameMachineDevice(accountDeviceRows, {
 			canonicalFingerprint: fingerprint,
 			userAgent,
 			osDetected,
 			deviceId,
+			ideName: normalizedIde || ide,
 		});
 		if (match) {
 			existingDevice = normalizeDeviceRow(match) as any;
@@ -1795,16 +1802,16 @@ proxy.all('/*', async (c) => {
 		}
 	}
 
-	// Delete sibling duplicates on the same machine (old ua:/device:/ip-era rows)
+	// Delete duplicate rows with the same canonical fingerprint only
 	if (existingDevice) {
 		const toDelete = siblingIdsToDeleteOnSameMachine(
 			accountDeviceRows,
 			existingDevice.id,
 			machineHint || 'unknown:',
+			fingerprint,
 		);
 		if (toDelete.length > 0) {
 			await db.delete(devices).where(inArray(devices.id, toDelete));
-			// Drop deleted ids from in-memory list used for counting
 			for (let i = accountDeviceRows.length - 1; i >= 0; i--) {
 				if (toDelete.includes(Number(accountDeviceRows[i].id))) {
 					accountDeviceRows.splice(i, 1);
@@ -1820,6 +1827,7 @@ proxy.all('/*', async (c) => {
 			userAgent,
 			osDetected,
 			deviceId,
+			ideName: normalizedIde || ide,
 		});
 		if (sibling) {
 			existingDevice = normalizeDeviceRow(sibling) as any;
@@ -1838,6 +1846,26 @@ proxy.all('/*', async (c) => {
 			},
 			403,
 		);
+	}
+
+	// Always honor block rules in allowed_devices (even when devicePolicy=none)
+	{
+		const { isFingerprintBlacklisted } = await import('../utils/device-challenge.js');
+		const keyIdsForBlock = accountDeviceRows.length
+			? [...new Set(accountDeviceRows.map((r: any) => Number(r.api_key_id || r.apiKeyId || keyRecord.id)))]
+			: [keyRecord.id];
+		if (await isFingerprintBlacklisted(keyIdsForBlock, effectiveFingerprint)) {
+			return c.json(
+				{
+					error: {
+						message: 'Device is blacklisted.',
+						type: 'access_error',
+						code: 'device_blacklisted',
+					},
+				},
+				403,
+			);
+		}
 	}
 
 	if (keyRecord.devicePolicy === 'allowlist') {
@@ -1978,106 +2006,61 @@ proxy.all('/*', async (c) => {
 		}
 	}
 
-	// ΓöÇΓöÇΓöÇ 6. Max Devices Check (account-scoped when Discord-linked) ΓöÇΓöÇΓöÇ
-	// Count distinct *machines* (OS+arch), not raw fingerprint strings — legacy
-	// IP/UA/device-id rows on the same PC must not burn the slot.
+	// ─── 6. Max Devices (registered slots; 3rd+ → 30m confirm, no key rotate) ───
 	if (keyRecord.maxDevices && keyRecord.maxDevices > 0) {
-		let deviceCountNum = countDistinctMachines(accountDeviceRows);
-		// If this request is a known machine, it already sits inside the set.
-		// If brand-new machine, count would rise by 1 after insert — compare with
-		// accountKnownFingerprint below.
+		const deviceCountNum = countRegisteredSlots(accountDeviceRows);
+		const knownRegistered =
+			accountKnownFingerprint &&
+			existingDevice &&
+			!(existingDevice as any).isProvisional;
 
-		if (deviceCountNum >= keyRecord.maxDevices && !accountKnownFingerprint) {
-			// Discord-provisioned + trial: auto-rotate on extra device, then queue DM.
-			// (Bot must handle type device_limit_rotate / new_device_detected — was a bug
-			// that cleared pending without sending Discord DM.)
-			const mayAutoRotate =
-				keyRecord.provisionedBy === 'discord-bot' ||
-				!!keyRecord.isTrial ||
-				keyRecord.provisionedBy === 'trial-bot';
+		if (deviceCountNum >= keyRecord.maxDevices && !knownRegistered) {
+			const hasDiscord = !!keyRecord.discordUserId;
+			if (hasDiscord) {
+				const {
+					openOrReuseChallenge,
+					findOpenChallenge,
+					expireStaleChallenges,
+				} = await import('../utils/device-challenge.js');
+				await expireStaleChallenges(keyRecord.discordUserId!);
 
-			if (mayAutoRotate) {
-				const rotatedKey = keyRecord.isTrial
-					? generateTrialApiKey()
-					: generateApiKey();
-				const newKeyPrefix = getKeyPrefix(rotatedKey);
-
-				if (keyRecord.discordUserId) {
-					await db.execute(sql`
-						DELETE FROM devices
-						WHERE api_key_id IN (
-							SELECT id FROM api_keys WHERE discord_user_id = ${keyRecord.discordUserId}
-						)
-					`);
-				} else {
-					await db.delete(devices).where(eq(devices.apiKeyId, keyRecord.id));
-				}
-
-				await db.insert(devices).values({
-					apiKeyId: keyRecord.id,
-					fingerprint: effectiveFingerprint,
-					ipAddress: clientIp,
-					userAgentRaw: userAgent,
-					osDetected,
-					deviceName: deviceName || null,
-					ideDetected: ide,
-					requestCount: 0,
-				});
-
-				const proxyEndpoint = `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || '3000'}`}/v1`;
-				const notification = {
-					type: keyRecord.isTrial ? 'trial_key_rotated' : 'device_limit_rotate',
-					discordUserId: keyRecord.discordUserId,
-					newKey: rotatedKey,
-					endpoint: proxyEndpoint,
-					title: '🔑 API Key Di-rotate — Device Baru',
-					message:
-						`Device baru terdeteksi (max ${keyRecord.maxDevices}). Key diganti otomatis. ` +
-						`Cek Discord DM atau salin key baru dari portal/admin.`,
-					rotatedAt: new Date().toISOString(),
-					maxDevices: keyRecord.maxDevices,
-					ideDetected: ide || null,
-				};
-
-				await db
-					.update(apiKeys)
-					.set({
-						key: rotatedKey,
-						keyPrefix: newKeyPrefix,
-						keyHash: sha256(rotatedKey),
-						isActive: true,
-						pendingNotification: JSON.stringify(notification),
-						updatedAt: new Date(),
-					})
-					.where(eq(apiKeys.id, keyRecord.id));
-
-				console.warn(
-					`[device-rotate] key=${keyRecord.id} user=${keyRecord.discordUserId || '-'} ` +
-						`max=${keyRecord.maxDevices} ide=${ide || '?'} ip=${clientIp}`,
+				const open = await findOpenChallenge(
+					keyRecord.discordUserId!,
+					effectiveFingerprint,
 				);
-
+				if (open) {
+					// Provisional access during pending challenge
+					accountKnownFingerprint = true;
+					deviceIsProvisional = true;
+				} else {
+					const { created } = await openOrReuseChallenge({
+						discordUserId: keyRecord.discordUserId!,
+						apiKeyId: keyRecord.id,
+						fingerprint: effectiveFingerprint,
+						ideDetected: ide || null,
+						userAgentRaw: userAgent,
+						ipAddress: clientIp,
+					});
+					console.warn(
+						`[device-challenge] key=${keyRecord.id} user=${keyRecord.discordUserId} ` +
+							`fp=${effectiveFingerprint.slice(0, 12)} ide=${ide || '?'} created=${created}`,
+					);
+					accountKnownFingerprint = true;
+					deviceIsProvisional = true;
+					existingDevice = null;
+				}
+			} else {
 				return c.json(
 					{
 						error: {
-							message: `Maximum device limit (${keyRecord.maxDevices}) reached. Your API key has been rotated automatically. Please check your Discord DMs for your new key.`,
+							message: `Maximum device limit (${keyRecord.maxDevices}) reached.`,
 							type: 'access_error',
-							code: 'discord_new_device_key_rotated',
+							code: 'device_limit_exceeded',
 						},
 					},
 					403,
 				);
 			}
-
-			return c.json(
-				{
-					error: {
-						message: `Maximum device limit (${keyRecord.maxDevices}) reached.`,
-						type: 'access_error',
-						code: 'device_limit_exceeded',
-					},
-				},
-				403,
-			);
 		}
 	}
 
@@ -5368,6 +5351,9 @@ proxy.all('/*', async (c) => {
 					osDetected,
 					deviceName: deviceName || null,
 					ideDetected: ide,
+					isProvisional: deviceIsProvisional
+						? true
+						: Boolean((existingDevice as any).isProvisional),
 				})
 				.where(eq(devices.id, existingDevice.id));
 		} else {
@@ -5380,6 +5366,7 @@ proxy.all('/*', async (c) => {
 				deviceName: deviceName || null,
 				ideDetected: ide,
 				requestCount: 1,
+				isProvisional: deviceIsProvisional,
 			});
 		}
 

@@ -617,7 +617,7 @@ export async function ensureVibecodeCatalog(): Promise<void> {
         modelDailyLimits: JSON.stringify(p.insertSubcaps),
         dailyTokenLimit: p.insertDaily,
         monthlyTokenLimit: 0,
-        maxDevices: 1,
+        maxDevices: 2,
         defaultDurationDays: p.days,
         isActive: p.active,
         discordRoleId: p.discordRoleId,

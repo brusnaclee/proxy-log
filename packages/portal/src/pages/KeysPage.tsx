@@ -81,8 +81,10 @@ export default function KeysPage() {
 
   const [expandedKey, setExpandedKey] = useState<number | null>(null);
   const [devices, setDevices] = useState<Record<number, DeviceInfo[]>>({});
+  const [blacklistRules, setBlacklistRules] = useState<Record<number, Array<{ fingerprint?: string | null; listType: string; label?: string | null }>>>({});
   const [loadingDevices, setLoadingDevices] = useState<Record<number, boolean>>({});
   const [deviceError, setDeviceError] = useState<Record<number, string | null>>({});
+  const [unblocking, setUnblocking] = useState<string | null>(null);
 
   const [rotating, setRotating] = useState<number | null>(null);
   const [rotatedKey, setRotatedKey] = useState<string | null>(null);
@@ -173,8 +175,15 @@ export default function KeysPage() {
     setLoadingDevices((prev) => ({ ...prev, [keyId]: true }));
     setDeviceError((prev) => ({ ...prev, [keyId]: null }));
     try {
-      const result = await api.keys.devices(keyId);
+      const [result, policy] = await Promise.all([
+        api.keys.devices(keyId),
+        api.keys.devicePolicyRules(keyId).catch(() => ({ rules: [] as any[] })),
+      ]);
       setDevices((prev) => ({ ...prev, [keyId]: result }));
+      setBlacklistRules((prev) => ({
+        ...prev,
+        [keyId]: (policy.rules || []).filter((r: any) => r.listType === "block" && r.fingerprint),
+      }));
     } catch (err) {
       setDeviceError((prev) => ({
         ...prev,
@@ -182,6 +191,27 @@ export default function KeysPage() {
       }));
     } finally {
       setLoadingDevices((prev) => ({ ...prev, [keyId]: false }));
+    }
+  };
+
+  const doUnblockDevice = async (keyId: number, fingerprint: string) => {
+    setUnblocking(fingerprint);
+    try {
+      await api.keys.unblockDevice(keyId, fingerprint);
+      setBlacklistRules((prev) => ({
+        ...prev,
+        [keyId]: (prev[keyId] || []).filter((r) => r.fingerprint !== fingerprint),
+      }));
+      setDevices((prev) => ({
+        ...prev,
+        [keyId]: (prev[keyId] || []).map((d) =>
+          d.fingerprint === fingerprint ? { ...d, isBlocked: false } : d,
+        ),
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to unblock device");
+    } finally {
+      setUnblocking(null);
     }
   };
 
@@ -554,10 +584,22 @@ export default function KeysPage() {
                             <div className="flex items-start gap-3 flex-1 min-w-0">
                               <div className="mt-0.5 text-muted-foreground">{getDeviceIcon(device.osDetected)}</div>
                               <div className="flex-1 min-w-0">
-                                <p className="text-sm text-foreground">
-                                  {device.ideDetected || "Unknown IDE"}
-                                  {device.osDetected && (
-                                    <span className="text-muted-foreground ml-1">— {device.osDetected}</span>
+                                <p className="text-sm text-foreground flex flex-wrap items-center gap-2">
+                                  <span>
+                                    {device.ideDetected || "Unknown IDE"}
+                                    {device.osDetected && (
+                                      <span className="text-muted-foreground ml-1">— {device.osDetected}</span>
+                                    )}
+                                  </span>
+                                  {device.isProvisional && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600">
+                                      {lang === "id" ? "Pending" : "Pending"}
+                                    </span>
+                                  )}
+                                  {device.isBlocked && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/15 text-red-500">
+                                      Blacklisted
+                                    </span>
                                   )}
                                 </p>
                                 <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5 text-xs text-muted-foreground">
@@ -585,16 +627,56 @@ export default function KeysPage() {
                                 )}
                               </div>
                             </div>
-                            <button
-                              onClick={() => handleDeleteDevice(key.id, device)}
-                              className="p-2 text-muted-foreground hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors flex-shrink-0"
-                              title={t("Revoke")}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                              {device.isBlocked && (
+                                <button
+                                  type="button"
+                                  disabled={unblocking === device.fingerprint}
+                                  onClick={() => void doUnblockDevice(key.id, device.fingerprint)}
+                                  className="px-2 py-1 text-xs rounded-lg border border-border hover:bg-accent disabled:opacity-50"
+                                >
+                                  {lang === "id" ? "Unblock" : "Unblock"}
+                                </button>
+                              )}
+                              <button
+                                onClick={() => handleDeleteDevice(key.id, device)}
+                                className="p-2 text-muted-foreground hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
+                                title={t("Revoke")}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
                           </div>
                         </div>
                       ))}
+                      {(blacklistRules[key.id] || []).length > 0 && (
+                        <div className="p-4 border-t border-border space-y-2 bg-muted/20">
+                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                            {lang === "id" ? "Blacklist" : "Blacklist"}
+                          </p>
+                          {(blacklistRules[key.id] || []).map((rule) => (
+                            <div
+                              key={rule.fingerprint || "rule"}
+                              className="flex items-center justify-between gap-2 text-sm"
+                            >
+                              <span className="font-mono text-xs truncate">
+                                {rule.fingerprint?.slice(0, 16)}…
+                                {rule.label ? ` · ${rule.label}` : ""}
+                              </span>
+                              <button
+                                type="button"
+                                disabled={!rule.fingerprint || unblocking === rule.fingerprint}
+                                onClick={() =>
+                                  rule.fingerprint && void doUnblockDevice(key.id, rule.fingerprint)
+                                }
+                                className="px-2 py-1 text-xs rounded-lg border border-border hover:bg-accent disabled:opacity-50"
+                              >
+                                Unblock
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

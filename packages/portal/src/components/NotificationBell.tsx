@@ -4,12 +4,18 @@ import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 
 type Notif = {
+	id?: number;
 	type?: string;
 	title?: string;
 	message?: string;
 	keyName?: string;
 	keyId?: number;
 	createdAt?: string;
+	actionable?: boolean;
+	expired?: boolean;
+	challengeId?: number | null;
+	token?: string | null;
+	ideDetected?: string | null;
 	[key: string]: unknown;
 };
 
@@ -22,7 +28,6 @@ function notifTitle(n: Notif): string {
 function notifBody(n: Notif): string {
 	const msg = String(n.message || "").trim();
 	if (!msg) return notifTitle(n);
-	// Keep modal readable — strip huge credential dumps to first lines
 	const lines = msg.split("\n").filter(Boolean);
 	if (lines.length <= 4) return msg;
 	return lines.slice(0, 4).join("\n") + "\n…";
@@ -35,12 +40,13 @@ export default function NotificationBell({
 	initialCount?: number;
 	onChanged?: () => void;
 }) {
-	const { t } = useI18n();
+	const { t, lang } = useI18n();
 	const [open, setOpen] = useState(false);
 	const [items, setItems] = useState<Notif[]>([]);
 	const [count, setCount] = useState(initialCount);
 	const [loading, setLoading] = useState(false);
 	const [dismissing, setDismissing] = useState(false);
+	const [actingId, setActingId] = useState<number | null>(null);
 
 	useEffect(() => {
 		setCount(initialCount);
@@ -52,7 +58,8 @@ export default function NotificationBell({
 			const res = await api.notifications.list();
 			const list = Array.isArray(res?.notifications) ? res.notifications : [];
 			setItems(list);
-			setCount(list.length);
+			const actionable = list.filter((n) => n.actionable).length;
+			setCount(actionable > 0 ? actionable : list.filter((n) => !n.readAt).length || list.length);
 		} catch {
 			setItems([]);
 		} finally {
@@ -68,7 +75,7 @@ export default function NotificationBell({
 		setDismissing(true);
 		try {
 			await api.notifications.dismiss();
-			setItems([]);
+			setItems((prev) => prev.map((n) => ({ ...n, readAt: new Date().toISOString() })));
 			setCount(0);
 			onChanged?.();
 			setOpen(false);
@@ -76,6 +83,24 @@ export default function NotificationBell({
 			/* ignore */
 		} finally {
 			setDismissing(false);
+		}
+	};
+
+	const actChallenge = async (n: Notif, kind: "approve" | "deny") => {
+		if (!n.challengeId || !n.token) return;
+		setActingId(n.challengeId);
+		try {
+			if (kind === "approve") {
+				await api.deviceChallenge.approve(n.challengeId, n.token);
+			} else {
+				await api.deviceChallenge.deny(n.challengeId, n.token);
+			}
+			await load();
+			onChanged?.();
+		} catch {
+			/* ignore */
+		} finally {
+			setActingId(null);
 		}
 	};
 
@@ -128,17 +153,56 @@ export default function NotificationBell({
 								</div>
 							) : (
 								<ul className="divide-y divide-border/60">
-									{items.map((n, i) => (
-										<li key={`${n.keyId || 0}-${n.type || "n"}-${i}`} className="px-4 py-3 space-y-1">
-											<div className="text-sm font-medium text-foreground">{notifTitle(n)}</div>
-											{n.keyName && (
-												<div className="text-[10px] text-muted-foreground font-mono">{String(n.keyName)}</div>
-											)}
-											<pre className="text-xs text-muted-foreground whitespace-pre-wrap break-words font-sans">
-												{notifBody(n)}
-											</pre>
-										</li>
-									))}
+									{items.map((n, i) => {
+										const isDevice = n.type === "device_confirm";
+										const disabled = !!n.expired || !n.actionable;
+										return (
+											<li
+												key={`${n.id || 0}-${n.type || "n"}-${i}`}
+												className={`px-4 py-3 space-y-2 ${disabled && isDevice ? "opacity-60" : ""}`}
+											>
+												<div className="flex items-center justify-between gap-2">
+													<div className="text-sm font-medium text-foreground">{notifTitle(n)}</div>
+													{isDevice && n.expired && (
+														<span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+															{lang === "id" ? "Kedaluwarsa" : "Expired"}
+														</span>
+													)}
+													{isDevice && n.actionable && (
+														<span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600">
+															{lang === "id" ? "Perlu aksi" : "Action needed"}
+														</span>
+													)}
+												</div>
+												{n.keyName && (
+													<div className="text-[10px] text-muted-foreground font-mono">{String(n.keyName)}</div>
+												)}
+												<pre className="text-xs text-muted-foreground whitespace-pre-wrap break-words font-sans">
+													{notifBody(n)}
+												</pre>
+												{isDevice && n.challengeId && n.token && (
+													<div className="flex gap-2 pt-1">
+														<button
+															type="button"
+															disabled={disabled || actingId === n.challengeId}
+															onClick={() => void actChallenge(n, "deny")}
+															className="text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed"
+														>
+															{lang === "id" ? "Bukan saya" : "Not me"}
+														</button>
+														<button
+															type="button"
+															disabled={disabled || actingId === n.challengeId}
+															onClick={() => void actChallenge(n, "approve")}
+															className="text-xs px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+														>
+															{lang === "id" ? "Ya itu saya" : "Yes, it's me"}
+														</button>
+													</div>
+												)}
+											</li>
+										);
+									})}
 								</ul>
 							)}
 						</div>
