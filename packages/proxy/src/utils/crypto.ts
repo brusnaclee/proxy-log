@@ -46,6 +46,27 @@ function normalizeUserAgent(ua: string): string {
  * We do NOT have a real hardware UUID from most IDEs — OS+arch is the best
  * stable signal that does not flip when WiFi or IDE changes.
  */
+export function normalizeMachineOs(os: string): string {
+  const o = String(os || "").toLowerCase().replace(/\s+/g, "_");
+  if (!o || o === "unknown") return "unknown";
+  if (/^windows(_nt)?$|^win/.test(o)) return "windows";
+  if (/^macintosh$|^mac_os(_x)?$|^macos$|^darwin$|^osx$/.test(o)) return "macos";
+  if (/^cros$|^chrome_?os$/.test(o)) return "chromeos";
+  if (/^iphone$|^ipad$|^ios$/.test(o)) return "ios";
+  if (/^android$/.test(o)) return "android";
+  if (/^linux$/.test(o)) return "linux";
+  return o.slice(0, 32);
+}
+
+export function normalizeMachineArch(arch: string): string {
+  const a = String(arch || "").toLowerCase();
+  if (!a) return "";
+  if (/^(x86_64|amd64|win64|wow64|x64)$/.test(a)) return "x64";
+  if (/^(aarch64|arm64)$/.test(a)) return "arm64";
+  if (/^(i686|i386|x86)$/.test(a)) return "x86";
+  return a.slice(0, 16);
+}
+
 export function extractMachineHint(
   userAgent: string,
   osDetected?: string | null,
@@ -58,19 +79,18 @@ export function extractMachineHint(
     /x86_64|win64|wow64|amd64|arm64|aarch64|x64|i686|i386/i,
   );
 
-  let os = (osFromUa || "").toLowerCase().replace(/\s+/g, "_");
-  if (!os && osDetected) {
+  let osRaw = (osFromUa || "").toLowerCase().replace(/\s+/g, "_");
+  if (!osRaw && osDetected) {
     const o = String(osDetected).toLowerCase();
-    if (/win/.test(o)) os = "windows";
-    else if (/mac|darwin|osx/.test(o)) os = "macintosh";
-    else if (/linux/.test(o)) os = "linux";
-    else if (/android/.test(o)) os = "android";
-    else if (/ios|iphone|ipad/.test(o)) os = "iphone";
-    else os = o.replace(/\s+/g, "_").slice(0, 32);
+    if (/win/.test(o)) osRaw = "windows";
+    else if (/mac|darwin|osx/.test(o)) osRaw = "macintosh";
+    else if (/linux/.test(o)) osRaw = "linux";
+    else if (/android/.test(o)) osRaw = "android";
+    else if (/ios|iphone|ipad/.test(o)) osRaw = "iphone";
+    else osRaw = o.replace(/\s+/g, "_").slice(0, 32);
   }
-  if (!os) os = "unknown";
-
-  const arch = (archMatch?.[0] || "").toLowerCase();
+  const os = normalizeMachineOs(osRaw || "unknown");
+  const arch = normalizeMachineArch(archMatch?.[0] || "");
   return `${os}:${arch}`;
 }
 

@@ -1796,11 +1796,11 @@ proxy.all('/*', async (c) => {
 	}
 
 	// Delete sibling duplicates on the same machine (old ua:/device:/ip-era rows)
-	if (existingDevice && machineHint && machineHint !== 'unknown:') {
+	if (existingDevice) {
 		const toDelete = siblingIdsToDeleteOnSameMachine(
 			accountDeviceRows,
 			existingDevice.id,
-			machineHint,
+			machineHint || 'unknown:',
 		);
 		if (toDelete.length > 0) {
 			await db.delete(devices).where(inArray(devices.id, toDelete));

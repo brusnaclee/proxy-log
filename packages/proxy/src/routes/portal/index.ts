@@ -1553,7 +1553,8 @@ portal.get("/models", async (c) => {
         .map((m) => {
           const st = lookup(m.id);
           if (!st) return null;
-          // Unpublished / force-off: still list as Offline (not borrow Online from siblings)
+          // Align with Discord + /v1/models: Unpublished = hidden (not Offline row)
+          if (!st.visible) return null;
           const checkedAt =
             checkedAtByKey.get(m.id) ||
             checkedAtByKey.get(`${st.provider}/${m.id}`) ||
@@ -1561,7 +1562,7 @@ portal.get("/models", async (c) => {
           return {
             id: m.id,
             allowed: true,
-            online: Boolean(st.visible && st.clientOnline),
+            online: Boolean(st.clientOnline),
             checkedAt: checkedAt?.toISOString() ?? null,
             lastCheckedMinutes: checkedAt ? minutesAgo(checkedAt) : null,
             latencyMs: st.latencyMs ?? null,

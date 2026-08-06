@@ -102,6 +102,32 @@ export function findSameMachineDevice(
 			return hint === machine && hint !== 'unknown:';
 		});
 		if (byMachine) return byMachine;
+
+		// OS-less legacy row on an account that already has this machine — absorb it
+		const osLess = rows.find((d) => {
+			const hint = machineKeyOfDevice(d);
+			return !hint || hint === 'unknown:';
+		});
+		if (osLess) return osLess;
+	}
+
+	// 3) Current request is OS-less (Cline/Kilo/OpenCode) but account already has
+	// exactly one known OS+arch slot → same PC, sticky merge (stops IDE-switch rotates).
+	if (!machine || machine === 'unknown:') {
+		const known = rows.filter((d) => {
+			const hint = machineKeyOfDevice(d);
+			return hint && hint !== 'unknown:';
+		});
+		const hints = new Set(known.map((d) => machineKeyOfDevice(d)));
+		if (hints.size === 1 && known.length > 0) {
+			return known[0];
+		}
+		// All-unknown account: prefer any existing unknown/shared row
+		const anyUnknown = rows.find((d) => {
+			const hint = machineKeyOfDevice(d);
+			return !hint || hint === 'unknown:';
+		});
+		if (anyUnknown) return anyUnknown;
 	}
 
 	return null;
@@ -109,33 +135,53 @@ export function findSameMachineDevice(
 
 /**
  * Count distinct physical machines (not raw fingerprint strings).
- * Legacy IP/UA rows on the same OS+arch collapse into one.
+ * - Known OS+arch rows collapse by normalized hint.
+ * - OS-less / legacy UA rows do NOT add slots when a known machine exists
+ *   (Cursor with OS UA + Cline without OS = 1 device).
+ * - If the account only has OS-less rows, count as 1 machine (shared bucket),
+ *   not N legacy ua: fingerprints.
  */
 export function countDistinctMachines(rows: DeviceRowLike[]): number {
-	const keys = new Set<string>();
+	const known = new Set<string>();
+	let hasUnknown = false;
 	for (const d of rows) {
 		const hint = machineKeyOfDevice(d);
 		if (hint && hint !== 'unknown:') {
-			keys.add(`m:${hint}`);
+			known.add(`m:${hint}`);
 		} else {
-			keys.add(`f:${d.fingerprint}`);
+			hasUnknown = true;
 		}
 	}
-	return keys.size;
+	if (known.size > 0) return known.size;
+	return hasUnknown ? 1 : 0;
 }
 
 /**
  * Among rows for one account, return ids to delete when consolidating onto
  * the keeper row for the current machine. Keeps other *different* machines.
+ * Also drops OS-less / legacy unknown rows when the keeper is a known OS+arch.
  */
 export function siblingIdsToDeleteOnSameMachine(
 	rows: DeviceRowLike[],
 	keeperId: number,
 	machineHint: string,
 ): number[] {
-	if (!machineHint || machineHint === 'unknown:') return [];
+	if (!machineHint || machineHint === 'unknown:') {
+		// All-unknown consolidate: delete every other unknown/legacy row
+		return rows
+			.filter((d) => {
+				if (d.id === keeperId) return false;
+				const hint = machineKeyOfDevice(d);
+				return !hint || hint === 'unknown:';
+			})
+			.map((d) => d.id);
+	}
 	return rows
-		.filter((d) => d.id !== keeperId && machineKeyOfDevice(d) === machineHint)
+		.filter((d) => {
+			if (d.id === keeperId) return false;
+			const hint = machineKeyOfDevice(d);
+			return hint === machineHint || !hint || hint === 'unknown:';
+		})
 		.map((d) => d.id);
 }
 
