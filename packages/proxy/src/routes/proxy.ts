@@ -39,6 +39,10 @@ import {
 	prepareAnthropicUpstreamBody,
 	splitAnthropicSseEvents,
 } from '../utils/anthropic-adapter.js';
+import {
+	applyAmanaiCompatShaping,
+	providerIsAmanaiCompat,
+} from '../utils/amanai-compat.js';
 import { sanitizeUpstreamHeaders } from '../utils/upstream-headers.js';
 import {
 	buildCachedRoundTripResponse,
@@ -267,12 +271,37 @@ function providerSupportsNativeAnthropic(provider: {
 	name?: string | null;
 	endpoint?: string | null;
 	endpointType?: string | null;
+	compatProfile?: string | null;
 } | null | undefined): boolean {
 	if (!provider) return false;
 	if (provider.endpointType === 'anthropic') return true;
+	if (providerIsAmanaiCompat(provider)) return true;
 	const name = String(provider.name || '').toLowerCase();
-	const endpoint = String(provider.endpoint || '').toLowerCase();
-	return name === 'phantomv2' || endpoint.includes('amanai.dev');
+	return name === 'phantomv2';
+}
+
+function buildAnthropicBodyForProvider(
+	body: any,
+	provider: { compatProfile?: string | null; name?: string | null; endpoint?: string | null },
+	clientIsAnthropic: boolean,
+): string {
+	const raw = clientIsAnthropic
+		? body
+		: JSON.parse(prepareAnthropicUpstreamBody(body));
+	const shaped = providerIsAmanaiCompat(provider)
+		? applyAmanaiCompatShaping(raw, 'anthropic')
+		: raw;
+	return JSON.stringify(shaped);
+}
+
+function openaiBodyBytesForProvider(
+	body: any,
+	provider: { compatProfile?: string | null; name?: string | null; endpoint?: string | null },
+): Uint8Array {
+	const shaped = providerIsAmanaiCompat(provider)
+		? applyAmanaiCompatShaping(body, 'openai')
+		: body;
+	return new TextEncoder().encode(JSON.stringify(shaped));
 }
 
 function backfillOpenAIMessageContent<T extends { content?: unknown; reasoning_content?: unknown; reasoning?: unknown } | null | undefined>(
@@ -4841,9 +4870,11 @@ proxy.all('/*', async (c) => {
 	let actualUpstreamPath = forwardPath;
 
 	if (isAnthropicProvider) {
-		anthropicRequestBody = isAnthropicRequest
-			? JSON.stringify(requestBody)
-			: prepareAnthropicUpstreamBody(requestBody);
+		anthropicRequestBody = buildAnthropicBodyForProvider(
+			requestBody,
+			targetProvider,
+			isAnthropicRequest,
+		);
 		actualUpstreamUrl = resolveAnthropicUpstreamUrl(targetProvider.endpoint);
 	} else if (isYouComProvider) {
 		// Convert OpenAI request to you.com Agents format.
@@ -5066,9 +5097,11 @@ proxy.all('/*', async (c) => {
 							providerSupportsNativeAnthropic(attemptProvider));
 					attemptIsYoucom = attemptProvider.endpointType === 'youcom';
 					if (attemptIsAnthropic) {
-						attemptAnthropicBody = isAnthropicRequest
-							? JSON.stringify(requestBody)
-							: prepareAnthropicUpstreamBody(requestBody);
+						attemptAnthropicBody = buildAnthropicBodyForProvider(
+							requestBody,
+							attemptProvider,
+							isAnthropicRequest,
+						);
 						attemptActualUrl = resolveAnthropicUpstreamUrl(attemptProvider.endpoint);
 					} else if (attemptIsYoucom) {
 						const yc = convertRequestToYouCom(requestBody, attemptUpstreamModel);
@@ -5147,7 +5180,7 @@ proxy.all('/*', async (c) => {
 								? attemptAnthropicBody!
 								: attemptIsYoucom
 									? attemptYoucomBody!
-									: (requestBodyBytes as any),
+									: (openaiBodyBytesForProvider(requestBody, attemptProvider) as any),
 						};
 					},
 					attemptIsYoucom ? false : attemptUsesStream,

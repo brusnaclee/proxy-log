@@ -33,15 +33,30 @@ providersApi.get("/providers/:id", async (c) => {
 });
 
 providersApi.post("/providers", async (c) => {
-  const body = await c.req.json<{ name: string; endpoint: string; apiKey: string; isActive?: boolean; priority?: number; endpointType?: string }>();
+  const body = await c.req.json<{
+    name: string;
+    endpoint: string;
+    apiKey: string;
+    isActive?: boolean;
+    priority?: number;
+    endpointType?: string;
+    compatProfile?: string;
+  }>();
   if (!body.name || !body.endpoint || !body.apiKey) {
     return c.json({ error: "Missing required fields" }, 400);
   }
+  const { inferCompatProfile } = await import("../../utils/amanai-compat.js");
+  const compatProfile = inferCompatProfile({
+    name: body.name,
+    endpoint: body.endpoint,
+    compatProfile: body.compatProfile,
+  });
   const [result] = await db.insert(providers).values({
     name: body.name,
     endpoint: body.endpoint,
     apiKey: sanitizeProviderApiKey(body.apiKey),
     endpointType: body.endpointType || "openai",
+    compatProfile,
     isActive: body.isActive ?? true,
     priority: body.priority || 0,
   }).returning();
@@ -75,7 +90,15 @@ providersApi.put("/providers/:id", async (c) => {
   const [existing] = await db.select().from(providers).where(eq(providers.id, id));
   if (!existing) return c.json({ error: "Provider not found" }, 404);
 
-  const body = await c.req.json<{ name?: string; endpoint?: string; apiKey?: string; isActive?: boolean; priority?: number; endpointType?: string }>();
+  const body = await c.req.json<{
+    name?: string;
+    endpoint?: string;
+    apiKey?: string;
+    isActive?: boolean;
+    priority?: number;
+    endpointType?: string;
+    compatProfile?: string;
+  }>();
   const updates: any = {};
   if (body.name !== undefined) updates.name = body.name;
   if (body.endpoint !== undefined) updates.endpoint = body.endpoint;
@@ -83,6 +106,10 @@ providersApi.put("/providers/:id", async (c) => {
   if (body.isActive !== undefined) updates.isActive = body.isActive;
   if (body.priority !== undefined) updates.priority = body.priority;
   if (body.endpointType !== undefined) updates.endpointType = body.endpointType;
+  if (body.compatProfile !== undefined) {
+    const { normalizeCompatProfile } = await import("../../utils/amanai-compat.js");
+    updates.compatProfile = normalizeCompatProfile(body.compatProfile);
+  }
   updates.updatedAt = new Date();
 
   await db.update(providers).set(updates).where(eq(providers.id, id));

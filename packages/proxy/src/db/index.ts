@@ -345,6 +345,26 @@ export async function initializeDatabase() {
 		console.warn('⚠️ device challenge migration warning:', err?.message || err);
 	}
 
+	// Provider compat_profile (default | amanai) — Amanai credit cache shaping
+	try {
+		await pool.query(`
+			ALTER TABLE providers
+			ADD COLUMN IF NOT EXISTS compat_profile TEXT NOT NULL DEFAULT 'default'
+		`);
+		await pool.query(`
+			UPDATE providers
+			SET compat_profile = 'amanai'
+			WHERE compat_profile = 'default'
+			  AND (
+			    lower(endpoint) LIKE '%amanai.dev%'
+			    OR lower(name) LIKE '%amanai%'
+			  )
+		`);
+		console.log('✅ Applied providers.compat_profile migration');
+	} catch (err: any) {
+		console.warn('⚠️ providers.compat_profile migration warning:', err?.message || err);
+	}
+
 	// model_monitor: one row per (model_id, provider) — concurrent sweeps used to insert twins
 	try {
 		await pool.query(`

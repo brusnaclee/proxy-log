@@ -44,17 +44,18 @@ export function ProvidersManager() {
   const [apiKey, setApiKey] = useState("");
   const [priority, setPriority] = useState(1);
   const [endpointType, setEndpointType] = useState("openai");
+  const [compatProfile, setCompatProfile] = useState("default");
 
-  // Inline-edit state for provider row fields (name, endpoint, endpointType, priority)
+  // Inline-edit state for provider row fields (name, endpoint, endpointType, priority, compatProfile)
   const [editingProviderField, setEditingProviderField] = useState<{
     providerId: number;
-    field: "name" | "endpoint" | "endpointType" | "priority";
+    field: "name" | "endpoint" | "endpointType" | "priority" | "compatProfile";
   } | null>(null);
   const [editProviderValue, setEditProviderValue] = useState<string>("");
 
   const handleEditProviderField = (
     providerId: number,
-    field: "name" | "endpoint" | "endpointType" | "priority",
+    field: "name" | "endpoint" | "endpointType" | "priority" | "compatProfile",
     currentValue: string | number,
   ) => {
     setEditingProviderField({ providerId, field });
@@ -133,9 +134,9 @@ export function ProvidersManager() {
         catalog?: { listed: number; seeded: number };
       }>("/providers", {
         method: "POST",
-        body: JSON.stringify({ name, endpoint, apiKey, priority, endpointType }),
+        body: JSON.stringify({ name, endpoint, apiKey, priority, endpointType, compatProfile }),
       });
-      setName(""); setEndpoint(""); setApiKey(""); setPriority(1); setEndpointType("openai");
+      setName(""); setEndpoint(""); setApiKey(""); setPriority(1); setEndpointType("openai"); setCompatProfile("default");
       loadProviders();
       if (res.health && !res.health.ok) {
         notify.error(res.health.error || "Provider saved but API key failed /models check");
@@ -364,17 +365,18 @@ export function ProvidersManager() {
       className="mt-6"
     >
         <div className="space-y-4">
-          <div className="grid grid-cols-7 gap-2 border-b border-border/50 pb-2 mb-2 text-sm font-medium text-muted-foreground">
+          <div className="grid grid-cols-8 gap-2 border-b border-border/50 pb-2 mb-2 text-sm font-medium text-muted-foreground">
             <div className="col-span-1">Name</div>
             <div className="col-span-2">Endpoint</div>
             <div className="col-span-1">Type</div>
+            <div className="col-span-1">Compat</div>
             <div className="col-span-1">Priority</div>
             <div className="col-span-1">Catalog</div>
             <div className="col-span-1 text-right">Actions</div>
           </div>
           {providers.map((p) => (
             <div key={p.id}>
-              <div className="grid grid-cols-7 gap-2 items-center border-b border-border/50 pb-2">
+              <div className="grid grid-cols-8 gap-2 items-center border-b border-border/50 pb-2">
                 <div className="col-span-1 truncate flex items-center gap-1">
                   <button onClick={() => toggleExpand(p.id)} className="p-0.5 hover:bg-muted rounded">
                     {expandedProvider === p.id ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
@@ -501,6 +503,57 @@ export function ProvidersManager() {
                         onClick={() => handleEditProviderField(p.id, "endpointType", p.endpointType || "openai")}
                         className="p-0.5 hover:bg-muted rounded opacity-60 hover:opacity-100"
                         title="Edit type"
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <div className="col-span-1 text-xs">
+                  {editingProviderField?.providerId === p.id && editingProviderField?.field === "compatProfile" ? (
+                    <div className="flex items-center gap-1">
+                      <select
+                        autoFocus
+                        value={editProviderValue}
+                        onChange={(e) => setEditProviderValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleSaveProviderField(p.id);
+                          else if (e.key === "Escape") handleCancelEditProviderField();
+                        }}
+                        className="px-1 py-0.5 text-xs border border-border rounded bg-background"
+                      >
+                        <option value="default">default</option>
+                        <option value="amanai">amanai</option>
+                      </select>
+                      <button
+                        onClick={() => handleSaveProviderField(p.id)}
+                        className="p-0.5 hover:bg-green-500/20 rounded"
+                        title="Save"
+                      >
+                        <Check className="w-3.5 h-3.5 text-green-500" />
+                      </button>
+                      <button
+                        onClick={handleCancelEditProviderField}
+                        className="p-0.5 hover:bg-red-500/20 rounded"
+                        title="Cancel"
+                      >
+                        <X className="w-3.5 h-3.5 text-red-500" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-xs ${(p.compatProfile || "default") === "amanai" ? "bg-violet-500/20 text-violet-300" : "bg-muted text-muted-foreground"}`}
+                        title={(p.compatProfile || "default") === "amanai"
+                          ? "Amanai compatible: cache_control breakpoints + dual Anthropic + nested model ids"
+                          : "Default: follow Type only (openai / anthropic / youcom)"}
+                      >
+                        {(p.compatProfile || "default") === "amanai" ? "amanai" : "default"}
+                      </span>
+                      <button
+                        onClick={() => handleEditProviderField(p.id, "compatProfile", p.compatProfile || "default")}
+                        className="p-0.5 hover:bg-muted rounded opacity-60 hover:opacity-100"
+                        title="Edit compat profile"
                       >
                         <Pencil className="w-3 h-3" />
                       </button>
@@ -954,14 +1007,24 @@ export function ProvidersManager() {
           ))}
 
           {/* Add new provider form */}
-          <div className="grid grid-cols-6 gap-2 mt-4 items-end">
+          <div className="grid grid-cols-7 gap-2 mt-4 items-end">
             <div className="col-span-1">
               <Label>Name</Label>
               <Input value={name} onChange={e => setName(e.target.value)} placeholder="OpenAI" />
             </div>
             <div className="col-span-2">
               <Label>Endpoint URL</Label>
-              <Input value={endpoint} onChange={e => setEndpoint(e.target.value)} placeholder="https://api.openai.com/v1" />
+              <Input
+                value={endpoint}
+                onChange={e => {
+                  setEndpoint(e.target.value);
+                  // Auto-suggest amanai when URL looks like amanai (user can still override)
+                  if (/amanai\.dev/i.test(e.target.value) && compatProfile === "default") {
+                    setCompatProfile("amanai");
+                  }
+                }}
+                placeholder="https://api.openai.com/v1"
+              />
             </div>
             <div className="col-span-1">
               <Label>Type</Label>
@@ -976,6 +1039,17 @@ export function ProvidersManager() {
               </select>
             </div>
             <div className="col-span-1">
+              <Label title="default = Type only; amanai = OpenAI/Anthropic + Amanai cache shaping">Compat</Label>
+              <select
+                value={compatProfile}
+                onChange={e => setCompatProfile(e.target.value)}
+                className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="default">Default</option>
+                <option value="amanai">Amanai</option>
+              </select>
+            </div>
+            <div className="col-span-1">
               <Label>Priority</Label>
               <Input type="number" value={priority} onChange={e => setPriority(parseInt(e.target.value)||0)} />
             </div>
@@ -985,6 +1059,9 @@ export function ProvidersManager() {
               </Button>
             </div>
           </div>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Compat <span className="text-violet-300">amanai</span> injects cache breakpoints for credit savings (cache_read @ 25% of input). Type stays openai/anthropic/youcom.
+          </p>
           <div className="mt-2">
             <Label>API Key</Label>
             <Input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-..." type="password" />

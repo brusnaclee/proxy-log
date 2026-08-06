@@ -820,11 +820,13 @@ function providerUsesNestedModelIds(
   providerName: string,
   endpoint: string | null | undefined,
   knownIds: Iterable<string>,
+  compatProfile?: string | null,
 ): boolean {
   const ep = String(endpoint || "").toLowerCase();
   const name = String(providerName || "").toLowerCase();
+  if (String(compatProfile || "").toLowerCase() === "amanai") return true;
   // Amanai always nests vendor ids as amanai/<model>
-  if (ep.includes("amanai.dev") || name === "amanai") return true;
+  if (ep.includes("amanai.dev") || name.includes("amanai")) return true;
   let total = 0;
   let withSlash = 0;
   for (const id of knownIds) {
@@ -865,7 +867,7 @@ async function resolveUpstreamModelId(
 
   await loadFromDisk();
   const [prov] = await db
-    .select({ id: providers.id, endpoint: providers.endpoint })
+    .select({ id: providers.id, endpoint: providers.endpoint, compatProfile: providers.compatProfile })
     .from(providers)
     .where(eq(providers.name, providerName))
     .limit(1);
@@ -890,7 +892,12 @@ async function resolveUpstreamModelId(
     }
   }
 
-  const nestedProvider = providerUsesNestedModelIds(providerName, prov?.endpoint, known);
+  const nestedProvider = providerUsesNestedModelIds(
+    providerName,
+    prov?.endpoint,
+    known,
+    prov?.compatProfile,
+  );
   let resolved = rest;
   if (!rest.includes("/") && nestedProvider) {
     resolved = nested;

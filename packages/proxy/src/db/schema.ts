@@ -333,6 +333,12 @@ export const providers = pgTable('providers', {
 	endpoint: text('endpoint').notNull(),
 	apiKey: text('api_key').notNull(),
 	endpointType: text('endpoint_type').notNull().default('openai'),
+	/**
+	 * Request shaping profile layered on endpointType:
+	 * - default: plain openai / anthropic / youcom behavior
+	 * - amanai: dual Anthropic + nested ids + cache_control breakpoints (credit cache)
+	 */
+	compatProfile: text('compat_profile').notNull().default('default'),
 	isActive: boolean('is_active').notNull().default(true),
 	priority: integer('priority').notNull().default(0),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
