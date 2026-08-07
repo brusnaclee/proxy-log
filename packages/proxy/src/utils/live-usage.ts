@@ -12,6 +12,7 @@ import {
 	turnCountSql,
 	peakPromptTokensSql,
 	turnCompletionTokensSql,
+	turnDisplayCompletionTokensSql,
 	turnBillablePromptTokensSql,
 	turnCachedTokensSql,
 	hopCountSql,
@@ -279,7 +280,7 @@ export async function buildLiveUsageForKey(
 				billablePromptTokens: turnBillablePromptTokensSql(whereTodayShared, tmOpts),
 				cachedTokens: turnCachedTokensSql(whereTodayShared, tmOpts),
 				fullInputTokens: hopFullInputTokensSql(whereTodayHopsShared, tmOpts),
-				completionTokens: turnCompletionTokensSql(whereTodayShared, tmOpts),
+				completionTokens: turnDisplayCompletionTokensSql(whereTodayHopsShared, tmOpts),
 			})
 			.from(requestLogs)
 			.where(whereToday)

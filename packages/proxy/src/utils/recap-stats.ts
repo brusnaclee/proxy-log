@@ -18,7 +18,7 @@ import {
   inputHopWeightSqlExpr,
   turnBillablePromptTokensSql,
   turnCachedTokensSql,
-  turnCompletionTokensSql,
+  turnDisplayCompletionTokensSql,
   turnCountSql,
   weightedHopInputTokensSql,
   weightedHopTotalTokensSql,
@@ -259,7 +259,7 @@ async function fetchTotals(keyIds: number[], start: Date, end: Date, tmOpts?: To
     SELECT
       ${turnCountSql(where)} AS turns,
       ${weightedHopInputTokensSql(where, tmOpts)} AS input_tokens,
-      ${turnCompletionTokensSql(where, tmOpts)} AS output_tokens,
+      ${turnDisplayCompletionTokensSql(where, tmOpts)} AS output_tokens,
       ${weightedHopTotalTokensSql(where, tmOpts)} AS total_tokens,
       ${turnBillablePromptTokensSql(where, tmOpts)} AS billable_prompt,
       ${turnCachedTokensSql(where, tmOpts)} AS cached,
@@ -739,8 +739,8 @@ export async function getMonthLeaderboard(yearMonth: string): Promise<{
       -- rank can never be computed from a different number than we display.
       COALESCE(COUNT(DISTINCT h.turn_id), 0) AS requests,
       COALESCE(SUM(h.input_credit), 0) AS input_tokens,
-      COALESCE(SUM(h.output_credit), 0) AS output_tokens,
-      COALESCE(SUM(h.input_credit + h.output_credit), 0) AS tokens
+      COALESCE(SUM(h.output_display), 0) AS output_tokens,
+      COALESCE(SUM(h.input_credit + h.output_meter), 0) AS tokens
     FROM (
       SELECT hops.api_key_id,
         hops.turn_id,
@@ -754,7 +754,8 @@ export async function getMonthLeaderboard(yearMonth: string): Promise<{
         (CASE
           WHEN COALESCE(hops.uc, 0) > 0 THEN 0::float8
           ELSE hops.outt * CASE WHEN COALESCE(a.trial_only, false) THEN 1 ELSE ${output} END
-        END) AS output_credit
+        END) AS output_meter,
+        hops.outt * CASE WHEN COALESCE(a.trial_only, false) THEN 1 ELSE ${output} END AS output_display
       FROM (
         SELECT api_key_id,
           turn_id,

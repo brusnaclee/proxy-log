@@ -5,7 +5,7 @@ import { eq, sql, and, desc, inArray } from "drizzle-orm";
 import { generateApiKey, getKeyPrefix, sha256, maskKey } from "../../utils/crypto.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
-import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, turnCountSql, turnPromptTokensSql, peakPromptTokensSql, turnCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, hopCountSql, hopFullInputTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, sanitizeRows, groupedInputSumSql, modelLimitCreditBreakdownSql } from "../../utils/counting.js";
+import { COUNTED_LOG_SQL, BILLABLE_LOG_SQL, VALID_LOG_SQL, wibMonthStartSql, turnCountSql, turnPromptTokensSql, peakPromptTokensSql, turnDisplayCompletionTokensSql, turnTotalTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, hopCountSql, hopFullInputTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, sanitizeRows, groupedInputSumSql, modelLimitCreditBreakdownSql } from "../../utils/counting.js";
 import { applyTokenMultiplierRows, getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { apiKeyCache, statsCache } from "../../utils/cache.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
@@ -589,7 +589,7 @@ keys.get("/keys/:id", async (c) => {
       billablePromptTokens: turnBillablePromptTokensSql(whereClause, tmOpts),
       cachedTokens:     turnCachedTokensSql(whereClause, tmOpts),
       fullInputTokens:  hopFullInputTokensSql(whereHops, tmOpts),
-      completionTokens: turnCompletionTokensSql(whereClause, tmOpts),
+      completionTokens: turnDisplayCompletionTokensSql(whereHops, tmOpts),
       contextTokens:    sql<number>`0`,
       estimatedCost:    sql<number>`COALESCE(SUM(estimated_cost), 0)`,
     }).from(requestLogs).where(whereClause))[0];
@@ -644,14 +644,14 @@ keys.get("/keys/:id", async (c) => {
 
   const topModelsByTokensRaw = sanitizeRows(
     (await db.execute(modelLimitCreditBreakdownSql(modelCreditWhere, { ...tmOpts, limit: 10 }))).rows as any[],
-    ["requests", "promptTokens", "completionTokens", "tokens"],
+    ["requests", "promptTokens", "completionTokens", "displayCompletionTokens", "tokens"],
   );
   const topModelsByTokens = topModelsByTokensRaw.map((r: any) => ({
     model: r.model,
     count: r.requests,
     tokens: r.tokens,
     promptTokens: r.promptTokens,
-    completionTokens: r.completionTokens,
+    completionTokens: Number(r.displayCompletionTokens) || Number(r.completionTokens) || 0,
     estimatedCost: 0,
   }));
   const topModels = [...topModelsByTokens].sort((a, b) => (b.count || 0) - (a.count || 0));

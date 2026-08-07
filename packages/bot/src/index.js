@@ -5714,7 +5714,7 @@ async function refreshRankingEmbeds() {
 						name = `<@${item.discordUserId}>`;
 					}
 					const suffix = item.isTrial ? ' 🎁' : '';
-					return `**${name}**${suffix} — ${formatTokens(item.tokens)} tok (📥 ${formatTokens(item.promptTokens || 0)} / 📤 ${formatTokens(item.completionTokens || 0)})`;
+					return `**${name}**${suffix} — ${formatTokens(item.tokens)} tok · 📥 ${formatTokens(item.promptTokens || 0)} · 📤 ${formatTokens(item.completionTokens || 0)}`;
 				},
 			);
 			await msg.edit({ embeds: [embed] });

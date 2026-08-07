@@ -226,12 +226,34 @@ export function turnCachedTokensSql(whereCondition: SQL | undefined, opts?: Toke
   return sql<number>`COALESCE((SELECT SUM(COALESCE(cached_tokens, 0) * ${min}) FROM request_logs WHERE ${whereCondition!}), 0)`;
 }
 
-/** Completion tokens: per-hop × OUTPUT multiplier (pattern-aware). Skip when upstream_credits set. */
+/**
+ * Output toward daily/monthly OUTPUT limits.
+ * Compat meter hops (`upstream_credits > 0`): 0 — output already folded into the credit input meter.
+ * Use {@link turnDisplayCompletionTokensSql} for ranking / UI "Output" counts.
+ */
 export function turnCompletionTokensSql(whereCondition: SQL | undefined, opts?: TokenMultiplierOpts): SQL<number> {
   const mout = sql.raw(sqlMultiplierExpr("output", "model", opts));
   return sql<number>`COALESCE((SELECT SUM(
     CASE WHEN COALESCE(upstream_credits, 0) > 0 THEN 0::float8
          ELSE COALESCE(completion_tokens, 0) * ${mout} END
+  ) FROM request_logs WHERE ${whereCondition!}), 0)`;
+}
+
+/** Alias — same as {@link turnCompletionTokensSql} (gates / remaining.output). */
+export const turnLimitOutputTokensSql = turnCompletionTokensSql;
+
+/**
+ * Completion tokens for display (Discord ranking 📤, /usage Output, portal/admin cards).
+ * Always counts `completion × output_mult` — never zeroed by upstream_credits.
+ * Do NOT add this into limit totals (credits path already includes out).
+ */
+export function turnDisplayCompletionTokensSql(
+  whereCondition: SQL | undefined,
+  opts?: TokenMultiplierOpts,
+): SQL<number> {
+  const mout = sql.raw(sqlMultiplierExpr("output", "model", opts));
+  return sql<number>`COALESCE((SELECT SUM(
+    COALESCE(completion_tokens, 0) * ${mout}
   ) FROM request_logs WHERE ${whereCondition!}), 0)`;
 }
 
@@ -418,12 +440,10 @@ export function hopWeightedTimeseriesSql(
         COALESCE(SUM(
           CASE WHEN COALESCE(peak_uc, 0) > 0 THEN peak_uc ELSE peak_in * ${min} END
         ), 0) as "promptTokens",
-        COALESCE(SUM(
-          CASE WHEN COALESCE(peak_uc, 0) > 0 THEN 0 ELSE out_sum * ${mout} END
-        ), 0) as "completionTokens",
+        COALESCE(SUM(out_display * ${mout}), 0) as "completionTokens",
         COALESCE(SUM(
           CASE WHEN COALESCE(peak_uc, 0) > 0 THEN peak_uc
-               ELSE peak_in * ${min} + out_sum * ${mout} END
+               ELSE peak_in * ${min} + out_meter * ${mout} END
         ), 0) as tokens
       FROM (
         SELECT
@@ -435,7 +455,8 @@ export function hopWeightedTimeseriesSql(
           SUM(
             CASE WHEN COALESCE(upstream_credits, 0) > 0 THEN 0
                  ELSE COALESCE(completion_tokens, 0) END
-          )::float8 as out_sum,
+          )::float8 as out_meter,
+          SUM(COALESCE(completion_tokens, 0))::float8 as out_display,
           (ARRAY_AGG(model ORDER BY (${sql.raw(LIMIT_INPUT_SQL)}) DESC, id ASC))[1] as model
         FROM request_logs
         WHERE ${whereExtra}
@@ -455,9 +476,7 @@ export function hopWeightedTimeseriesSql(
         COALESCE(SUM(
           CASE WHEN COALESCE(uc, 0) > 0 THEN uc ELSE inn * ${min} END
         ), 0) as "promptTokens",
-        COALESCE(SUM(
-          CASE WHEN COALESCE(uc, 0) > 0 THEN 0 ELSE outt * ${mout} END
-        ), 0) as "completionTokens",
+        COALESCE(SUM(outt * ${mout}), 0) as "completionTokens",
         COALESCE(SUM(
           CASE WHEN COALESCE(uc, 0) > 0 THEN uc ELSE inn * ${min} + outt * ${mout} END
         ), 0) as tokens
@@ -486,9 +505,7 @@ export function hopWeightedTimeseriesSql(
       COALESCE(SUM(
         CASE WHEN COALESCE(uc, 0) > 0 THEN uc * (${sql.raw(w)}) ELSE inn * (${sql.raw(w)}) * ${min} END
       ), 0) as "promptTokens",
-      COALESCE(SUM(
-        CASE WHEN COALESCE(uc, 0) > 0 THEN 0 ELSE outt * ${mout} END
-      ), 0) as "completionTokens",
+      COALESCE(SUM(outt * ${mout}), 0) as "completionTokens",
       COALESCE(SUM(
         CASE WHEN COALESCE(uc, 0) > 0 THEN uc * (${sql.raw(w)})
              ELSE inn * (${sql.raw(w)}) * ${min} + outt * ${mout} END
@@ -545,6 +562,7 @@ export function modelLimitCreditBreakdownSql(
         COALESCE(SUM(
           CASE WHEN COALESCE(uc, 0) > 0 THEN 0 ELSE outt * ${mout} END
         ), 0) as "completionTokens",
+        COALESCE(SUM(outt * ${mout}), 0) as "displayCompletionTokens",
         COALESCE(SUM(
           CASE WHEN COALESCE(uc, 0) > 0 THEN uc ELSE inn * ${min} + outt * ${mout} END
         ), 0) as tokens
@@ -577,6 +595,7 @@ export function modelLimitCreditBreakdownSql(
       COALESCE(SUM(
         CASE WHEN COALESCE(uc, 0) > 0 THEN 0 ELSE outt * ${mout} END
       ), 0) as "completionTokens",
+      COALESCE(SUM(outt * ${mout}), 0) as "displayCompletionTokens",
       COALESCE(SUM(
         CASE WHEN COALESCE(uc, 0) > 0 THEN uc * (${sql.raw(w)})
              ELSE inn * (${sql.raw(w)}) * ${min} + outt * ${mout} END

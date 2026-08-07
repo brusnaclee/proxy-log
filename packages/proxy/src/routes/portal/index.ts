@@ -8,7 +8,7 @@ import { eq, sql, and, desc } from "drizzle-orm";
 import { generateApiKey, getKeyPrefix, sha256, maskKey } from "../../utils/crypto.js";
 import { createPortalSession, destroyPortalSession, getPortalDiscordUserId, resolvePortalDiscordUserId, getPortalSessionRawId } from "../../middleware/portal-session.js";
 import { destroyAllAuthSessions, destroyAuthSessionById, destroyOtherAuthSessions, listAuthSessions } from "../../utils/auth-sessions.js";
-import { resolvePeriodRange, chartDaysForPeriod, type PeriodKey, turnCountSql, hopCountSql, peakPromptTokensSql, turnCompletionTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, hopFullInputTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, modelLimitCreditBreakdownSql, hopWeightedTimeseriesSql, BILLABLE_LOG_SQL } from "../../utils/counting.js";
+import { resolvePeriodRange, chartDaysForPeriod, type PeriodKey, turnCountSql, hopCountSql, peakPromptTokensSql, turnCompletionTokensSql, turnDisplayCompletionTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, hopFullInputTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, modelLimitCreditBreakdownSql, hopWeightedTimeseriesSql, BILLABLE_LOG_SQL } from "../../utils/counting.js";
 import { resolveTokenMultipliers } from "../../utils/token-multiplier.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { getRecapWindow } from "../../utils/recap-window.js";
@@ -369,7 +369,7 @@ portal.get("/me", async (c) => {
     billablePromptTokens: turnBillablePromptTokensSql(todayPw!, { isTrial: usageIsTrial }),
     cachedTokens: turnCachedTokensSql(todayPw!, { isTrial: usageIsTrial }),
     fullInputTokens: hopFullInputTokensSql(todayHops!, { isTrial: usageIsTrial }),
-    completionTokens: turnCompletionTokensSql(todayPw!, { isTrial: usageIsTrial }),
+    completionTokens: turnDisplayCompletionTokensSql(todayHops!, { isTrial: usageIsTrial }),
     totalTokens: weightedHopTotalTokensSql(todayHops!, { isTrial: usageIsTrial }),
   }).from(requestLogs).where(todayPw))[0];
 
@@ -832,7 +832,7 @@ portal.get("/stats/overview", async (c) => {
     billablePromptTokens: turnBillablePromptTokensSql(pw, { isTrial }),
     cachedTokens: turnCachedTokensSql(pw, { isTrial }),
     peakPromptTokens: peakPromptTokensSql(pw, { isTrial }),
-    completionTokens: turnCompletionTokensSql(pw, { isTrial }),
+    completionTokens: turnDisplayCompletionTokensSql(hops, { isTrial }),
   }).from(requestLogs).where(pw))[0];
 
   const sessionWhere = userWhere(discordUserId);
@@ -920,12 +920,14 @@ portal.get("/stats/by-model", async (c) => {
 
   const rows = sanitizeRows(
     (await db.execute(modelLimitCreditBreakdownSql(extraWhere, { isTrial, limit: 20 }))).rows as any[],
-    ["requests", "promptTokens", "completionTokens", "tokens"],
+    ["requests", "promptTokens", "completionTokens", "displayCompletionTokens", "tokens"],
   );
 
   return c.json(
     rows.map((r: any) => ({
       ...r,
+      // UI ↓ uses real completion; cost/limit field stays in completionTokens if needed
+      completionTokens: Number(r.displayCompletionTokens) || Number(r.completionTokens) || 0,
       billablePromptTokens: r.promptTokens,
       cachedTokens: 0,
     })),
@@ -1029,7 +1031,7 @@ portal.get("/stats/compare", async (c) => {
       promptTokens: weightedHopInputTokensSql(hops, { isTrial }),
       billablePromptTokens: turnBillablePromptTokensSql(pw, { isTrial }),
       cachedTokens: turnCachedTokensSql(pw, { isTrial }),
-      completionTokens: turnCompletionTokensSql(pw, { isTrial }),
+      completionTokens: turnDisplayCompletionTokensSql(hops, { isTrial }),
     }).from(requestLogs).where(pw))[0];
 
     const breakdownRows = sanitizeRows(

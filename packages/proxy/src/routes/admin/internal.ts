@@ -18,7 +18,7 @@ import {
 } from "../../utils/rate-limit.js";
 import { isInternalRequest } from "../../middleware/session.js";
 import { configCache } from "../../utils/cache.js";
-import { BILLABLE_LOG_SQL, VALID_LOG_SQL, turnCountSql, hopCountSql, turnPromptTokensSql, peakPromptTokensSql, turnCompletionTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, modelLimitCreditBreakdownSql, normalizeTokenLimitWeightPercent } from "../../utils/counting.js";
+import { BILLABLE_LOG_SQL, VALID_LOG_SQL, turnCountSql, hopCountSql, turnPromptTokensSql, peakPromptTokensSql, turnCompletionTokensSql, turnDisplayCompletionTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, modelLimitCreditBreakdownSql, normalizeTokenLimitWeightPercent } from "../../utils/counting.js";
 import { getTokenMultipliers } from "../../utils/token-multiplier.js";
 import {
   getAccountUsageAggregates,
@@ -83,7 +83,7 @@ async function getUserStats(apiKeyId: number) {
     requests: turnCountSql(whereClause),
     tokens: weightedHopTotalTokensSql(whereClause),
     promptTokens: weightedHopInputTokensSql(whereClause),
-    completionTokens: turnCompletionTokensSql(whereClause),
+    completionTokens: turnDisplayCompletionTokensSql(whereClause),
   }).from(requestLogs).where(whereClause);
 
   const [uniqueDevices] = await db.select({ count: sql<number>`count(*)` })
@@ -642,7 +642,10 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
       peakPromptTokens: peakPromptTokensSql(whereClause!, tmOpts),
       billablePromptTokens: turnBillablePromptTokensSql(whereClause!, tmOpts),
       cachedTokens: turnCachedTokensSql(whereClause!, tmOpts),
-      completionTokens: turnCompletionTokensSql(whereClause!, tmOpts),
+      // 📤 display — always real completion×mult (credit hops must not show 0)
+      completionTokens: turnDisplayCompletionTokensSql(whereHops!, tmOpts),
+      // toward daily Output limit only (0 when upstream meter folds out into input)
+      limitOutputTokens: turnCompletionTokensSql(whereHops!, tmOpts),
       contextTokens: sql<number>`0`,
     })
     .from(requestLogs)
@@ -670,6 +673,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
       billablePromptTokens: s?.billablePromptTokens || 0,
       cachedTokens: s?.cachedTokens || 0,
       completionTokens: s?.completionTokens || 0,
+      limitOutputTokens: s?.limitOutputTokens || 0,
       contextTokens: s?.contextTokens || 0,
       estimatedCost: Math.round(estimatedCost),
     };
@@ -750,7 +754,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
               apiCalls: hopCountSql(whereHops!),
               tokens: weightedHopTotalTokensSql(whereHops!, tmOpts),
               promptTokens: weightedHopInputTokensSql(whereHops!, tmOpts),
-              completionTokens: turnCompletionTokensSql(whereHops!, tmOpts),
+              completionTokens: turnDisplayCompletionTokensSql(whereHops!, tmOpts),
             })
             .from(requestLogs)
             .where(whereClause!)
@@ -1043,7 +1047,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     dailyTokensUsed: todaySharedStats?.tokens || 0,
     monthlyTokensUsed: monthStats?.tokens || 0,
     dailyInputUsed: todaySharedStats?.promptTokens || 0,
-    dailyOutputUsed: todaySharedStats?.completionTokens || 0,
+    dailyOutputUsed: todaySharedStats?.limitOutputTokens || 0,
     dailyInputBillable: todaySharedStats?.billablePromptTokens || 0,
     dailyInputCached: todaySharedStats?.cachedTokens || 0,
     dedicatedPools: dedicatedPools.map((p) => ({ ...p, resetAt: dailyResetAt })),

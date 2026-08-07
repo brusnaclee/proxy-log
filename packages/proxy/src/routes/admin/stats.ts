@@ -3,7 +3,7 @@ import { db } from "../../db/index.js";
 import { requestLogs, apiKeys, devices, chatSessions, monthlyStats } from "../../db/schema.js";
 import { eq, sql, and } from "drizzle-orm";
 import { getModelRates } from "../../utils/cost-calculator.js";
-import { VALID_LOG_SQL, BILLABLE_LOG_SQL, turnCountSql, hopCountSql, turnCompletionTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, peakPromptTokensSql, hopFullInputTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, sanitizeRows, resolvePeriodRange, groupedInputSumSql, modelLimitCreditBreakdownSql, hopWeightedTimeseriesSql, type PeriodKey } from "../../utils/counting.js";
+import { VALID_LOG_SQL, BILLABLE_LOG_SQL, turnCountSql, hopCountSql, turnDisplayCompletionTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, peakPromptTokensSql, hopFullInputTokensSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, sanitizeRows, resolvePeriodRange, groupedInputSumSql, modelLimitCreditBreakdownSql, hopWeightedTimeseriesSql, type PeriodKey } from "../../utils/counting.js";
 import { applyTokenMultiplierRows, getTokenMultipliers } from "../../utils/token-multiplier.js";
 import { statsCache } from "../../utils/cache.js";
 import {
@@ -88,7 +88,7 @@ stats.get("/stats/overview", async (c) => {
         promptTokens: weightedHopInputTokensSql(periodWhere),
         billablePromptTokens: turnBillablePromptTokensSql(periodWhere),
         cachedTokens: turnCachedTokensSql(periodWhere),
-        completionTokens: turnCompletionTokensSql(periodWhere),
+        completionTokens: turnDisplayCompletionTokensSql(periodWhere),
         contextTokens: sql<number>`0`,
         uniqueDevices: sql<number>`COUNT(DISTINCT device_fingerprint)`,
       })
@@ -262,7 +262,7 @@ stats.get("/stats/by-key", async (c) => {
       requests: turnCountSql(whereClause),
       tokens: weightedHopTotalTokensSql(whereClause),
       promptTokens: weightedHopInputTokensSql(whereClause),
-      completionTokens: turnCompletionTokensSql(whereClause),
+      completionTokens: turnDisplayCompletionTokensSql(whereClause),
       uniqueDevices: sql<number>`COUNT(DISTINCT device_fingerprint)`
     }).from(requestLogs).where(whereClause))[0];
 
@@ -473,7 +473,7 @@ stats.get("/stats/period-summary", async (c) => {
       billablePromptTokens: turnBillablePromptTokensSql(whereTurns),
       cachedTokens: turnCachedTokensSql(whereTurns),
       fullInputTokens: hopFullInputTokensSql(whereClause),
-      completionTokens: turnCompletionTokensSql(whereTurns),
+      completionTokens: turnDisplayCompletionTokensSql(whereClause),
     }).from(requestLogs).where(whereTurns))[0];
 
     return {
