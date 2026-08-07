@@ -100,10 +100,15 @@ function cloneMessageContent(m: any): any {
 }
 
 /**
- * Mark the last cacheable text block in messages (prefer penultimate turn so the
- * growing history prefix is cached; falls back to last message).
+ * Mark the last cacheable turn (prefer penultimate so the growing history prefix
+ * is cached). For string content, set message-level cache_control without rewriting
+ * to content blocks — converting strings→blocks can bust OpenAI automatic prefix cache.
  */
-function markTrailingHistoryBreakpoint(messages: any[], budget: { n: number }): void {
+function markTrailingHistoryBreakpoint(
+	messages: any[],
+	budget: { n: number },
+	opts?: { preferMessageLevel?: boolean },
+): void {
 	if (budget.n <= 0 || !Array.isArray(messages) || messages.length === 0) return;
 
 	// Prefer last assistant (or user) before the final user turn — classic multi-turn.
@@ -113,11 +118,17 @@ function markTrailingHistoryBreakpoint(messages: any[], budget: { n: number }): 
 		targetIdx = messages.length - 2;
 	}
 
+	const preferMessageLevel = opts?.preferMessageLevel === true;
+
 	for (let i = targetIdx; i >= 0 && budget.n > 0; i--) {
 		const msg = messages[i];
 		if (!msg || (msg.role !== "user" && msg.role !== "assistant")) continue;
 
 		if (typeof msg.content === "string" && msg.content.trim().length > 0) {
+			if (preferMessageLevel) {
+				if (markCacheControl(msg)) budget.n -= 1;
+				return;
+			}
 			msg.content = [
 				{
 					type: "text",
@@ -216,27 +227,21 @@ export function applyAmanaiCacheToOpenAIBody(body: any): any {
 	if (!Array.isArray(out.messages)) return out;
 	out.messages = out.messages.map(cloneMessageContent);
 
-	// System / developer
+	// System / developer — keep string content intact (OpenAI auto prefix cache);
+	// only annotate message-level or existing content-block cache_control.
 	for (const msg of out.messages) {
 		if (budget.n <= 0) break;
 		if (msg.role !== "system" && msg.role !== "developer") continue;
 		if (typeof msg.content === "string" && msg.content.trim()) {
-			msg.content = [
-				{
-					type: "text",
-					text: msg.content,
-					cache_control: { ...CACHE_CONTROL_EPHEMERAL },
-				},
-			];
-			budget.n -= 1;
+			if (markCacheControl(msg)) budget.n -= 1;
 		} else if (Array.isArray(msg.content) && msg.content.length > 0) {
 			const last = msg.content[msg.content.length - 1];
 			if (last && typeof last === "object" && markCacheControl(last)) budget.n -= 1;
 		}
 	}
 
-	// Trailing history (multi-turn) — not only the first user message
-	markTrailingHistoryBreakpoint(out.messages, budget);
+	// Trailing history (multi-turn) — message-level for strings
+	markTrailingHistoryBreakpoint(out.messages, budget, { preferMessageLevel: true });
 
 	return out;
 }

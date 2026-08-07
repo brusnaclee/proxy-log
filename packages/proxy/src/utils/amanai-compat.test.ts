@@ -72,7 +72,7 @@ describe("amanai cache shaping", () => {
 		assert.equal(shaped.messages[1].content[0].cache_control?.type, "ephemeral");
 	});
 
-	it("marks openai system + trailing history + top-level cache", () => {
+	it("marks openai system + trailing history + top-level cache without rewriting strings", () => {
 		const shaped = applyAmanaiCacheToOpenAIBody({
 			model: "amanai/gpt-5.6-sol",
 			messages: [
@@ -87,9 +87,12 @@ describe("amanai cache shaping", () => {
 			],
 		});
 		assert.equal(shaped.cache_control?.type, "ephemeral");
-		assert.equal(shaped.messages[0].content[0].cache_control?.type, "ephemeral");
+		// String system stays a string — message-level cache_control only
+		assert.equal(shaped.messages[0].content, "Stable system instructions here.");
+		assert.equal(shaped.messages[0].cache_control?.type, "ephemeral");
 		assert.equal(shaped.tools[1].cache_control?.type, "ephemeral");
-		assert.equal(shaped.messages[2].content[0].cache_control?.type, "ephemeral");
+		assert.equal(shaped.messages[2].content, "sure");
+		assert.equal(shaped.messages[2].cache_control?.type, "ephemeral");
 		assert.equal(shaped.messages[3].content, "next");
 	});
 

@@ -620,6 +620,10 @@ export function buildAnthropicUpstreamHeaders(
   // Always win over any client auth headers (Claude Code sends x-api-key=sk-proxy-…).
   headers["x-api-key"] = apiKey;
   headers["anthropic-version"] = "2023-06-01";
+  // Ensure prompt-caching beta is present for gateways that still require it.
+  if (!headers["anthropic-beta"] && !headers["Anthropic-Beta"]) {
+    headers["anthropic-beta"] = "prompt-caching-2024-07-31";
+  }
   // Some dual OpenAI+Anthropic gateways (amanai) also accept Bearer.
   headers["Authorization"] = `Bearer ${apiKey}`;
   // Neutral UA — amanai WAF blocks OpenAI/Python SDK fingerprints.

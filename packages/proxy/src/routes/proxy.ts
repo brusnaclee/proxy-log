@@ -323,7 +323,7 @@ function applyUpstreamCreditsToLogEntry(
 	return parts.total;
 }
 
-/** Best-effort OpenAI-path cache enrich when usage omitted cache_read. */
+/** Best-effort Amanai /v1/usage enrich — prefer API credits + cache_read as billing truth. */
 function maybeScheduleAmanaiEnrich(opts: {
 	logId?: number | null;
 	provider: { id?: number | null; endpointType?: string | null; compatProfile?: string | null } | null | undefined;
@@ -336,14 +336,13 @@ function maybeScheduleAmanaiEnrich(opts: {
 	const { provider } = opts;
 	if (!provider || !providerIsAmanaiCompat(provider)) return;
 	if ((opts.upstreamCredits || 0) <= 0) return;
-	if ((opts.cachedTokens || 0) > 0) return;
-	if (String(provider.endpointType || '') === 'anthropic') return;
 	scheduleAmanaiUsageEnrich({
 		logId: opts.logId,
 		providerId: provider.id,
 		model: opts.model,
 		promptTokens: opts.promptTokens,
 		completionTokens: opts.completionTokens,
+		cachedTokens: opts.cachedTokens,
 	});
 }
 

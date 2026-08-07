@@ -1,6 +1,9 @@
 /**
- * Best-effort Amanai GET /v1/usage enrich for OpenAI hops that omit cache fields.
+ * Best-effort Amanai GET /v1/usage enrich for Compat hops.
  * Uses provider API key from DB only — never hardcode. Never throws to callers.
+ *
+ * Prefer Amanai recent (cache_read + credits) as billing truth when response
+ * usage omits cache fields (common on GLM/DeepSeek OpenAI path).
  */
 import { db } from "../db/index.js";
 import { providerApiKeys, providers, requestLogs } from "../db/schema.js";
@@ -63,9 +66,37 @@ async function fetchAmanaiUsageRecent(apiKey: string): Promise<UsageRecent[]> {
 	}
 }
 
+function scoreMatch(
+	r: UsageRecent,
+	opts: { needle: string; promptTokens: number; completionTokens: number; nowSec: number },
+): number {
+	if (r.status && r.status !== "ok") return -1;
+	const pm = String(r.public_model || "").toLowerCase();
+	const bare = pm.split("/").pop() || "";
+	if (!pm.includes(opts.needle) && !opts.needle.includes(bare)) return -1;
+	const ts = Number(r.ts) || 0;
+	if (ts && Math.abs(ts - opts.nowSec) > 180) return -1;
+	const input = Math.max(0, Number(r.input_tokens) || 0);
+	const out = Math.max(0, Number(r.output_tokens) || 0);
+	const cacheRead = Math.max(0, Number(r.cache_read_tokens) || 0);
+	// Amanai input is usually full prompt (incl. cache); our stored prompt may be uncached.
+	const fullGuess = Math.max(opts.promptTokens + (opts.promptTokens > 0 ? 0 : 0), opts.promptTokens);
+	const candidates = [input, Math.max(0, input - cacheRead), input + cacheRead];
+	let bestTok = Infinity;
+	for (const c of candidates) {
+		bestTok = Math.min(bestTok, Math.abs(c - fullGuess), Math.abs(c - (fullGuess + cacheRead)));
+	}
+	// Also compare against prompt+typical cache if we already had a guess
+	bestTok = Math.min(bestTok, Math.abs(input - opts.promptTokens));
+	const outDelta = Math.abs(out - opts.completionTokens);
+	const tsDelta = ts ? Math.abs(ts - opts.nowSec) : 60;
+	// Lower is better
+	return bestTok + outDelta * 2 + tsDelta;
+}
+
 /**
- * After an OpenAI-path hop with cached_tokens=0, try to pull cache_read + credits
- * from Amanai recent activity and patch the log row.
+ * After a Compat hop, pull cache_read + credits from Amanai recent and patch the log.
+ * Runs even when response already reported cached_tokens — API credits win.
  */
 export function scheduleAmanaiUsageEnrich(opts: {
 	logId?: number | null;
@@ -73,6 +104,7 @@ export function scheduleAmanaiUsageEnrich(opts: {
 	model: string;
 	promptTokens: number;
 	completionTokens: number;
+	cachedTokens?: number;
 	createdAtMs?: number;
 }): void {
 	const { providerId, model } = opts;
@@ -82,31 +114,42 @@ export function scheduleAmanaiUsageEnrich(opts: {
 			const key = await resolveProviderApiKey(providerId);
 			if (!key) return;
 			// Small delay so Amanai recent includes this hop
-			await new Promise((r) => setTimeout(r, 1200));
+			await new Promise((r) => setTimeout(r, 1500));
 			const recent = await fetchAmanaiUsageRecent(key);
 			if (!recent.length) return;
 			const needle = modelNeedle(model);
 			const nowSec = Math.floor((opts.createdAtMs || Date.now()) / 1000);
-			const match = recent.find((r) => {
-				if (r.status && r.status !== "ok") return false;
-				const pm = String(r.public_model || "").toLowerCase();
-				if (!pm.includes(needle) && !needle.includes(pm.split("/").pop() || "")) return false;
-				const ts = Number(r.ts) || 0;
-				if (ts && Math.abs(ts - nowSec) > 120) return false;
-				return true;
-			});
-			if (!match) return;
-			const cacheRead = Math.max(0, Number(match.cache_read_tokens) || 0);
-			const apiCredits = Math.max(0, Number(match.credits) || 0);
-			const input = Math.max(0, Number(match.input_tokens) || 0);
-			// Anthropic-style: input often = uncached remainder when cache present
-			const billable =
-				cacheRead > 0 && input > 0
-					? Math.max(0, input - cacheRead) > 0
-						? Math.max(0, input - cacheRead)
-						: Math.max(0, opts.promptTokens)
-					: Math.max(0, opts.promptTokens);
-			const completion = Math.max(0, Number(match.output_tokens) || opts.completionTokens || 0);
+			let best: UsageRecent | null = null;
+			let bestScore = Infinity;
+			for (const r of recent) {
+				const s = scoreMatch(r, {
+					needle,
+					promptTokens: opts.promptTokens,
+					completionTokens: opts.completionTokens,
+					nowSec,
+				});
+				if (s < 0) continue;
+				if (s < bestScore) {
+					bestScore = s;
+					best = r;
+				}
+			}
+			if (!best || bestScore > 8000) return;
+
+			const cacheRead = Math.max(0, Number(best.cache_read_tokens) || 0);
+			const apiCredits = Math.max(0, Number(best.credits) || 0);
+			const input = Math.max(0, Number(best.input_tokens) || 0);
+			const completion = Math.max(0, Number(best.output_tokens) || opts.completionTokens || 0);
+
+			// Prefer Amanai semantics: input ≈ full; cache_read ⊆ input
+			let billable = Math.max(0, opts.promptTokens);
+			if (cacheRead > 0 && input > 0) {
+				billable = input >= cacheRead ? Math.max(0, input - cacheRead) : billable;
+			} else if (input > 0 && cacheRead === 0) {
+				// No cache on Amanai — billable = full input from API
+				billable = input;
+			}
+
 			const parts = computeUpstreamCreditPartsForHop({
 				model,
 				promptTokens: billable,
@@ -114,9 +157,10 @@ export function scheduleAmanaiUsageEnrich(opts: {
 				completionTokens: completion,
 				amanaiCompat: true,
 			});
-			// Prefer API total when present; keep out-part from formula (capped)
 			const credits = apiCredits > 0 ? apiCredits : parts.total;
 			const outCredits = Math.min(credits, parts.outCredits);
+
+			// Nothing useful to write
 			if (cacheRead <= 0 && apiCredits <= 0) return;
 
 			const patch: Record<string, number> = {
@@ -125,9 +169,13 @@ export function scheduleAmanaiUsageEnrich(opts: {
 			};
 			if (cacheRead > 0) {
 				patch.cachedTokens = cacheRead;
-				// Keep prompt as uncached remainder when Amanai input looks like total
-				if (input > cacheRead) {
-					patch.promptTokens = Math.max(0, input - cacheRead);
+				patch.promptTokens = billable;
+			} else if (apiCredits > 0 && input > 0) {
+				// Sync credits even without cache; keep token fields unless clearly full-priced miss
+				patch.promptTokens = billable;
+				if ((opts.cachedTokens || 0) > 0 && cacheRead === 0) {
+					// Response claimed cache but Amanai billed 0 — clear false cache
+					patch.cachedTokens = 0;
 				}
 			}
 
@@ -135,7 +183,6 @@ export function scheduleAmanaiUsageEnrich(opts: {
 				await db.update(requestLogs).set(patch).where(eq(requestLogs.id, opts.logId));
 				return;
 			}
-			// Fallback: newest matching row in last 3 minutes
 			const since = new Date(Date.now() - 3 * 60 * 1000);
 			const rows = await db
 				.select({ id: requestLogs.id })
