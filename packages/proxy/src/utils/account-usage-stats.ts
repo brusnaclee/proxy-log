@@ -2,9 +2,9 @@
  * Account-scoped usage aggregates — one row per Discord account (sibling keys
  * merged). Same meter as Discord ranking / live-usage / portal / gates:
  *   prompts = COUNT(DISTINCT turn_id) on 2xx
- *   input   = upstream_credits when set, else (prompt+cache)×local mult × hop weight
- *   tokens  = input + limit-output (limit-output = 0 when credits — out folded in)
- *   completionTokens = always completion×out mult (display 📤; not added into tokens for credit hops)
+ *   input   = credit_in when uc set, else (prompt+cache)×local mult × hop weight
+ *   output  = credit_out when uc set, else completion×out mult
+ *   tokens  = input + output  (always Total = In + Out)
  *   trial   = 1× multipliers when every key on the account is trial
  */
 
@@ -59,8 +59,8 @@ export async function getAccountUsageAggregates(
 					COUNT(DISTINCT h.turn_id) FILTER (WHERE h.turn_id IS NOT NULL) AS requests,
 					COUNT(*)::int AS "apiCalls",
 					COALESCE(SUM(h.input_credit), 0) AS "promptTokens",
-					COALESCE(SUM(h.output_display), 0) AS "completionTokens",
-					COALESCE(SUM(h.input_credit + h.output_meter), 0) AS tokens
+					COALESCE(SUM(h.output_credit), 0) AS "completionTokens",
+					COALESCE(SUM(h.input_credit + h.output_credit), 0) AS tokens
 				FROM (
 					SELECT hops.turn_id,
 						k.discord_user_id,
@@ -69,19 +69,19 @@ export async function getAccountUsageAggregates(
 						COALESCE(a.trial_only, false) AS trial_only,
 						COALESCE(k.discord_user_id, hops.api_key_id::text) AS acct_key,
 						CASE
-							WHEN COALESCE(hops.uc, 0) > 0 THEN hops.uc * (${sql.raw(wExpr)})
+							WHEN COALESCE(hops.uc, 0) > 0 THEN GREATEST(0, hops.uc - hops.uc_out) * (${sql.raw(wExpr)})
 							ELSE hops.inn * (${sql.raw(wExpr)}) * CASE WHEN COALESCE(a.trial_only, false) THEN 1 ELSE ${sql.raw(minPaid)} END
 						END AS input_credit,
 						CASE
-							WHEN COALESCE(hops.uc, 0) > 0 THEN 0::float8
+							WHEN COALESCE(hops.uc, 0) > 0 THEN hops.uc_out
 							ELSE hops.outt * CASE WHEN COALESCE(a.trial_only, false) THEN 1 ELSE ${sql.raw(moutPaid)} END
-						END AS output_meter,
-						hops.outt * CASE WHEN COALESCE(a.trial_only, false) THEN 1 ELSE ${sql.raw(moutPaid)} END AS output_display
+						END AS output_credit
 					FROM (
 						SELECT api_key_id, turn_id, model,
 							(COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
 							COALESCE(completion_tokens, 0)::float8 AS outt,
 							COALESCE(upstream_credits, 0)::float8 AS uc,
+							COALESCE(upstream_credits_out, 0)::float8 AS uc_out,
 							ROW_NUMBER() OVER (
 								PARTITION BY api_key_id, COALESCE(turn_id, 'orphan-' || id::text)
 								ORDER BY created_at ASC, id ASC
@@ -116,8 +116,7 @@ export async function getAccountUsageAggregates(
 			billablePromptTokens: 0,
 			cachedTokens: 0,
 			completionTokens,
-			// Cost from meter total (not display out — credit hops already fold out into input)
-			estimatedCost: Math.round(promptTokens * 1.5 + Math.max(0, tokens - promptTokens) * 6.0),
+			estimatedCost: Math.round(promptTokens * 1.5 + completionTokens * 6.0),
 		};
 	});
 }

@@ -43,7 +43,7 @@ import {
 	applyAmanaiCompatShaping,
 	providerIsAmanaiCompat,
 } from '../utils/amanai-compat.js';
-import { computeUpstreamCreditsForHop } from '../utils/amanai-credits.js';
+import { computeUpstreamCreditPartsForHop } from '../utils/amanai-credits.js';
 import { scheduleAmanaiUsageEnrich } from '../utils/amanai-usage-sync.js';
 import { sanitizeUpstreamHeaders } from '../utils/upstream-headers.js';
 import {
@@ -306,20 +306,21 @@ function openaiBodyBytesForProvider(
 	return new TextEncoder().encode(JSON.stringify(shaped));
 }
 
-/** Attach Amanai credit meter on Compat=amanai hops (anti-boncos). */
+/** Attach Compat credit meter on hops (anti-boncos) — stores total + output part. */
 function applyUpstreamCreditsToLogEntry(
 	entry: Record<string, any>,
 	provider: { compatProfile?: string | null } | null | undefined,
 ): number {
-	const credits = computeUpstreamCreditsForHop({
+	const parts = computeUpstreamCreditPartsForHop({
 		model: String(entry.model || ''),
 		promptTokens: Number(entry.promptTokens) || 0,
 		cachedTokens: Number(entry.cachedTokens) || 0,
 		completionTokens: Number(entry.completionTokens) || 0,
 		amanaiCompat: providerIsAmanaiCompat(provider),
 	});
-	entry.upstreamCredits = credits;
-	return credits;
+	entry.upstreamCredits = parts.total;
+	entry.upstreamCreditsOut = parts.outCredits;
+	return parts.total;
 }
 
 /** Best-effort OpenAI-path cache enrich when usage omitted cache_read. */

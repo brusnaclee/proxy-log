@@ -739,8 +739,8 @@ export async function getMonthLeaderboard(yearMonth: string): Promise<{
       -- rank can never be computed from a different number than we display.
       COALESCE(COUNT(DISTINCT h.turn_id), 0) AS requests,
       COALESCE(SUM(h.input_credit), 0) AS input_tokens,
-      COALESCE(SUM(h.output_display), 0) AS output_tokens,
-      COALESCE(SUM(h.input_credit + h.output_meter), 0) AS tokens
+      COALESCE(SUM(h.output_credit), 0) AS output_tokens,
+      COALESCE(SUM(h.input_credit + h.output_credit), 0) AS tokens
     FROM (
       SELECT hops.api_key_id,
         hops.turn_id,
@@ -748,20 +748,20 @@ export async function getMonthLeaderboard(yearMonth: string): Promise<{
         k.discord_username AS discord_username,
         k.name AS api_key_name,
         (CASE
-          WHEN COALESCE(hops.uc, 0) > 0 THEN hops.uc * (${sql.raw(w)})
+          WHEN COALESCE(hops.uc, 0) > 0 THEN GREATEST(0, hops.uc - hops.uc_out) * (${sql.raw(w)})
           ELSE hops.inn * (${sql.raw(w)}) * CASE WHEN COALESCE(a.trial_only, false) THEN 1 ELSE ${input} END
         END) AS input_credit,
         (CASE
-          WHEN COALESCE(hops.uc, 0) > 0 THEN 0::float8
+          WHEN COALESCE(hops.uc, 0) > 0 THEN hops.uc_out
           ELSE hops.outt * CASE WHEN COALESCE(a.trial_only, false) THEN 1 ELSE ${output} END
-        END) AS output_meter,
-        hops.outt * CASE WHEN COALESCE(a.trial_only, false) THEN 1 ELSE ${output} END AS output_display
+        END) AS output_credit
       FROM (
         SELECT api_key_id,
           turn_id,
           (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS inn,
           COALESCE(completion_tokens, 0)::float8 AS outt,
           COALESCE(upstream_credits, 0)::float8 AS uc,
+          COALESCE(upstream_credits_out, 0)::float8 AS uc_out,
           ROW_NUMBER() OVER (
             PARTITION BY api_key_id, COALESCE(turn_id, 'orphan-' || id::text)
             ORDER BY created_at ASC, id ASC

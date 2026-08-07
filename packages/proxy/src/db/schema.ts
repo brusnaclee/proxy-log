@@ -215,10 +215,12 @@ export const requestLogs = pgTable('request_logs', {
 	errorMessage: text('error_message'),
 	estimatedCost: integer('estimated_cost').default(0),
 	/**
-	 * Amanai Pricing v3 credits for Compat=amanai hops (anti-boncos meter).
-	 * When > 0, daily/input limits use this instead of (prompt+cache)×local mult.
+	 * Compat meter total (Pricing v3). When > 0, limits use credit parts instead of local mult.
+	 * Input part = upstream_credits - upstream_credits_out; output part = upstream_credits_out.
 	 */
 	upstreamCredits: integer('upstream_credits').notNull().default(0),
+	/** Output portion of upstream_credits (0 on classic hops / legacy rows). */
+	upstreamCreditsOut: integer('upstream_credits_out').notNull().default(0),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
 }, (table) => ({
 	createdAtIdx: index('idx_logs_created_at').on(table.createdAt),

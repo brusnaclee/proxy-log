@@ -642,9 +642,8 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
       peakPromptTokens: peakPromptTokensSql(whereClause!, tmOpts),
       billablePromptTokens: turnBillablePromptTokensSql(whereClause!, tmOpts),
       cachedTokens: turnCachedTokensSql(whereClause!, tmOpts),
-      // 📤 display — always real completion×mult (credit hops must not show 0)
-      completionTokens: turnDisplayCompletionTokensSql(whereHops!, tmOpts),
-      // toward daily Output limit only (0 when upstream meter folds out into input)
+    // 📤 / limit out — same units (credit out-part or classic completion×mult)
+      completionTokens: turnCompletionTokensSql(whereHops!, tmOpts),
       limitOutputTokens: turnCompletionTokensSql(whereHops!, tmOpts),
       contextTokens: sql<number>`0`,
     })

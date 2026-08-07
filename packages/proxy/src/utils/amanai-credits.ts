@@ -81,14 +81,34 @@ export function estimateAmanaiCredits(opts: {
 	mCache?: number;
 	minCredits?: number;
 }): number {
+	return estimateAmanaiCreditParts(opts).total;
+}
+
+/**
+ * Split Pricing v3 credits into input vs output parts so UI/gates can show
+ * Total = Input + Output (same units). Floor applies to the combined total;
+ * leftover floor is attributed to input.
+ */
+export function estimateAmanaiCreditParts(opts: {
+	promptTokens: number;
+	cachedTokens: number;
+	completionTokens: number;
+	mIn: number;
+	mOut: number;
+	mCache?: number;
+	minCredits?: number;
+}): { total: number; inCredits: number; outCredits: number } {
 	const billableIn = Math.max(0, Number(opts.promptTokens) || 0);
 	const cached = Math.max(0, Number(opts.cachedTokens) || 0);
 	const out = Math.max(0, Number(opts.completionTokens) || 0);
 	const mCache = opts.mCache != null ? opts.mCache : opts.mIn * 0.25;
-	const raw = billableIn * opts.mIn + cached * mCache + out * opts.mOut;
-	const credits = Math.ceil(raw);
+	const rawIn = billableIn * opts.mIn + cached * mCache;
+	const rawOut = out * opts.mOut;
 	const floor = opts.minCredits != null ? opts.minCredits : 1000;
-	return Math.max(floor, credits);
+	const total = Math.max(floor, Math.ceil(rawIn + rawOut));
+	const outCredits = Math.min(total, Math.ceil(rawOut));
+	const inCredits = total - outCredits;
+	return { total, inCredits, outCredits };
 }
 
 /** promptTokens here = billable (uncached) as stored in request_logs. */
@@ -127,13 +147,24 @@ export function computeUpstreamCreditsForHop(opts: {
 	/** When false, returns 0 (non-amanai provider). */
 	amanaiCompat: boolean;
 }): number {
-	if (!opts.amanaiCompat) return 0;
+	return computeUpstreamCreditPartsForHop(opts).total;
+}
+
+/** Total + output-part credits for Compat=amanai hops (input-part = total − out). */
+export function computeUpstreamCreditPartsForHop(opts: {
+	model: string;
+	promptTokens: number;
+	cachedTokens: number;
+	completionTokens: number;
+	amanaiCompat: boolean;
+}): { total: number; inCredits: number; outCredits: number } {
+	if (!opts.amanaiCompat) return { total: 0, inCredits: 0, outCredits: 0 };
 	const prompt = Math.max(0, Number(opts.promptTokens) || 0);
 	const cached = Math.max(0, Number(opts.cachedTokens) || 0);
 	const completion = Math.max(0, Number(opts.completionTokens) || 0);
-	if (prompt + cached + completion <= 0) return 0;
+	if (prompt + cached + completion <= 0) return { total: 0, inCredits: 0, outCredits: 0 };
 	const multipliers = resolveAmanaiMultipliers(opts.model) || FALLBACK_MULTIPLIERS;
-	return estimateAmanaiCredits({
+	return estimateAmanaiCreditParts({
 		promptTokens: prompt,
 		cachedTokens: cached,
 		completionTokens: completion,

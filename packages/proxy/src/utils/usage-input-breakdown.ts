@@ -79,7 +79,7 @@ export async function fetchInputLimitBreakdown(
         (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 AS full_in,
         COALESCE(upstream_credits, 0)::float8 AS uc,
         CASE
-          WHEN COALESCE(upstream_credits, 0) > 0 THEN COALESCE(upstream_credits, 0)::float8
+          WHEN COALESCE(upstream_credits, 0) > 0 THEN GREATEST(0, COALESCE(upstream_credits, 0) - COALESCE(upstream_credits_out, 0))::float8
           ELSE (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0))::float8 * ${min}
         END AS meter_in,
         ROW_NUMBER() OVER (

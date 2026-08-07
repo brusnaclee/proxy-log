@@ -365,7 +365,7 @@ export async function initializeDatabase() {
 		console.warn('⚠️ providers.compat_profile migration warning:', err?.message || err);
 	}
 
-	// request_logs.upstream_credits — Amanai Pricing v3 meter for Compat=amanai hops
+	// request_logs.upstream_credits — Compat Pricing v3 meter
 	try {
 		await pool.query(`
 			ALTER TABLE request_logs
@@ -374,6 +374,50 @@ export async function initializeDatabase() {
 		console.log('✅ Applied request_logs.upstream_credits migration');
 	} catch (err: any) {
 		console.warn('⚠️ request_logs.upstream_credits migration warning:', err?.message || err);
+	}
+
+	// request_logs.upstream_credits_out — output share of upstream_credits (Total = In + Out)
+	try {
+		await pool.query(`
+			ALTER TABLE request_logs
+			ADD COLUMN IF NOT EXISTS upstream_credits_out INTEGER NOT NULL DEFAULT 0
+		`);
+		console.log('✅ Applied request_logs.upstream_credits_out migration');
+	} catch (err: any) {
+		console.warn('⚠️ request_logs.upstream_credits_out migration warning:', err?.message || err);
+	}
+
+	// Backfill out-part for recent credit hops (legacy rows had uc_out=0 → Total looked == Input)
+	try {
+		const { computeUpstreamCreditPartsForHop } = await import('../utils/amanai-credits.js');
+		const pending = await pool.query(`
+			SELECT id, model, prompt_tokens, cached_tokens, completion_tokens, upstream_credits
+			FROM request_logs
+			WHERE upstream_credits > 0 AND COALESCE(upstream_credits_out, 0) = 0
+			ORDER BY id DESC
+			LIMIT 12000
+		`);
+		let updated = 0;
+		for (const row of pending.rows as any[]) {
+			const parts = computeUpstreamCreditPartsForHop({
+				model: String(row.model || ''),
+				promptTokens: Number(row.prompt_tokens) || 0,
+				cachedTokens: Number(row.cached_tokens) || 0,
+				completionTokens: Number(row.completion_tokens) || 0,
+				amanaiCompat: true,
+			});
+			const total = Number(row.upstream_credits) || parts.total;
+			const outCredits = Math.min(total, parts.outCredits);
+			if (outCredits <= 0) continue;
+			await pool.query(
+				`UPDATE request_logs SET upstream_credits_out = $1 WHERE id = $2 AND COALESCE(upstream_credits_out, 0) = 0`,
+				[outCredits, row.id],
+			);
+			updated++;
+		}
+		if (updated > 0) console.log(`✅ Backfilled upstream_credits_out on ${updated} log rows`);
+	} catch (err: any) {
+		console.warn('⚠️ upstream_credits_out backfill warning:', err?.message || err);
 	}
 
 	// model_monitor: one row per (model_id, provider) — concurrent sweeps used to insert twins

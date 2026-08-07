@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
 	computeUpstreamCreditsForHop,
 	estimateAmanaiCredits,
+	estimateAmanaiCreditParts,
 	estimateAmanaiCreditsForLogRow,
 	resolveAmanaiMultipliers,
 } from "./amanai-credits.js";
@@ -79,5 +80,32 @@ describe("amanai credits", () => {
 		});
 		// ~60k * 12.1 + 11 * 60.5 ≈ 726k+ — far above raw 60k tokens
 		assert.ok(c > 500_000, `expected >500k credits, got ${c}`);
+	});
+
+	it("splits credits into in + out that sum to total", () => {
+		const parts = estimateAmanaiCreditParts({
+			promptTokens: 1000,
+			cachedTokens: 0,
+			completionTokens: 100,
+			mIn: 6,
+			mOut: 30,
+			minCredits: 0,
+		});
+		assert.equal(parts.total, parts.inCredits + parts.outCredits);
+		assert.equal(parts.outCredits, 3000); // 100 * 30
+		assert.equal(parts.inCredits, 6000); // 1000 * 6
+	});
+
+	it("attributes floor leftover to input", () => {
+		const parts = estimateAmanaiCreditParts({
+			promptTokens: 1,
+			cachedTokens: 0,
+			completionTokens: 1,
+			mIn: 1,
+			mOut: 1,
+		});
+		assert.equal(parts.total, 1000);
+		assert.equal(parts.outCredits, 1);
+		assert.equal(parts.inCredits, 999);
 	});
 });

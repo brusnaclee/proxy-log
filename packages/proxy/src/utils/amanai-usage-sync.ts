@@ -5,7 +5,7 @@
 import { db } from "../db/index.js";
 import { providerApiKeys, providers, requestLogs } from "../db/schema.js";
 import { and, desc, eq, gte } from "drizzle-orm";
-import { computeUpstreamCreditsForHop } from "./amanai-credits.js";
+import { computeUpstreamCreditPartsForHop } from "./amanai-credits.js";
 
 type UsageRecent = {
 	ts?: number;
@@ -106,20 +106,23 @@ export function scheduleAmanaiUsageEnrich(opts: {
 						? Math.max(0, input - cacheRead)
 						: Math.max(0, opts.promptTokens)
 					: Math.max(0, opts.promptTokens);
-			// Prefer API credits when present; else recompute with enriched cache
-			const credits =
-				apiCredits > 0
-					? apiCredits
-					: computeUpstreamCreditsForHop({
-							model,
-							promptTokens: billable,
-							cachedTokens: cacheRead,
-							completionTokens: Math.max(0, Number(match.output_tokens) || opts.completionTokens || 0),
-							amanaiCompat: true,
-						});
+			const completion = Math.max(0, Number(match.output_tokens) || opts.completionTokens || 0);
+			const parts = computeUpstreamCreditPartsForHop({
+				model,
+				promptTokens: billable,
+				cachedTokens: cacheRead,
+				completionTokens: completion,
+				amanaiCompat: true,
+			});
+			// Prefer API total when present; keep out-part from formula (capped)
+			const credits = apiCredits > 0 ? apiCredits : parts.total;
+			const outCredits = Math.min(credits, parts.outCredits);
 			if (cacheRead <= 0 && apiCredits <= 0) return;
 
-			const patch: Record<string, number> = { upstreamCredits: credits };
+			const patch: Record<string, number> = {
+				upstreamCredits: credits,
+				upstreamCreditsOut: outCredits,
+			};
 			if (cacheRead > 0) {
 				patch.cachedTokens = cacheRead;
 				// Keep prompt as uncached remainder when Amanai input looks like total
