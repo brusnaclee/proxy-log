@@ -1,24 +1,21 @@
 /**
  * Amanai-compatible upstream shaping.
  *
- * Billing (Pricing Engine v3): 
+ * Billing (Pricing Engine v3):
  *   credits = ceil( (input - cache_read) * m_in + cache_read * m_cache + output * m_out )
  *   m_cache = 0.25 * m_in  → 75% discount on cached input
- *   At ~60% cache-hit, effective input ≈ 0.55 × m_in
  *
  * Docs: https://ai.amanai.dev/docs/billing/
- *
- * We inject Anthropic-style `cache_control: { type: "ephemeral" }` breakpoints on
- * stable prefixes (tools → system → early messages) so multi-turn agent traffic
- * can hit cache_read instead of full m_in. OpenAI chat path uses the same markers
- * on content blocks / tools (Amanai accepts both OpenAI + Anthropic APIs).
+ * Anthropic prompt caching: prefer top-level automatic cache_control for multi-turn,
+ * plus explicit breakpoints on tools/system/stable prefix (max 4 explicit).
  */
 
 export type CompatProfile = "default" | "amanai";
 
 export const CACHE_CONTROL_EPHEMERAL = { type: "ephemeral" as const };
 
-const MAX_BREAKPOINTS = 4;
+/** Anthropic allows up to 4 explicit breakpoints; automatic top-level uses one slot. */
+const MAX_EXPLICIT_BREAKPOINTS = 4;
 
 export function normalizeCompatProfile(raw: unknown): CompatProfile {
 	const v = String(raw || "default").toLowerCase().trim();
@@ -47,7 +44,6 @@ export function providerIsAmanaiCompat(provider: {
 } | null | undefined): boolean {
 	if (!provider) return false;
 	if (normalizeCompatProfile(provider.compatProfile) === "amanai") return true;
-	// Legacy fallback before column backfill completes
 	if (provider.compatProfile == null || provider.compatProfile === "") {
 		const name = String(provider.name || "").toLowerCase();
 		const endpoint = String(provider.endpoint || "").toLowerCase();
@@ -60,21 +56,22 @@ function hasCacheControl(obj: any): boolean {
 	return !!(obj && typeof obj === "object" && obj.cache_control);
 }
 
-function countBreakpoints(root: any): number {
+/** Count explicit block-level cache_control markers (not top-level body.cache_control). */
+function countExplicitBreakpoints(root: any): number {
 	let n = 0;
-	const visit = (node: any) => {
+	const visit = (node: any, isRoot: boolean) => {
 		if (!node || typeof node !== "object") return;
-		if (hasCacheControl(node)) n += 1;
+		if (!isRoot && hasCacheControl(node)) n += 1;
 		if (Array.isArray(node)) {
-			for (const x of node) visit(x);
+			for (const x of node) visit(x, false);
 			return;
 		}
 		for (const k of Object.keys(node)) {
 			if (k === "cache_control") continue;
-			visit(node[k]);
+			visit(node[k], false);
 		}
 	};
-	visit(root);
+	visit(root, true);
 	return n;
 }
 
@@ -85,24 +82,89 @@ function markCacheControl(target: any): boolean {
 	return true;
 }
 
+function ensureTopLevelAutomaticCache(out: any): void {
+	// Anthropic automatic caching: top-level cache_control moves with the last
+	// cacheable block as conversations grow (best for multi-turn / Claude Code).
+	if (!hasCacheControl(out)) {
+		out.cache_control = { ...CACHE_CONTROL_EPHEMERAL };
+	}
+}
+
+function cloneMessageContent(m: any): any {
+	return {
+		...m,
+		content: Array.isArray(m.content)
+			? m.content.map((b: any) => (b && typeof b === "object" ? { ...b } : b))
+			: m.content,
+	};
+}
+
+/**
+ * Mark the last cacheable text block in messages (prefer penultimate turn so the
+ * growing history prefix is cached; falls back to last message).
+ */
+function markTrailingHistoryBreakpoint(messages: any[], budget: { n: number }): void {
+	if (budget.n <= 0 || !Array.isArray(messages) || messages.length === 0) return;
+
+	// Prefer last assistant (or user) before the final user turn — classic multi-turn.
+	let targetIdx = messages.length - 1;
+	const last = messages[messages.length - 1];
+	if (last?.role === "user" && messages.length >= 2) {
+		targetIdx = messages.length - 2;
+	}
+
+	for (let i = targetIdx; i >= 0 && budget.n > 0; i--) {
+		const msg = messages[i];
+		if (!msg || (msg.role !== "user" && msg.role !== "assistant")) continue;
+
+		if (typeof msg.content === "string" && msg.content.trim().length > 0) {
+			msg.content = [
+				{
+					type: "text",
+					text: msg.content,
+					cache_control: { ...CACHE_CONTROL_EPHEMERAL },
+				},
+			];
+			budget.n -= 1;
+			return;
+		}
+		if (Array.isArray(msg.content) && msg.content.length > 0) {
+			const textBlocks = msg.content.filter(
+				(b: any) => b && typeof b === "object" && (b.type === "text" || typeof b.text === "string"),
+			);
+			for (let t = textBlocks.length - 1; t >= 0; t--) {
+				if (markCacheControl(textBlocks[t])) {
+					budget.n -= 1;
+					return;
+				}
+			}
+		}
+	}
+}
+
 /**
  * Shape an Anthropic Messages body for Amanai cache hits.
- * Order of breakpoints (Anthropic): tools → system → messages.
+ * - Top-level automatic cache_control (multi-turn)
+ * - Explicit: last tool → system → trailing history breakpoint
  */
 export function applyAmanaiCacheToAnthropicBody(body: any): any {
 	if (!body || typeof body !== "object") return body;
 	const out = { ...body };
-	let budget = Math.max(0, MAX_BREAKPOINTS - countBreakpoints(out));
+	ensureTopLevelAutomaticCache(out);
+
+	const budget = {
+		n: Math.max(0, MAX_EXPLICIT_BREAKPOINTS - countExplicitBreakpoints(out)),
+	};
 
 	// 1) Last tool
-	if (budget > 0 && Array.isArray(out.tools) && out.tools.length > 0) {
+	if (budget.n > 0 && Array.isArray(out.tools) && out.tools.length > 0) {
 		out.tools = out.tools.map((t: any) => ({ ...t }));
 		const last = out.tools[out.tools.length - 1];
-		if (markCacheControl(last)) budget -= 1;
+		if (markCacheControl(last)) budget.n -= 1;
 	}
 
 	// 2) System → text block with cache_control
-	if (budget > 0 && out.system != null) {
+	if (budget.n > 0 && out.system != null) {
 		if (typeof out.system === "string" && out.system.trim()) {
 			out.system = [
 				{
@@ -111,73 +173,52 @@ export function applyAmanaiCacheToAnthropicBody(body: any): any {
 					cache_control: { ...CACHE_CONTROL_EPHEMERAL },
 				},
 			];
-			budget -= 1;
+			budget.n -= 1;
 		} else if (Array.isArray(out.system) && out.system.length > 0) {
 			out.system = out.system.map((b: any) => ({ ...b }));
 			const last = out.system[out.system.length - 1];
-			if (last?.type === "text" && markCacheControl(last)) budget -= 1;
+			if (last?.type === "text" && markCacheControl(last)) budget.n -= 1;
 		}
 	}
 
-	// 3) Early stable user message (first non-tool_result user with text)
-	if (budget > 0 && Array.isArray(out.messages)) {
-		out.messages = out.messages.map((m: any) => ({
-			...m,
-			content: Array.isArray(m.content)
-				? m.content.map((b: any) => (b && typeof b === "object" ? { ...b } : b))
-				: m.content,
-		}));
-		for (const msg of out.messages) {
-			if (budget <= 0) break;
-			if (msg.role !== "user") continue;
-			if (typeof msg.content === "string" && msg.content.trim().length > 200) {
-				msg.content = [
-					{
-						type: "text",
-						text: msg.content,
-						cache_control: { ...CACHE_CONTROL_EPHEMERAL },
-					},
-				];
-				budget -= 1;
-				break;
-			}
-			if (Array.isArray(msg.content) && msg.content.length > 0) {
-				const textBlocks = msg.content.filter((b: any) => b?.type === "text" && b.text);
-				if (textBlocks.length === 0) continue;
-				const lastText = textBlocks[textBlocks.length - 1];
-				if (String(lastText.text || "").length > 200 && markCacheControl(lastText)) {
-					budget -= 1;
-					break;
-				}
-			}
-		}
+	// 3) Trailing history breakpoint (moves as conversation grows)
+	if (budget.n > 0 && Array.isArray(out.messages)) {
+		out.messages = out.messages.map(cloneMessageContent);
+		markTrailingHistoryBreakpoint(out.messages, budget);
 	}
 
 	return out;
 }
 
 /**
- * Shape an OpenAI chat/completions (or similar) body for Amanai cache hits.
- * Uses content-block + tool-level cache_control markers accepted by dual gateways.
+ * Shape an OpenAI chat/completions body for Amanai cache hits.
+ * Same idea: tools + system + trailing history (not only the first user message).
+ * Also set top-level cache_control when Amanai/OpenAI-compat honors it.
  */
 export function applyAmanaiCacheToOpenAIBody(body: any): any {
 	if (!body || typeof body !== "object") return body;
 	const out = { ...body };
-	let budget = Math.max(0, MAX_BREAKPOINTS - countBreakpoints(out));
+	ensureTopLevelAutomaticCache(out);
 
-	// Tools: mark last function tool
-	if (budget > 0 && Array.isArray(out.tools) && out.tools.length > 0) {
-		out.tools = out.tools.map((t: any) => ({ ...t, function: t.function ? { ...t.function } : t.function }));
+	const budget = {
+		n: Math.max(0, MAX_EXPLICIT_BREAKPOINTS - countExplicitBreakpoints(out)),
+	};
+
+	if (budget.n > 0 && Array.isArray(out.tools) && out.tools.length > 0) {
+		out.tools = out.tools.map((t: any) => ({
+			...t,
+			function: t.function ? { ...t.function } : t.function,
+		}));
 		const last = out.tools[out.tools.length - 1];
-		if (markCacheControl(last)) budget -= 1;
+		if (markCacheControl(last)) budget.n -= 1;
 	}
 
 	if (!Array.isArray(out.messages)) return out;
-	out.messages = out.messages.map((m: any) => ({ ...m }));
+	out.messages = out.messages.map(cloneMessageContent);
 
-	// System / developer messages → content blocks with cache_control
+	// System / developer
 	for (const msg of out.messages) {
-		if (budget <= 0) break;
+		if (budget.n <= 0) break;
 		if (msg.role !== "system" && msg.role !== "developer") continue;
 		if (typeof msg.content === "string" && msg.content.trim()) {
 			msg.content = [
@@ -187,40 +228,15 @@ export function applyAmanaiCacheToOpenAIBody(body: any): any {
 					cache_control: { ...CACHE_CONTROL_EPHEMERAL },
 				},
 			];
-			budget -= 1;
+			budget.n -= 1;
 		} else if (Array.isArray(msg.content) && msg.content.length > 0) {
-			msg.content = msg.content.map((b: any) => (b && typeof b === "object" ? { ...b } : b));
 			const last = msg.content[msg.content.length - 1];
-			if (last && typeof last === "object" && markCacheControl(last)) budget -= 1;
+			if (last && typeof last === "object" && markCacheControl(last)) budget.n -= 1;
 		}
 	}
 
-	// First large user message
-	if (budget > 0) {
-		for (const msg of out.messages) {
-			if (msg.role !== "user") continue;
-			if (typeof msg.content === "string" && msg.content.trim().length > 200) {
-				msg.content = [
-					{
-						type: "text",
-						text: msg.content,
-						cache_control: { ...CACHE_CONTROL_EPHEMERAL },
-					},
-				];
-				budget -= 1;
-				break;
-			}
-			if (Array.isArray(msg.content)) {
-				msg.content = msg.content.map((b: any) => (b && typeof b === "object" ? { ...b } : b));
-				const textBlocks = msg.content.filter((b: any) => b?.type === "text");
-				const last = textBlocks[textBlocks.length - 1];
-				if (last && String(last.text || "").length > 200 && markCacheControl(last)) {
-					budget -= 1;
-					break;
-				}
-			}
-		}
-	}
+	// Trailing history (multi-turn) — not only the first user message
+	markTrailingHistoryBreakpoint(out.messages, budget);
 
 	return out;
 }

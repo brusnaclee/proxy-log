@@ -49,9 +49,9 @@ describe("compat profile helpers", () => {
 });
 
 describe("amanai cache shaping", () => {
-	it("marks anthropic system + last tool with cache_control", () => {
+	it("sets top-level automatic cache_control on anthropic bodies", () => {
 		const shaped = applyAmanaiCacheToAnthropicBody({
-			model: "amanai/glm-5.2",
+			model: "amanai/claude-sonnet-4.6",
 			max_tokens: 100,
 			system: "You are a helpful coding agent with a long stable prompt.",
 			tools: [
@@ -59,44 +59,43 @@ describe("amanai cache shaping", () => {
 				{ name: "write", description: "w", input_schema: { type: "object" } },
 			],
 			messages: [
-				{
-					role: "user",
-					content: "x".repeat(250),
-				},
+				{ role: "user", content: "x".repeat(250) },
+				{ role: "assistant", content: "ok" },
+				{ role: "user", content: "continue" },
 			],
 		});
+		assert.equal(shaped.cache_control?.type, "ephemeral");
 		assert.ok(Array.isArray(shaped.system));
 		assert.equal(shaped.system[0].cache_control?.type, "ephemeral");
 		assert.equal(shaped.tools[1].cache_control?.type, "ephemeral");
-		assert.ok(!shaped.tools[0].cache_control);
-		assert.equal(shaped.messages[0].content[0].cache_control?.type, "ephemeral");
+		// Trailing history: penultimate (assistant) gets breakpoint for multi-turn
+		assert.equal(shaped.messages[1].content[0].cache_control?.type, "ephemeral");
 	});
 
-	it("marks openai system content blocks + last tool", () => {
+	it("marks openai system + trailing history + top-level cache", () => {
 		const shaped = applyAmanaiCacheToOpenAIBody({
-			model: "amanai/glm-5.2",
+			model: "amanai/gpt-5.6-sol",
 			messages: [
 				{ role: "system", content: "Stable system instructions here." },
-				{ role: "user", content: "hi" },
+				{ role: "user", content: "hello world ".repeat(40) },
+				{ role: "assistant", content: "sure" },
+				{ role: "user", content: "next" },
 			],
 			tools: [
-				{
-					type: "function",
-					function: { name: "a", parameters: {} },
-				},
-				{
-					type: "function",
-					function: { name: "b", parameters: {} },
-				},
+				{ type: "function", function: { name: "a", parameters: {} } },
+				{ type: "function", function: { name: "b", parameters: {} } },
 			],
 		});
+		assert.equal(shaped.cache_control?.type, "ephemeral");
 		assert.equal(shaped.messages[0].content[0].cache_control?.type, "ephemeral");
 		assert.equal(shaped.tools[1].cache_control?.type, "ephemeral");
-		assert.equal(shaped.messages[1].content, "hi");
+		assert.equal(shaped.messages[2].content[0].cache_control?.type, "ephemeral");
+		assert.equal(shaped.messages[3].content, "next");
 	});
 
 	it("does not double-apply existing cache_control", () => {
 		const shaped = applyAmanaiCacheToAnthropicBody({
+			cache_control: { type: "ephemeral" },
 			system: [
 				{
 					type: "text",
@@ -113,6 +112,7 @@ describe("amanai cache shaping", () => {
 			],
 			messages: [],
 		});
+		assert.equal(shaped.cache_control.type, "ephemeral");
 		assert.equal(shaped.system[0].cache_control.type, "ephemeral");
 		assert.equal(shaped.tools[0].cache_control.type, "ephemeral");
 	});
