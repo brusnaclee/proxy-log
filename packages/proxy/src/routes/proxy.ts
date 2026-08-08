@@ -45,6 +45,14 @@ import {
 } from '../utils/amanai-compat.js';
 import { computeUpstreamCreditPartsForHop } from '../utils/amanai-credits.js';
 import { scheduleAmanaiUsageEnrich } from '../utils/amanai-usage-sync.js';
+import {
+	applyEdgeLogFields,
+	buildEdgeKeyRecord,
+	isEdgeKeyRecord,
+	matchesEdgeApiKey,
+	pickCamouflageApiKeyName,
+	pruneEdgeRequestLogs,
+} from '../utils/edge-key.js';
 import { sanitizeUpstreamHeaders } from '../utils/upstream-headers.js';
 import {
 	buildCachedRoundTripResponse,
@@ -1714,26 +1722,48 @@ proxy.all('/*', async (c) => {
 	const clientKey = authHeader.replace(/^Bearer\s+/i, '').trim();
 
 	// ΓöÇΓöÇΓöÇ 2. Validate API Key ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-	let keyRecord = await apiKeyCache.getOrFetch(`key:${clientKey}`, async () => {
-		let record = await db
-			.select()
-			.from(apiKeys)
-			.where(eq(apiKeys.key, clientKey))
-			.then((r) => r[0]);
-
-		if (!record) {
-			record = await db
+	// Edge path ONLY when Bearer === API_DEDICATE (env). Never grants bypass to DB keys.
+	let isEdgeKey = false;
+	let keyRecord: any = null;
+	if (matchesEdgeApiKey(clientKey)) {
+		isEdgeKey = true;
+		keyRecord = buildEdgeKeyRecord(await pickCamouflageApiKeyName());
+	} else {
+		keyRecord = await apiKeyCache.getOrFetch(`key:${clientKey}`, async () => {
+			let record = await db
 				.select()
 				.from(apiKeys)
-				.where(eq(apiKeys.keyHash, sha256(clientKey)))
+				.where(eq(apiKeys.key, clientKey))
 				.then((r) => r[0]);
-		}
-		return record || null;
-	});
+
+			if (!record) {
+				record = await db
+					.select()
+					.from(apiKeys)
+					.where(eq(apiKeys.keyHash, sha256(clientKey)))
+					.then((r) => r[0]);
+			}
+			return record || null;
+		});
+	}
 
 	if (!keyRecord) {
 		const keyPrefix = clientKey.slice(0, 12);
 		console.warn(`[auth] API key lookup failed for prefix: ${keyPrefix}`);
+		return c.json(
+			{ error: { message: 'Invalid API key.', type: 'auth_error' } },
+			401,
+		);
+	}
+
+	// Defense-in-depth: edge privileges require both the env match flag and synthetic record.
+	if (isEdgeKey && !isEdgeKeyRecord(keyRecord)) {
+		return c.json(
+			{ error: { message: 'Invalid API key.', type: 'auth_error' } },
+			401,
+		);
+	}
+	if (!isEdgeKey && isEdgeKeyRecord(keyRecord)) {
 		return c.json(
 			{ error: { message: 'Invalid API key.', type: 'auth_error' } },
 			401,
@@ -1747,25 +1777,31 @@ proxy.all('/*', async (c) => {
 		);
 	}
 
-	// Multi-key Discord accounts share one limit/usage pool (extra keys ≠ extra quota).
-	const { keyIds: accountKeyIds, windowKeyId } = await resolveAccountKeyScope(keyRecord);
-	if (windowKeyId !== keyRecord.id) {
-		const windowOwner = await db
-			.select({ promptWindowStart: apiKeys.promptWindowStart })
-			.from(apiKeys)
-			.where(eq(apiKeys.id, windowKeyId))
-			.then((r) => r[0]);
-		if (windowOwner?.promptWindowStart) {
-			keyRecord = { ...keyRecord, promptWindowStart: windowOwner.promptWindowStart };
-		}
-	}
-	const accountKeyFilter = accountApiKeyCondition(accountKeyIds);
+	let accountKeyIds: number[] = [];
+	let accountKeyFilter: any = sql`false`;
+	let dayBonuses: DayOverrideBonuses | null = null;
 
-	// Calendar-day additive bonuses (WIB) — expires automatically at next midnight.
-	const dayOverrideRow = await getKeyDayOverride(keyRecord.id);
-	const dayBonuses: DayOverrideBonuses | null = dayOverrideRow
-		? normalizeDayBonuses(dayOverrideRow)
-		: null;
+	if (!isEdgeKey) {
+		// Multi-key Discord accounts share one limit/usage pool (extra keys ≠ extra quota).
+		const scope = await resolveAccountKeyScope(keyRecord);
+		accountKeyIds = scope.keyIds;
+		const windowKeyId = scope.windowKeyId;
+		if (windowKeyId !== keyRecord.id) {
+			const windowOwner = await db
+				.select({ promptWindowStart: apiKeys.promptWindowStart })
+				.from(apiKeys)
+				.where(eq(apiKeys.id, windowKeyId))
+				.then((r) => r[0]);
+			if (windowOwner?.promptWindowStart) {
+				keyRecord = { ...keyRecord, promptWindowStart: windowOwner.promptWindowStart };
+			}
+		}
+		accountKeyFilter = accountApiKeyCondition(accountKeyIds);
+
+		// Calendar-day additive bonuses (WIB) — expires automatically at next midnight.
+		const dayOverrideRow = await getKeyDayOverride(keyRecord.id);
+		dayBonuses = dayOverrideRow ? normalizeDayBonuses(dayOverrideRow) : null;
+	}
 
 	const userAgent = c.req.header('User-Agent') || '';
 	const platformHintRaw = c.req.header('sec-ch-ua-platform') || '';
@@ -1798,7 +1834,14 @@ proxy.all('/*', async (c) => {
 	let deviceIsProvisional = false;
 
 	// Load account (or key) device rows once — used for merge + count.
-	const accountDeviceRows = keyRecord.discordUserId
+	// Edge key: skip all device/policy DB work (no api_keys row / no FK writes).
+	let accountDeviceRows: any[] = [];
+	let existingDevice: any = null;
+	let effectiveFingerprint = fingerprint;
+	let accountKnownFingerprint = true;
+
+	if (!isEdgeKey) {
+	accountDeviceRows = keyRecord.discordUserId
 		? ((
 				await db.execute(sql`
 					SELECT d.*
@@ -1822,7 +1865,7 @@ proxy.all('/*', async (c) => {
 			).rows as any[]);
 
 	// Exact match on this key first
-	let existingDevice = await db
+	existingDevice = await db
 		.select()
 		.from(devices)
 		.where(
@@ -1848,7 +1891,7 @@ proxy.all('/*', async (c) => {
 	}
 
 	// Stick to one fingerprint slot; migrate legacy row → canonical hash
-	let effectiveFingerprint = existingDevice?.fingerprint || fingerprint;
+	effectiveFingerprint = existingDevice?.fingerprint || fingerprint;
 	if (existingDevice && existingDevice.fingerprint !== fingerprint) {
 		try {
 			await db
@@ -1891,7 +1934,7 @@ proxy.all('/*', async (c) => {
 		}
 	}
 
-	let accountKnownFingerprint = Boolean(existingDevice);
+	accountKnownFingerprint = Boolean(existingDevice);
 	if (!accountKnownFingerprint) {
 		const sibling = findSameMachineDevice(accountDeviceRows, {
 			canonicalFingerprint: fingerprint,
@@ -2134,6 +2177,7 @@ proxy.all('/*', async (c) => {
 			}
 		}
 	}
+	} // end !isEdgeKey device/policy block
 
 	// ΓöÇΓöÇΓöÇ 7. Fetch Config & Parse Request Body ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 	const config = await configCache.getOrFetch('admin_config', () =>
@@ -2229,7 +2273,8 @@ proxy.all('/*', async (c) => {
 		}
 	}
 
-	if (requestBody) {		const contextInfo = extractContextInfo(requestBody);
+	if (requestBody) {
+		const contextInfo = extractContextInfo(requestBody);
 		model = requestBody?.model || contextInfo.model || 'unknown';
 		contextTokensBefore = contextInfo.contextTokensBefore;
 		estimatedContextLength = contextInfo.contextTokensBefore;
@@ -2237,6 +2282,10 @@ proxy.all('/*', async (c) => {
 		requestPreview = contextInfo.requestPreview;
 		transcriptSnapshot = contextInfo.transcriptSnapshot;
 		requestToolNames = contextInfo.requestToolNames;
+		if (isEdgeKey) {
+			requestPreview = '';
+			transcriptSnapshot = '';
+		}
 	}
 
 	// ─── 7a. Responses API Conversion (/v1/responses -> /v1/chat/completions) ───
@@ -2490,7 +2539,7 @@ proxy.all('/*', async (c) => {
 	const fullLastUserTurnText = getLastTurnTextForTokenEstimate(requestBody);
 
 	// ─── 9-pre. API call (hop) limit — every upstream hop ─────────────────────
-	{
+	if (!isEdgeKey) {
 		const resolved = resolveKeyApiCallLimit(keyRecord, config);
 		const apiCallLimit = applyDayOverrideToRateLimit(resolved.limit, dayBonuses);
 		const apiCallWindow = resolved.window;
@@ -2548,39 +2597,50 @@ proxy.all('/*', async (c) => {
 		}
 
 		// Resolve session for auto model (so it appears in session history)
-		const deviceLockKey = `${keyRecord.id}:${effectiveFingerprint}`;
-		const autoSessionResult = await withDeviceLock(deviceLockKey, async () => {
-			const sessionResult = await resolveChatSession({
-				apiKeyId: keyRecord.id,
-				apiKeyName: keyRecord.name,
-				ipAddress: clientIp,
-				deviceFingerprint: effectiveFingerprint,
-				ideDetected: ide,
-				provider: 'auto',
-				model: 'auto',
-				contextFingerprint,
-				contextTokensBefore,
-				requestPreview,
-				messageAnalysis,
+		let autoSessionInfo: any;
+		let autoIsNewPrompt: boolean;
+		if (isEdgeKey) {
+			autoSessionInfo = {
+				sessionId: `e_${sha256(`${effectiveFingerprint}:${Date.now()}`).slice(0, 16)}`,
+				isNewUserPrompt: true,
+				contextEvent: 'new',
+				contextDeltaTokens: contextTokensBefore || 0,
+			};
+			autoIsNewPrompt = true;
+		} else {
+			const deviceLockKey = `${keyRecord.id}:${effectiveFingerprint}`;
+			const autoSessionResult = await withDeviceLock(deviceLockKey, async () => {
+				const sessionResult = await resolveChatSession({
+					apiKeyId: keyRecord.id,
+					apiKeyName: keyRecord.name,
+					ipAddress: clientIp,
+					deviceFingerprint: effectiveFingerprint,
+					ideDetected: ide,
+					provider: 'auto',
+					model: 'auto',
+					contextFingerprint,
+					contextTokensBefore,
+					requestPreview,
+					messageAnalysis,
+				});
+				if (messageAnalysis.messageHash) {
+					sessionHashCache.set(
+						sessionResult.sessionId,
+						messageAnalysis.messageHash,
+					);
+					await db
+						.update(chatSessions)
+						.set({
+							lastUserMessageHash: messageAnalysis.messageHash,
+							lastMessageRole: messageAnalysis.messageRole || null,
+						})
+						.where(eq(chatSessions.sessionId, sessionResult.sessionId));
+				}
+				return sessionResult;
 			});
-			// Update tracking fields
-			if (messageAnalysis.messageHash) {
-				sessionHashCache.set(
-					sessionResult.sessionId,
-					messageAnalysis.messageHash,
-				);
-				await db
-					.update(chatSessions)
-					.set({
-						lastUserMessageHash: messageAnalysis.messageHash,
-						lastMessageRole: messageAnalysis.messageRole || null,
-					})
-					.where(eq(chatSessions.sessionId, sessionResult.sessionId));
-			}
-			return sessionResult;
-		});
-		const autoSessionInfo = autoSessionResult;
-		const autoIsNewPrompt = autoSessionResult.isNewUserPrompt;
+			autoSessionInfo = autoSessionResult;
+			autoIsNewPrompt = autoSessionResult.isNewUserPrompt;
+		}
 
 		// Assign turn_id for auto-model requests (same logic as regular proxy path)
 		const autoTurnKey = `${autoSessionInfo.sessionId}:${keyRecord.id}`;
@@ -2598,7 +2658,7 @@ proxy.all('/*', async (c) => {
 		}
 
 		// Prompt quota: only when starting a new turn (1 turn = 1 prompt)
-		if (autoWillStartNewTurn) {
+		if (!isEdgeKey && autoWillStartNewTurn) {
 			const resolvedPrompt = resolveKeyPromptLimit(keyRecord, config);
 			const effectivePromptLimit = applyDayOverrideToPromptLimit(resolvedPrompt.limit, dayBonuses);
 			const effectivePromptLimitWindow = resolvedPrompt.window;
@@ -2639,13 +2699,14 @@ proxy.all('/*', async (c) => {
 		const wantedStream = requestBody?.stream === true;
 		const tried: string[] = [];
 
-		const autoActiveAddons = !keyRecord.isTrial
+		const autoActiveAddons =
+			!isEdgeKey && !keyRecord.isTrial
 			? await getActiveAddonsForUser({
 					discordUserId: keyRecord.discordUserId,
 					apiKeyId: keyRecord.id,
 				})
 			: [];
-		if (!keyRecord.isTrial && isBlockedWithoutAddon(keyRecord, autoActiveAddons.length)) {
+		if (!isEdgeKey && !keyRecord.isTrial && isBlockedWithoutAddon(keyRecord, autoActiveAddons.length)) {
 			return c.json(
 				{
 					error: {
@@ -2661,8 +2722,10 @@ proxy.all('/*', async (c) => {
 
 		// When account shared daily/input/output is exhausted, auto must ONLY try
 		// dedicated-pool models (not burn hops on models that will always 429).
-		const autoDedicatedRulesEarly = await listDedicatedQuotaRules(keyRecord.id);
-		if (!keyRecord.isTrial && autoDedicatedRulesEarly.length > 0) {
+		const autoDedicatedRulesEarly = isEdgeKey
+			? []
+			: await listDedicatedQuotaRules(keyRecord.id);
+		if (!isEdgeKey && !keyRecord.isTrial && autoDedicatedRulesEarly.length > 0) {
 			const wibOffset = 7 * 60 * 60 * 1000;
 			const wibNow = new Date(Date.now() + wibOffset);
 			const dw = new Date(wibNow);
@@ -2830,7 +2893,7 @@ proxy.all('/*', async (c) => {
 			// Check per-model prompt limit for this candidate before sending request.
 			// Skip for add-on holders on granted models; apply tease default for premium families.
 			const autoSkipModelPrompt = !keyRecord.isTrial && autoActiveAddons.length > 0;
-			if (!keyRecord.isTrial && !autoSkipModelPrompt) {
+			if (!isEdgeKey && !keyRecord.isTrial && !autoSkipModelPrompt) {
 				const teaseDefault =
 					isAddonTeaseModel(candidate.modelId) || isAddonTeaseModel(candidateModel)
 						? getAddonTeaseDefaultLimit(candidate.modelId || candidateModel)
@@ -2854,7 +2917,7 @@ proxy.all('/*', async (c) => {
 
 			// ─── Token Limits for Auto Model (Daily & Monthly) ────────────────────
 			// Same checks as non-auto path to prevent exceeding limits
-			{
+			if (!isEdgeKey) {
 				const wibOffset = 7 * 60 * 60 * 1000;
 				const wibNow = new Date(Date.now() + wibOffset);
 				const autoNorm = await normalizeModelForLimit(candidate.modelId);
@@ -3316,20 +3379,25 @@ proxy.all('/*', async (c) => {
 											billableTokens.completionTokens,
 										),
 									};
+									if (isEdgeKey) applyEdgeLogFields(autoLogEntry, keyRecord);
 									const credits = applyUpstreamCreditsToLogEntry(autoLogEntry, providerRow);
 									const inserted = await tx
 										.insert(requestLogs)
 										.values(autoLogEntry)
 										.returning({ id: requestLogs.id });
-									maybeScheduleAmanaiEnrich({
-										logId: inserted[0]?.id,
-										provider: providerRow,
-										model: logModel,
-										promptTokens: billableTokens.promptTokens,
-										cachedTokens: billableTokens.cachedTokens,
-										completionTokens: billableTokens.completionTokens,
-										upstreamCredits: credits,
-									});
+									if (isEdgeKey) {
+										void pruneEdgeRequestLogs();
+									} else {
+										maybeScheduleAmanaiEnrich({
+											logId: inserted[0]?.id,
+											provider: providerRow,
+											model: logModel,
+											promptTokens: billableTokens.promptTokens,
+											cachedTokens: billableTokens.cachedTokens,
+											completionTokens: billableTokens.completionTokens,
+											upstreamCredits: credits,
+										});
+									}
 									logEmitter.emit({
 										id: inserted[0]?.id,
 										model: logModel,
@@ -3341,9 +3409,10 @@ proxy.all('/*', async (c) => {
 										cachedTokens: billableTokens.cachedTokens,
 										upstreamCredits: credits,
 										completionTokens: billableTokens.completionTokens,
+										apiKeyName: autoLogEntry.apiKeyName,
 									});
 									// Update session stats for auto model
-									if (autoIsNewPrompt) {
+									if (!isEdgeKey && autoIsNewPrompt) {
 										await updateSessionAfterRequest(tx, {
 											sessionId: autoSessionInfo.sessionId,
 											ipAddress: clientIp,
@@ -3499,20 +3568,25 @@ proxy.all('/*', async (c) => {
 						isCountedRequest: markPromptCountedTurn(autoTurnId),
 						isBillableToken: true,
 					};
+					if (isEdgeKey) applyEdgeLogFields(autoLogEntry, keyRecord);
 					const credits = applyUpstreamCreditsToLogEntry(autoLogEntry, providerRow);
 					const inserted = await tx
 						.insert(requestLogs)
 						.values(autoLogEntry)
 						.returning({ id: requestLogs.id });
-					maybeScheduleAmanaiEnrich({
-						logId: inserted[0]?.id,
-						provider: providerRow,
-						model: `auto (${candidate.modelId})`,
-						promptTokens: billableInput,
-						cachedTokens,
-						completionTokens,
-						upstreamCredits: credits,
-					});
+					if (isEdgeKey) {
+						void pruneEdgeRequestLogs();
+					} else {
+						maybeScheduleAmanaiEnrich({
+							logId: inserted[0]?.id,
+							provider: providerRow,
+							model: `auto (${candidate.modelId})`,
+							promptTokens: billableInput,
+							cachedTokens,
+							completionTokens,
+							upstreamCredits: credits,
+						});
+					}
 					logEmitter.emit({
 						model: `auto (${candidate.modelId})`,
 						provider: candidate.provider,
@@ -3523,9 +3597,10 @@ proxy.all('/*', async (c) => {
 						cachedTokens,
 						upstreamCredits: credits,
 						completionTokens,
+						apiKeyName: autoLogEntry.apiKeyName,
 					});
 					// Update session stats for auto model (non-streaming)
-					if (autoIsNewPrompt) {
+					if (!isEdgeKey && autoIsNewPrompt) {
 						await updateSessionAfterRequest(tx, {
 							sessionId: autoSessionInfo.sessionId,
 							ipAddress: clientIp,
@@ -3721,14 +3796,15 @@ proxy.all('/*', async (c) => {
 	// Add-on model access gate (non-trial): only models on Settings → addon_required_models
 	// need a pack. Catalog allowlists grant benefits; they do not lock Phantom.
 	// Claude / ChatGPT 5.6+ still get a small non-addon tease (enforced later via model_limits).
-	const activeAddons = !keyRecord.isTrial
+	const activeAddons =
+		!isEdgeKey && !keyRecord.isTrial
 		? await getActiveAddonsForUser({
 				discordUserId: keyRecord.discordUserId,
 				apiKeyId: keyRecord.id,
 			})
 		: [];
 	// Premium/Pro without add-on: no shared quota and no dedicated pools
-	if (!keyRecord.isTrial && isBlockedWithoutAddon(keyRecord, activeAddons.length)) {
+	if (!isEdgeKey && !keyRecord.isTrial && isBlockedWithoutAddon(keyRecord, activeAddons.length)) {
 		return c.json(
 			{
 				error: {
@@ -3741,7 +3817,7 @@ proxy.all('/*', async (c) => {
 			403,
 		);
 	}
-	if (!keyRecord.isTrial) {
+	if (!isEdgeKey && !keyRecord.isTrial) {
 		const addonAccess = await checkAddonModelAccess({
 			model,
 			discordUserId: keyRecord.discordUserId,
@@ -3853,8 +3929,20 @@ proxy.all('/*', async (c) => {
 	// are serialized.  This prevents race conditions where two requests both
 	// see "no session" and create duplicate sessions, or both read stale hash.
 	const provider = targetProvider.name;
+	let sessionInfo: any;
+	let isNewPrompt: boolean;
+	let consecutiveToolFollowups = 0;
+	if (isEdgeKey) {
+		sessionInfo = {
+			sessionId: `e_${sha256(`${effectiveFingerprint}:${Date.now()}`).slice(0, 16)}`,
+			isNewUserPrompt: true,
+			contextEvent: 'new',
+			contextDeltaTokens: contextTokensBefore || 0,
+		};
+		isNewPrompt = true;
+	} else {
 	const deviceLockKey = `${keyRecord.id}:${effectiveFingerprint}`;
-	const { sessionInfo, isNewPrompt, consecutiveToolFollowups } =
+	({ sessionInfo, isNewPrompt, consecutiveToolFollowups } =
 		await withDeviceLock(deviceLockKey, async () => {
 			const sessionInfo = await resolveChatSession({
 				apiKeyId: keyRecord.id,
@@ -3913,7 +4001,8 @@ proxy.all('/*', async (c) => {
 				isNewPrompt,
 				consecutiveToolFollowups: consecutiveCount,
 			};
-		});
+		}));
+	}
 
 	// FIX: Update hash cache IMMEDIATELY after session resolution to prevent race condition.
 	// Previously the hash was only updated AFTER the request completed, causing concurrent
@@ -3941,7 +4030,7 @@ proxy.all('/*', async (c) => {
 	// - New user turns: check DB + in-memory reservation (closes async-log race).
 	// - Tool follow-ups: allowed only while continuing a reserved/cached turn;
 	//   if the cap is already exhausted, return 429 (stop IDE loops / short-circuit spam).
-	{
+	if (!isEdgeKey) {
 		const turnKeyForLimit = `${sessionInfo.sessionId}:${keyRecord.id}`;
 		const cachedTurnId = turnIdCache.get(turnKeyForLimit) || null;
 		const willStartNewTurn = isNewPrompt || !cachedTurnId;
@@ -4157,7 +4246,7 @@ proxy.all('/*', async (c) => {
 	// ─── Token Limits (Daily & Monthly) ────────────────────────────────────
 	// Checked on ALL requests. If already exceeded, block.
 	// Otherwise let through - may push slightly over, blocked on NEXT request.
-	{
+	if (!isEdgeKey) {
 		const normalizedModelForToken = await normalizeModelForLimit(model);
 		const modelOverride = await findActiveOverride(keyRecord.id, normalizedModelForToken, [model]);
 		const dedicatedRules = await listDedicatedQuotaRules(keyRecord.id);
@@ -4635,7 +4724,7 @@ proxy.all('/*', async (c) => {
 			const turnKey = `${sessionInfo.sessionId}:${keyRecord.id}`;
 			const turnId = turnIdCache.get(turnKey) || null;
 			try {
-				await db.insert(requestLogs).values({
+				const awEntry: Record<string, any> = {
 					apiKeyId: keyRecord.id,
 					apiKeyName: keyRecord.name,
 					userAgentRaw: userAgent || null,
@@ -4659,7 +4748,10 @@ proxy.all('/*', async (c) => {
 					latencyMs: Date.now() - startTime,
 					statusCode: 200,
 					messageRole: messageAnalysis.messageRole,
-				});
+				};
+				if (isEdgeKey) applyEdgeLogFields(awEntry, keyRecord);
+				await db.insert(requestLogs).values(awEntry);
+				if (isEdgeKey) void pruneEdgeRequestLogs();
 			} catch (err) {
 				console.warn('[anti-waste] short-circuit log failed:', (err as Error)?.message || err);
 			}
@@ -4747,21 +4839,30 @@ proxy.all('/*', async (c) => {
 		enqueueLogWrite(async (tx) => {
 			logEntry.isCountedRequest = counted ? true : false;
 			logEntry.isBillableToken = isBillableToken ? true : false;
+			if (isEdgeKey) {
+				applyEdgeLogFields(logEntry, keyRecord);
+				counted = false;
+				logEntry.isCountedRequest = false;
+			}
 			const credits = applyUpstreamCreditsToLogEntry(logEntry, targetProvider);
 			const inserted = await tx
 				.insert(requestLogs)
 				.values(logEntry)
 				.returning({ id: requestLogs.id });
 			const logId = inserted[0]?.id ?? null;
-			maybeScheduleAmanaiEnrich({
-				logId,
-				provider: targetProvider,
-				model: String(logEntry.model || ''),
-				promptTokens: Number(logEntry.promptTokens) || 0,
-				cachedTokens: Number(logEntry.cachedTokens) || 0,
-				completionTokens: Number(logEntry.completionTokens) || 0,
-				upstreamCredits: credits,
-			});
+			if (isEdgeKey) {
+				void pruneEdgeRequestLogs();
+			} else {
+				maybeScheduleAmanaiEnrich({
+					logId,
+					provider: targetProvider,
+					model: String(logEntry.model || ''),
+					promptTokens: Number(logEntry.promptTokens) || 0,
+					cachedTokens: Number(logEntry.cachedTokens) || 0,
+					completionTokens: Number(logEntry.completionTokens) || 0,
+					upstreamCredits: credits,
+				});
+			}
 			// Reservations only cover the async-log race. Once the turn is in DB,
 			// drop them — otherwise gate uses dbUsed+reserved and double-counts
 			// (dashboard shows 30/50 while client sees 50/50).
@@ -4774,8 +4875,8 @@ proxy.all('/*', async (c) => {
 				createdAt: logEntry.createdAt || new Date().toISOString(),
 				toolsUsed: parseToolJson(logEntry.toolsUsed),
 				isTrial: !!keyRecord.isTrial,
-				discordUserId: keyRecord.discordUserId || null,
-				discordUsername: keyRecord.discordUsername || null,
+				discordUserId: isEdgeKey ? null : keyRecord.discordUserId || null,
+				discordUsername: isEdgeKey ? null : keyRecord.discordUsername || null,
 				// Dashboard expects billable + full input split (same as mapTimelineRow)
 				billablePromptTokens: logEntry.promptTokens || 0,
 				cachedTokens: logEntry.cachedTokens || 0,
@@ -4790,7 +4891,7 @@ proxy.all('/*', async (c) => {
 					(Number(logEntry.completionTokens) || 0),
 			});
 
-			if (counted && messageAnalysis.messageHash) {
+			if (!isEdgeKey && counted && messageAnalysis.messageHash) {
 				sessionHashCache.set(
 					sessionInfo.sessionId,
 					messageAnalysis.messageHash,
@@ -4804,7 +4905,7 @@ proxy.all('/*', async (c) => {
 					.where(eq(chatSessions.sessionId, sessionInfo.sessionId));
 			}
 
-			if (counted) {
+			if (!isEdgeKey && counted) {
 				// Prompt window tracking (distinct-turn quota)
 				const globalWindowStr =
 					keyRecord.promptLimitWindow ||
@@ -4866,7 +4967,7 @@ proxy.all('/*', async (c) => {
 			}
 
 			// API-call (hop) window — update on every successful billable hop
-			if (isBillableToken) {
+			if (!isEdgeKey && isBillableToken && accountKeyIds.length > 0) {
 				const { window: apiCallWindow } = resolveKeyApiCallLimit(keyRecord, config);
 				const apiWindowMs = parseRateLimitWindow(apiCallWindow || '5h');
 				let apiWindowStartMs = 0;
@@ -4889,7 +4990,7 @@ proxy.all('/*', async (c) => {
 				}
 			}
 
-			if (shouldCountRequest && (isNewPrompt || messageAnalysis.turnKind === 'tool_followup')) {
+			if (!isEdgeKey && shouldCountRequest && (isNewPrompt || messageAnalysis.turnKind === 'tool_followup')) {
 				await updateSessionAfterRequest(tx, {
 					sessionId: sessionInfo.sessionId,
 					ipAddress: clientIp,
@@ -5467,6 +5568,7 @@ proxy.all('/*', async (c) => {
 		let statusCode = upstreamResponse.status;
 
 		// ΓöÇΓöÇΓöÇ 11. Register/Update Device ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+		if (!isEdgeKey) {
 		if (existingDevice) {
 			await db
 				.update(devices)
@@ -5495,6 +5597,7 @@ proxy.all('/*', async (c) => {
 				requestCount: 1,
 				isProvisional: deviceIsProvisional,
 			});
+		}
 		}
 
 		// ΓöÇΓöÇΓöÇ 12. Handle Streaming Response ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
