@@ -365,6 +365,31 @@ export async function initializeDatabase() {
 		console.warn('⚠️ providers.compat_profile migration warning:', err?.message || err);
 	}
 
+	// Provider vendor_aliases — public vendor rename (amanai → vibecode, etc.)
+	try {
+		await pool.query(`
+			ALTER TABLE providers
+			ADD COLUMN IF NOT EXISTS vendor_aliases TEXT NOT NULL DEFAULT '{}'
+		`);
+		await pool.query(`
+			UPDATE providers
+			SET vendor_aliases = '{"amanai":"vibecode"}'
+			WHERE (vendor_aliases IS NULL OR vendor_aliases = '' OR vendor_aliases = '{}')
+			  AND (
+			    compat_profile = 'amanai'
+			    OR lower(endpoint) LIKE '%amanai.dev%'
+			    OR EXISTS (
+			      SELECT 1 FROM model_monitor m
+			      WHERE m.provider = providers.name
+			        AND m.model_id LIKE 'amanai/%'
+			    )
+			  )
+		`);
+		console.log('✅ Applied providers.vendor_aliases migration (+ amanai→vibecode seed)');
+	} catch (err: any) {
+		console.warn('⚠️ providers.vendor_aliases migration warning:', err?.message || err);
+	}
+
 	// request_logs.upstream_credits — Compat Pricing v3 meter
 	try {
 		await pool.query(`

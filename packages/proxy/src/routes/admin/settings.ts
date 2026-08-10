@@ -205,7 +205,10 @@ settings.get("/settings/models", async (c) => {
   } catch {}
 
   const models = Array.from(modelSet).sort();
-  return c.json({ data: models });
+  const { loadVendorAliasIndex, publicizeModelString } = await import("../../utils/vendor-aliases.js");
+  const aliasIndex = await loadVendorAliasIndex();
+  const publicModels = [...new Set(models.map((m) => publicizeModelString(m, aliasIndex)))].sort();
+  return c.json({ data: publicModels });
 });
 
 settings.get("/settings", async (c) => {

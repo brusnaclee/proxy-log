@@ -683,7 +683,7 @@ portal.get("/me", async (c) => {
               ? "premium"
               : "phantom";
 
-  return c.json({
+  return c.json(await (await import("../../utils/vendor-aliases.js")).withPublicizedModels({
     discordUserId,
     discordUsername: primaryKey?.discordUsername ?? null,
     accountType,
@@ -812,7 +812,7 @@ portal.get("/me", async (c) => {
         overrides: packUserTokenSaverOverrides(settings),
       };
     })(),
-  });
+  }));
 });
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
@@ -989,7 +989,7 @@ portal.get("/stats/top-errors", async (c) => {
     LEFT JOIN request_logs r ON r.id = g."sampleId"
   `)).rows as any[], ["statusCode", "count"]);
 
-  return c.json(rows.map(r => ({
+  return c.json(await (await import("../../utils/vendor-aliases.js")).withPublicizedModels(rows.map(r => ({
     statusCode: r.statusCode,
     errorSnippet: sanitizeErrorMsg(r.errorSnippet),
     count: r.count,
@@ -1000,7 +1000,7 @@ portal.get("/stats/top-errors", async (c) => {
     responsePreview: sanitizePreview(r.responsePreview),
     errorMessage: sanitizeErrorMsg(r.errorMessage),
     sampleAt: r.sampleAt || null,
-  })));
+  }))));
 });
 
 portal.get("/stats/compare", async (c) => {
@@ -1499,7 +1499,7 @@ portal.get("/logs", async (c) => {
 
   const total = (await db.select({ count: sql<number>`count(*)` }).from(requestLogs).where(where))[0];
 
-  return c.json({
+  return c.json(await (await import("../../utils/vendor-aliases.js")).withPublicizedModels({
     data: rows.map(r => {
       const uc = Math.max(0, Number(r.upstreamCredits) || 0);
       // Compat meter hops: limits use upstream meter; activity shows raw prompt/cache/out (no brand wording).
@@ -1546,7 +1546,7 @@ portal.get("/logs", async (c) => {
       total: Number(total?.count) || 0,
       totalPages: Math.ceil((Number(total?.count) || 0) / limit),
     },
-  });
+  }));
 });
 
 // ─── Models ───────────────────────────────────────────────────────────────────
@@ -1590,7 +1590,9 @@ portal.get("/models", async (c) => {
       "../../utils/model-catalog.js"
     );
     const monitorRows = await getAllClientCatalogMonitorRows();
-    const { lookup } = buildProviderStrictStatusLookup(monitorRows);
+    const { loadVendorAliasIndex } = await import("../../utils/vendor-aliases.js");
+    const aliasIndex = await loadVendorAliasIndex();
+    const { lookup } = buildProviderStrictStatusLookup(monitorRows, aliasIndex);
 
     // checkedAt by provider/model for display
     const checkedAtByKey = new Map<string, Date>();

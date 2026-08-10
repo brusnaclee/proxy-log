@@ -594,7 +594,10 @@ monitor.get("/monitor/models/details", async (c) => {
     getModelCatalogResponse(),
     getAllClientCatalogMonitorRows(),
   ]);
-  const { lookup } = buildProviderStrictStatusLookup(monitorRows);
+  const { lookup } = buildProviderStrictStatusLookup(
+    monitorRows,
+    await (await import("../../utils/vendor-aliases.js")).loadVendorAliasIndex(),
+  );
 
   const enriched = catalog.data
     .map((model: any) => {

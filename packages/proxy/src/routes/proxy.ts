@@ -1685,7 +1685,9 @@ proxy.all('/*', async (c) => {
 				buildProviderStrictStatusLookup,
 			} = await import('../utils/model-catalog.js');
 			const monitorRows = await getAllClientCatalogMonitorRows();
-			const { lookup } = buildProviderStrictStatusLookup(monitorRows);
+			const { loadVendorAliasIndex } = await import('../utils/vendor-aliases.js');
+			const aliasIndex = await loadVendorAliasIndex();
+			const { lookup } = buildProviderStrictStatusLookup(monitorRows, aliasIndex);
 
 			if (Array.isArray((catalog as any)?.data)) {
 				(catalog as any).data = (catalog as any).data
@@ -2585,6 +2587,16 @@ proxy.all('/*', async (c) => {
 		onlineModels = onlineModels.filter((m) => isAutoCompatible(m.modelId));
 		// Trial uses full online catalog (same as Phantom); whitelist enforced elsewhere if configured.
 
+		const {
+			loadVendorAliasIndex,
+			publicizeModelString,
+		} = await import('../utils/vendor-aliases.js');
+		const autoAliasIndex = await loadVendorAliasIndex();
+		const autoPublicId = (provider: string, mid: string) =>
+			publicizeModelString(`${provider}/${mid}`, autoAliasIndex);
+		const autoLogModel = (provider: string, mid: string, stream = false) =>
+			`auto (${autoPublicId(provider, mid)})${stream ? ' [stream]' : ''}`;
+
 		if (onlineModels.length === 0) {
 			return c.json(
 				{
@@ -3164,7 +3176,7 @@ proxy.all('/*', async (c) => {
 					if (trialResponse.body) {
 						const acc = makeAccumulator();
 						const decoder = new TextDecoder();
-						const logModel = `auto (${candidate.modelId}) [stream]`;
+						const logModel = autoLogModel(candidate.provider, candidate.modelId, true);
 						const reasoningOpts = reasoningOptsForIde(ide);
 						const streamReasoningOpts = { ...reasoningOpts, streaming: true as const };
 						const streamDeltaState = { sawPlainContent: false, reasoningText: '' };
@@ -3174,7 +3186,7 @@ proxy.all('/*', async (c) => {
 						let autoHasActualToolCalls = false;
 						const streamHoldback = new StreamHoldbackScrubber();
 						const anthropicStreamState = isAnthropicAuto
-							? createStreamState(`auto (${candidate.modelId})`)
+							? createStreamState(autoLogModel(candidate.provider, candidate.modelId))
 							: null;
 
 						const { readable, writable } = new TransformStream({
@@ -3421,7 +3433,7 @@ proxy.all('/*', async (c) => {
 											ipAddress: clientIp,
 											ideDetected: ide,
 											provider: candidate.provider,
-											model: `auto (${candidate.modelId})`,
+											model: autoLogModel(candidate.provider, candidate.modelId),
 											contextFingerprint,
 											contextTokensBefore,
 											requestPreview,
@@ -3474,7 +3486,7 @@ proxy.all('/*', async (c) => {
 						});
 
 						void pumpStreamBody(trialResponse.body, writable, () =>
-							buildStreamInterruptSse(`auto (${candidate.modelId})`),
+							buildStreamInterruptSse(autoLogModel(candidate.provider, candidate.modelId)),
 						);
 						return new Response(readable, {
 							status: trialResponse.status,
@@ -3513,7 +3525,7 @@ proxy.all('/*', async (c) => {
 
 				// Non-streaming success: return with model info injected
 				if (responseJson && typeof responseJson === 'object') {
-					responseJson.model = `auto (${candidate.modelId})`;
+					responseJson.model = autoLogModel(candidate.provider, candidate.modelId);
 				}
 				const finalBody = responseJson
 					? JSON.stringify(responseJson)
@@ -3548,7 +3560,7 @@ proxy.all('/*', async (c) => {
 						endpointPath: path,
 						sessionId: autoSessionInfo.sessionId,
 						turnId: autoTurnId,
-						model: `auto (${candidate.modelId})`,
+						model: autoLogModel(candidate.provider, candidate.modelId),
 						promptTokens: billableInput,
 						completionTokens,
 						totalTokens: billableInput + completionTokens,
@@ -3585,7 +3597,7 @@ proxy.all('/*', async (c) => {
 						maybeScheduleAmanaiEnrich({
 							logId: inserted[0]?.id,
 							provider: providerRow,
-							model: `auto (${candidate.modelId})`,
+							model: autoLogModel(candidate.provider, candidate.modelId),
 							promptTokens: billableInput,
 							cachedTokens,
 							completionTokens,
@@ -3593,7 +3605,7 @@ proxy.all('/*', async (c) => {
 						});
 					}
 					logEmitter.emit({
-						model: `auto (${candidate.modelId})`,
+						model: autoLogModel(candidate.provider, candidate.modelId),
 						provider: candidate.provider,
 						statusCode: 200,
 						latencyMs,
@@ -3611,7 +3623,7 @@ proxy.all('/*', async (c) => {
 							ipAddress: clientIp,
 							ideDetected: ide,
 							provider: candidate.provider,
-							model: `auto (${candidate.modelId})`,
+							model: autoLogModel(candidate.provider, candidate.modelId),
 							contextFingerprint,
 							contextTokensBefore,
 							requestPreview,
@@ -3728,6 +3740,18 @@ proxy.all('/*', async (c) => {
 		// Re-encode body bytes with modified model
 		const bodyStr = JSON.stringify(requestBody);
 		requestBodyBytes = new TextEncoder().encode(bodyStr);
+	}
+
+	// Log / display form uses vendor aliases (amanai → vibecode); upstream body stays real.
+	{
+		const {
+			getAliasesForProviderName,
+			loadVendorAliasIndex,
+			toPublicModelId,
+		} = await import('../utils/vendor-aliases.js');
+		const aliasIndex = await loadVendorAliasIndex();
+		const aliases = getAliasesForProviderName(aliasIndex, targetProvider.name);
+		model = toPublicModelId(targetProvider.name, upstreamModel, aliases);
 	}
 
 	// ─── 8a. Model Monitor Check (before add-on — offline ≠ buy add-on) ───

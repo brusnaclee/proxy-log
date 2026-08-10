@@ -7,6 +7,11 @@ import { parseToolJson } from "../../utils/telemetry.js";
 import { forceTranscriptCleanup, forceCleanMonth, getCleanupStatus } from "../../utils/cleanup.js";
 import { resolvePeriodRange, type PeriodKey } from "../../utils/counting.js";
 import { statsCache } from "../../utils/cache.js";
+import {
+  loadVendorAliasIndex,
+  publicizeModelString,
+  type VendorAliasIndex,
+} from "../../utils/vendor-aliases.js";
 
 const logs = new Hono();
 
@@ -69,7 +74,7 @@ function getTurnKey(row: any): string {
   return `${model}::${normalizedPrompt}::${tools}`;
 }
 
-function mapTimelineRow(row: any) {
+function mapTimelineRow(row: any, aliasIndex?: VendorAliasIndex | null) {
   const billable = Number(row.promptTokens) || 0;
   const cached = Number(row.cachedTokens) || 0;
   const completion = Number(row.completionTokens) || 0;
@@ -77,6 +82,9 @@ function mapTimelineRow(row: any) {
   const inputTokens = billable + cached;
   return sanitizeLogPayload({
     ...row,
+    model: aliasIndex
+      ? publicizeModelString(row.model, aliasIndex)
+      : row.model,
     billablePromptTokens: billable,
     cachedTokens: cached,
     upstreamCredits,
@@ -91,12 +99,12 @@ function mapTimelineRow(row: any) {
   });
 }
 
-function collapseTimelineRows(rows: any[]) {
+function collapseTimelineRows(rows: any[], aliasIndex?: VendorAliasIndex | null) {
   const collapsed: any[] = [];
 
   for (const row of rows) {
     const turnKey = getTurnKey(row);
-    const mapped = mapTimelineRow(row);
+    const mapped = mapTimelineRow(row, aliasIndex);
     const previous = collapsed[collapsed.length - 1];
 
     if (previous && previous.turnKey === turnKey) {
@@ -266,7 +274,8 @@ logs.get("/logs", async (c) => {
   const totalPages = Math.min(maxPages, Math.max(1, Math.ceil(total / limit)));
   const cappedTotal = Math.min(total, maxPages * limit);
 
-  const mappedRows = rows.map((row: any) => mapTimelineRow(row));
+  const aliasIndex = await loadVendorAliasIndex();
+  const mappedRows = rows.map((row: any) => mapTimelineRow(row, aliasIndex));
 
   return c.json({
     data: mappedRows,
@@ -359,8 +368,9 @@ logs.get("/logs/sessions/:sessionId", async (c) => {
   .orderBy(requestLogs.createdAt)
   .limit(500);
 
-  const mappedTimeline = timeline.map((row: any) => mapTimelineRow(row));
-  const collapsedTimeline = collapseTimelineRows(timeline);
+  const aliasIndex = await loadVendorAliasIndex();
+  const mappedTimeline = timeline.map((row: any) => mapTimelineRow(row, aliasIndex));
+  const collapsedTimeline = collapseTimelineRows(timeline, aliasIndex);
 
   return c.json({
     session,

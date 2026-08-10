@@ -546,7 +546,7 @@ internal.get("/internal/stats/ranking", async (c) => {
     getAccountUsageAggregates(monthDate),
   ]);
 
-  return c.json({
+  return c.json(await (await import("../../utils/vendor-aliases.js")).withPublicizedModels({
     today: {
       topModelsByRequests: todayModelsByReq,
       topModelsByTokens: todayModelsByTok,
@@ -559,7 +559,7 @@ internal.get("/internal/stats/ranking", async (c) => {
       topUsersByRequests: sortTopByRequests(monthAccounts),
       topUsersByTokens: sortTopByTokens(monthAccounts),
     },
-  });
+  }));
 });
 
 internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
@@ -962,7 +962,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     dailyLimit: quotaStack.dailyInputLimit,
   });
 
-  return c.json({
+  return c.json(await (await import("../../utils/vendor-aliases.js")).withPublicizedModels({
     discordUserId: key.discordUserId,
     discordUsername: key.discordUsername || key.name,
     isActive: key.isActive,
@@ -1076,7 +1076,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
       estimatedCost: monthStats?.estimatedCost || 0,
       topModels: monthModels,
     },
-  });
+  }));
 });
 
 internal.get("/internal/stats/user-detail/:discordUserId/model-overrides", async (c) => {
@@ -1476,7 +1476,10 @@ internal.get("/internal/models/details", async (c) => {
     getModelCatalogResponse(),
     getAllClientCatalogMonitorRows(),
   ]);
-  const { lookup } = buildProviderStrictStatusLookup(monitorRows);
+  const { lookup } = buildProviderStrictStatusLookup(
+    monitorRows,
+    await (await import("../../utils/vendor-aliases.js")).loadVendorAliasIndex(),
+  );
 
   const enriched = catalog.data
     .map((model: any) => {
@@ -1493,6 +1496,20 @@ internal.get("/internal/models/details", async (c) => {
     .filter(Boolean);
 
   return c.json({ object: "list", data: enriched });
+});
+
+/** Vendor alias maps for Discord / clients that render raw monitor model ids. */
+internal.get("/internal/vendor-aliases", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+  const { loadVendorAliasIndex } = await import("../../utils/vendor-aliases.js");
+  const index = await loadVendorAliasIndex();
+  const out: Record<string, Record<string, string>> = {};
+  for (const [lower, aliases] of index.byProviderName.entries()) {
+    const name = index.canonicalName.get(lower) || lower;
+    if (Object.keys(aliases).length) out[name] = aliases;
+  }
+  return c.json({ providers: out });
 });
 
 // --- Trial Mode (bot integration) --------------------------------------------

@@ -346,6 +346,12 @@ export const providers = pgTable('providers', {
 	 * - amanai: dual Anthropic + nested ids + cache_control breakpoints (credit cache)
 	 */
 	compatProfile: text('compat_profile').notNull().default('default'),
+	/**
+	 * Public vendor-segment overrides for nested upstream model ids.
+	 * JSON map: { "amanai": "vibecode" } → clients see provider/vibecode/...
+	 * while upstream still receives amanai/...
+	 */
+	vendorAliases: text('vendor_aliases').notNull().default('{}'),
 	isActive: boolean('is_active').notNull().default(true),
 	priority: integer('priority').notNull().default(0),
 	createdAt: timestamp('created_at').notNull().defaultNow(),

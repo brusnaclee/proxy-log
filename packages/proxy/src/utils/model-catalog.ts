@@ -11,6 +11,14 @@ import {
 } from "./probe-validate.js";
 import { getClientCatalogFlags } from "./model-monitor-store.js";
 import { seedMonitorModelsFromList } from "./model-monitor-store.js";
+import {
+  expandUpstreamIdCandidates,
+  getAliasesForProviderName,
+  loadVendorAliasIndex,
+  toPublicUpstreamId,
+  toRealUpstreamId,
+  type VendorAliasIndex,
+} from "./vendor-aliases.js";
 
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 30_000; // Upstream combo is often slow on POST; give the GET enough headroom.
@@ -550,6 +558,8 @@ export async function getModelCatalogResponse() {
     }
   }
 
+  const aliasIndex = await loadVendorAliasIndex();
+
   // Deduplicate per (provider, model) so the same upstream model id on different
   // providers (e.g. tokito vs claude both serving minimax/MiniMax-M3) each get
   // their own public entry: {provider}/{modelId}.
@@ -580,10 +590,15 @@ export async function getModelCatalogResponse() {
           return providerIds.length > 0 ? (providerIdToName.get(providerIds[0]) || null) : null;
         })();
 
-    // Build the public ID with upstream provider prefix
+    const aliases = upstreamProviderName
+      ? getAliasesForProviderName(aliasIndex, upstreamProviderName)
+      : {};
+    const publicSuffix = toPublicUpstreamId(m.id, aliases);
+
+    // Build the public ID with upstream provider prefix + vendor aliases
     const publicId = upstreamProviderName
-      ? `${upstreamProviderName}/${m.id}`
-      : m.id;
+      ? `${upstreamProviderName}/${publicSuffix}`
+      : publicSuffix;
 
     const { provider_id: _pid, ...rest } = m;
     rest.id = publicId;
@@ -648,7 +663,9 @@ export async function getModelCatalogResponse() {
   const activeCustomModels = await db.select().from(customModels).where(eq(customModels.isActive, true));
   for (const cm of activeCustomModels) {
     const providerName = providerIdToName.get(cm.providerId) || "unknown";
-    const publicId = `${providerName}/${cm.modelId}`;
+    const aliases = getAliasesForProviderName(aliasIndex, providerName);
+    const publicSuffix = toPublicUpstreamId(cm.modelId, aliases);
+    const publicId = `${providerName}/${publicSuffix}`;
 
     if (seen.has(publicId)) continue;
     seen.add(publicId);
@@ -850,19 +867,26 @@ async function resolveUpstreamModelId(
   rest: string,
   peeled: string[],
 ): Promise<string> {
-  const cacheKey = `${providerName}\0${rest}\0${peeled.join("/")}`;
+  const aliasIndex = await loadVendorAliasIndex();
+  const aliases = getAliasesForProviderName(aliasIndex, providerName);
+  const restForms = expandUpstreamIdCandidates(rest, aliases);
+
+  const cacheKey = `${providerName}\0${rest}\0${peeled.join("/")}\0${restForms.join("|")}`;
   const cached = upstreamModelResolveCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
 
   const candidates: string[] = [];
   // Prefer nested forms first for correctness on nested-id upstreams.
-  for (let i = peeled.length - 1; i >= 0; i--) {
-    candidates.push([...peeled.slice(i), rest].join("/"));
-  }
-  if (!candidates.includes(rest)) candidates.push(rest);
-  const nested = `${providerName}/${rest}`;
-  if (!rest.includes("/") && !candidates.includes(nested)) {
-    candidates.unshift(nested);
+  for (const form of restForms) {
+    for (let i = peeled.length - 1; i >= 0; i--) {
+      const c = [...peeled.slice(i), form].join("/");
+      if (!candidates.includes(c)) candidates.push(c);
+    }
+    if (!candidates.includes(form)) candidates.push(form);
+    const nested = `${providerName}/${form}`;
+    if (!form.includes("/") && !candidates.includes(nested)) {
+      candidates.unshift(nested);
+    }
   }
 
   await loadFromDisk();
@@ -898,15 +922,26 @@ async function resolveUpstreamModelId(
     known,
     prov?.compatProfile,
   );
-  let resolved = rest;
-  if (!rest.includes("/") && nestedProvider) {
+  // Prefer real upstream vendor form for forwarding
+  let resolved = restForms.find((f) => f !== rest && known.has(f)) || restForms[0] || rest;
+  const realPreferred = expandUpstreamIdCandidates(resolved, aliases).find((f) =>
+    Object.keys(aliases).some((real) => f.toLowerCase().startsWith(real.toLowerCase() + "/")),
+  );
+  if (realPreferred) resolved = realPreferred;
+
+  if (!resolved.includes("/") && nestedProvider) {
+    const nested = `${providerName}/${resolved}`;
     resolved = nested;
   } else if (known.size > 0) {
     const nestedHits = [...known].filter((id) => id.includes("/")).length;
-    if (nestedHits >= known.size / 2 && !rest.includes("/")) {
-      resolved = nested;
+    if (nestedHits >= known.size / 2 && !resolved.includes("/")) {
+      resolved = `${providerName}/${resolved}`;
     }
   }
+
+  // Final: if still on public alias vendor, flip to real for upstream
+  resolved = expandUpstreamIdCandidates(resolved, aliases).find((c) => known.has(c))
+    || toRealUpstreamId(resolved, aliases);
 
   upstreamModelResolveCache.set(cacheKey, {
     value: resolved,
@@ -1228,7 +1263,10 @@ export async function getAllClientCatalogMonitorRows(): Promise<ClientCatalogMon
  * Provider-strict status index. Never OR Online across bare leaf IDs like `claude-sonnet-5`
  * (that made force-off tokito/amanai/sonnet inherit Online from another provider).
  */
-export function buildProviderStrictStatusLookup(rows: ClientCatalogMonitorRow[]) {
+export function buildProviderStrictStatusLookup(
+  rows: ClientCatalogMonitorRow[],
+  aliasIndex?: VendorAliasIndex | null,
+) {
   const byKey = new Map<string, CatalogStatusMatch>();
 
   for (const row of rows) {
@@ -1241,6 +1279,16 @@ export function buildProviderStrictStatusLookup(rows: ClientCatalogMonitorRow[])
     const keys = new Set<string>([`${row.provider}/${row.modelId}`]);
     // modelId may already be fully qualified (provider/...)
     if (row.modelId.includes("/")) keys.add(row.modelId);
+
+    if (aliasIndex) {
+      const aliases = getAliasesForProviderName(aliasIndex, row.provider);
+      const pubSuffix = toPublicUpstreamId(row.modelId, aliases);
+      if (pubSuffix !== row.modelId) {
+        keys.add(`${row.provider}/${pubSuffix}`);
+        if (pubSuffix.includes("/")) keys.add(pubSuffix);
+      }
+    }
+
     for (const k of keys) {
       const prev = byKey.get(k);
       if (!prev) {
@@ -1272,6 +1320,15 @@ export function buildProviderStrictStatusLookup(rows: ClientCatalogMonitorRow[])
       const rest = modelId.slice(slash + 1);
       const scoped = `${provider}/${rest}`;
       if (byKey.has(scoped)) return byKey.get(scoped)!;
+
+      // Public vendor → try real upstream form for this provider
+      if (aliasIndex) {
+        const aliases = getAliasesForProviderName(aliasIndex, provider);
+        for (const form of expandUpstreamIdCandidates(rest, aliases)) {
+          const alt = `${provider}/${form}`;
+          if (byKey.has(alt)) return byKey.get(alt)!;
+        }
+      }
     }
     return null;
   };

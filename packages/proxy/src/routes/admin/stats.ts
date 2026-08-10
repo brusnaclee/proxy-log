@@ -331,7 +331,8 @@ stats.get("/stats/by-model", async (c) => {
     };
   });
 
-  return withCost;
+  const { withPublicizedModels } = await import("../../utils/vendor-aliases.js");
+  return withPublicizedModels(withCost);
   })); // end statsCache.getOrFetch
 });
 

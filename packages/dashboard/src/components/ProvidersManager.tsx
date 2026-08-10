@@ -39,6 +39,11 @@ export function ProvidersManager() {
   const [editingModel, setEditingModel] = useState<{ providerId: number; modelId: string } | null>(null);
   const [editModelValue, setEditModelValue] = useState({ displayName: "", description: "", contextLength: "", maxOutputTokens: "", inputPricePerMtok: "", outputPricePerMtok: "", inputModalities: "", outputModalities: "", supportedFeatures: "" });
 
+  // Vendor aliases (upstream vendor → public name)
+  const [expandedVendorAliases, setExpandedVendorAliases] = useState<number | null>(null);
+  const [vendorAliasDrafts, setVendorAliasDrafts] = useState<Record<number, Record<string, string>>>({});
+  const [savingVendorAliases, setSavingVendorAliases] = useState<number | null>(null);
+
   const [name, setName] = useState("");
   const [endpoint, setEndpoint] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -123,6 +128,48 @@ export function ProvidersManager() {
       setExpandedProvider(providerId);
       await loadKeys(providerId);
       await loadCustomModels(providerId);
+      const p = providers.find((x) => x.id === providerId);
+      if (p) {
+        setVendorAliasDrafts((prev) => ({
+          ...prev,
+          [providerId]: { ...(p.vendorAliases || {}) },
+        }));
+      }
+    }
+  };
+
+  const openVendorAliases = (p: any) => {
+    if (expandedVendorAliases === p.id) {
+      setExpandedVendorAliases(null);
+      return;
+    }
+    setExpandedVendorAliases(p.id);
+    const drafts: Record<string, string> = { ...(p.vendorAliases || {}) };
+    for (const v of p.vendors || []) {
+      if (drafts[v] === undefined) drafts[v] = p.vendorAliases?.[v] || "";
+    }
+    setVendorAliasDrafts((prev) => ({ ...prev, [p.id]: drafts }));
+  };
+
+  const handleSaveVendorAliases = async (providerId: number) => {
+    const draft = vendorAliasDrafts[providerId] || {};
+    const cleaned: Record<string, string> = {};
+    for (const [k, v] of Object.entries(draft)) {
+      const pub = String(v || "").trim();
+      if (pub && pub !== k) cleaned[k] = pub;
+    }
+    setSavingVendorAliases(providerId);
+    try {
+      await request(`/providers/${providerId}`, {
+        method: "PUT",
+        body: JSON.stringify({ vendorAliases: cleaned }),
+      });
+      notify.success("Vendor aliases saved");
+      await loadProviders();
+    } catch (e: any) {
+      notify.error(e.message || "Failed to save vendor aliases");
+    } finally {
+      setSavingVendorAliases(null);
     }
   };
 
@@ -848,6 +895,75 @@ export function ProvidersManager() {
                     <Button size="sm" onClick={() => handleAddKey(p.id)} disabled={!newKeyInputs[p.id]}>
                       <Plus className="w-3 h-3 mr-1" /> Add Key
                     </Button>
+                  </div>
+
+                  {/* Vendor aliases — public rename of nested vendor segment */}
+                  <div className="mt-4 pt-4 border-t border-border/50">
+                    <button
+                      type="button"
+                      onClick={() => openVendorAliases(p)}
+                      className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground"
+                    >
+                      <Pencil className="w-4 h-4" />
+                      <span>
+                        Vendor aliases ({Object.keys(p.vendorAliases || {}).length}/{(p.vendors || []).length || Object.keys(p.vendorAliases || {}).length})
+                      </span>
+                      {expandedVendorAliases === p.id ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                    </button>
+                    {expandedVendorAliases === p.id && (
+                      <div className="mt-3 space-y-2">
+                        <p className="text-xs text-muted-foreground">
+                          Rename nested vendor segments in public model ids (e.g. amanai → vibecode). Empty restores the original. Clients call{" "}
+                          <code className="font-mono">{p.name}/vibecode/…</code>; upstream still receives the original vendor.
+                        </p>
+                        {(!(p.vendors || []).length && !Object.keys(vendorAliasDrafts[p.id] || {}).length) ? (
+                          <p className="text-xs text-muted-foreground">No nested vendors discovered yet. Sync models first.</p>
+                        ) : (
+                          <div className="space-y-1">
+                            {[...new Set([...(p.vendors || []), ...Object.keys(vendorAliasDrafts[p.id] || {})])].sort().map((vendor) => (
+                              <div key={vendor} className="flex items-center gap-2 text-xs">
+                                <code className="font-mono w-28 shrink-0 truncate" title={vendor}>{vendor}</code>
+                                <span className="text-muted-foreground">→</span>
+                                <Input
+                                  className="h-7 text-xs flex-1"
+                                  placeholder={vendor}
+                                  value={vendorAliasDrafts[p.id]?.[vendor] ?? ""}
+                                  onChange={(e) =>
+                                    setVendorAliasDrafts((prev) => ({
+                                      ...prev,
+                                      [p.id]: { ...(prev[p.id] || {}), [vendor]: e.target.value },
+                                    }))
+                                  }
+                                />
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7"
+                                  title="Clear override"
+                                  onClick={() =>
+                                    setVendorAliasDrafts((prev) => ({
+                                      ...prev,
+                                      [p.id]: { ...(prev[p.id] || {}), [vendor]: "" },
+                                    }))
+                                  }
+                                >
+                                  <X className="w-3 h-3" />
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <Button
+                          size="sm"
+                          className="h-7"
+                          disabled={savingVendorAliases === p.id}
+                          onClick={() => handleSaveVendorAliases(p.id)}
+                        >
+                          {savingVendorAliases === p.id ? "Saving…" : "Save aliases"}
+                        </Button>
+                      </div>
+                    )}
                   </div>
 
                   {/* Custom Models Section */}

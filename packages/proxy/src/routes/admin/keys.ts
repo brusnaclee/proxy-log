@@ -778,7 +778,7 @@ keys.get("/keys/:id", async (c) => {
     pendingNotify = null;
   }
 
-  return c.json({
+  return c.json(await (await import("../../utils/vendor-aliases.js")).withPublicizedModels({
     id: key.id, name: key.name, keyPrefix: key.keyPrefix, keyMasked: maskKey(key.key),
     discordUserId: key.discordUserId,
     discordUsername: key.discordUsername,
@@ -825,7 +825,7 @@ keys.get("/keys/:id", async (c) => {
       topDevices,
       deviceSessions,
     },
-  });
+  }));
 });
 
 keys.put("/keys/:id", async (c) => {

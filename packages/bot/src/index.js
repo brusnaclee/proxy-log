@@ -490,6 +490,7 @@ async function handleAdminCommand(message) {
 				return true;
 			}
 			const session = createTokitoSession(message.author.id, 'status');
+			await ensureVendorAliasCache();
 			const { embed, components } = buildTokitoEmbed('status', session);
 			await message.reply({ embeds: [embed], components });
 			return true;
@@ -1311,6 +1312,41 @@ async function apiFetch(endpoint, options = {}) {
 function providerOf(modelId) {
 	if (!modelId.includes('/')) return 'unknown';
 	return modelId.split('/')[0];
+}
+
+let vendorAliasCache = { at: 0, map: {} };
+
+async function loadVendorAliases() {
+	if (Date.now() - vendorAliasCache.at < 60_000) return vendorAliasCache.map;
+	try {
+		const res = await proxyInternal('/admin/internal/vendor-aliases', 'GET');
+		vendorAliasCache = { at: Date.now(), map: res?.providers || {} };
+	} catch (err) {
+		console.warn('[vendor-aliases] fetch failed:', err?.message || err);
+	}
+	return vendorAliasCache.map;
+}
+
+/** Rewrite nested vendor segment for display (amanai → vibecode). */
+function publicizeDisplayModel(provider, modelId, aliasesByProvider) {
+	const mid = String(modelId || '');
+	const prov = String(provider || '');
+	const aliases =
+		aliasesByProvider?.[prov] ||
+		aliasesByProvider?.[prov.toLowerCase()] ||
+		{};
+	if (!mid.includes('/') || !aliases || !Object.keys(aliases).length) {
+		return mid.includes('/') || !prov ? mid : `${prov}/${mid}`;
+	}
+	const slash = mid.indexOf('/');
+	const vendor = mid.slice(0, slash);
+	const rest = mid.slice(slash);
+	for (const [real, pub] of Object.entries(aliases)) {
+		if (real.toLowerCase() === vendor.toLowerCase() && pub) {
+			return `${prov}/${pub}${rest}`;
+		}
+	}
+	return `${prov}/${mid}`;
 }
 
 function entryKey(entry) {
@@ -2631,18 +2667,28 @@ function buildTokitoRows(
 	if (upstreamProvider !== 'all') {
 		vendorSource = vendorSource.filter((e) => e.provider === upstreamProvider);
 	}
-	const vendorOptions = [
-		'all',
-		...new Set(vendorSource.map((e) => providerOf(e.modelId))),
-	].slice(0, 25);
+	const aliasesByProvider = runtime._vendorAliases || {};
+	const vendorSeen = new Set();
+	const vendorOptions = [{ real: 'all', label: 'all' }];
+	for (const e of vendorSource) {
+		const real = providerOf(e.modelId);
+		if (!real || real === 'unknown' || vendorSeen.has(real)) continue;
+		vendorSeen.add(real);
+		const full = publicizeDisplayModel(e.provider, e.modelId, aliasesByProvider);
+		const suffix = full.startsWith(`${e.provider}/`)
+			? full.slice(e.provider.length + 1)
+			: full;
+		const label = providerOf(suffix) || real;
+		vendorOptions.push({ real, label });
+	}
 	const vendorMenu = new StringSelectMenuBuilder()
 		.setCustomId(`tokito_filter_vendor_${sessionId}`)
 		.setPlaceholder('Model vendor (ag/minimax/...)')
 		.addOptions(
-			vendorOptions.map((v) => ({
-				label: v,
-				value: v,
-				default: v === modelVendor,
+			vendorOptions.slice(0, 25).map((v) => ({
+				label: v.label,
+				value: v.real,
+				default: v.real === modelVendor,
 			})),
 		);
 
@@ -2811,6 +2857,10 @@ async function ensureModelDetailsCache() {
 	}
 }
 
+async function ensureVendorAliasCache() {
+	runtime._vendorAliases = await loadVendorAliases();
+}
+
 function buildTokitoEmbed(kind, session) {
 	const pageSize = kind === 'details' ? 5 : TOKITO_PAGE_SIZE;
 	const entries = listModels(
@@ -2825,20 +2875,29 @@ function buildTokitoEmbed(kind, session) {
 	session.page = page;
 
 	const slice = entries.slice(page * pageSize, (page + 1) * pageSize);
+	const aliasesByProvider = runtime._vendorAliases || {};
 	const lines = slice.map((entry) => {
 		// Auto model: show special description
 		if (entry.modelId === 'auto') {
 			return `🤖 \`auto\` | **Auto-select**: picks fastest online model automatically`;
 		}
 
-		const vendor = providerOf(entry.modelId);
+		const displayFull = publicizeDisplayModel(
+			entry.provider,
+			entry.modelId,
+			aliasesByProvider,
+		);
+		const displaySuffix = displayFull.startsWith(`${entry.provider}/`)
+			? displayFull.slice(entry.provider.length + 1)
+			: displayFull;
+		const vendor = providerOf(displaySuffix.includes('/') ? displaySuffix : entry.modelId);
 		const lt = displayLatencyForEntry(entry, session);
 
 		if (kind === 'details') {
 			const detailsCache = runtime._modelDetailsCache || [];
 			const meta = resolveModelDetailsMeta(entry, detailsCache);
 			const icon = lt?.ok ? '🟢' : lt?.status === 429 ? '🟡' : lt ? '🔴' : '⚪';
-			const name = meta?.name || entry.modelId;
+			const name = meta?.name || displaySuffix || entry.modelId;
 			const ctx = meta?.context_length
 				? `${Math.round(meta.context_length / 1024)}K`
 				: '—';
@@ -2858,12 +2917,12 @@ function buildTokitoEmbed(kind, session) {
 			const latency = lt?.ms != null ? `${lt.ms}ms` : '—';
 			const features =
 				(meta?.supported_features || []).slice(0, 4).join(', ') || '—';
-			return `━━━━━━━━━━━━━━━━━━━━\n${icon} **${name}** (\`${entry.modelId}\`)\n📐 Context/Input: **${ctx}**  •  Max Output: **${maxOut}**\n💰 In: **${inPrice}/M**  •  Out: **${outPrice}/M**\n📥 ${inMod} → ${outMod}\n⚡ ${latency}  •  🛠 ${features}`;
+			return `━━━━━━━━━━━━━━━━━━━━\n${icon} **${name}** (\`${displayFull}\`)\n📐 Context/Input: **${ctx}**  •  Max Output: **${maxOut}**\n💰 In: **${inPrice}/M**  •  Out: **${outPrice}/M**\n📥 ${inMod} → ${outMod}\n⚡ ${latency}  •  🛠 ${features}`;
 		}
 
 		if (kind === 'status') {
 			if (!lt || lt.status == null) {
-				return `⚪ \`${entry.provider}/${entry.modelId}\` | not tested yet | vendor: **${vendor}**`;
+				return `⚪ \`${displayFull}\` | not tested yet | vendor: **${vendor}**`;
 			}
 			const icon = lt.ok ? '🟢' : lt.status === 429 ? '🟡' : '🔴';
 			const httpInfo =
@@ -2872,14 +2931,14 @@ function buildTokitoEmbed(kind, session) {
 					: lt.status
 						? `HTTP ${lt.status}`
 						: 'timeout';
-			return `${icon} \`${entry.provider}/${entry.modelId}\` | ${httpInfo} | vendor: **${vendor}**`;
+			return `${icon} \`${displayFull}\` | ${httpInfo} | vendor: **${vendor}**`;
 		}
 
 		if (!lt)
-			return `⚪ \`${entry.provider}/${entry.modelId}\` | not tested yet`;
+			return `⚪ \`${displayFull}\` | not tested yet`;
 		const icon = lt.ok ? '🟢' : lt.status === 429 ? '🟡' : '🔴';
 		const statusInfo = lt.status === 429 ? 'rate limited' : `HTTP ${lt.status}`;
-		return `${icon} \`${entry.provider}/${entry.modelId}\` | ${lt.ms} ms | ${statusInfo}`;
+		return `${icon} \`${displayFull}\` | ${lt.ms} ms | ${statusInfo}`;
 	});
 
 	const titleStyled =
@@ -8809,6 +8868,7 @@ client.on('interactionCreate', async (interaction) => {
 				}
 				// Store interaction for message deletion on expiry
 				session.interaction = interaction;
+				await ensureVendorAliasCache();
 				const { embed, components } = buildTokitoEmbed(kind, session);
 
 				// Add endpoint info footer to the embed
@@ -8929,6 +8989,7 @@ client.on('interactionCreate', async (interaction) => {
 				await ensureModelDetailsCache();
 			}
 
+			await ensureVendorAliasCache();
 			const { embed, components } = buildTokitoEmbed(session.kind, session);
 			await interaction.update({ embeds: [embed], components });
 			return;
@@ -8992,6 +9053,7 @@ client.on('interactionCreate', async (interaction) => {
 			if (session.kind === 'details') {
 				await ensureModelDetailsCache();
 			}
+			await ensureVendorAliasCache();
 			const { embed, components } = buildTokitoEmbed(session.kind, session);
 			await interaction.update({ embeds: [embed], components });
 		}

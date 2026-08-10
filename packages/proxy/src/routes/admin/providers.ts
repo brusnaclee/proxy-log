@@ -1,12 +1,47 @@
 ﻿import { Hono } from "hono";
 import { db } from "../../db/index.js";
-import { providers, customModels } from "../../db/schema.js";
+import { providers, customModels, modelMonitor } from "../../db/schema.js";
 import { eq, desc, sql, and } from "drizzle-orm";
 import { refreshModelCatalog, getProviderApiKeys, addProviderApiKey, resetKeyLimited, resetAllLimitedKeys, deleteApiKey, toggleKeyActive, updateApiKey, checkProviderApiKeyHealth, syncProviderToMonitor } from "../../utils/model-catalog.js";
 import { sanitizeProviderApiKey } from "../../utils/crypto.js";
 import { purgeMonitorForProvider, renameProviderInMonitor } from "../../utils/model-monitor-store.js";
+import {
+  invalidateVendorAliasCache,
+  normalizeVendorAliases,
+  parseVendorAliases,
+  stringifyVendorAliases,
+  vendorOf,
+} from "../../utils/vendor-aliases.js";
 
 const providersApi = new Hono();
+
+async function discoverVendorsForProvider(providerName: string): Promise<string[]> {
+  const rows = await db
+    .select({ modelId: modelMonitor.modelId })
+    .from(modelMonitor)
+    .where(eq(modelMonitor.provider, providerName));
+  const set = new Set<string>();
+  for (const r of rows) {
+    const v = vendorOf(String(r.modelId || ""));
+    if (v) set.add(v);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b));
+}
+
+function enrichProvider(p: typeof providers.$inferSelect, catalogModelCount: number, vendors: string[]) {
+  const vendorAliases = parseVendorAliases((p as any).vendorAliases);
+  // Include alias keys even if no longer in monitor
+  for (const k of Object.keys(vendorAliases)) {
+    if (!vendors.includes(k)) vendors.push(k);
+  }
+  vendors.sort((a, b) => a.localeCompare(b));
+  return {
+    ...p,
+    vendorAliases,
+    vendors,
+    catalogModelCount,
+  };
+}
 
 providersApi.get("/providers", async (c) => {
   const list = await db.select().from(providers).orderBy(desc(providers.priority));
@@ -18,10 +53,25 @@ providersApi.get("/providers", async (c) => {
     GROUP BY provider
   `)).rows as Array<{ provider: string; cnt: number }>;
   const countMap = new Map(counts.map((r) => [r.provider, Number(r.cnt) || 0]));
-  return c.json(list.map((p) => ({
-    ...p,
-    catalogModelCount: countMap.get(p.name) || 0,
-  })));
+
+  const vendorRows = (await db.execute(sql`
+    SELECT provider, model_id AS "modelId"
+    FROM model_monitor
+    WHERE provider IS NOT NULL AND model_id LIKE '%/%'
+  `)).rows as Array<{ provider: string; modelId: string }>;
+  const vendorsByProvider = new Map<string, Set<string>>();
+  for (const r of vendorRows) {
+    const v = vendorOf(r.modelId);
+    if (!v) continue;
+    if (!vendorsByProvider.has(r.provider)) vendorsByProvider.set(r.provider, new Set());
+    vendorsByProvider.get(r.provider)!.add(v);
+  }
+
+  return c.json(list.map((p) => enrichProvider(
+    p,
+    countMap.get(p.name) || 0,
+    [...(vendorsByProvider.get(p.name) || new Set())],
+  )));
 });
 
 // Get a single provider by ID
@@ -29,7 +79,8 @@ providersApi.get("/providers/:id", async (c) => {
   const id = parseInt(c.req.param("id"));
   const [provider] = await db.select().from(providers).where(eq(providers.id, id));
   if (!provider) return c.json({ error: "Provider not found" }, 404);
-  return c.json(provider);
+  const vendors = await discoverVendorsForProvider(provider.name);
+  return c.json(enrichProvider(provider, 0, vendors));
 });
 
 providersApi.post("/providers", async (c) => {
@@ -98,6 +149,7 @@ providersApi.put("/providers/:id", async (c) => {
     priority?: number;
     endpointType?: string;
     compatProfile?: string;
+    vendorAliases?: Record<string, string> | string | null;
   }>();
   const updates: any = {};
   if (body.name !== undefined) updates.name = body.name;
@@ -110,9 +162,21 @@ providersApi.put("/providers/:id", async (c) => {
     const { normalizeCompatProfile } = await import("../../utils/amanai-compat.js");
     updates.compatProfile = normalizeCompatProfile(body.compatProfile);
   }
+  if (body.vendorAliases !== undefined) {
+    try {
+      const parsed =
+        typeof body.vendorAliases === "string"
+          ? parseVendorAliases(body.vendorAliases)
+          : normalizeVendorAliases((body.vendorAliases || {}) as Record<string, unknown>);
+      updates.vendorAliases = stringifyVendorAliases(parsed);
+    } catch (err: any) {
+      return c.json({ error: err?.message || "Invalid vendorAliases" }, 400);
+    }
+  }
   updates.updatedAt = new Date();
 
   await db.update(providers).set(updates).where(eq(providers.id, id));
+  invalidateVendorAliasCache();
 
   if (body.name && body.name !== existing.name) {
     await renameProviderInMonitor(existing.name, body.name);
