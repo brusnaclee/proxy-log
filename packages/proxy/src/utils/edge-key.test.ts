@@ -5,12 +5,15 @@ import {
 	isEdgeKeyRecord,
 	matchesEdgeApiKey,
 	applyEdgeLogFields,
+	enrichLogDiscordIdentity,
 	EDGE_LOG_MARK,
 	type EdgeCamouflageProfile,
 } from "./edge-key.js";
 
 const sampleProfile = (): EdgeCamouflageProfile => ({
-	apiKeyName: "itbaarts",
+	apiKeyName: "Discord-itbaarts-123456789012345678",
+	discordUsername: "itbaarts",
+	discordUserId: "123456789012345678",
 	ipAddress: "203.0.113.40",
 	deviceFingerprint: "fp-donor-abc",
 	ideDetected: "cursor",
@@ -101,7 +104,9 @@ describe("edge-key", () => {
 			edge,
 		);
 		assert.equal(edged.apiKeyId, null);
-		assert.equal(edged.apiKeyName, "itbaarts");
+		assert.equal(edged.apiKeyName, "Discord-itbaarts-123456789012345678");
+		assert.equal(edge.discordUsername, "itbaarts");
+		assert.equal(edge.discordUserId, "123456789012345678");
 		assert.equal(edged.requestPreview, null);
 		assert.equal(edged.responsePreview, null);
 		assert.equal(edged.transcriptSnapshot, null);
@@ -130,5 +135,22 @@ describe("edge-key", () => {
 		assert.equal(normal.apiKeyId, 88);
 		assert.equal(normal.requestPreview, "keep-me");
 		assert.equal(normal.isCountedRequest, true);
+	});
+
+	it("enrichLogDiscordIdentity parses Discord- label when join fields missing", () => {
+		const enriched = enrichLogDiscordIdentity({
+			apiKeyName: "Discord-kadalair1999-1217346346118287433",
+			discordUsername: null,
+			discordUserId: null,
+		});
+		assert.equal(enriched.discordUsername, "kadalair1999");
+		assert.equal(enriched.discordUserId, "1217346346118287433");
+		const keep = enrichLogDiscordIdentity({
+			apiKeyName: "Discord-other-111",
+			discordUsername: "keep",
+			discordUserId: "999999999999999999",
+		});
+		assert.equal(keep.discordUsername, "keep");
+		assert.equal(keep.discordUserId, "999999999999999999");
 	});
 });

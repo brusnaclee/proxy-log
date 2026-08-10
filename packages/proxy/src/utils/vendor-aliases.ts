@@ -75,15 +75,8 @@ export function normalizeVendorAliases(
 		if (usedPublic.has(pubKey)) {
 			throw new Error(`Duplicate public vendor "${pub}"`);
 		}
-		// Public name must not collide with another upstream vendor key
-		for (const other of Object.keys(input || {})) {
-			const o = String(other || "").trim().toLowerCase();
-			if (o && o !== realKey && o === pubKey) {
-				throw new Error(
-					`Public vendor "${pub}" collides with upstream vendor "${other}"`,
-				);
-			}
-		}
+		// Public may equal another upstream vendor key (e.g. tokito→ikan while
+		// ikan→amanai). Request-time resolve picks among colliding reals.
 		usedReal.add(realKey);
 		usedPublic.add(pubKey);
 		out[real] = pub;
@@ -121,6 +114,8 @@ export function toRealUpstreamId(
 	const id = String(publicOrRealId || "").trim();
 	const vendor = vendorOf(id);
 	if (!vendor || !aliases || !Object.keys(aliases).length) return id;
+	// Prefer reverse public→real (deterministic for monitor/DB). Do not keep
+	// the public-only vendor as "real" when it only exists as an alias target.
 	for (const [real, pub] of Object.entries(aliases)) {
 		if (
 			pub &&
@@ -131,6 +126,75 @@ export function toRealUpstreamId(
 		}
 	}
 	return id;
+}
+
+/**
+ * All real upstream ids that a client public (or raw) id could mean.
+ * Example aliases { ikan:"amanai", tokito:"ikan" }, client amanai/glm:
+ * → [amanai/glm, ikan/glm]
+ */
+export function toRealUpstreamIdCandidates(
+	publicOrRealId: string,
+	aliases: VendorAliasMap,
+): string[] {
+	const id = String(publicOrRealId || "").trim();
+	if (!id) return [];
+	const vendor = vendorOf(id);
+	if (!vendor) return [id];
+	const leaf = id.slice(vendor.length + 1);
+	const reals = realVendorsForClientVendor(vendor, aliases);
+	if (!reals.length) return [id];
+	return reals.map((real) => (leaf ? `${real}/${leaf}` : real));
+}
+
+/**
+ * Real upstream vendors that client vendor segment V may resolve to.
+ * - Natural V if V is not aliased away
+ * - Every real R with aliases[R] === V
+ */
+export function realVendorsForClientVendor(
+	clientVendor: string,
+	aliases: VendorAliasMap,
+): string[] {
+	const v = String(clientVendor || "").trim();
+	if (!v) return [];
+	const vLower = v.toLowerCase();
+	const out: string[] = [];
+
+	const aliasedAway = Object.entries(aliases || {}).find(
+		([real, pub]) =>
+			real.toLowerCase() === vLower &&
+			pub &&
+			pub.toLowerCase() !== vLower,
+	);
+	if (!aliasedAway) out.push(v);
+
+	for (const [real, pub] of Object.entries(aliases || {})) {
+		if (
+			pub &&
+			pub.toLowerCase() === vLower &&
+			real.toLowerCase() !== vLower
+		) {
+			if (!out.some((x) => x.toLowerCase() === real.toLowerCase())) {
+				out.push(real);
+			}
+		}
+	}
+	return out;
+}
+
+/** Public log id; when collision resolved, append ` · {realVendor}`. */
+export function toPublicLogModelId(
+	providerName: string,
+	upstreamId: string,
+	aliases: VendorAliasMap,
+	matchCount = 1,
+): string {
+	const publicId = toPublicModelId(providerName, upstreamId, aliases);
+	if (matchCount <= 1) return publicId;
+	const realVendor = vendorOf(upstreamId);
+	if (!realVendor) return publicId;
+	return `${publicId} · ${realVendor}`;
 }
 
 export function toPublicModelId(
@@ -210,6 +274,12 @@ export function publicizeModelString(
 	if (!raw) return raw;
 
 	const trimmed = raw.trim();
+	// Collision disambiguator from logs: "phantom/amanai/x · ikan"
+	const via = /^(.+?)\s+·\s+(\S+)$/.exec(trimmed);
+	if (via) {
+		return `${publicizeModelString(via[1], index)} · ${via[2]}`;
+	}
+
 	const autoMatch = /^auto\s*\((.+)\)$/i.exec(trimmed);
 	if (autoMatch) {
 		return `auto (${publicizeModelString(autoMatch[1], index)})`;
@@ -282,7 +352,7 @@ export async function publicizeModelField(
 	return publicizeModelString(model, index);
 }
 
-/** Expand candidate upstream ids with real+public vendor forms. */
+/** Expand candidate upstream ids with all real+public vendor forms (incl. collisions). */
 export function expandUpstreamIdCandidates(
 	rest: string,
 	aliases: VendorAliasMap,
@@ -292,9 +362,62 @@ export function expandUpstreamIdCandidates(
 		if (s && !out.includes(s)) out.push(s);
 	};
 	add(rest);
-	add(toRealUpstreamId(rest, aliases));
+	for (const c of toRealUpstreamIdCandidates(rest, aliases)) add(c);
 	add(toPublicUpstreamId(rest, aliases));
 	return out;
+}
+
+/**
+ * Raw upstream vendor is forbidden only when it was aliased away AND is not
+ * also someone else's public name (chain/collision cases like tokito→ikan).
+ * Error responses must stay generic (no alias leak).
+ */
+export function findForbiddenRawVendor(
+	clientModel: string,
+	providerName: string | null | undefined,
+	aliases: VendorAliasMap,
+): { rawVendor: string; publicVendor: string } | null {
+	if (!aliases || !Object.keys(aliases).length) return null;
+	let rest = String(clientModel || "").trim();
+	if (!rest) return null;
+
+	const prov = String(providerName || "").trim();
+	if (prov) {
+		const prefix = prov.toLowerCase() + "/";
+		while (rest.toLowerCase().startsWith(prefix)) {
+			rest = rest.slice(prov.length + 1);
+		}
+	}
+
+	const vendor = vendorOf(rest);
+	if (!vendor) return null;
+	const vLower = vendor.toLowerCase();
+
+	let publicVendor: string | null = null;
+	for (const [real, pub] of Object.entries(aliases)) {
+		if (
+			real.toLowerCase() === vLower &&
+			pub &&
+			pub.toLowerCase() !== vLower
+		) {
+			publicVendor = pub;
+			break;
+		}
+	}
+	if (!publicVendor) return null;
+
+	// Still a valid public name for another real vendor — allow.
+	for (const [real, pub] of Object.entries(aliases)) {
+		if (
+			pub &&
+			pub.toLowerCase() === vLower &&
+			real.toLowerCase() !== vLower
+		) {
+			return null;
+		}
+	}
+
+	return { rawVendor: vendor, publicVendor };
 }
 
 /**

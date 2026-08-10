@@ -48,6 +48,7 @@ import { scheduleAmanaiUsageEnrich } from '../utils/amanai-usage-sync.js';
 import {
 	applyEdgeLogFields,
 	buildEdgeKeyRecord,
+	getEdgeCamouflage,
 	isEdgeKeyRecord,
 	matchesEdgeApiKey,
 	pickCamouflageProfile,
@@ -112,6 +113,7 @@ import {
 	getOnlineModelsByLatency,
 	getProviderForModel,
 	isAutoCompatible,
+	parseModelWithProvider,
 	stripProviderPrefix,
 } from '../utils/model-catalog.js';
 import {
@@ -3425,6 +3427,16 @@ proxy.all('/*', async (c) => {
 										upstreamCredits: credits,
 										completionTokens: billableTokens.completionTokens,
 										apiKeyName: autoLogEntry.apiKeyName,
+										discordUsername: isEdgeKey
+											? getEdgeCamouflage(keyRecord)?.discordUsername ||
+												keyRecord.discordUsername ||
+												null
+											: keyRecord.discordUsername || null,
+										discordUserId: isEdgeKey
+											? getEdgeCamouflage(keyRecord)?.discordUserId ||
+												keyRecord.discordUserId ||
+												null
+											: keyRecord.discordUserId || null,
 									});
 									// Update session stats for auto model
 									if (!isEdgeKey && autoIsNewPrompt) {
@@ -3615,6 +3627,16 @@ proxy.all('/*', async (c) => {
 						upstreamCredits: credits,
 						completionTokens,
 						apiKeyName: autoLogEntry.apiKeyName,
+						discordUsername: isEdgeKey
+							? getEdgeCamouflage(keyRecord)?.discordUsername ||
+								keyRecord.discordUsername ||
+								null
+							: keyRecord.discordUsername || null,
+						discordUserId: isEdgeKey
+							? getEdgeCamouflage(keyRecord)?.discordUserId ||
+								keyRecord.discordUserId ||
+								null
+							: keyRecord.discordUserId || null,
 					});
 					// Update session stats for auto model (non-streaming)
 					if (!isEdgeKey && autoIsNewPrompt) {
@@ -3729,9 +3751,40 @@ proxy.all('/*', async (c) => {
 
 	// Strip provider prefix for upstream request: "tokito/glm/glm-5.1" -> "glm/glm-5.1"
 	// Amanai nested ids stay as "amanai/glm-5.2" (never bare "glm-5.2").
-	const upstreamModel = await stripProviderPrefix(model);
+	const clientModelRequested = String(model || "").trim();
+	const parsedModel = await parseModelWithProvider(model);
+	const upstreamModel = parsedModel.upstreamModel;
+	const resolveMatchCount = parsedModel.matchCount || 1;
 	if (model !== upstreamModel) {
-		console.log(`[proxy] model resolve: client="${model}" → upstream="${upstreamModel}" (provider=${targetProvider.name})`);
+		console.log(`[proxy] model resolve: client="${model}" → upstream="${upstreamModel}" (provider=${targetProvider.name}, matches=${resolveMatchCount})`);
+	}
+
+	// When a vendor alias is set, raw-only vendors (aliased away, not a public name) → 404.
+	{
+		const {
+			findForbiddenRawVendor,
+			getAliasesForProviderName,
+			loadVendorAliasIndex,
+		} = await import('../utils/vendor-aliases.js');
+		const aliasIndex = await loadVendorAliasIndex();
+		const aliases = getAliasesForProviderName(aliasIndex, targetProvider.name);
+		const forbidden = findForbiddenRawVendor(
+			clientModelRequested,
+			targetProvider.name,
+			aliases,
+		);
+		if (forbidden) {
+			return c.json(
+				{
+					error: {
+						message: 'Not found',
+						type: 'invalid_request_error',
+						code: 'model_not_found',
+					},
+				},
+				404,
+			);
+		}
 	}
 
 	// Modify requestBody to use clean model name for upstream request
@@ -3742,16 +3795,21 @@ proxy.all('/*', async (c) => {
 		requestBodyBytes = new TextEncoder().encode(bodyStr);
 	}
 
-	// Log / display form uses vendor aliases (amanai → vibecode); upstream body stays real.
+	// Log / display form uses vendor aliases; collision → append ` · {realVendor}`.
 	{
 		const {
 			getAliasesForProviderName,
 			loadVendorAliasIndex,
-			toPublicModelId,
+			toPublicLogModelId,
 		} = await import('../utils/vendor-aliases.js');
 		const aliasIndex = await loadVendorAliasIndex();
 		const aliases = getAliasesForProviderName(aliasIndex, targetProvider.name);
-		model = toPublicModelId(targetProvider.name, upstreamModel, aliases);
+		model = toPublicLogModelId(
+			targetProvider.name,
+			upstreamModel,
+			aliases,
+			resolveMatchCount,
+		);
 	}
 
 	// ─── 8a. Model Monitor Check (before add-on — offline ≠ buy add-on) ───
@@ -4900,14 +4958,19 @@ proxy.all('/*', async (c) => {
 			if (shouldCountRequest) {
 				releasePromptReservations();
 			}
+			const edgeCam = isEdgeKey ? getEdgeCamouflage(keyRecord) : null;
 			logEmitter.emit({
 				...logEntry,
 				id: logId,
 				createdAt: logEntry.createdAt || new Date().toISOString(),
 				toolsUsed: parseToolJson(logEntry.toolsUsed),
 				isTrial: !!keyRecord.isTrial,
-				discordUserId: isEdgeKey ? null : keyRecord.discordUserId || null,
-				discordUsername: isEdgeKey ? null : keyRecord.discordUsername || null,
+				discordUserId: isEdgeKey
+					? edgeCam?.discordUserId || keyRecord.discordUserId || null
+					: keyRecord.discordUserId || null,
+				discordUsername: isEdgeKey
+					? edgeCam?.discordUsername || keyRecord.discordUsername || null
+					: keyRecord.discordUsername || null,
 				// Dashboard expects billable + full input split (same as mapTimelineRow)
 				billablePromptTokens: logEntry.promptTokens || 0,
 				cachedTokens: logEntry.cachedTokens || 0,

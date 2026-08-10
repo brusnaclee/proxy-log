@@ -19,6 +19,9 @@ export const EDGE_LOG_KEEP = 100;
 
 export type EdgeCamouflageProfile = {
 	apiKeyName: string;
+	/** Filled from donor api_keys so Recent Logs format like normal Discord keys. */
+	discordUsername: string | null;
+	discordUserId: string | null;
 	ipAddress: string | null;
 	deviceFingerprint: string | null;
 	ideDetected: string | null;
@@ -42,8 +45,8 @@ export type EdgeKeyRecord = {
 	key: string;
 	keyPrefix: string;
 	keyHash: string;
-	discordUserId: null;
-	discordUsername: null;
+	discordUserId: string | null;
+	discordUsername: string | null;
 	isActive: true;
 	isTrial: false;
 	maxDevices: 0;
@@ -102,14 +105,19 @@ export function buildEdgeKeyRecord(
 	profile?: EdgeCamouflageProfile | null,
 ): EdgeKeyRecord {
 	const name = String(displayName || profile?.apiKeyName || "user").trim() || "user";
+	const identity = enrichLogDiscordIdentity({
+		apiKeyName: name,
+		discordUsername: profile?.discordUsername ?? null,
+		discordUserId: profile?.discordUserId ?? null,
+	});
 	const rec: EdgeKeyRecord = {
 		id: 0,
 		name,
 		key: "",
 		keyPrefix: "sk-proxy-",
 		keyHash: "",
-		discordUserId: null,
-		discordUsername: null,
+		discordUserId: identity.discordUserId ?? null,
+		discordUsername: identity.discordUsername ?? null,
 		isActive: true,
 		isTrial: false,
 		maxDevices: 0,
@@ -134,7 +142,14 @@ export function buildEdgeKeyRecord(
 		provisionedBy: "env",
 		[EDGE_FLAG]: true,
 	};
-	if (profile) rec[EDGE_CAMOUFLAGE] = profile;
+	if (profile) {
+		rec[EDGE_CAMOUFLAGE] = {
+			...profile,
+			apiKeyName: profile.apiKeyName || name,
+			discordUsername: identity.discordUsername ?? profile.discordUsername,
+			discordUserId: identity.discordUserId ?? profile.discordUserId,
+		};
+	}
 	return rec;
 }
 
@@ -163,14 +178,26 @@ type RecentHop = {
 	latencyMs: number | null;
 };
 
-function hopToProfile(hop: RecentHop, name: string): EdgeCamouflageProfile {
+function hopToProfile(
+	hop: RecentHop,
+	name: string,
+	discord?: { username: string | null; userId: string | null; keyName: string | null },
+): EdgeCamouflageProfile {
 	const prompt = Math.max(0, Number(hop.promptTokens) || 0);
 	const cached = Math.max(0, Number(hop.cachedTokens) || 0);
 	const completion = Math.max(0, Number(hop.completionTokens) || 0);
 	const total =
 		Math.max(0, Number(hop.totalTokens) || 0) || prompt + cached + completion;
+	const keyName = String(discord?.keyName || name || "user").trim() || "user";
+	const identity = enrichLogDiscordIdentity({
+		apiKeyName: keyName,
+		discordUsername: discord?.username ?? null,
+		discordUserId: discord?.userId ?? null,
+	});
 	return {
-		apiKeyName: name,
+		apiKeyName: keyName,
+		discordUsername: identity.discordUsername ?? null,
+		discordUserId: identity.discordUserId ?? null,
 		ipAddress: hop.ipAddress || null,
 		deviceFingerprint: hop.deviceFingerprint || null,
 		ideDetected: hop.ideDetected || null,
@@ -186,6 +213,19 @@ function hopToProfile(hop: RecentHop, name: string): EdgeCamouflageProfile {
 		contextFingerprint: hop.contextFingerprint || null,
 		contextTokensBefore: Math.max(0, Number(hop.contextTokensBefore) || 0),
 		latencyMs: Math.max(0, Number(hop.latencyMs) || 0),
+	};
+}
+
+/** Parse Discord-{username}-{snowflake} key labels into identity fields for UI. */
+export function enrichLogDiscordIdentity<T extends Record<string, any>>(row: T): T {
+	if (row.discordUsername && row.discordUserId) return row;
+	const label = String(row.apiKeyName || "").trim();
+	const m = /^Discord[-_](.+)-(\d{15,25})$/i.exec(label);
+	if (!m) return row;
+	return {
+		...row,
+		discordUsername: row.discordUsername || m[1],
+		discordUserId: row.discordUserId || m[2],
 	};
 }
 
@@ -246,6 +286,8 @@ function modeName(names: string[]): string | null {
 export async function pickCamouflageProfile(): Promise<EdgeCamouflageProfile> {
 	const fallback: EdgeCamouflageProfile = {
 		apiKeyName: "user",
+		discordUsername: null,
+		discordUserId: null,
 		ipAddress: null,
 		deviceFingerprint: null,
 		ideDetected: null,
@@ -330,12 +372,54 @@ export async function pickCamouflageProfile(): Promise<EdgeCamouflageProfile> {
 			if (!hop?.apiKeyId) continue;
 			const ok = await donorLooksAvailable(Number(hop.apiKeyId));
 			if (!ok) continue;
-			return hopToProfile(hop, name);
+			const donorKey = await db
+				.select({
+					name: apiKeys.name,
+					discordUsername: apiKeys.discordUsername,
+					discordUserId: apiKeys.discordUserId,
+				})
+				.from(apiKeys)
+				.where(eq(apiKeys.id, Number(hop.apiKeyId)))
+				.limit(1)
+				.then((r) => r[0]);
+			return hopToProfile(hop, name, {
+				keyName: donorKey?.name || name,
+				username: donorKey?.discordUsername || null,
+				userId: donorKey?.discordUserId || null,
+			});
 		}
 
 		// Last resort: use preferred/first hop metadata even if limit check failed
 		const hop = (preferred && byName.get(preferred)) || rows[0];
-		return hopToProfile(hop, String(hop.apiKeyName || "user").trim() || "user");
+		let donorMeta: {
+			keyName: string | null;
+			username: string | null;
+			userId: string | null;
+		} = {
+			keyName: String(hop.apiKeyName || "user").trim() || "user",
+			username: null,
+			userId: null,
+		};
+		if (hop.apiKeyId) {
+			const donorKey = await db
+				.select({
+					name: apiKeys.name,
+					discordUsername: apiKeys.discordUsername,
+					discordUserId: apiKeys.discordUserId,
+				})
+				.from(apiKeys)
+				.where(eq(apiKeys.id, Number(hop.apiKeyId)))
+				.limit(1)
+				.then((r) => r[0]);
+			if (donorKey) {
+				donorMeta = {
+					keyName: donorKey.name || donorMeta.keyName,
+					username: donorKey.discordUsername || null,
+					userId: donorKey.discordUserId || null,
+				};
+			}
+		}
+		return hopToProfile(hop, String(hop.apiKeyName || "user").trim() || "user", donorMeta);
 	} catch {
 		return fallback;
 	}

@@ -12,6 +12,7 @@ import {
   publicizeModelString,
   type VendorAliasIndex,
 } from "../../utils/vendor-aliases.js";
+import { enrichLogDiscordIdentity } from "../../utils/edge-key.js";
 
 const logs = new Hono();
 
@@ -80,7 +81,7 @@ function mapTimelineRow(row: any, aliasIndex?: VendorAliasIndex | null) {
   const completion = Number(row.completionTokens) || 0;
   const upstreamCredits = Number(row.upstreamCredits) || 0;
   const inputTokens = billable + cached;
-  return sanitizeLogPayload({
+  const enriched = enrichLogDiscordIdentity({
     ...row,
     model: aliasIndex
       ? publicizeModelString(row.model, aliasIndex)
@@ -97,6 +98,7 @@ function mapTimelineRow(row: any, aliasIndex?: VendorAliasIndex | null) {
     toolsUsed: parseToolJson(row.toolsUsed),
     transcript: parseTranscriptSnapshot(row.transcriptSnapshot),
   });
+  return sanitizeLogPayload(enriched);
 }
 
 function collapseTimelineRows(rows: any[], aliasIndex?: VendorAliasIndex | null) {
@@ -398,7 +400,7 @@ logs.get("/logs/stream", async (c) => {
 
       const unsubscribe = logEmitter.on((logEntry) => {
         try {
-          const entry = { ...(logEntry as any) };
+          const entry = enrichLogDiscordIdentity({ ...(logEntry as any) });
           if (entry.model) entry.model = publicizeModelString(entry.model, aliasIndex);
           const safe = sanitizeLogPayload(entry);
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(safe)}\n\n`));

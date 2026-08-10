@@ -560,10 +560,10 @@ export async function getModelCatalogResponse() {
 
   const aliasIndex = await loadVendorAliasIndex();
 
-  // Deduplicate per (provider, model) so the same upstream model id on different
-  // providers (e.g. tokito vs claude both serving minimax/MiniMax-M3) each get
-  // their own public entry: {provider}/{modelId}.
+  // Deduplicate per public client id so alias collisions (ikan→amanai overlapping
+  // natural amanai) expose one catalog entry; request-time resolve picks randomly.
   const seen = new Set<string>();
+  const seenPublic = new Set<string>();
   const publicModels: any[] = [];
 
   // Add virtual "auto" model (proxy-level auto-selection)
@@ -599,6 +599,9 @@ export async function getModelCatalogResponse() {
     const publicId = upstreamProviderName
       ? `${upstreamProviderName}/${publicSuffix}`
       : publicSuffix;
+
+    if (seenPublic.has(publicId)) continue;
+    seenPublic.add(publicId);
 
     const { provider_id: _pid, ...rest } = m;
     rest.id = publicId;
@@ -789,10 +792,14 @@ async function resolveProviderById(providerId: number) {
  * equal to our provider name (`amanai/glm-5.2`). After peeling `amanai/`,
  * we must restore that full id when the catalog/monitor knows it.
  */
-export async function parseModelWithProvider(modelId: string): Promise<{ upstreamModel: string; forcedProviderName: string | null }> {
+export async function parseModelWithProvider(modelId: string): Promise<{
+  upstreamModel: string;
+  forcedProviderName: string | null;
+  matchCount: number;
+}> {
   const raw = String(modelId || "").trim();
   if (!raw.includes("/")) {
-    return { upstreamModel: raw, forcedProviderName: null };
+    return { upstreamModel: raw, forcedProviderName: null, matchCount: 1 };
   }
 
   const allProvs = await getActiveProviders();
@@ -812,7 +819,7 @@ export async function parseModelWithProvider(modelId: string): Promise<{ upstrea
   }
 
   if (!forcedProviderName) {
-    return { upstreamModel: raw, forcedProviderName: null };
+    return { upstreamModel: raw, forcedProviderName: null, matchCount: 1 };
   }
 
   const canonical = allProvs.find(
@@ -821,16 +828,20 @@ export async function parseModelWithProvider(modelId: string): Promise<{ upstrea
   const providerName = canonical?.name || forcedProviderName;
 
   // Prefer the id form that actually exists for this provider (nested vendor prefix).
-  const upstreamModel = await resolveUpstreamModelId(providerName, rest, peeled);
+  const resolved = await resolveUpstreamModelId(providerName, rest, peeled);
 
   return {
-    upstreamModel,
+    upstreamModel: resolved.upstreamModel,
     forcedProviderName: providerName,
+    matchCount: resolved.matchCount,
   };
 }
 
 /** Short-lived cache so we don't hit monitor on every request. */
-const upstreamModelResolveCache = new Map<string, { value: string; expiresAt: number }>();
+const upstreamModelResolveCache = new Map<
+  string,
+  { hits: string[]; expiresAt: number }
+>();
 const UPSTREAM_MODEL_RESOLVE_TTL_MS = 60_000;
 
 function providerUsesNestedModelIds(
@@ -861,93 +872,103 @@ function providerUsesNestedModelIds(
  * Pick bare vs nested (`amanai/glm-5.2`) form based on catalog + monitor.
  * Never bare-peel amanai-style providers when rest has no slash — that caused
  * mass 404 Unknown model: glm-5.2.
+ * When multiple known reals match the same public vendor (alias collision), pick randomly.
  */
 async function resolveUpstreamModelId(
   providerName: string,
   rest: string,
   peeled: string[],
-): Promise<string> {
+): Promise<{ upstreamModel: string; matchCount: number }> {
   const aliasIndex = await loadVendorAliasIndex();
   const aliases = getAliasesForProviderName(aliasIndex, providerName);
   const restForms = expandUpstreamIdCandidates(rest, aliases);
 
   const cacheKey = `${providerName}\0${rest}\0${peeled.join("/")}\0${restForms.join("|")}`;
   const cached = upstreamModelResolveCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  let knownHits: string[] | null =
+    cached && cached.expiresAt > Date.now() ? cached.hits : null;
 
-  const candidates: string[] = [];
-  // Prefer nested forms first for correctness on nested-id upstreams.
-  for (const form of restForms) {
-    for (let i = peeled.length - 1; i >= 0; i--) {
-      const c = [...peeled.slice(i), form].join("/");
-      if (!candidates.includes(c)) candidates.push(c);
+  if (!knownHits) {
+    const candidates: string[] = [];
+    // Prefer nested forms first for correctness on nested-id upstreams.
+    for (const form of restForms) {
+      for (let i = peeled.length - 1; i >= 0; i--) {
+        const c = [...peeled.slice(i), form].join("/");
+        if (!candidates.includes(c)) candidates.push(c);
+      }
+      if (!candidates.includes(form)) candidates.push(form);
+      const nested = `${providerName}/${form}`;
+      if (!form.includes("/") && !candidates.includes(nested)) {
+        candidates.unshift(nested);
+      }
     }
-    if (!candidates.includes(form)) candidates.push(form);
-    const nested = `${providerName}/${form}`;
-    if (!form.includes("/") && !candidates.includes(nested)) {
-      candidates.unshift(nested);
+
+    await loadFromDisk();
+    const [prov] = await db
+      .select({ id: providers.id, endpoint: providers.endpoint, compatProfile: providers.compatProfile })
+      .from(providers)
+      .where(eq(providers.name, providerName))
+      .limit(1);
+    const providerId = prov?.id;
+
+    const known = new Set<string>();
+    for (const m of cache.models || []) {
+      if (providerId != null && m.provider_id === providerId && m.id) known.add(m.id);
     }
-  }
-
-  await loadFromDisk();
-  const [prov] = await db
-    .select({ id: providers.id, endpoint: providers.endpoint, compatProfile: providers.compatProfile })
-    .from(providers)
-    .where(eq(providers.name, providerName))
-    .limit(1);
-  const providerId = prov?.id;
-
-  const known = new Set<string>();
-  for (const m of cache.models || []) {
-    if (providerId != null && m.provider_id === providerId && m.id) known.add(m.id);
-  }
-  const mon = await db
-    .select({ modelId: modelMonitor.modelId })
-    .from(modelMonitor)
-    .where(eq(modelMonitor.provider, providerName));
-  for (const r of mon) {
-    if (r.modelId) known.add(r.modelId);
-  }
-
-  for (const c of candidates) {
-    if (known.has(c)) {
-      upstreamModelResolveCache.set(cacheKey, { value: c, expiresAt: Date.now() + UPSTREAM_MODEL_RESOLVE_TTL_MS });
-      return c;
+    const mon = await db
+      .select({ modelId: modelMonitor.modelId })
+      .from(modelMonitor)
+      .where(eq(modelMonitor.provider, providerName));
+    for (const r of mon) {
+      if (r.modelId) known.add(r.modelId);
     }
-  }
 
-  const nestedProvider = providerUsesNestedModelIds(
-    providerName,
-    prov?.endpoint,
-    known,
-    prov?.compatProfile,
-  );
-  // Prefer real upstream vendor form for forwarding
-  let resolved = restForms.find((f) => f !== rest && known.has(f)) || restForms[0] || rest;
-  const realPreferred = expandUpstreamIdCandidates(resolved, aliases).find((f) =>
-    Object.keys(aliases).some((real) => f.toLowerCase().startsWith(real.toLowerCase() + "/")),
-  );
-  if (realPreferred) resolved = realPreferred;
+    knownHits = candidates.filter((c) => known.has(c));
 
-  if (!resolved.includes("/") && nestedProvider) {
-    const nested = `${providerName}/${resolved}`;
-    resolved = nested;
-  } else if (known.size > 0) {
-    const nestedHits = [...known].filter((id) => id.includes("/")).length;
-    if (nestedHits >= known.size / 2 && !resolved.includes("/")) {
-      resolved = `${providerName}/${resolved}`;
+    if (knownHits.length === 0) {
+      const nestedProvider = providerUsesNestedModelIds(
+        providerName,
+        prov?.endpoint,
+        known,
+        prov?.compatProfile,
+      );
+      // Prefer real upstream vendor form for forwarding
+      let resolved = restForms.find((f) => f !== rest && known.has(f)) || restForms[0] || rest;
+      const realPreferred = expandUpstreamIdCandidates(resolved, aliases).find((f) =>
+        Object.keys(aliases).some((real) => f.toLowerCase().startsWith(real.toLowerCase() + "/")),
+      );
+      if (realPreferred) resolved = realPreferred;
+
+      if (!resolved.includes("/") && nestedProvider) {
+        const nested = `${providerName}/${resolved}`;
+        resolved = nested;
+      } else if (known.size > 0) {
+        const nestedHits = [...known].filter((id) => id.includes("/")).length;
+        if (nestedHits >= known.size / 2 && !resolved.includes("/")) {
+          resolved = `${providerName}/${resolved}`;
+        }
+      }
+
+      // Final: if still on public alias vendor, flip to real for upstream
+      resolved = expandUpstreamIdCandidates(resolved, aliases).find((c) => known.has(c))
+        || toRealUpstreamId(resolved, aliases);
+
+      knownHits = [resolved];
     }
+
+    upstreamModelResolveCache.set(cacheKey, {
+      hits: knownHits,
+      expiresAt: Date.now() + UPSTREAM_MODEL_RESOLVE_TTL_MS,
+    });
   }
 
-  // Final: if still on public alias vendor, flip to real for upstream
-  resolved = expandUpstreamIdCandidates(resolved, aliases).find((c) => known.has(c))
-    || toRealUpstreamId(resolved, aliases);
+  const matchCount = knownHits.length;
+  const pick =
+    matchCount === 1
+      ? knownHits[0]
+      : knownHits[Math.floor(Math.random() * matchCount)];
 
-  upstreamModelResolveCache.set(cacheKey, {
-    value: resolved,
-    expiresAt: Date.now() + UPSTREAM_MODEL_RESOLVE_TTL_MS,
-  });
-  return resolved;
+  return { upstreamModel: pick, matchCount };
 }
 
 function collectProviderIdsForModel(modelId: string, upstreamModel: string): number[] {
