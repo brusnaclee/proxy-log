@@ -291,7 +291,8 @@ stats.get("/stats/by-key", async (c) => {
       uniqueDevices: keyStats?.uniqueDevices || 0, topModel: topModel?.model || "N/A",
     });
   }
-  return result;
+  const { withPublicizedModels } = await import("../../utils/vendor-aliases.js");
+  return withPublicizedModels(result);
   })); // end statsCache.getOrFetch
 });
 

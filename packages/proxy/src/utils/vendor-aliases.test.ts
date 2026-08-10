@@ -6,6 +6,7 @@ import {
 	toRealUpstreamId,
 	toPublicModelId,
 	publicizeModelString,
+	publicizeMonitorModelId,
 	expandUpstreamIdCandidates,
 	type VendorAliasIndex,
 } from "./vendor-aliases.js";
@@ -52,6 +53,18 @@ describe("vendor-aliases", () => {
 		assert.equal(
 			publicizeModelString("amanai/glm-5.2", index),
 			"vibecode/glm-5.2",
+		);
+	});
+
+	it("publicizeMonitorModelId rewrites nested vendor only", () => {
+		const index: VendorAliasIndex = {
+			canonicalName: new Map([["phantom", "phantom"]]),
+			byProviderName: new Map([["phantom", { amanai: "vibecode" }]]),
+			reverseByProviderName: new Map([["phantom", new Map([["vibecode", "amanai"]])]]),
+		};
+		assert.equal(
+			publicizeMonitorModelId("phantom", "amanai/claude-haiku-4.5", index),
+			"vibecode/claude-haiku-4.5",
 		);
 	});
 });

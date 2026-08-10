@@ -271,7 +271,9 @@ settings.get("/settings/model-limits", async (c) => {
   const rows = await db.select().from(modelLimits)
     .where(and(eq(modelLimits.scope, "global"), eq(modelLimits.scopeId, 0)));
   const data = await enrichModelLimitsWithCatalog(rows);
-  return c.json({ data });
+  return c.json({
+    data: await (await import("../../utils/vendor-aliases.js")).withPublicizedModels(data),
+  });
 });
 
 // GET /admin/settings/model-catalog/match?pattern=X

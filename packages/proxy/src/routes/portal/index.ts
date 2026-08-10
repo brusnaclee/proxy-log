@@ -924,13 +924,14 @@ portal.get("/stats/by-model", async (c) => {
   );
 
   return c.json(
-    rows.map((r: any) => ({
-      ...r,
-      // UI ↓ uses real completion; cost/limit field stays in completionTokens if needed
-      completionTokens: Number(r.displayCompletionTokens) || Number(r.completionTokens) || 0,
-      billablePromptTokens: r.promptTokens,
-      cachedTokens: 0,
-    })),
+    await (await import("../../utils/vendor-aliases.js")).withPublicizedModels(
+      rows.map((r: any) => ({
+        ...r,
+        completionTokens: Number(r.displayCompletionTokens) || Number(r.completionTokens) || 0,
+        billablePromptTokens: r.promptTokens,
+        cachedTokens: 0,
+      })),
+    ),
   );
 });
 

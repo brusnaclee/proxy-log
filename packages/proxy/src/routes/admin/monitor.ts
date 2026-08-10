@@ -24,6 +24,11 @@ import {
   extractModelsArray,
 } from "../../utils/probe-validate.js";
 import { refreshUsableProviderKeys } from "../../utils/model-catalog.js";
+import {
+  loadVendorAliasIndex,
+  publicizeMonitorModelId,
+  resolveRawMonitorModelId,
+} from "../../utils/vendor-aliases.js";
 
 const monitor = new Hono();
 
@@ -285,31 +290,47 @@ monitor.get("/monitor/models", async (c) => {
       forceDeactivated: isForceDeactivatedMessage(d.errorMessage),
     }));
 
+  const aliasIndex = await loadVendorAliasIndex();
+  const publicData = data.map((d) => ({
+    ...d,
+    modelId: publicizeMonitorModelId(d.provider, d.modelId, aliasIndex),
+  }));
+
   const mode = await getMonitorAutoMode();
   const activeProviders = [...activeNames].sort((a, b) => a.localeCompare(b));
   const summary = {
-    total: data.length,
-    online: data.filter((d) => d.isOnline).length,
-    offline: data.filter((d) => !d.isOnline && d.httpStatus !== 0).length,
-    timeout: data.filter((d) => !d.isOnline && d.httpStatus === 0).length,
-    probeOk: data.filter((d) => d.probeOk).length,
+    total: publicData.length,
+    online: publicData.filter((d) => d.isOnline).length,
+    offline: publicData.filter((d) => !d.isOnline && d.httpStatus !== 0).length,
+    timeout: publicData.filter((d) => !d.isOnline && d.httpStatus === 0).length,
+    probeOk: publicData.filter((d) => d.probeOk).length,
     monitorAutoMode: mode,
   };
 
-  return c.json({ data, summary, monitorAutoMode: mode, activeProviders });
+  return c.json({ data: publicData, summary, monitorAutoMode: mode, activeProviders });
 });
 
 // GET history for a specific model
 monitor.get("/monitor/models/:modelId/history", async (c) => {
-  const modelId = c.req.param("modelId");
+  const modelIdParam = decodeURIComponent(c.req.param("modelId"));
+  const providerHint = c.req.query("provider") || null;
+  const rawId = await resolveRawMonitorModelId(providerHint, modelIdParam);
+  const candidates = [...new Set([modelIdParam, rawId])];
+
   const rows = await db
     .select()
     .from(modelMonitor)
-    .where(eq(modelMonitor.modelId, modelId))
+    .where(sql`${modelMonitor.modelId} IN (${sql.join(candidates.map((id) => sql`${id}`), sql`, `)})`)
     .orderBy(desc(modelMonitor.checkedAt))
     .limit(100);
 
-  return c.json(rows);
+  const aliasIndex = await loadVendorAliasIndex();
+  return c.json(
+    rows.map((r) => ({
+      ...r,
+      modelId: publicizeMonitorModelId(r.provider, r.modelId, aliasIndex),
+    })),
+  );
 });
 
 // POST batch update from bot
@@ -433,11 +454,39 @@ monitor.get("/internal/monitor/models", async (c) => {
     .map((r) => r.model_monitor)
     .filter((d) => d.provider && activeNames.has(d.provider));
 
-  return c.json({ data });
+  const aliasIndex = await loadVendorAliasIndex();
+  return c.json({
+    data: data.map((d) => ({
+      ...d,
+      modelId: publicizeMonitorModelId(d.provider, d.modelId, aliasIndex),
+    })),
+  });
 });
 
 function modelVendorOf(modelId: string): string {
   return modelId.includes("/") ? modelId.split("/")[0] : "unknown";
+}
+
+/** Vendor label for display/filter — prefers public alias when set. */
+function publicVendorOf(
+  provider: string | null | undefined,
+  modelId: string,
+  index: Awaited<ReturnType<typeof loadVendorAliasIndex>>,
+): string {
+  const pub = publicizeMonitorModelId(provider, modelId, index);
+  return modelVendorOf(pub);
+}
+
+function vendorFilterMatches(
+  provider: string | null | undefined,
+  rawModelId: string,
+  vendorFilter: string,
+  index: Awaited<ReturnType<typeof loadVendorAliasIndex>>,
+): boolean {
+  const rawVendor = modelVendorOf(rawModelId);
+  const pubVendor = publicVendorOf(provider, rawModelId, index);
+  const f = vendorFilter.toLowerCase();
+  return rawVendor.toLowerCase() === f || pubVendor.toLowerCase() === f;
 }
 
 async function getLatestMonitorRows() {
@@ -477,9 +526,10 @@ monitor.post("/monitor/models/activate", async (c) => {
   if (!body.modelId || !body.provider) {
     return c.json({ error: "modelId and provider required" }, 400);
   }
+  const rawModelId = await resolveRawMonitorModelId(body.provider, String(body.modelId));
   await upsertModelStatus(
     {
-      modelId: String(body.modelId),
+      modelId: rawModelId,
       provider: String(body.provider),
       isOnline: true,
       latencyMs: 0,
@@ -501,9 +551,10 @@ monitor.post("/monitor/models/deactivate", async (c) => {
   if (!body.modelId || !body.provider) {
     return c.json({ error: "modelId and provider required" }, 400);
   }
+  const rawModelId = await resolveRawMonitorModelId(body.provider, String(body.modelId));
   await upsertModelStatus(
     {
-      modelId: String(body.modelId),
+      modelId: rawModelId,
       provider: String(body.provider),
       isOnline: false,
       latencyMs: 0,
@@ -540,8 +591,11 @@ monitor.post("/monitor/models/bulk-override", async (c) => {
   if (providerFilter) {
     rows = rows.filter((d) => d.provider === providerFilter);
   }
+  const aliasIndex = await loadVendorAliasIndex();
   if (vendorFilter) {
-    rows = rows.filter((d) => modelVendorOf(d.modelId) === vendorFilter);
+    rows = rows.filter((d) =>
+      vendorFilterMatches(d.provider, d.modelId, vendorFilter, aliasIndex),
+    );
   }
   if (probeFilter === "ok") {
     rows = rows.filter((d) => Number(d.httpStatus) >= 200 && Number(d.httpStatus) < 300);

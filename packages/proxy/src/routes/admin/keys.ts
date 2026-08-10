@@ -321,10 +321,12 @@ keys.get("/keys", async (c) => {
   });
 
   return c.json(
-    (listBase as any[]).map((row) => ({
-      ...row,
-      liveUsage: liveByKeyId.get(row.id) || null,
-    })),
+    await (await import("../../utils/vendor-aliases.js")).withPublicizedModels(
+      (listBase as any[]).map((row) => ({
+        ...row,
+        liveUsage: liveByKeyId.get(row.id) || null,
+      })),
+    ),
   );
 });
 
@@ -1236,7 +1238,9 @@ keys.get("/keys/:id/model-limits", async (c) => {
   const rows = await db.select().from(modelLimits)
     .where(and(eq(modelLimits.scope, "key"), eq(modelLimits.scopeId, keyId)));
   const data = await enrichModelLimitsWithCatalog(rows);
-  return c.json({ data });
+  return c.json({
+    data: await (await import("../../utils/vendor-aliases.js")).withPublicizedModels(data),
+  });
 });
 
 keys.put("/keys/:id/model-limits", async (c) => {

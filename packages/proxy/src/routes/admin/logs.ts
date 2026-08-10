@@ -318,7 +318,10 @@ logs.get("/logs/sessions", async (c) => {
   const totalResult = (await db.select({ count: sql<number>`count(*)` }).from(chatSessions).where(whereClause))[0];
   const total = totalResult?.count || 0;
 
-  return c.json({ data: rows, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
+  return c.json({
+    data: await (await import("../../utils/vendor-aliases.js")).withPublicizedModels(rows),
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  });
 });
 
 logs.get("/logs/sessions/:sessionId", async (c) => {
@@ -371,16 +374,21 @@ logs.get("/logs/sessions/:sessionId", async (c) => {
   const aliasIndex = await loadVendorAliasIndex();
   const mappedTimeline = timeline.map((row: any) => mapTimelineRow(row, aliasIndex));
   const collapsedTimeline = collapseTimelineRows(timeline, aliasIndex);
+  const publicSession = {
+    ...session,
+    model: publicizeModelString(session.model, aliasIndex),
+  };
 
   return c.json({
-    session,
+    session: publicSession,
     timeline: mode === "raw" ? mappedTimeline : collapsedTimeline,
     rawTimelineCount: mappedTimeline.length,
     turnCount: collapsedTimeline.length,
   });
 });
 
-logs.get("/logs/stream", (c) => {
+logs.get("/logs/stream", async (c) => {
+  const aliasIndex = await loadVendorAliasIndex();
   const stream = new ReadableStream({
     start(controller) {
       const encoder = new TextEncoder();
@@ -390,7 +398,9 @@ logs.get("/logs/stream", (c) => {
 
       const unsubscribe = logEmitter.on((logEntry) => {
         try {
-          const safe = sanitizeLogPayload({ ...(logEntry as any) });
+          const entry = { ...(logEntry as any) };
+          if (entry.model) entry.model = publicizeModelString(entry.model, aliasIndex);
+          const safe = sanitizeLogPayload(entry);
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(safe)}\n\n`));
         } catch {
           unsubscribe();

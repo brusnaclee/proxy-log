@@ -47,11 +47,13 @@ buglog.get("/buglog", async (c) => {
     LIMIT ${limit}
   `);
 
-  const data = (rows as any[]).map((row, idx) => ({
+  const aliasIndex = await (await import("../../utils/vendor-aliases.js")).loadVendorAliasIndex();
+  const { publicizeModelString } = await import("../../utils/vendor-aliases.js");
+  const data = ((rows as any)?.rows || rows).map((row: any, idx: number) => ({
     id: idx + 1,
     statusCode: row.status_code,
     errorMessage: row.error_message,
-    model: row.model,
+    model: publicizeModelString(row.model, aliasIndex),
     endpointPath: row.endpoint_path,
     count: Number(row.count),
     sampleId: row.sample_id,
@@ -63,13 +65,14 @@ buglog.get("/buglog", async (c) => {
     signature: `${row.status_code}|${row.error_message}|${row.model}|${row.endpoint_path}`,
   }));
 
-  const [totalRow] = await db.execute(sql`
+  const totalResult = await db.execute(sql`
     SELECT COUNT(*) as total FROM request_logs WHERE ${whereClause}
   `);
+  const totalRow = (totalResult as any)?.rows?.[0] || (totalResult as any)?.[0];
 
   return c.json({
     data,
-    total: Number((totalRow as any)?.total || 0),
+    total: Number(totalRow?.total || 0),
     days,
     limit,
   });

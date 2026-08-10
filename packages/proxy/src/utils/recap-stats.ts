@@ -664,7 +664,7 @@ export async function getRecapStats(keyId: number, yearMonth: string): Promise<R
   const ideTop = aux.ide.filter((i) => i.ide !== "unknown");
   const ideSorted = [...ideTop].sort((a, b) => b.requests - a.requests);
 
-  return {
+  const stats: RecapStats = {
     yearMonth,
     hasData,
     source: "live",
@@ -694,6 +694,8 @@ export async function getRecapStats(keyId: number, yearMonth: string): Promise<R
     rank: { requests: 0, tokens: 0, totalParticipants: 0 },
     comparison: { hasPrev: false, requestsDeltaPercent: 0, tokensDeltaPercent: 0 },
   };
+  const { withPublicizedModels } = await import("./vendor-aliases.js");
+  return (await withPublicizedModels(stats)) as RecapStats;
 }
 
 export interface LeaderboardEntry {

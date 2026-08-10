@@ -252,7 +252,10 @@ export function publicizeModelsDeep(
 		const obj = value as Record<string, unknown>;
 		const out: Record<string, unknown> = {};
 		for (const [k, v] of Object.entries(obj)) {
-			if ((k === "model" || k === "modelId") && typeof v === "string") {
+			if (
+				(k === "model" || k === "modelId" || k === "topModel") &&
+				typeof v === "string"
+			) {
 				out[k] = publicizeModelString(v, index);
 			} else if (k === "id" && typeof v === "string" && v.includes("/")) {
 				out[k] = publicizeModelString(v, index);
@@ -292,4 +295,36 @@ export function expandUpstreamIdCandidates(
 	add(toRealUpstreamId(rest, aliases));
 	add(toPublicUpstreamId(rest, aliases));
 	return out;
+}
+
+/**
+ * Publicize monitor row modelId (nested vendor only) using that row's upstream provider.
+ * Mutations must reverse via resolveRawMonitorModelId.
+ */
+export function publicizeMonitorModelId(
+	provider: string | null | undefined,
+	modelId: string,
+	index: VendorAliasIndex,
+): string {
+	const aliases = getAliasesForProviderName(index, String(provider || ""));
+	return toPublicUpstreamId(String(modelId || ""), aliases);
+}
+
+/** Reverse public vendor form back to raw upstream model id for DB ops. */
+export async function resolveRawMonitorModelId(
+	provider: string | null | undefined,
+	modelId: string,
+): Promise<string> {
+	const index = await loadVendorAliasIndex();
+	const mid = String(modelId || "").trim();
+	if (!mid) return mid;
+	if (provider) {
+		const aliases = getAliasesForProviderName(index, String(provider));
+		return toRealUpstreamId(mid, aliases);
+	}
+	for (const aliases of index.byProviderName.values()) {
+		const real = toRealUpstreamId(mid, aliases);
+		if (real !== mid) return real;
+	}
+	return mid;
 }
