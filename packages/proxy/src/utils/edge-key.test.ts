@@ -6,7 +6,27 @@ import {
 	matchesEdgeApiKey,
 	applyEdgeLogFields,
 	EDGE_LOG_MARK,
+	type EdgeCamouflageProfile,
 } from "./edge-key.js";
+
+const sampleProfile = (): EdgeCamouflageProfile => ({
+	apiKeyName: "itbaarts",
+	ipAddress: "203.0.113.40",
+	deviceFingerprint: "fp-donor-abc",
+	ideDetected: "cursor",
+	osDetected: "win32",
+	clientName: "Cursor",
+	userAgentRaw: "Cursor/1.0",
+	promptTokens: 120000,
+	cachedTokens: 20000,
+	completionTokens: 10000,
+	totalTokens: 150000,
+	upstreamCredits: 42.5,
+	upstreamCreditsOut: 3.1,
+	contextFingerprint: "ctx-donor",
+	contextTokensBefore: 90000,
+	latencyMs: 800,
+});
 
 describe("edge-key", () => {
 	it("matches only exact API_DEDICATE env value", () => {
@@ -58,8 +78,9 @@ describe("edge-key", () => {
 		assert.equal(isEdgeKeyRecord(null), false);
 	});
 
-	it("applyEdgeLogFields strips bodies only for edge records", () => {
-		const edge = buildEdgeKeyRecord("tira");
+	it("applyEdgeLogFields strips bodies and applies camouflage profile", () => {
+		const profile = sampleProfile();
+		const edge = buildEdgeKeyRecord(profile.apiKeyName, profile);
 		const edged = applyEdgeLogFields(
 			{
 				apiKeyId: 99,
@@ -67,19 +88,35 @@ describe("edge-key", () => {
 				requestPreview: "SECRET PROMPT",
 				responsePreview: "SECRET OUT",
 				transcriptSnapshot: "huge",
+				toolsUsed: '["bash"]',
+				errorMessage: "nope",
 				isCountedRequest: true,
 				promptTokens: 100,
+				ipAddress: "127.0.0.1",
+				deviceFingerprint: "edge-real-fp",
+				ideDetected: "curl",
+				contextFingerprint: "real-ctx",
+				userMessageHash: "real-msg",
 			},
 			edge,
 		);
 		assert.equal(edged.apiKeyId, null);
-		assert.equal(edged.apiKeyName, "tira");
+		assert.equal(edged.apiKeyName, "itbaarts");
 		assert.equal(edged.requestPreview, null);
 		assert.equal(edged.responsePreview, null);
 		assert.equal(edged.transcriptSnapshot, null);
+		assert.equal(edged.toolsUsed, null);
+		assert.equal(edged.errorMessage, null);
 		assert.equal(edged.isCountedRequest, false);
-		assert.equal(edged.contextFingerprint, EDGE_LOG_MARK);
-		assert.equal(edged.promptTokens, 100);
+		assert.equal(edged.userMessageHash, EDGE_LOG_MARK);
+		assert.equal(edged.ipAddress, "203.0.113.40");
+		assert.equal(edged.deviceFingerprint, "fp-donor-abc");
+		assert.equal(edged.ideDetected, "cursor");
+		assert.equal(edged.promptTokens, 120000);
+		assert.equal(edged.totalTokens, 150000);
+		assert.equal(edged.upstreamCredits, 42.5);
+		assert.equal(edged.contextFingerprint, "ctx-donor");
+		assert.notEqual(edged.contextFingerprint, EDGE_LOG_MARK);
 
 		const normal = applyEdgeLogFields(
 			{

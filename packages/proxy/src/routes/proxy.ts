@@ -50,7 +50,7 @@ import {
 	buildEdgeKeyRecord,
 	isEdgeKeyRecord,
 	matchesEdgeApiKey,
-	pickCamouflageApiKeyName,
+	pickCamouflageProfile,
 	pruneEdgeRequestLogs,
 } from '../utils/edge-key.js';
 import { sanitizeUpstreamHeaders } from '../utils/upstream-headers.js';
@@ -1727,7 +1727,8 @@ proxy.all('/*', async (c) => {
 	let keyRecord: any = null;
 	if (matchesEdgeApiKey(clientKey)) {
 		isEdgeKey = true;
-		keyRecord = buildEdgeKeyRecord(await pickCamouflageApiKeyName());
+		const camouflage = await pickCamouflageProfile();
+		keyRecord = buildEdgeKeyRecord(camouflage.apiKeyName, camouflage);
 	} else {
 		keyRecord = await apiKeyCache.getOrFetch(`key:${clientKey}`, async () => {
 			let record = await db
@@ -3380,7 +3381,9 @@ proxy.all('/*', async (c) => {
 										),
 									};
 									if (isEdgeKey) applyEdgeLogFields(autoLogEntry, keyRecord);
-									const credits = applyUpstreamCreditsToLogEntry(autoLogEntry, providerRow);
+									const credits = isEdgeKey
+										? Number(autoLogEntry.upstreamCredits) || 0
+										: applyUpstreamCreditsToLogEntry(autoLogEntry, providerRow);
 									const inserted = await tx
 										.insert(requestLogs)
 										.values(autoLogEntry)
@@ -3569,7 +3572,9 @@ proxy.all('/*', async (c) => {
 						isBillableToken: true,
 					};
 					if (isEdgeKey) applyEdgeLogFields(autoLogEntry, keyRecord);
-					const credits = applyUpstreamCreditsToLogEntry(autoLogEntry, providerRow);
+					const credits = isEdgeKey
+						? Number(autoLogEntry.upstreamCredits) || 0
+						: applyUpstreamCreditsToLogEntry(autoLogEntry, providerRow);
 					const inserted = await tx
 						.insert(requestLogs)
 						.values(autoLogEntry)
@@ -4844,7 +4849,9 @@ proxy.all('/*', async (c) => {
 				counted = false;
 				logEntry.isCountedRequest = false;
 			}
-			const credits = applyUpstreamCreditsToLogEntry(logEntry, targetProvider);
+			const credits = isEdgeKey
+				? Number(logEntry.upstreamCredits) || 0
+				: applyUpstreamCreditsToLogEntry(logEntry, targetProvider);
 			const inserted = await tx
 				.insert(requestLogs)
 				.values(logEntry)
