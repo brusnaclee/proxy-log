@@ -11,6 +11,14 @@ Per-upstream **vendor segment** overrides for nested model ids.
 
 Clients **must** use the public vendor (`phantom/vibecode/...`). Calling a raw-only upstream vendor (`phantom/amanai/...` when aliased away and not also someone else's public name) returns **404 Not found** (no alias details in the body). The proxy still forwards the **real** upstream id after resolving the public name.
 
+`/v1/models` fields also follow the public vendor:
+
+| Field | Value |
+|-------|--------|
+| `id` | `phantom/vibecode/...` |
+| `owned_by` / `provider` | `vibecode` (not raw `amanai`) |
+| `upstream_provider` | proxy provider name (`phantom`) — unchanged |
+
 ## Collisions / chains
 
 Public names may overlap another upstream vendor (allowed), e.g.:

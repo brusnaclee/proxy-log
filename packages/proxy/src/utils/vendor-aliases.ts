@@ -208,6 +208,47 @@ export function toPublicModelId(
 	return `${prov}/${pubSuffix}`;
 }
 
+/**
+ * Client-facing owned_by / catalog provider label.
+ * Prefer public vendor segment of the publicized model id; else map raw owned_by
+ * when it equals an aliased upstream vendor.
+ */
+export function toPublicOwnedBy(
+	ownedBy: string | null | undefined,
+	publicUpstreamId: string,
+	aliases: VendorAliasMap,
+): string {
+	const fromId = vendorOf(String(publicUpstreamId || "").trim());
+	if (fromId) return fromId;
+	const raw = String(ownedBy || "").trim();
+	if (!raw) return raw;
+	for (const [real, pub] of Object.entries(aliases || {})) {
+		if (
+			real.toLowerCase() === raw.toLowerCase() &&
+			pub &&
+			pub.toLowerCase() !== real.toLowerCase()
+		) {
+			return pub;
+		}
+	}
+	return raw;
+}
+
+/** Rewrite a bare vendor label across any provider alias map. */
+export function publicizeOwnedByLabel(
+	label: string | null | undefined,
+	index: VendorAliasIndex,
+): string {
+	const raw = String(label ?? "").trim();
+	if (!raw) return String(label ?? "");
+	if (raw.includes("/")) return publicizeModelString(raw, index);
+	for (const aliases of index.byProviderName.values()) {
+		const mapped = toPublicOwnedBy(raw, "", aliases);
+		if (mapped !== raw) return mapped;
+	}
+	return raw;
+}
+
 function buildIndex(
 	rows: Array<{ name: string; vendorAliases?: string | null }>,
 ): VendorAliasIndex {
@@ -327,6 +368,9 @@ export function publicizeModelsDeep(
 				typeof v === "string"
 			) {
 				out[k] = publicizeModelString(v, index);
+			} else if (k === "owned_by" && typeof v === "string") {
+				// Catalog vendor label only — do not touch log `provider` (proxy name).
+				out[k] = publicizeOwnedByLabel(v, index);
 			} else if (k === "id" && typeof v === "string" && v.includes("/")) {
 				out[k] = publicizeModelString(v, index);
 			} else if (v && typeof v === "object") {

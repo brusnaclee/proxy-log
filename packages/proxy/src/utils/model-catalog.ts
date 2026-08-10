@@ -15,8 +15,10 @@ import {
   expandUpstreamIdCandidates,
   getAliasesForProviderName,
   loadVendorAliasIndex,
+  toPublicOwnedBy,
   toPublicUpstreamId,
   toRealUpstreamId,
+  vendorOf,
   type VendorAliasIndex,
 } from "./vendor-aliases.js";
 
@@ -606,13 +608,18 @@ export async function getModelCatalogResponse() {
     const { provider_id: _pid, ...rest } = m;
     rest.id = publicId;
 
+    // Client-facing vendor label follows alias (amanai → vibecode).
+    // upstream_provider stays the proxy provider name (phantom).
+    const publicOwnedBy = toPublicOwnedBy(rest.owned_by, publicSuffix, aliases);
+
     // Start from hardcoded fallback metadata, then overlay DB-enriched metadata.
     const fb = getFallbackMetadata(m.id) || getFallbackMetadata(publicId);
     const meta = metadataMap.get(m.id) || metadataMap.get(publicId);
 
     if (meta || fb) {
       const enriched: any = { ...rest };
-      enriched.provider = enriched.owned_by || null;
+      enriched.owned_by = publicOwnedBy;
+      enriched.provider = publicOwnedBy;
       enriched.upstream_provider = upstreamProviderName;
 
       // Apply fallback first
@@ -656,7 +663,8 @@ export async function getModelCatalogResponse() {
       }
       publicModels.push(enriched);
     } else {
-      rest.provider = rest.owned_by || null;
+      rest.owned_by = publicOwnedBy;
+      rest.provider = publicOwnedBy;
       rest.upstream_provider = upstreamProviderName;
       publicModels.push(rest);
     }
@@ -669,6 +677,9 @@ export async function getModelCatalogResponse() {
     const aliases = getAliasesForProviderName(aliasIndex, providerName);
     const publicSuffix = toPublicUpstreamId(cm.modelId, aliases);
     const publicId = `${providerName}/${publicSuffix}`;
+    const publicOwnedBy =
+      toPublicOwnedBy(vendorOf(cm.modelId) || providerName, publicSuffix, aliases) ||
+      providerName;
 
     if (seen.has(publicId)) continue;
     seen.add(publicId);
@@ -688,8 +699,8 @@ export async function getModelCatalogResponse() {
       id: publicId,
       object: "model",
       created: Math.floor(cm.createdAt.getTime() / 1000),
-      owned_by: providerName,
-      provider: providerName,
+      owned_by: publicOwnedBy,
+      provider: publicOwnedBy,
       upstream_provider: providerName,
       name: cm.displayName || fb?.displayName || cm.modelId,
       description: cm.description || fb?.description || null,

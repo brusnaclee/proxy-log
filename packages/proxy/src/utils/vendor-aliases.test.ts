@@ -7,6 +7,7 @@ import {
 	toRealUpstreamIdCandidates,
 	toPublicModelId,
 	toPublicLogModelId,
+	toPublicOwnedBy,
 	publicizeModelString,
 	publicizeMonitorModelId,
 	expandUpstreamIdCandidates,
@@ -137,5 +138,15 @@ describe("vendor-aliases", () => {
 			toPublicLogModelId("phantom", "amanai/glm-5.2", aliases, 1),
 			"phantom/amanai/glm-5.2",
 		);
+	});
+
+	it("toPublicOwnedBy follows public vendor segment", () => {
+		const aliases = { amanai: "vibecode" };
+		assert.equal(
+			toPublicOwnedBy("amanai", "vibecode/deepseek-v4-flash-0731", aliases),
+			"vibecode",
+		);
+		assert.equal(toPublicOwnedBy("amanai", "", aliases), "vibecode");
+		assert.equal(toPublicOwnedBy("system", "leaf-only", aliases), "system");
 	});
 });
