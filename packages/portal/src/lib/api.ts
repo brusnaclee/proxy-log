@@ -5,9 +5,10 @@ const BASE = "/portal/api";
 async function request<T>(
   path: string,
   method: string,
-  body?: unknown
+  body?: unknown,
+  base = BASE
 ): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(`${base}${path}`, {
     method,
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -362,6 +363,59 @@ export interface NotificationsResponse {
   }>;
 }
 
+export type UsageExplanationPeriod = "1d" | "3d" | "7d" | "30d";
+
+export interface UsageExplanationTotals {
+  turns: number;
+  apiCalls: number;
+  hops: number;
+  success: number;
+  fail: number;
+  rawBillableInput: number;
+  cachedInput: number;
+  output: number;
+  total: number;
+  inputTowardLimit: number;
+  outputTowardLimit: number;
+  amountTowardLimit: number;
+  successfulHops: number;
+  failedHops: number;
+  billableInputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  rawTotalTokens: number;
+  upstreamInputCredits: number;
+  upstreamOutputCredits: number;
+}
+
+export interface UsageExplanationBreakdown extends Partial<UsageExplanationTotals> {
+  ide?: string;
+  model?: string;
+  name?: string;
+  label?: string;
+}
+
+export interface UsageExplanationResponse {
+  period: UsageExplanationPeriod;
+  from: string;
+  to: string;
+  timezone: string;
+  totals: UsageExplanationTotals;
+  towardLimit: {
+    input: number;
+    output: number;
+    total: number;
+    source: string;
+    explanation: string;
+  };
+  meter: {
+    source: string;
+    explanation: string;
+  };
+  byIde: UsageExplanationBreakdown[];
+  byModel: UsageExplanationBreakdown[];
+}
+
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
 function clientHintPayload() {
@@ -454,6 +508,11 @@ export const stats = {
 
   forecast: () =>
     request<ForecastResponse>("/stats/forecast", "GET"),
+};
+
+export const usage = {
+  explanation: (period: UsageExplanationPeriod) =>
+    request<UsageExplanationResponse>(`/stats/usage-breakdown?period=${period}`, "GET"),
 };
 
 // ─── Keys ─────────────────────────────────────────────────────────────────────
@@ -563,4 +622,4 @@ export const settings = {
 
 // ─── Root export ──────────────────────────────────────────────────────────────
 
-export const api = { me, auth, stats, keys, logs, models, recap, notifications, deviceChallenge, settings, sessions };
+export const api = { me, auth, stats, usage, keys, logs, models, recap, notifications, deviceChallenge, settings, sessions };

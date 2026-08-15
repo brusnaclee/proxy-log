@@ -89,28 +89,28 @@ stats.get("/stats/overview", async (c) => {
         billablePromptTokens: turnBillablePromptTokensSql(periodWhere),
         cachedTokens: turnCachedTokensSql(periodWhere),
         completionTokens: turnDisplayCompletionTokensSql(periodWhere),
-        contextTokens: sql<number>`0`,
+    contextTokens: sql<number>`0`,
         uniqueDevices: sql<number>`COUNT(DISTINCT device_fingerprint)`,
-      })
-        .from(requestLogs)
+  })
+  .from(requestLogs)
         .where(periodWhere)
         .then((r) => r[0]),
       db.execute(sql`
-        SELECT model, COALESCE(SUM(sum_delta), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
-        FROM (
-          SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
-            turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
+    SELECT model, COALESCE(SUM(sum_delta), 0) as "promptTokens", COALESCE(SUM(sum_c), 0) as "completionTokens"
+    FROM (
+      SELECT CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END as model,
+        turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
           FROM request_logs
           WHERE status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL ${dateFilter}
-          GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
-          UNION ALL
-          SELECT TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
-            turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
+      GROUP BY CASE WHEN model LIKE 'auto (%)%' THEN 'auto' ELSE model END, turn_id
+      UNION ALL
+      SELECT TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)) as model,
+        turn_id, ${sql.raw(groupedInputSumSql())} as sum_delta, SUM(completion_tokens) as sum_c
           FROM request_logs
           WHERE model LIKE 'auto (%)%' AND status_code BETWEEN 200 AND 299 AND turn_id IS NOT NULL ${dateFilter}
-          GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
-        )
-        GROUP BY model
+      GROUP BY TRIM(SUBSTRING(model FROM 7 FOR POSITION(')' IN SUBSTRING(model FROM 7)) - 1)), turn_id
+    )
+    GROUP BY model
       `),
       db.select({ count: sql<number>`count(*)` }).from(apiKeys).where(eq(apiKeys.isActive, true)).then((r) => r[0]),
       db.select({ count: sql<number>`count(*)` }).from(apiKeys).then((r) => r[0]),
@@ -118,23 +118,23 @@ stats.get("/stats/overview", async (c) => {
       db.select({ count: sql<number>`count(*)` }).from(chatSessions).then((r) => r[0]),
       period === "allTime"
         ? db.select({
-            requests: sql<number>`COALESCE(SUM(turn_count), 0)`,
-            tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
-            promptTokens: sql<number>`COALESCE(SUM(input_tokens), 0)`,
-            completionTokens: sql<number>`COALESCE(SUM(output_tokens), 0)`,
-          })
-            .from(monthlyStats)
+    requests: sql<number>`COALESCE(SUM(turn_count), 0)`,
+    tokens: sql<number>`COALESCE(SUM(total_tokens), 0)`,
+    promptTokens: sql<number>`COALESCE(SUM(input_tokens), 0)`,
+    completionTokens: sql<number>`COALESCE(SUM(output_tokens), 0)`,
+  })
+  .from(monthlyStats)
             .where(sql`api_key_id IS NULL AND model = '_all_'`)
             .then((r) => r[0])
         : Promise.resolve(null),
       period === "allTime"
         ? db.select({
-            model: monthlyStats.model,
-            promptTokens: sql<number>`COALESCE(SUM(input_tokens), 0)`,
-            completionTokens: sql<number>`COALESCE(SUM(output_tokens), 0)`,
-          })
-            .from(monthlyStats)
-            .where(sql`api_key_id IS NULL AND model != '_all_'`)
+    model: monthlyStats.model,
+    promptTokens: sql<number>`COALESCE(SUM(input_tokens), 0)`,
+    completionTokens: sql<number>`COALESCE(SUM(output_tokens), 0)`,
+  })
+  .from(monthlyStats)
+  .where(sql`api_key_id IS NULL AND model != '_all_'`)
             .groupBy(monthlyStats.model)
         : Promise.resolve([] as any[]),
     ]);
@@ -176,7 +176,7 @@ stats.get("/stats/overview", async (c) => {
           completionTokens: Number(r.completionTokens) || 0,
         })),
       );
-      const breakdownMap = new Map<string, { promptTokens: number; completionTokens: number }>();
+  const breakdownMap = new Map<string, { promptTokens: number; completionTokens: number }>();
       for (const row of breakdown) {
         breakdownMap.set(row.model, {
           promptTokens: row.promptTokens,
@@ -184,11 +184,11 @@ stats.get("/stats/overview", async (c) => {
         });
       }
       for (const row of archivedBd as any[]) {
-        const existing = breakdownMap.get(row.model);
-        if (existing) {
-          existing.promptTokens += row.promptTokens;
-          existing.completionTokens += row.completionTokens;
-        } else {
+    const existing = breakdownMap.get(row.model);
+    if (existing) {
+      existing.promptTokens += row.promptTokens;
+      existing.completionTokens += row.completionTokens;
+    } else {
           breakdownMap.set(row.model, {
             promptTokens: row.promptTokens,
             completionTokens: row.completionTokens,
@@ -426,8 +426,8 @@ stats.get("/stats/timeseries", async (c) => {
   const whereExtra = sql`
     created_at >= ${startDate}
     ${endFilter}
-    AND status_code BETWEEN 200 AND 299
-    ${keyFilter}
+        AND status_code BETWEEN 200 AND 299
+        ${keyFilter}
   `;
 
   const result = sanitizeRows(
@@ -536,7 +536,7 @@ stats.get("/stats/top-users", async (c) => {
     };
   };
 
-  return {
+        return {
     byRequests: sortTopByRequests(accounts).map(toRow),
     byTokens: sortTopByTokens(accounts).map(toRow),
   };

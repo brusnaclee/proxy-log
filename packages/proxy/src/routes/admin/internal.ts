@@ -6,6 +6,10 @@ import { generateApiKey, getKeyPrefix, sha256 } from "../../utils/crypto.js";
 import { getModelRates } from "../../utils/cost-calculator.js";
 import { normalizeIdeName } from "../../utils/detect-ide.js";
 import {
+  getAccountUsageBreakdown,
+  parseUsageBreakdownPeriod,
+} from "../../utils/usage-aggregates.js";
+import {
   checkPromptLimit,
   checkModelPromptLimit,
   checkApiCallLimit,
@@ -31,6 +35,20 @@ import { listGpyCatalogModels } from "../../utils/trial-routing.js";
 import { pickPrimaryNonTrialKey } from "../../utils/api-key-primary.js";
 
 const internal = new Hono();
+
+internal.get("/discord/users/:discordUserId/usage-explanation", async (c) => {
+  const discordUserId = String(c.req.param("discordUserId") || "").trim();
+  if (!/^\d{15,25}$/.test(discordUserId)) {
+    return c.json({ error: "Invalid Discord user ID" }, 400);
+  }
+  const days = String(c.req.query("days") || "1").trim();
+  try {
+    const period = parseUsageBreakdownPeriod(`${days}d`);
+    return c.json(await getAccountUsageBreakdown(discordUserId, period));
+  } catch (error) {
+    return c.json({ error: (error as Error).message }, 400);
+  }
+});
 
 const checkInternal = (c: any) => {
   if (!isInternalRequest(c)) {

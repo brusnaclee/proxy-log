@@ -9,6 +9,82 @@ Single source of truth for how **usage today** is counted and shown across:
 
 When changing formulas or labels, update **all** surfaces listed here and this doc.
 
+## Canonical transparent breakdown API
+
+The backend exposes one account-level explanation contract for every usage UI:
+
+- Portal (authenticated account): `GET /portal/stats/usage-breakdown?period=1d`
+- Admin (existing admin API-key route): `GET /admin/keys/:id/usage-breakdown?period=1d`
+
+Allowed periods are `1d`, `3d`, `7d`, and `30d`; default is `1d`. These are
+rolling windows ending at request time, not calendar buckets. Invalid periods
+return HTTP 400. `from` and `to` are UTC ISO timestamps and `timezone` is
+`Asia/Jakarta`, the product's display/accounting timezone.
+
+Both endpoints are **account scoped**. The portal uses the authenticated
+Discord account. Admin resolves `:id` to its `discord_user_id`, then includes
+logs from every API key with that value (including inactive sibling keys).
+An unlinked admin key returns HTTP 422.
+
+### Response contract
+
+```json
+{
+  "period": "1d",
+  "from": "2026-08-14T16:00:00.000Z",
+  "to": "2026-08-15T16:00:00.000Z",
+  "timezone": "Asia/Jakarta",
+  "totals": {
+    "turns": 12,
+    "apiCalls": 31,
+    "hops": 31,
+    "success": 29,
+    "fail": 2,
+    "rawBillableInput": 10000,
+    "cachedInput": 4000,
+    "output": 3000,
+    "total": 17000,
+    "inputTowardLimit": 8200,
+    "outputTowardLimit": 3000,
+    "amountTowardLimit": 11200
+  },
+  "towardLimit": {
+    "input": 8200,
+    "output": 3000,
+    "total": 11200,
+    "source": "canonical-limit-meter",
+    "explanation": "Canonical gate meter: upstream credits when present; otherwise configured model multipliers and flat hop weighting (25%). Output is weighted by the canonical output meter."
+  },
+  "byIde": [{ "name": "cursor", "...same totals fields": "..." }],
+  "byModel": [{ "name": "claude-sonnet-4", "...same totals fields": "..." }]
+}
+```
+
+`byIde` and `byModel` rows contain `name` plus every field in `totals`, including
+`amountTowardLimit`; blank values are grouped as `unknown`. Groups sort by
+`amountTowardLimit`, then API calls.
+
+### Field meaning
+
+- `turns`: distinct successful non-null `turn_id` values.
+- `apiCalls` / `hops`: all request-log hops, successful or failed.
+- `success` / `fail`: hop counts by HTTP 2xx / non-2xx status.
+- `rawBillableInput`: successful-hop `prompt_tokens` before multipliers.
+- `cachedInput`: successful-hop `cached_tokens` before multipliers.
+- `output`: successful-hop `completion_tokens` before multipliers.
+- `total`: the raw transparent sum of those three fields. It is informational,
+  not the enforced amount.
+- `inputTowardLimit`, `outputTowardLimit`, `amountTowardLimit`: canonical
+  enforced meter. They call the same `weightedHopInputTokensSql` and
+  `weightedHopTotalTokensSql` helpers as gates and existing surfaces; this
+  service intentionally does not duplicate the billing formula.
+- Canonical input uses upstream credits when available; otherwise it applies
+  the account tier's configured model multiplier and current hop weighting.
+  Canonical output likewise uses upstream output credits/model multiplier.
+
+All consumers should display this contract directly. Do not recompute
+`amountTowardLimit` in portal, dashboard, bot, or admin clients.
+
 ---
 
 ## 1. Scope rules

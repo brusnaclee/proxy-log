@@ -1,4 +1,4 @@
-﻿const {
+const {
 	Client,
 	GatewayIntentBits,
 	Partials,
@@ -4432,6 +4432,32 @@ function buildUsageDetailRow(includeOther = false) {
 	return new ActionRowBuilder().addComponents(...buttons);
 }
 
+const USAGE_BREAKDOWN_PREFIX = 'usage_breakdown:';
+const USAGE_BREAKDOWN_PERIODS = [1, 3, 7, 30];
+
+function buildUsageBreakdownRow(targetUserId, selectedDays = null) {
+	return new ActionRowBuilder().addComponents(
+		...USAGE_BREAKDOWN_PERIODS.map((days) =>
+			new ButtonBuilder()
+				.setCustomId(`${USAGE_BREAKDOWN_PREFIX}${targetUserId}:${days}`)
+				.setLabel(`${days} hari`)
+				.setStyle(
+					days === selectedDays ? ButtonStyle.Primary : ButtonStyle.Secondary,
+				),
+		),
+	);
+}
+
+function buildUsageBreakdownEntryRow(targetUserId) {
+	return new ActionRowBuilder().addComponents(
+		new ButtonBuilder()
+			.setCustomId(`${USAGE_BREAKDOWN_PREFIX}${targetUserId}:7`)
+			.setLabel('Detailed Usage')
+			.setEmoji('🔎')
+			.setStyle(ButtonStyle.Primary),
+	);
+}
+
 function fmtTokShort(v) {
 	if (!v || v <= 0) return '—';
 	if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
@@ -7040,7 +7066,10 @@ async function handleShowMyUsage(interaction) {
 	const embed = buildUsageDetailEmbed(data, discordUserId, discordUserId);
 	await interaction.editReply({
 		embeds: [embed],
-		components: [buildUsageDetailRow(true)],
+		components: [
+			buildUsageDetailRow(true),
+			buildUsageBreakdownEntryRow(discordUserId),
+		],
 	});
 }
 
@@ -7114,8 +7143,153 @@ async function handleRankingSearchModal(interaction) {
 	const embed = buildUsageDetailEmbed(data, discordUserId, interaction.user.id);
 	await interaction.editReply({
 		embeds: [embed],
-		components: [buildUsageDetailRow(false)],
+		components: [
+			buildUsageDetailRow(false),
+			buildUsageBreakdownEntryRow(discordUserId),
+		],
 	});
+}
+
+function canonicalNumber(value) {
+	const number = Number(value);
+	return Number.isFinite(number) ? number : 0;
+}
+
+function formatCanonicalAmount(value, unit = 'tokens') {
+	const amount = canonicalNumber(value).toLocaleString('en-US', {
+		maximumFractionDigits: 4,
+	});
+	return unit ? `${amount} ${unit}` : amount;
+}
+
+function truncateDiscord(value, max) {
+	const text = String(value ?? '');
+	return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1))}…`;
+}
+
+function formatBreakdownRows(rows, valueKey = 'amountTowardLimit', unit = 'tokens') {
+	if (!Array.isArray(rows) || rows.length === 0) return 'Tidak ada data.';
+	return truncateDiscord(
+		rows
+			.slice(0, 10)
+			.map((row, index) => {
+				const name = row.name ?? row.label ?? row.id ?? `#${index + 1}`;
+				return `**${truncateDiscord(name, 60)}** — ${formatCanonicalAmount(row[valueKey], row.unit ?? unit)}`;
+			})
+			.join('\n'),
+		1024,
+	);
+}
+
+function buildTransparentUsageEmbed(data, targetUserId, days) {
+	const usage = data.usage ?? data;
+	const totals = usage.totals ?? {};
+	const billable = usage.billable ?? {};
+	const activity = usage.activity ?? {};
+	const meter = usage.meter ?? usage.towardLimit ?? {};
+	const limit = usage.limit ?? usage.towardLimit ?? {};
+	const period = usage.period ?? {};
+	const amount =
+		limit.total ??
+		limit.amountTowardLimit ??
+		usage.amountTowardLimit ??
+		totals.amountTowardLimit;
+	const limitValue = limit.value ?? usage.limitAmount;
+	const unit = limit.unit ?? usage.unit ?? 'tokens';
+	const amountLine =
+		limitValue == null
+			? formatCanonicalAmount(amount, unit)
+			: `${formatCanonicalAmount(amount, unit)} / ${formatCanonicalAmount(limitValue, unit)}`;
+
+	const explanation = truncateDiscord(
+		meter.explanation ?? usage.explanation ?? 'Tidak diberikan backend.',
+		900,
+	);
+	const source = meter.source ?? usage.meterSource ?? 'canonical backend meter';
+
+	return new EmbedBuilder()
+		.setColor(0x5865f2)
+		.setTitle(`🔎 Detailed Usage · ${days} hari`)
+		.setDescription(
+			`Akun: <@${targetUserId}>\nPeriode: **${period.start ?? '—'}** sampai **${period.end ?? '—'}**`,
+		)
+		.addFields(
+			{
+				name: 'Amount toward limit',
+				value: `**${amountLine}**`,
+				inline: false,
+			},
+			{
+				name: 'Raw billable tokens',
+				value:
+					`Input: **${formatCanonicalAmount(billable.input, billable.unit ?? 'tokens')}**\n` +
+					`Cache: **${formatCanonicalAmount(billable.cache, billable.unit ?? 'tokens')}**\n` +
+					`Output: **${formatCanonicalAmount(billable.output, billable.unit ?? 'tokens')}**`,
+				inline: true,
+			},
+			{
+				name: 'Activity',
+				value:
+					`Prompts: **${canonicalNumber(activity.prompts ?? totals.turns).toLocaleString('en-US')}**\n` +
+					`API calls: **${canonicalNumber(activity.apiCalls ?? totals.apiCalls ?? totals.hops).toLocaleString('en-US')}**`,
+				inline: true,
+			},
+			{
+				name: 'Meter source & explanation',
+				value: `**${truncateDiscord(source, 100)}**\n${explanation}`,
+				inline: false,
+			},
+			{
+				name: 'Top IDE',
+				value: formatBreakdownRows(usage.topIdes ?? usage.byIde, 'amountTowardLimit', unit),
+				inline: true,
+			},
+			{
+				name: 'Top models',
+				value: formatBreakdownRows(usage.topModels ?? usage.byModel, 'amountTowardLimit', unit),
+				inline: true,
+			},
+		)
+		.setFooter({ text: 'Canonical values supplied by the proxy backend' })
+		.setTimestamp();
+}
+
+async function handleTransparentUsage(interaction) {
+	const match = interaction.customId.match(/^usage_breakdown:(\d{17,20}):(1|3|7|30)$/);
+	if (!match) {
+		await interaction.reply({ content: '❌ Permintaan usage tidak valid.', ephemeral: true });
+		return;
+	}
+	const [, targetUserId, daysText] = match;
+	const days = Number(daysText);
+	if (interaction.user.id !== targetUserId) {
+		const access = await getMemberToolAccess(interaction.member);
+		if (!access.canUseTools) {
+			await interaction.reply({
+				content: '❌ Anda tidak boleh melihat detailed usage akun lain.',
+				ephemeral: true,
+			});
+			return;
+		}
+	}
+
+	await interaction.deferUpdate();
+	try {
+		const data = await proxyInternal(
+			`/admin/internal/discord/users/${encodeURIComponent(targetUserId)}/usage-explanation?days=${days}`,
+		);
+		const embed = buildTransparentUsageEmbed(data, targetUserId, days);
+		await interaction.editReply({
+			embeds: [embed],
+			components: [buildUsageBreakdownRow(targetUserId, days)],
+		});
+	} catch (err) {
+		console.error('[usage-breakdown] Failed:', err);
+		await interaction.followUp({
+			content: `❌ Gagal mengambil detailed usage: ${err.message || err}`,
+			ephemeral: true,
+		});
+	}
 }
 
 client.once('clientReady', async () => {
@@ -8118,6 +8292,14 @@ client.on('interactionCreate', async (interaction) => {
 		}
 
 		// ─── Ranking See Model Limit Button ──────────────────────────────────
+		if (
+			interaction.isButton() &&
+			interaction.customId.startsWith(USAGE_BREAKDOWN_PREFIX)
+		) {
+			await handleTransparentUsage(interaction);
+			return;
+		}
+
 		if (
 			interaction.isButton() &&
 			(interaction.customId === 'ranking_see_model_limits' ||

@@ -25,6 +25,7 @@ import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, 
 } from "recharts";
 import { ChartBox } from "@/components/ChartBox";
+import { UsageExplanationCard } from "@/components/UsageExplanationCard";
 import { badgeClass, badgeLabel, resolveDisplayBadges, formatAddonExpiry } from "@/lib/account-badge";
 
 const TOOLTIP_STYLE  = { backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "8px", fontSize: "12px", color: "hsl(var(--foreground))" };
@@ -632,6 +633,8 @@ export default function KeyDetailPage() {
           )}
         </div>
       </div>
+
+      <UsageExplanationCard keyId={Number(id)} />
 
       {trialInfo && (
         <Card className="border-purple-500/30 bg-purple-500/5">

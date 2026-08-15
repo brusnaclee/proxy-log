@@ -37,6 +37,7 @@ import {
   sortKeysPrimaryFirst,
 } from "../../utils/api-key-primary.js";
 import { listAccountDevices } from "../../utils/account-devices.js";
+import { getAccountUsageBreakdown, parseUsageBreakdownPeriod } from "../../utils/usage-aggregates.js";
 
 const portal = new Hono();
 
@@ -816,6 +817,16 @@ portal.get("/me", async (c) => {
 });
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
+
+portal.get("/stats/usage-breakdown", async (c) => {
+  const discordUserId = getPortalDiscordUserId(c)!;
+  try {
+    const period = parseUsageBreakdownPeriod(c.req.query("period"));
+    return c.json(await getAccountUsageBreakdown(discordUserId, period));
+  } catch (error) {
+    return c.json({ error: (error as Error).message }, 400);
+  }
+});
 
 portal.get("/stats/overview", async (c) => {
   const discordUserId = getPortalDiscordUserId(c)!;

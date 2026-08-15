@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { PeriodSelector, type PeriodKey } from "@/components/PeriodSelector";
 import { ChartBox } from "@/components/ChartBox";
+import { UsageExplanationCard } from "@/components/UsageExplanationCard";
 import { api, type MeResponse, type TopError } from "@/lib/api";
 import { formatNumber, formatCost, formatInputBreakdown } from "@/lib/utils";
 import { badgeClass, badgeLabel, resolveDisplayBadges, formatAddonExpiry } from "@/lib/account-badge";
@@ -942,6 +943,8 @@ export default function OverviewPage() {
       </div>
 
       {renderTrialCountdown()}
+
+      <UsageExplanationCard />
 
       {/* Loading skeleton — only first load; keep previous charts while refreshing */}
       {loading && !stats ? (

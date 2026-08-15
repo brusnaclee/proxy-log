@@ -345,6 +345,41 @@ export interface KeyPeriodStats {
   completionCost: number;
 }
 
+export type UsageExplanationPeriod = "1d" | "3d" | "7d" | "30d";
+
+export interface UsageExplanationNumbers {
+  turns: number;
+  apiCalls: number;
+  successfulHops: number;
+  failedHops: number;
+  billableInputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  rawTotalTokens: number;
+  upstreamInputCredits: number;
+  upstreamOutputCredits: number;
+  amountTowardLimit: number;
+}
+
+export interface UsageExplanationRow extends UsageExplanationNumbers {
+  label?: string;
+  model?: string;
+}
+
+export interface UsageExplanation {
+  period: UsageExplanationPeriod;
+  from: string;
+  to: string;
+  timezone: string;
+  totals: UsageExplanationNumbers;
+  meter: {
+    source: string;
+    explanation: string;
+  };
+  byIde: UsageExplanationRow[];
+  byModel: UsageExplanationRow[];
+}
+
 export interface ApiKeyDetail extends ApiKeyListItem {
   rateLimit: number;
   rateLimitWindow: string;
@@ -464,6 +499,8 @@ export const keys = {
   list: (opts?: { lite?: boolean }) =>
     request<ApiKeyListItem[]>(opts?.lite ? "/keys?lite=1" : "/keys"),
   get: (id: number) => request<ApiKeyDetail>(`/keys/${id}`),
+  getUsageExplanation: (id: number, period: UsageExplanationPeriod) =>
+    request<UsageExplanation>(`/api-keys/${id}/usage-explanation?period=${period}`),
   create: (name: string) =>
     request<CreateKeyResponse>("/keys", {
       method: "POST",

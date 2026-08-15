@@ -29,6 +29,7 @@ import {
   resolveDiscordRoles,
 } from "../../utils/discord-roles.js";
 import { queueUserNotification, formatPhantomCredentialsMessage } from "../../utils/user-notify.js";
+import { getAccountUsageBreakdown, parseUsageBreakdownPeriod } from "../../utils/usage-aggregates.js";
 
 async function mapWithConcurrency<T, R>(
   items: T[],
@@ -534,6 +535,22 @@ keys.post("/keys/override-discord", async (c) => {
     roleLimitMode: limitMode,
     accountTier,
   });
+});
+
+keys.get("/keys/:id/usage-breakdown", async (c) => {
+  const id = Number.parseInt(c.req.param("id"), 10);
+  if (!Number.isInteger(id)) return c.json({ error: "Invalid API key id" }, 400);
+  const key = (await db.select({
+    discordUserId: apiKeys.discordUserId,
+  }).from(apiKeys).where(eq(apiKeys.id, id)))[0];
+  if (!key) return c.json({ error: "API key not found" }, 404);
+  if (!key.discordUserId) return c.json({ error: "API key is not linked to an account" }, 422);
+  try {
+    const period = parseUsageBreakdownPeriod(c.req.query("period"));
+    return c.json(await getAccountUsageBreakdown(key.discordUserId, period));
+  } catch (error) {
+    return c.json({ error: (error as Error).message }, 400);
+  }
 });
 
 keys.get("/keys/:id", async (c) => {

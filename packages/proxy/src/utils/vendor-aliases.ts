@@ -360,6 +360,11 @@ export function publicizeModelsDeep(
 		return value.map((v) => publicizeModelsDeep(v, index));
 	}
 	if (typeof value === "object") {
+		// Dates and other class instances are already safely serializable. Treating
+		// them as records turns Date into `{}` and blanks client-facing timestamps.
+		if (value instanceof Date) return value;
+		const proto = Object.getPrototypeOf(value);
+		if (proto !== Object.prototype && proto !== null) return value;
 		const obj = value as Record<string, unknown>;
 		const out: Record<string, unknown> = {};
 		for (const [k, v] of Object.entries(obj)) {
