@@ -15,6 +15,7 @@ The backend exposes one account-level explanation contract for every usage UI:
 
 - Portal (authenticated account): `GET /portal/stats/usage-breakdown?period=1d`
 - Admin (existing admin API-key route): `GET /admin/keys/:id/usage-breakdown?period=1d`
+- Discord (internal bot route): `GET /admin/internal/discord/users/:discordUserId/usage-explanation?days=1`
 
 Allowed periods are `1d`, `3d`, `7d`, and `30d`; default is `1d`. These are
 rolling windows ending at request time, not calendar buckets. Invalid periods
@@ -25,6 +26,34 @@ Both endpoints are **account scoped**. The portal uses the authenticated
 Discord account. Admin resolves `:id` to its `discord_user_id`, then includes
 logs from every API key with that value (including inactive sibling keys).
 An unlinked admin key returns HTTP 422.
+
+### Display vocabulary and information architecture
+
+Never expose internal meter names or use the ambiguous label **Raw tokens**.
+All user-facing surfaces use:
+
+- **Input processed** = billable input + cached input. This is traffic context,
+  not necessarily the amount charged to a limit.
+- **Output generated** = completion/output tokens, separate from input.
+- **Counted toward limits** = canonical input counted + canonical output
+  counted. This is the value supplied by the gate meter.
+- **Prompts** = distinct user turns.
+- **Upstream calls** = request-log hops, including retry, continuation, and
+  tool-step calls.
+- **Total traffic** may appear only as tertiary context, explicitly described
+  as input + output and not as a quota value.
+
+Portal Overview and Admin Key Detail show a compact summary/trigger. The trigger
+opens an accessible dialog with rolling 1/3/7/30-day controls, exact range, and
+By IDE / By Model tables. Discord uses the same labels in a compact embed.
+
+The IDE and model tables show Input processed, Output generated, and Counted
+toward limits as separate columns. Each table independently partitions the same
+account snapshot; never add the IDE table to the model table.
+
+`Usage Today` quota bars are calendar-day counters since **00:00 WIB** and are
+independent from the analytics period selector. Transparent explanation periods
+are exact rolling windows, so “1 day” is not the same window as “Today”.
 
 ### Response contract
 

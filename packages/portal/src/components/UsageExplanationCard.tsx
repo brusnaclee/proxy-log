@@ -1,237 +1,124 @@
-import { useEffect, useState } from "react";
-import {
-  AlertTriangle, Braces, ChevronDown, CircleHelp, Database, Gauge,
-  MessageSquareText, RefreshCw, Sparkles, type LucideIcon,
-} from "lucide-react";
-import {
-  api,
-  type UsageExplanationBreakdown,
-  type UsageExplanationPeriod,
-  type UsageExplanationResponse,
-} from "@/lib/api";
+import { useEffect, useRef, useState } from "react";
+import { AlertTriangle, ArrowRight, CircleHelp, RefreshCw, X } from "lucide-react";
+import { api, type UsageExplanationBreakdown, type UsageExplanationPeriod, type UsageExplanationResponse } from "@/lib/api";
 import { formatNumber } from "@/lib/utils";
 
 const PERIODS: Array<{ value: UsageExplanationPeriod; label: string }> = [
-  { value: "1d", label: "1 day" },
-  { value: "3d", label: "3 days" },
-  { value: "7d", label: "7 days" },
-  { value: "30d", label: "30 days" },
+  { value: "1d", label: "1 day" }, { value: "3d", label: "3 days" },
+  { value: "7d", label: "7 days" }, { value: "30d", label: "30 days" },
 ];
 
-const n = (value?: number) => formatNumber(value ?? 0);
+const value = (row: UsageExplanationBreakdown, key: keyof UsageExplanationBreakdown) =>
+  typeof row[key] === "number" ? row[key] as number : 0;
+const inputProcessed = (row: UsageExplanationBreakdown) =>
+  value(row, "rawBillableInput") + value(row, "cachedInput");
 
-function dateRange(data: UsageExplanationResponse) {
-  try {
-    const format = new Intl.DateTimeFormat(undefined, {
-      month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
-      timeZone: data.timezone,
-    });
-    return `${format.format(new Date(data.from))} – ${format.format(new Date(data.to))} (${data.timezone})`;
-  } catch {
-    return `${data.from} – ${data.to}`;
-  }
-}
-
-function BreakdownTable({
-  rows,
-  kind,
-}: {
-  rows: UsageExplanationBreakdown[];
-  kind: "IDE" | "Model";
-}) {
-  if (!rows.length) {
-    return (
-      <div className="py-8 text-center text-sm text-muted-foreground">
-        No {kind.toLowerCase()} usage in this period.
-      </div>
-    );
-  }
-
+function BreakdownTable({ rows, kind }: { rows: UsageExplanationBreakdown[]; kind: "IDE" | "Model" }) {
+  if (!rows.length) return <p className="py-8 text-center text-sm text-muted-foreground">No {kind.toLowerCase()} usage in this period.</p>;
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[520px] text-sm">
-        <thead>
-          <tr className="border-b border-border text-left text-xs text-muted-foreground">
-            <th className="pb-2 font-medium">{kind}</th>
-            <th className="pb-2 text-right font-medium">Prompts</th>
-            <th className="pb-2 text-right font-medium">API calls</th>
-            <th className="pb-2 text-right font-medium">Raw tokens</th>
-            <th className="pb-2 text-right font-medium">Toward limit</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, index) => {
-            const label = row.ide ?? row.model ?? row.name ?? row.label ?? `Unknown ${kind}`;
-            return (
-              <tr key={`${label}-${index}`} className="border-b border-border/60 last:border-0">
-                <td className="max-w-[220px] truncate py-3 pr-4 font-medium text-foreground" title={label}>{label}</td>
-                <td className="py-3 text-right tabular-nums text-muted-foreground">{n(row.turns)}</td>
-                <td className="py-3 text-right tabular-nums text-muted-foreground">{n(row.apiCalls)}</td>
-                <td className="py-3 text-right tabular-nums text-muted-foreground">{n(row.rawTotalTokens)}</td>
-                <td className="py-3 text-right tabular-nums font-medium text-foreground">{n(row.amountTowardLimit)}</td>
-              </tr>
-            );
-          })}
-        </tbody>
+      <table className="w-full min-w-[760px] text-sm">
+        <thead><tr className="border-b border-border text-left text-xs text-muted-foreground">
+          <th className="pb-2 font-medium">{kind}</th><th className="pb-2 text-right font-medium">Prompts</th>
+          <th className="pb-2 text-right font-medium">Upstream calls</th><th className="pb-2 text-right font-medium">Input processed</th>
+          <th className="pb-2 text-right font-medium">Output generated</th><th className="pb-2 text-right font-medium">Counted toward limits</th>
+        </tr></thead>
+        <tbody>{rows.map((row, index) => {
+          const label = row.ide ?? row.model ?? row.name ?? row.label ?? `Unknown ${kind}`;
+          return <tr key={`${label}-${index}`} className="border-b border-border/60 last:border-0">
+            <td className="py-3 font-medium text-foreground">{label}</td>
+            <td className="py-3 text-right tabular-nums">{formatNumber(value(row, "turns"))}</td>
+            <td className="py-3 text-right tabular-nums">{formatNumber(value(row, "apiCalls") || value(row, "hops"))}</td>
+            <td className="py-3 text-right tabular-nums">{formatNumber(inputProcessed(row))}</td>
+            <td className="py-3 text-right tabular-nums">{formatNumber(value(row, "output"))}</td>
+            <td className="py-3 text-right font-medium tabular-nums text-primary">{formatNumber(value(row, "amountTowardLimit"))}</td>
+          </tr>;
+        })}</tbody>
       </table>
     </div>
   );
 }
 
 export function UsageExplanationCard() {
+  const [open, setOpen] = useState(false);
   const [period, setPeriod] = useState<UsageExplanationPeriod>("7d");
   const [data, setData] = useState<UsageExplanationResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<"ide" | "model">("ide");
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const [retry, setRetry] = useState(0);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    let active = true;
-    setLoading(true);
-    setError("");
-    api.usage.explanation(period)
-      .then((result) => active && setData(result))
-      .catch((err) => active && setError(err instanceof Error ? err.message : "Unable to load usage"))
-      .finally(() => active && setLoading(false));
-    return () => { active = false; };
-  }, [period, retry]);
+    if (!open) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    closeRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => { document.body.style.overflow = previousOverflow; window.removeEventListener("keydown", onKey); triggerRef.current?.focus(); };
+  }, [open]);
 
-  return (
-    <section className="overflow-hidden rounded-xl border border-border bg-card shadow-sm" aria-labelledby="usage-explanation-title">
-      <div className="border-b border-border bg-gradient-to-br from-primary/[0.08] via-transparent to-transparent p-4 sm:p-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="rounded-lg bg-primary/10 p-2 text-primary"><Gauge className="h-4 w-4" /></span>
-              <div>
-                <h2 id="usage-explanation-title" className="font-semibold text-foreground">How your usage is counted</h2>
-                <p className="mt-0.5 text-xs text-muted-foreground">Account-wide totals from the usage meter</p>
-              </div>
+  useEffect(() => {
+    if (!open) return;
+    let current = true;
+    setLoading(true); setError("");
+    api.usage.explanation(period).then((result) => { if (current) setData(result); })
+      .catch((err) => { if (current) setError(err instanceof Error ? err.message : "Could not load usage details."); })
+      .finally(() => { if (current) setLoading(false); });
+    return () => { current = false; };
+  }, [open, period]);
+
+  const close = () => setOpen(false);
+  return <>
+    <button ref={triggerRef} type="button" onClick={() => setOpen(true)}
+      className="group flex w-full items-center justify-between gap-4 rounded-xl border border-border bg-card px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+      <span className="flex min-w-0 items-center gap-3"><span className="rounded-lg bg-primary/10 p-2 text-primary"><CircleHelp className="h-4 w-4" /></span>
+        <span><span className="block text-sm font-medium text-foreground">How your usage is counted</span>
+        <span className="block text-xs text-muted-foreground">Input, output, prompts, and upstream calls explained</span></span></span>
+      <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+    </button>
+
+    {open && <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6">
+      <button className="absolute inset-0 bg-black/70 backdrop-blur-sm" aria-label="Close usage details" onClick={close} />
+      <section role="dialog" aria-modal="true" aria-labelledby="usage-dialog-title"
+        className="relative flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-2xl border border-border bg-background shadow-2xl sm:max-w-5xl sm:rounded-2xl">
+        <header className="flex items-start justify-between gap-4 border-b border-border px-4 py-4 sm:px-6">
+          <div><h2 id="usage-dialog-title" className="text-lg font-semibold text-foreground">How your usage is counted</h2>
+            <p className="mt-1 text-sm text-muted-foreground">A transparent view of the canonical usage recorded by the service.</p></div>
+          <button ref={closeRef} onClick={close} className="rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" aria-label="Close dialog"><X className="h-5 w-5" /></button>
+        </header>
+        <div className="overflow-y-auto px-4 py-5 sm:px-6">
+          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="inline-flex rounded-lg border border-border bg-muted/40 p-1" aria-label="Usage period">
+              {PERIODS.map(option => <button key={option.value} onClick={() => setPeriod(option.value)} aria-pressed={period === option.value}
+                className={`min-h-9 flex-1 rounded-md px-3 text-xs font-medium sm:flex-none ${period === option.value ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-accent"}`}>{option.label}</button>)}
             </div>
+            {data && <p className="text-xs text-muted-foreground">Rolling range: <span className="font-medium text-foreground">{new Date(data.from).toLocaleString()}</span> – <span className="font-medium text-foreground">{new Date(data.to).toLocaleString()}</span> ({data.timezone})</p>}
           </div>
-          <div className="flex w-full rounded-lg border border-border bg-background/60 p-1 sm:w-auto" aria-label="Usage period">
-            {PERIODS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => setPeriod(option.value)}
-                className={`min-h-9 flex-1 whitespace-nowrap rounded-md px-3 text-xs font-medium transition-colors sm:flex-none ${
-                  period === option.value
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-accent hover:text-foreground"
-                }`}
-                aria-pressed={period === option.value}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
+          {loading ? <div className="space-y-3" aria-busy="true"><div className="h-36 animate-pulse rounded-xl bg-muted" /><div className="h-52 animate-pulse rounded-xl bg-muted" /></div>
+          : error ? <div className="flex flex-col items-center rounded-xl border border-red-400/30 bg-red-400/5 px-4 py-10 text-center"><AlertTriangle className="mb-3 h-6 w-6 text-red-400" /><p className="text-sm text-foreground">{error}</p><button onClick={() => { setOpen(false); requestAnimationFrame(() => setOpen(true)); }} className="mt-4 inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm"><RefreshCw className="h-4 w-4" />Retry</button></div>
+          : data && <div className="space-y-5">
+            <section className="rounded-xl border border-primary/30 bg-primary/5 p-4 sm:p-5">
+              <p className="text-xs font-semibold uppercase tracking-wider text-primary">Counted toward limits</p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-lg border border-border bg-background/70 p-4"><p className="text-xs text-muted-foreground">Input counted</p><p className="mt-1 text-2xl font-semibold tabular-nums">{formatNumber(data.towardLimit.input)}</p></div>
+                <div className="rounded-lg border border-border bg-background/70 p-4"><p className="text-xs text-muted-foreground">Output counted</p><p className="mt-1 text-2xl font-semibold tabular-nums">{formatNumber(data.towardLimit.output)}</p></div>
+              </div>
+              <p className="mt-3 text-sm text-muted-foreground">{data.towardLimit.explanation || "These are the canonical values used by your limit meter after the service applies your plan’s counting rules."}</p>
+            </section>
+            <section className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-xl border border-border p-4"><p className="text-sm font-medium">Input processed</p><p className="mt-1 text-xl font-semibold tabular-nums">{formatNumber(data.totals.rawBillableInput + data.totals.cachedInput)}</p><p className="mt-2 text-xs text-muted-foreground">Billable input ({formatNumber(data.totals.rawBillableInput)}) + cached input ({formatNumber(data.totals.cachedInput)}).</p></div>
+              <div className="rounded-xl border border-border p-4"><p className="text-sm font-medium">Output generated</p><p className="mt-1 text-xl font-semibold tabular-nums">{formatNumber(data.totals.output)}</p><p className="mt-2 text-xs text-muted-foreground">Tokens generated by models. Kept separate from input.</p></div>
+            </section>
+            <div className="rounded-xl border border-border bg-muted/30 p-4 text-sm text-muted-foreground"><strong className="text-foreground">Prompts vs upstream calls:</strong> A prompt is one request from your IDE. One prompt can create multiple upstream calls (hops), for example when retries or routing occur. Total traffic is {formatNumber(data.totals.total)} input + output tokens; it is context only, not a quota value.</div>
+            <section className="rounded-xl border border-border p-4">
+              <div className="mb-4 flex gap-1 border-b border-border">{(["ide", "model"] as const).map(item => <button key={item} onClick={() => setTab(item)} className={`border-b-2 px-3 pb-2 text-sm font-medium ${tab === item ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}>By {item === "ide" ? "IDE" : "Model"}</button>)}</div>
+              <BreakdownTable rows={tab === "ide" ? data.byIde : data.byModel} kind={tab === "ide" ? "IDE" : "Model"} />
+            </section>
+          </div>}
         </div>
-      </div>
-
-      {loading ? (
-        <div className="space-y-4 p-4 sm:p-6" aria-busy="true">
-          <div className="h-28 animate-pulse rounded-xl bg-muted" />
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {[0, 1, 2, 3].map((item) => <div key={item} className="h-20 animate-pulse rounded-lg bg-muted" />)}
-          </div>
-        </div>
-      ) : error ? (
-        <div className="flex flex-col items-center px-4 py-12 text-center">
-          <AlertTriangle className="mb-3 h-7 w-7 text-destructive" />
-          <p className="font-medium text-foreground">Usage details are unavailable</p>
-          <p className="mt-1 max-w-md text-sm text-muted-foreground">{error}</p>
-          <button type="button" onClick={() => setRetry((value) => value + 1)} className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-lg border border-border px-4 text-sm font-medium hover:bg-accent">
-            <RefreshCw className="h-4 w-4" /> Try again
-          </button>
-        </div>
-      ) : data ? (
-        <div className="space-y-5 p-4 sm:p-6">
-          <div className="rounded-xl border border-primary/20 bg-primary/[0.06] p-4 sm:p-5">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-primary">Amount toward your limit</p>
-                <p className="mt-1 text-3xl font-semibold tabular-nums text-foreground sm:text-4xl">{n(data.totals.amountTowardLimit)}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{dateRange(data)}</p>
-              </div>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Database className="h-3.5 w-3.5" />
-                Meter source: <span className="font-medium text-foreground">{data.meter.source || "Account usage"}</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {([
-              ["Prompts", data.totals.turns, MessageSquareText, "User turns"],
-              ["API calls", data.totals.apiCalls, Braces, "All request hops"],
-              ["Raw tokens", data.totals.rawTotalTokens, Sparkles, "Before metering"],
-              ["Successful hops", data.totals.successfulHops, Gauge, `${n(data.totals.failedHops)} failed`],
-            ] satisfies Array<[string, number, LucideIcon, string]>).map(([label, value, Icon, hint]) => (
-              <div key={label} className="rounded-lg border border-border bg-background/40 p-3">
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground"><Icon className="h-3.5 w-3.5" />{label}</div>
-                <p className="mt-2 text-xl font-semibold tabular-nums text-foreground">{n(value)}</p>
-                <p className="mt-0.5 text-[11px] text-muted-foreground">{hint}</p>
-              </div>
-            ))}
-          </div>
-
-          {data.totals.apiCalls > data.totals.turns * 2 && data.totals.turns > 0 && (
-            <div className="flex gap-3 rounded-lg border border-amber-400/25 bg-amber-400/[0.07] p-3 text-sm">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
-              <div>
-                <p className="font-medium text-foreground">Higher request-hop activity</p>
-                <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                  Some prompts made several API calls, such as retries or tool steps. This is why API calls are higher than prompts.
-                </p>
-              </div>
-            </div>
-          )}
-
-          <div className="rounded-lg border border-border">
-            <button type="button" onClick={() => setDetailsOpen((open) => !open)} className="flex min-h-12 w-full items-center justify-between gap-3 px-4 text-left">
-              <span className="flex items-center gap-2 text-sm font-medium text-foreground"><CircleHelp className="h-4 w-4 text-primary" />See the token breakdown and formula</span>
-              <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${detailsOpen ? "rotate-180" : ""}`} />
-            </button>
-            {detailsOpen && (
-              <div className="space-y-4 border-t border-border p-4">
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                  {[
-                    ["Billable input", data.totals.billableInputTokens],
-                    ["Cached input", data.totals.cachedInputTokens],
-                    ["Output", data.totals.outputTokens],
-                  ].map(([label, value]) => (
-                    <div key={label as string} className="rounded-lg bg-muted/50 p-3">
-                      <p className="text-xs text-muted-foreground">{label as string}</p>
-                      <p className="mt-1 font-semibold tabular-nums text-foreground">{n(value as number)}</p>
-                    </div>
-                  ))}
-                </div>
-                <div className="rounded-lg bg-background/60 p-3 font-mono text-xs leading-relaxed text-foreground">
-                  {n(data.totals.billableInputTokens)} billable input + {n(data.totals.cachedInputTokens)} cached input + {n(data.totals.outputTokens)} output = {n(data.totals.rawTotalTokens)} raw tokens
-                </div>
-                <p className="text-sm leading-relaxed text-muted-foreground">{data.meter.explanation}</p>
-                <p className="text-xs leading-relaxed text-muted-foreground">
-                  The amount toward your limit is supplied by the account meter. Raw token totals help explain activity, but are not a second limit calculation.
-                </p>
-              </div>
-            )}
-          </div>
-
-          <div>
-            <div className="mb-3 flex border-b border-border">
-              {(["ide", "model"] as const).map((value) => (
-                <button key={value} type="button" onClick={() => setTab(value)} className={`min-h-10 border-b-2 px-4 text-sm font-medium transition-colors ${tab === value ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
-                  By {value === "ide" ? "IDE" : "Model"}
-                </button>
-              ))}
-            </div>
-            <BreakdownTable rows={tab === "ide" ? data.byIde : data.byModel} kind={tab === "ide" ? "IDE" : "Model"} />
-          </div>
-        </div>
-      ) : null}
-    </section>
-  );
+      </section>
+    </div>}
+  </>;
 }

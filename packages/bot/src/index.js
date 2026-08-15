@@ -7167,18 +7167,31 @@ function truncateDiscord(value, max) {
 	return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1))}…`;
 }
 
-function formatBreakdownRows(rows, valueKey = 'amountTowardLimit', unit = 'tokens') {
+function formatBreakdownRows(rows, unit = 'tokens') {
 	if (!Array.isArray(rows) || rows.length === 0) return 'Tidak ada data.';
 	return truncateDiscord(
 		rows
-			.slice(0, 10)
+			.slice(0, 5)
 			.map((row, index) => {
 				const name = row.name ?? row.label ?? row.id ?? `#${index + 1}`;
-				return `**${truncateDiscord(name, 60)}** — ${formatCanonicalAmount(row[valueKey], row.unit ?? unit)}`;
+				const rowUnit = row.unit ?? unit;
+				const input = row.input ?? row.inputTokens ?? row.billableInput;
+				const output = row.output ?? row.outputTokens ?? row.billableOutput;
+				const counted = row.counted ?? row.towardLimit?.total ?? row.amountTowardLimit;
+				return `**${truncateDiscord(name, 28)}** · in ${formatCanonicalAmount(input, rowUnit)} · out ${formatCanonicalAmount(output, rowUnit)} · counted ${formatCanonicalAmount(counted, row.towardLimit?.unit ?? rowUnit)}`;
 			})
 			.join('\n'),
 		1024,
 	);
+}
+
+function plainUsageExplanation(value) {
+	const text = String(value ?? '').trim();
+	if (!text) return 'One prompt can make multiple upstream calls for retries or tool steps.';
+	if (/first[_\s-]*rest[_\s-]*flat/i.test(text)) {
+		return 'The first upstream call and later calls are counted using the backend limit rules.';
+	}
+	return truncateDiscord(text.replace(/first_rest_flat/gi, 'backend limit rules'), 700);
 }
 
 function buildTransparentUsageEmbed(data, targetUserId, days) {
@@ -7186,7 +7199,8 @@ function buildTransparentUsageEmbed(data, targetUserId, days) {
 	const totals = usage.totals ?? {};
 	const billable = usage.billable ?? {};
 	const activity = usage.activity ?? {};
-	const meter = usage.meter ?? usage.towardLimit ?? {};
+	const towardLimit = usage.towardLimit;
+	const meter = usage.meter ?? towardLimit ?? {};
 	const limit = usage.limit ?? usage.towardLimit ?? {};
 	const period = usage.period ?? {};
 	const amount =
@@ -7201,53 +7215,63 @@ function buildTransparentUsageEmbed(data, targetUserId, days) {
 			? formatCanonicalAmount(amount, unit)
 			: `${formatCanonicalAmount(amount, unit)} / ${formatCanonicalAmount(limitValue, unit)}`;
 
-	const explanation = truncateDiscord(
-		meter.explanation ?? usage.explanation ?? 'Tidak diberikan backend.',
-		900,
-	);
-	const source = meter.source ?? usage.meterSource ?? 'canonical backend meter';
+	const explanation = plainUsageExplanation(meter.explanation ?? usage.explanation);
+	const countedUnit = towardLimit?.unit ?? unit;
+	const processedInput =
+		billable.input == null && billable.cache == null
+			? null
+			: canonicalNumber(billable.input) + canonicalNumber(billable.cache);
+	const countedValue = towardLimit
+		? `Input: **${formatCanonicalAmount(towardLimit.input, countedUnit)}** · Output: **${formatCanonicalAmount(towardLimit.output, countedUnit)}**\nTotal: **${formatCanonicalAmount(towardLimit.total, countedUnit)}**${limitValue == null ? '' : ` / ${formatCanonicalAmount(limitValue, countedUnit)}`}`
+		: `**${amountLine}**`;
 
 	return new EmbedBuilder()
 		.setColor(0x5865f2)
-		.setTitle(`🔎 Detailed Usage · ${days} hari`)
+		.setTitle(`🔎 Usage breakdown · ${days} hari`)
 		.setDescription(
 			`Akun: <@${targetUserId}>\nPeriode: **${period.start ?? '—'}** sampai **${period.end ?? '—'}**`,
 		)
 		.addFields(
 			{
-				name: 'Amount toward limit',
-				value: `**${amountLine}**`,
+				name: 'Counted toward limits',
+				value: countedValue,
 				inline: false,
 			},
 			{
-				name: 'Raw billable tokens',
+				name: 'Input processed',
 				value:
-					`Input: **${formatCanonicalAmount(billable.input, billable.unit ?? 'tokens')}**\n` +
-					`Cache: **${formatCanonicalAmount(billable.cache, billable.unit ?? 'tokens')}**\n` +
-					`Output: **${formatCanonicalAmount(billable.output, billable.unit ?? 'tokens')}**`,
+					`Total: **${formatCanonicalAmount(processedInput, billable.unit ?? 'tokens')}**\n` +
+					`Billable input: ${formatCanonicalAmount(billable.input, billable.unit ?? 'tokens')}\n` +
+					`Cached input: ${formatCanonicalAmount(billable.cache, billable.unit ?? 'tokens')}`,
 				inline: true,
 			},
 			{
-				name: 'Activity',
+				name: 'Output generated',
+				value: `**${formatCanonicalAmount(billable.output, billable.unit ?? 'tokens')}**`,
+				inline: true,
+			},
+			{
+				name: 'Prompts & upstream calls',
 				value:
 					`Prompts: **${canonicalNumber(activity.prompts ?? totals.turns).toLocaleString('en-US')}**\n` +
-					`API calls: **${canonicalNumber(activity.apiCalls ?? totals.apiCalls ?? totals.hops).toLocaleString('en-US')}**`,
-				inline: true,
-			},
-			{
-				name: 'Meter source & explanation',
-				value: `**${truncateDiscord(source, 100)}**\n${explanation}`,
+					`Upstream calls: **${canonicalNumber(activity.apiCalls ?? totals.apiCalls ?? totals.hops).toLocaleString('en-US')}**\n` +
+					'Retries and tool steps can make one prompt use multiple upstream calls.',
 				inline: false,
 			},
 			{
-				name: 'Top IDE',
-				value: formatBreakdownRows(usage.topIdes ?? usage.byIde, 'amountTowardLimit', unit),
-				inline: true,
+				name: 'How counting works',
+				value: explanation,
+				inline: false,
+			},
+			{
+				name: 'Top IDEs',
+				value: formatBreakdownRows(usage.topIdes ?? usage.byIde, unit),
+				inline: false,
 			},
 			{
 				name: 'Top models',
-				value: formatBreakdownRows(usage.topModels ?? usage.byModel, 'amountTowardLimit', unit),
-				inline: true,
+				value: formatBreakdownRows(usage.topModels ?? usage.byModel, unit),
+				inline: false,
 			},
 		)
 		.setFooter({ text: 'Canonical values supplied by the proxy backend' })

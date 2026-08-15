@@ -500,7 +500,7 @@ export const keys = {
     request<ApiKeyListItem[]>(opts?.lite ? "/keys?lite=1" : "/keys"),
   get: (id: number) => request<ApiKeyDetail>(`/keys/${id}`),
   getUsageExplanation: (id: number, period: UsageExplanationPeriod) =>
-    request<UsageExplanation>(`/api-keys/${id}/usage-explanation?period=${period}`),
+    request<UsageExplanation>(`/keys/${id}/usage-breakdown?period=${period}`),
   create: (name: string) =>
     request<CreateKeyResponse>("/keys", {
       method: "POST",

@@ -376,7 +376,12 @@ export default function OverviewPage() {
 
     return (
       <div className="bg-card border border-border rounded-xl p-4 space-y-3">
-        <h3 className="text-sm font-medium text-foreground">{t("Usage Today")}</h3>
+        <div>
+          <h3 className="text-sm font-medium text-foreground">{t("Usage Today")}</h3>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
+            Since 00:00 WIB · independent of the analytics period above
+          </p>
+        </div>
         {(user.keyCount || 0) > 1 && (
           <p className="text-[10px] text-muted-foreground">
             {lang === "id"
