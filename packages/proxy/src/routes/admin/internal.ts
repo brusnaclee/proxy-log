@@ -36,7 +36,7 @@ import { pickPrimaryNonTrialKey } from "../../utils/api-key-primary.js";
 
 const internal = new Hono();
 
-internal.get("/discord/users/:discordUserId/usage-explanation", async (c) => {
+internal.get("/internal/discord/users/:discordUserId/usage-explanation", async (c) => {
   const discordUserId = String(c.req.param("discordUserId") || "").trim();
   if (!/^\d{15,25}$/.test(discordUserId)) {
     return c.json({ error: "Invalid Discord user ID" }, 400);
