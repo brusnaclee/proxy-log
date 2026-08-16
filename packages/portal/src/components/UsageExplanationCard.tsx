@@ -25,13 +25,22 @@ function BreakdownTable({ rows, kind }: { rows: UsageExplanationBreakdown[]; kin
         </tr></thead>
         <tbody>{rows.map((row, index) => {
           const label = row.ide ?? row.model ?? row.name ?? row.label ?? `Unknown ${kind}`;
+          const c = row.composition;
           return <tr key={`${label}-${index}`} className="border-b border-border/60 last:border-0">
             <td className="py-3 font-medium text-foreground">{label}</td>
             <td className="py-3 text-right tabular-nums">{formatNumber(value(row, "turns"))}</td>
             <td className="py-3 text-right tabular-nums">{formatNumber(value(row, "apiCalls") || value(row, "hops"))}</td>
             <td className="py-3 text-right tabular-nums">{formatNumber(inputProcessed(row))}</td>
             <td className="py-3 text-right tabular-nums">{formatNumber(value(row, "output"))}</td>
-            <td className="py-3 text-right font-medium tabular-nums text-primary">{formatNumber(value(row, "amountTowardLimit"))}</td>
+            <td className="py-3 text-right font-medium tabular-nums text-primary">
+              <div>{formatNumber(value(row, "amountTowardLimit"))}</div>
+              <div className="mt-0.5 whitespace-nowrap text-[10px] font-normal text-muted-foreground">
+                In {formatNumber(value(row, "inputTowardLimit"))} · Out {formatNumber(value(row, "outputTowardLimit"))}
+              </div>
+              {c && <div className="mt-0.5 whitespace-nowrap text-[10px] font-normal text-muted-foreground">
+                Credits {formatNumber(c.upstreamInputBeforeWeight)} in · {formatNumber(c.upstreamOutputBeforeWeight)} out
+              </div>}
+            </td>
           </tr>;
         })}</tbody>
       </table>

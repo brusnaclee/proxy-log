@@ -303,11 +303,14 @@ export default function OverviewPage() {
           ? `base ${formatNumber(bd.inputBase || bd.base || 0)} + pack ${formatNumber(bd.addonBonus)}`
           : ctxIn;
       bars.push({
-        label: t("Input Tokens"),
+        label: "Counted Input",
         value: used,
         max: inputMax,
         softMode: false,
-        sublabel: bd && bd.addonBonus > 0 ? `${stack} · ${ctxIn}` : ctxIn,
+        sublabel:
+          `${formatNumber(usageToday.rawProcessedInput ?? usageToday.fullInputTokens ?? ((usageToday.billablePromptTokens || 0) + (usageToday.cachedTokens || 0)))} input processed` +
+          ` (${formatNumber(usageToday.billablePromptTokens || 0)} billable + ${formatNumber(usageToday.cachedTokens || 0)} cached)` +
+          ` · ${bd && bd.addonBonus > 0 ? `${stack} · ` : ""}${ctxIn}`,
         source: bd && bd.addonBonus > 0
           ? "base + pack → input"
           : sourceLabel(limits.dailyInputTokenLimitSource),
@@ -316,11 +319,11 @@ export default function OverviewPage() {
     }
     if (limits.dailyOutputTokenLimit > 0) {
       bars.push({
-        label: t("Output Tokens"),
+        label: "Counted Output",
         value: usageToday.completionTokens,
         max: limits.dailyOutputTokenLimit,
         softMode: false,
-        sublabel: "tokens",
+        sublabel: `${formatNumber(usageToday.rawCompletionTokens ?? 0)} output generated · ${formatNumber(usageToday.completionTokens || 0)} counted`,
         source: sourceLabel(limits.dailyOutputTokenLimitSource),
         reset: formatReset(user.dailyResetAt),
       });

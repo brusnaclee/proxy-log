@@ -95,6 +95,19 @@ are the upstream's reported usage measure. For non-credit providers, the local
 fallback remains directly derived from raw input/output and configured model
 multipliers.
 
+Grouped By IDE / By Model rows carry their own `composition`. The Counted cell
+shows:
+
+- final Input counted and Output counted;
+- upstream input/output credit units for that IDE/model;
+- local fallback units when present.
+
+Current limit windows use the same vocabulary. Daily input/output rows show the
+raw Input processed / Output generated as context, while the progress value and
+limit are explicitly Counted Input / Counted Output meter units. Plans without
+an input/output limit omit those rows; dedicated pools keep their own scope and
+reset semantics.
+
 `Usage Today` quota bars are calendar-day counters since **00:00 WIB** and are
 independent from the analytics period selector. Transparent explanation periods
 use the same WIB calendar-aligned boundaries as analytics (`1d` = Today,

@@ -79,6 +79,9 @@ export interface MeResponse {
     promptTokens: number;
     billablePromptTokens?: number;
     cachedTokens?: number;
+    fullInputTokens?: number;
+    rawProcessedInput?: number;
+    rawCompletionTokens?: number;
     completionTokens: number;
     promptCount?: number;
     apiCallCount?: number;
@@ -393,6 +396,7 @@ export interface UsageExplanationBreakdown extends Partial<UsageExplanationTotal
   model?: string;
   name?: string;
   label?: string;
+  composition?: UsageExplanationResponse["composition"];
 }
 
 export interface UsageExplanationResponse {

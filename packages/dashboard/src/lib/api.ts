@@ -358,12 +358,15 @@ export interface UsageExplanationNumbers {
   rawTotalTokens: number;
   upstreamInputCredits: number;
   upstreamOutputCredits: number;
+  inputTowardLimit: number;
+  outputTowardLimit: number;
   amountTowardLimit: number;
 }
 
 export interface UsageExplanationRow extends UsageExplanationNumbers {
   label?: string;
   model?: string;
+  composition?: UsageExplanation["composition"];
 }
 
 export interface UsageExplanation {

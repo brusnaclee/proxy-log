@@ -52,6 +52,7 @@ export interface UsageMeterComposition {
 
 export interface UsageBreakdownGroup extends UsageBreakdownTotals {
   name: string;
+  composition: UsageMeterComposition;
 }
 
 export interface AccountUsageBreakdown {
@@ -228,13 +229,17 @@ async function aggregateBy(
     FROM request_logs WHERE ${where}
   `)).rows as Array<{ name: string }>;
 
-  const result = await Promise.all(rows.map(async ({ name }) => ({
-    name,
-    ...await aggregate(
-      and(where, sql`COALESCE(NULLIF(${column}, ''), 'unknown') = ${name}`)!,
-      isTrial,
-    ),
-  })));
+  const result = await Promise.all(rows.map(async ({ name }) => {
+    const groupWhere = and(
+      where,
+      sql`COALESCE(NULLIF(${column}, ''), 'unknown') = ${name}`,
+    )!;
+    const [totals, composition] = await Promise.all([
+      aggregate(groupWhere, isTrial),
+      meterComposition(groupWhere, isTrial),
+    ]);
+    return { name, ...totals, composition };
+  }));
   return result.sort((a, b) => b.amountTowardLimit - a.amountTowardLimit || b.apiCalls - a.apiCalls);
 }
 

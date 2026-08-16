@@ -370,6 +370,8 @@ portal.get("/me", async (c) => {
     billablePromptTokens: turnBillablePromptTokensSql(todayPw!, { isTrial: usageIsTrial }),
     cachedTokens: turnCachedTokensSql(todayPw!, { isTrial: usageIsTrial }),
     fullInputTokens: hopFullInputTokensSql(todayHops!, { isTrial: usageIsTrial }),
+    rawProcessedInput: sql<number>`COALESCE(SUM(COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)), 0)`,
+    rawCompletionTokens: sql<number>`COALESCE(SUM(COALESCE(completion_tokens, 0)), 0)`,
     completionTokens: turnDisplayCompletionTokensSql(todayHops!, { isTrial: usageIsTrial }),
     totalTokens: weightedHopTotalTokensSql(todayHops!, { isTrial: usageIsTrial }),
   }).from(requestLogs).where(todayPw))[0];

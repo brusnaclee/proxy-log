@@ -51,7 +51,15 @@ function BreakdownTable({ title, rows, nameKey }: { title: string; rows: UsageEx
                   <td className="max-w-[220px] truncate px-3 py-2.5 font-medium" title={row[nameKey] || "Unknown"}>{row[nameKey] || "Unknown"}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums">{number(inputProcessed(row))}</td>
                   <td className="px-3 py-2.5 text-right tabular-nums">{number(row.outputTokens)}</td>
-                  <td className="px-3 py-2.5 text-right font-semibold tabular-nums text-cyan-300">{number(row.amountTowardLimit)}</td>
+                  <td className="px-3 py-2.5 text-right font-semibold tabular-nums text-cyan-300">
+                    <div>{number(row.amountTowardLimit)}</div>
+                    <div className="mt-0.5 whitespace-nowrap text-[10px] font-normal text-muted-foreground">
+                      In {number(row.inputTowardLimit)} · Out {number(row.outputTowardLimit)}
+                    </div>
+                    {row.composition && <div className="mt-0.5 whitespace-nowrap text-[10px] font-normal text-muted-foreground">
+                      Credits {number(row.composition.upstreamInputBeforeWeight)} in · {number(row.composition.upstreamOutputBeforeWeight)} out
+                    </div>}
+                  </td>
                   <td className="px-3 py-2.5 text-right tabular-nums">{number(row.turns)} / {number(row.apiCalls)}</td>
                 </tr>
               ))}
