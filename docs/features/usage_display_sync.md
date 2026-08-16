@@ -51,6 +51,31 @@ The IDE and model tables show Input processed, Output generated, and Counted
 toward limits as separate columns. Each table independently partitions the same
 account snapshot; never add the IDE table to the model table.
 
+### Where counted values come from
+
+For every successful upstream call:
+
+1. **Input processed** is only descriptive traffic:
+   `prompt_tokens + cached_tokens`.
+2. When `upstream_credits > 0`, the canonical meter uses:
+   - input units before hop weighting:
+     `max(0, upstream_credits - upstream_credits_out)`
+   - output units:
+     `upstream_credits_out`
+3. When upstream credits are absent, the fallback uses:
+   - input: `(prompt_tokens + cached_tokens) × model input multiplier`
+   - output: `completion_tokens × model output multiplier`
+4. The configured hop schedule is applied to input. In `first_rest_flat`, the
+   first call in a prompt is 100% and later calls use the configured follow-up
+   percentage. Output uses its canonical output meter.
+5. The account total is the sum of these canonical per-call results.
+
+Therefore Input processed and Output generated are not expected to equal Input
+counted and Output counted. Retries, continuations, tool steps, upstream usage
+credits, model multipliers, and hop weights can all change the counted values.
+The API's `composition` object exposes how many calls used each source and the
+pre-weight input/output units so Portal/Admin/Discord can explain the result.
+
 `Usage Today` quota bars are calendar-day counters since **00:00 WIB** and are
 independent from the analytics period selector. Transparent explanation periods
 are exact rolling windows, so “1 day” is not the same window as “Today”.

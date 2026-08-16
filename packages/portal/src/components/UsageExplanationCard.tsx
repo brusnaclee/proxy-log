@@ -105,7 +105,19 @@ export function UsageExplanationCard() {
                 <div className="rounded-lg border border-border bg-background/70 p-4"><p className="text-xs text-muted-foreground">Input counted</p><p className="mt-1 text-2xl font-semibold tabular-nums">{formatNumber(data.towardLimit.input)}</p></div>
                 <div className="rounded-lg border border-border bg-background/70 p-4"><p className="text-xs text-muted-foreground">Output counted</p><p className="mt-1 text-2xl font-semibold tabular-nums">{formatNumber(data.towardLimit.output)}</p></div>
               </div>
-              <p className="mt-3 text-sm text-muted-foreground">{data.towardLimit.explanation || "These are the canonical values used by your limit meter after the service applies your plan’s counting rules."}</p>
+              <div className="mt-3 space-y-2 text-sm text-muted-foreground">
+                <p>
+                  Input counted starts from the upstream usage meter on {formatNumber(data.composition.creditHops)} calls
+                  {data.composition.localHops > 0 ? ` and local token multipliers on ${formatNumber(data.composition.localHops)} calls` : ""}.
+                  {" "}The first call in a prompt is counted fully; later calls use the configured follow-up weight
+                  {data.composition.inputHopWeightMode === "first_rest_flat" ? ` (${data.composition.followUpInputWeightPercent}%)` : ""}.
+                </p>
+                <p>
+                  Before hop weighting: {formatNumber(data.composition.upstreamInputBeforeWeight + data.composition.localInputBeforeWeight)} input units
+                  {" "}and {formatNumber(data.composition.upstreamOutputBeforeWeight + data.composition.localOutputBeforeWeight)} output units.
+                  After the canonical rules: {formatNumber(data.towardLimit.input)} input counted and {formatNumber(data.towardLimit.output)} output counted.
+                </p>
+              </div>
             </section>
             <section className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-xl border border-border p-4"><p className="text-sm font-medium">Input processed</p><p className="mt-1 text-xl font-semibold tabular-nums">{formatNumber(data.totals.rawBillableInput + data.totals.cachedInput)}</p><p className="mt-2 text-xs text-muted-foreground">Billable input ({formatNumber(data.totals.rawBillableInput)}) + cached input ({formatNumber(data.totals.cachedInput)}).</p></div>

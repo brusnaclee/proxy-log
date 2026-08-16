@@ -412,6 +412,16 @@ export interface UsageExplanationResponse {
     source: string;
     explanation: string;
   };
+  composition: {
+    creditHops: number;
+    localHops: number;
+    upstreamInputBeforeWeight: number;
+    upstreamOutputBeforeWeight: number;
+    localInputBeforeWeight: number;
+    localOutputBeforeWeight: number;
+    inputHopWeightMode: string;
+    followUpInputWeightPercent: number;
+  };
   byIde: UsageExplanationBreakdown[];
   byModel: UsageExplanationBreakdown[];
 }

@@ -31,6 +31,17 @@ export interface UsageBreakdownTotals {
   amountTowardLimit: number;
 }
 
+export interface UsageMeterComposition {
+  creditHops: number;
+  localHops: number;
+  upstreamInputBeforeWeight: number;
+  upstreamOutputBeforeWeight: number;
+  localInputBeforeWeight: number;
+  localOutputBeforeWeight: number;
+  inputHopWeightMode: string;
+  followUpInputWeightPercent: number;
+}
+
 export interface UsageBreakdownGroup extends UsageBreakdownTotals {
   name: string;
 }
@@ -120,6 +131,50 @@ async function aggregate(where: SQL, isTrial: boolean): Promise<UsageBreakdownTo
   };
 }
 
+async function meterComposition(
+  where: SQL,
+  isTrial: boolean,
+): Promise<UsageMeterComposition> {
+  const successful = and(where, sql`status_code BETWEEN 200 AND 299`)!;
+  const { sqlMultiplierExpr } = await import("./token-multiplier.js");
+  const inputMultiplier = sql.raw(sqlMultiplierExpr("input", "model", { isTrial }));
+  const outputMultiplier = sql.raw(sqlMultiplierExpr("output", "model", { isTrial }));
+  const [row] = await db.select({
+    creditHops: sql<number>`COUNT(*) FILTER (WHERE COALESCE(upstream_credits, 0) > 0)`,
+    localHops: sql<number>`COUNT(*) FILTER (WHERE COALESCE(upstream_credits, 0) <= 0)`,
+    upstreamInputBeforeWeight: sql<number>`COALESCE(SUM(
+      CASE WHEN COALESCE(upstream_credits, 0) > 0
+        THEN GREATEST(0, COALESCE(upstream_credits, 0) - COALESCE(upstream_credits_out, 0))
+        ELSE 0 END
+    ), 0)`,
+    upstreamOutputBeforeWeight: sql<number>`COALESCE(SUM(
+      CASE WHEN COALESCE(upstream_credits, 0) > 0
+        THEN COALESCE(upstream_credits_out, 0)
+        ELSE 0 END
+    ), 0)`,
+    localInputBeforeWeight: sql<number>`COALESCE(SUM(
+      CASE WHEN COALESCE(upstream_credits, 0) <= 0
+        THEN (COALESCE(prompt_tokens, 0) + COALESCE(cached_tokens, 0)) * ${inputMultiplier}
+        ELSE 0 END
+    ), 0)`,
+    localOutputBeforeWeight: sql<number>`COALESCE(SUM(
+      CASE WHEN COALESCE(upstream_credits, 0) <= 0
+        THEN COALESCE(completion_tokens, 0) * ${outputMultiplier}
+        ELSE 0 END
+    ), 0)`,
+  }).from(requestLogs).where(successful);
+  return {
+    creditHops: n(row?.creditHops),
+    localHops: n(row?.localHops),
+    upstreamInputBeforeWeight: n(row?.upstreamInputBeforeWeight),
+    upstreamOutputBeforeWeight: n(row?.upstreamOutputBeforeWeight),
+    localInputBeforeWeight: n(row?.localInputBeforeWeight),
+    localOutputBeforeWeight: n(row?.localOutputBeforeWeight),
+    inputHopWeightMode: getTokenLimitWeightModeSync(),
+    followUpInputWeightPercent: getTokenLimitWeightPercentSync(),
+  };
+}
+
 async function aggregateBy(
   dimension: UsageBreakdownDimension,
   where: SQL,
@@ -150,8 +205,9 @@ export async function getAccountUsageBreakdown(
   const where = accountWhere(discordUserId, from, to);
   const tier = await resolveAccountTokenTier(discordUserId);
   const isTrial = tier.isTrial;
-  const [totals, byIde, byModel] = await Promise.all([
+  const [totals, composition, byIde, byModel] = await Promise.all([
     aggregate(where, isTrial),
+    meterComposition(where, isTrial),
     aggregateBy("ide", where, isTrial),
     aggregateBy("model", where, isTrial),
   ]);
@@ -183,6 +239,7 @@ export async function getAccountUsageBreakdown(
       source: "canonical-limit-meter",
       explanation,
     },
+    composition,
     meter: {
       source: "canonical-limit-meter",
       explanation,

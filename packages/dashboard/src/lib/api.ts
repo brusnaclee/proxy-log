@@ -376,6 +376,23 @@ export interface UsageExplanation {
     source: string;
     explanation: string;
   };
+  towardLimit: {
+    input: number;
+    output: number;
+    total: number;
+    source: string;
+    explanation: string;
+  };
+  composition: {
+    creditHops: number;
+    localHops: number;
+    upstreamInputBeforeWeight: number;
+    upstreamOutputBeforeWeight: number;
+    localInputBeforeWeight: number;
+    localOutputBeforeWeight: number;
+    inputHopWeightMode: string;
+    followUpInputWeightPercent: number;
+  };
   byIde: UsageExplanationRow[];
   byModel: UsageExplanationRow[];
 }

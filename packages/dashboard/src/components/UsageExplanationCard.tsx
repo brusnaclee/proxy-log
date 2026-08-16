@@ -159,7 +159,25 @@ export function UsageExplanationCard({ keyId }: { keyId: number }) {
                 )}
                 <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   <Badge variant="outline">Backend metered</Badge>
-                  <span>Input processed combines billable and cached input for presentation. Limit totals remain canonical backend values.</span>
+                  <span>
+                    {formatNumber(data.composition.creditHops)} upstream-metered calls
+                    {data.composition.localHops > 0 ? ` + ${formatNumber(data.composition.localHops)} locally multiplied calls` : ""}.
+                    First call per prompt counts fully
+                    {data.composition.inputHopWeightMode === "first_rest_flat"
+                      ? `; later calls use ${data.composition.followUpInputWeightPercent}% input weight`
+                      : ""}.
+                  </span>
+                </div>
+                <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
+                  <p className="font-medium text-foreground">Counted-value composition</p>
+                  <p className="mt-1">
+                    Before hop weighting: {formatNumber(data.composition.upstreamInputBeforeWeight + data.composition.localInputBeforeWeight)} input units
+                    {" "}and {formatNumber(data.composition.upstreamOutputBeforeWeight + data.composition.localOutputBeforeWeight)} output units.
+                  </p>
+                  <p className="mt-1">
+                    Final: {formatNumber(data.towardLimit.input)} input counted + {formatNumber(data.towardLimit.output)} output counted
+                    {" "}= {formatNumber(data.towardLimit.total)} toward limits.
+                  </p>
                 </div>
                 <div className="grid gap-5 xl:grid-cols-2">
                   <BreakdownTable title="By IDE" rows={data.byIde || []} nameKey="label" />
