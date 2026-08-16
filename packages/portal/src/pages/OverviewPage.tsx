@@ -377,9 +377,9 @@ export default function OverviewPage() {
     return (
       <div className="bg-card border border-border rounded-xl p-4 space-y-3">
         <div>
-          <h3 className="text-sm font-medium text-foreground">{t("Usage Today")}</h3>
+          <h3 className="text-sm font-medium text-foreground">Current limit windows</h3>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            Since 00:00 WIB · independent of the analytics period above
+            Live quota counters · each row follows the reset window shown beside it
           </p>
         </div>
         {(user.keyCount || 0) > 1 && (
@@ -783,8 +783,18 @@ export default function OverviewPage() {
     const cards = [
       { key: "requests", label: t("Prompts"), icon: Activity, value: stats.requests, format: formatNumber },
       { key: "apiCalls", label: t("API Calls"), icon: Zap, value: stats.apiCalls || 0, format: formatNumber, hint: t("API Calls hint") },
-      { key: "promptTokens", label: t("Input Tokens"), icon: MessageSquare, value: stats.promptTokens, format: (n: number) => formatInputBreakdown(stats.billablePromptTokens, stats.cachedTokens, n).label },
-      { key: "completionTokens", label: t("Output Tokens"), icon: Download, value: stats.completionTokens, format: formatNumber },
+      {
+        key: "promptTokens",
+        label: "Counted Input",
+        icon: MessageSquare,
+        value: stats.promptTokens,
+        format: (n: number) => {
+          const processed = Number(stats.billablePromptTokens || 0) + Number(stats.cachedTokens || 0);
+          return `${formatNumber(n)} counted · ${formatNumber(processed)} processed`;
+        },
+        hint: `${formatNumber(stats.billablePromptTokens || 0)} billable + ${formatNumber(stats.cachedTokens || 0)} cached before metering`,
+      },
+      { key: "completionTokens", label: "Counted Output", icon: Download, value: stats.completionTokens, format: formatNumber, hint: "Output counted by the canonical meter for the selected analytics period" },
       { key: "cost", label: t("Est. Cost"), icon: DollarSign, value: stats.cost.total, format: formatCost },
       { key: "sessions", label: t("Sessions"), icon: Users, value: stats.sessions, format: formatNumber },
       { key: "toolCalls", label: t("Tool Calls"), icon: Wrench, value: stats.toolCalls, format: formatNumber, hint: t("Tool Calls hint") },
