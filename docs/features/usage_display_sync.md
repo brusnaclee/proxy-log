@@ -14,7 +14,7 @@ When changing formulas or labels, update **all** surfaces listed here and this d
 The backend exposes one account-level explanation contract for every usage UI:
 
 - Portal (authenticated account): `GET /portal/stats/usage-breakdown?period=1d`
-- Admin (existing admin API-key route): `GET /admin/keys/:id/usage-breakdown?period=1d`
+- Admin Key Detail (selected key only): `GET /admin/keys/:id/usage-breakdown?period=1d`
 - Discord (internal bot route): `GET /admin/internal/discord/users/:discordUserId/usage-explanation?days=1`
 
 Allowed periods are `1d`, `3d`, `7d`, and `30d`; default is `1d`. These are
@@ -43,7 +43,9 @@ All user-facing surfaces use:
 - **Total traffic** may appear only as tertiary context, explicitly described
   as input + output and not as a quota value.
 
-Portal Overview and Admin Key Detail show a compact summary/trigger. The trigger
+Portal Overview and Admin Key Detail show a compact summary/trigger. Portal and
+Discord are account-wide; Admin Key Detail is deliberately selected-key-only so
+its dialog exactly matches that page's Usage Today and charts. The trigger
 opens an accessible dialog with rolling 1/3/7/30-day controls, exact range, and
 By IDE / By Model tables. Discord uses the same labels in a compact embed.
 

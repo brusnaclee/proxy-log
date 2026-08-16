@@ -29,7 +29,7 @@ import {
   resolveDiscordRoles,
 } from "../../utils/discord-roles.js";
 import { queueUserNotification, formatPhantomCredentialsMessage } from "../../utils/user-notify.js";
-import { getAccountUsageBreakdown, parseUsageBreakdownPeriod } from "../../utils/usage-aggregates.js";
+import { getKeyUsageBreakdown, parseUsageBreakdownPeriod } from "../../utils/usage-aggregates.js";
 
 async function mapWithConcurrency<T, R>(
   items: T[],
@@ -547,7 +547,7 @@ keys.get("/keys/:id/usage-breakdown", async (c) => {
   if (!key.discordUserId) return c.json({ error: "API key is not linked to an account" }, 422);
   try {
     const period = parseUsageBreakdownPeriod(c.req.query("period"));
-    return c.json(await getAccountUsageBreakdown(key.discordUserId, period));
+    return c.json(await getKeyUsageBreakdown(id, period));
   } catch (error) {
     return c.json({ error: (error as Error).message }, 400);
   }

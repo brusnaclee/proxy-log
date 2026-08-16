@@ -1,6 +1,6 @@
-import { and, sql, type SQL } from "drizzle-orm";
+import { and, eq, sql, type SQL } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { requestLogs } from "../db/schema.js";
+import { apiKeys, requestLogs } from "../db/schema.js";
 import {
   hopCountSql,
   resolvePeriodRange,
@@ -57,6 +57,7 @@ export interface UsageBreakdownGroup extends UsageBreakdownTotals {
 
 export interface AccountUsageBreakdown {
   period: UsageBreakdownPeriod;
+  scope: "account" | "key";
   from: string;
   to: string;
   timezone: "Asia/Jakarta";
@@ -109,6 +110,14 @@ function n(value: unknown): number {
 function accountWhere(discordUserId: string, from: Date, to: Date): SQL {
   return and(
     sql`api_key_id IN (SELECT id FROM api_keys WHERE discord_user_id = ${discordUserId})`,
+    sql`created_at >= ${from}`,
+    sql`created_at <= ${to}`,
+  )!;
+}
+
+function keyWhere(apiKeyId: number, from: Date, to: Date): SQL {
+  return and(
+    sql`api_key_id = ${apiKeyId}`,
     sql`created_at >= ${from}`,
     sql`created_at <= ${to}`,
   )!;
@@ -243,15 +252,14 @@ async function aggregateBy(
   return result.sort((a, b) => b.amountTowardLimit - a.amountTowardLimit || b.apiCalls - a.apiCalls);
 }
 
-export async function getAccountUsageBreakdown(
-  discordUserId: string,
+async function buildUsageBreakdown(
+  where: SQL,
   period: UsageBreakdownPeriod,
-  now = new Date(),
+  from: Date,
+  to: Date,
+  isTrial: boolean,
+  scope: "account" | "key",
 ): Promise<AccountUsageBreakdown> {
-  const { from, to } = resolveUsageBreakdownRange(period, now);
-  const where = accountWhere(discordUserId, from, to);
-  const tier = await resolveAccountTokenTier(discordUserId);
-  const isTrial = tier.isTrial;
   const [totals, composition, byIde, byModel] = await Promise.all([
     aggregate(where, isTrial),
     meterComposition(where, isTrial),
@@ -275,6 +283,7 @@ export async function getAccountUsageBreakdown(
   const explanation = `Canonical gate meter: upstream credits when present; otherwise configured model multipliers and ${mode} hop weighting (${percent}%). Output is weighted by the canonical output meter.`;
   return {
     period,
+    scope,
     from: from.toISOString(),
     to: to.toISOString(),
     timezone: "Asia/Jakarta",
@@ -291,7 +300,41 @@ export async function getAccountUsageBreakdown(
       source: "canonical-limit-meter",
       explanation,
     },
-    byIde: byIde.map(compatibility),
-    byModel: byModel.map(compatibility),
+  byIde: byIde.map((row) => ({ ...compatibility(row), label: row.name })),
+  byModel: byModel.map((row) => ({ ...compatibility(row), model: row.name })),
   };
+}
+
+export async function getAccountUsageBreakdown(
+  discordUserId: string,
+  period: UsageBreakdownPeriod,
+  now = new Date(),
+): Promise<AccountUsageBreakdown> {
+  const { from, to } = resolveUsageBreakdownRange(period, now);
+  const tier = await resolveAccountTokenTier(discordUserId);
+  return buildUsageBreakdown(
+    accountWhere(discordUserId, from, to),
+    period,
+    from,
+    to,
+    tier.isTrial,
+    "account",
+  );
+}
+
+export async function getKeyUsageBreakdown(
+  apiKeyId: number,
+  period: UsageBreakdownPeriod,
+  now = new Date(),
+) {
+  const { from, to } = resolveUsageBreakdownRange(period, now);
+  const [key] = await db.select({ isTrial: apiKeys.isTrial }).from(apiKeys).where(eq(apiKeys.id, apiKeyId));
+  return buildUsageBreakdown(
+    keyWhere(apiKeyId, from, to),
+    period,
+    from,
+    to,
+    !!key?.isTrial,
+    "key",
+  );
 }

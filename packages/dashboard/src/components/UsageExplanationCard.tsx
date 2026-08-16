@@ -121,8 +121,8 @@ export function UsageExplanationCard({ keyId }: { keyId: number }) {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-h-[90vh] max-w-6xl overflow-y-auto p-0">
           <DialogHeader className="border-b border-border/60 p-5 pr-12">
-            <DialogTitle className="flex items-center gap-2"><Calculator className="h-5 w-5 text-cyan-400" />Usage calculation</DialogTitle>
-            <DialogDescription>Canonical backend metering, presented in clear operational terms.</DialogDescription>
+            <DialogTitle className="flex items-center gap-2"><Calculator className="h-5 w-5 text-cyan-400" />Usage calculation · This API key</DialogTitle>
+            <DialogDescription>Canonical backend metering for this key only, matching the cards and charts below.</DialogDescription>
           </DialogHeader>
           <div className="space-y-5 p-5">
             <div className="flex flex-wrap gap-2" role="group" aria-label="Usage period">
