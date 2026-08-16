@@ -15,14 +15,14 @@ test("usage breakdown accepts only rolling periods", () => {
   }
 });
 
-test("usage breakdown periods are exact rolling windows", () => {
+test("usage breakdown periods match WIB calendar-aligned analytics windows", () => {
   const now = new Date("2026-08-15T16:00:00.000Z");
   assert.deepEqual(resolveUsageBreakdownRange("1d", now), {
-    from: new Date("2026-08-14T16:00:00.000Z"),
+    from: new Date("2026-08-14T17:00:00.000Z"),
     to: now,
   });
   assert.deepEqual(resolveUsageBreakdownRange("30d", now), {
-    from: new Date("2026-07-16T16:00:00.000Z"),
+    from: new Date("2026-07-16T17:00:00.000Z"),
     to: now,
   });
 });

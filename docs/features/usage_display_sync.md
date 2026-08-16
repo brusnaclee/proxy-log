@@ -78,7 +78,9 @@ pre-weight input/output units so Portal/Admin/Discord can explain the result.
 
 `Usage Today` quota bars are calendar-day counters since **00:00 WIB** and are
 independent from the analytics period selector. Transparent explanation periods
-are exact rolling windows, so “1 day” is not the same window as “Today”.
+use the same WIB calendar-aligned boundaries as analytics (`1d` = Today,
+`3d` = today plus the previous two WIB dates, etc.), so equal selectors produce
+equal account snapshots.
 
 ### Response contract
 

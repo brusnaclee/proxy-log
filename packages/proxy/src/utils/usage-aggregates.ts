@@ -3,6 +3,7 @@ import { db } from "../db/index.js";
 import { requestLogs } from "../db/schema.js";
 import {
   hopCountSql,
+  resolvePeriodRange,
   turnCountSql,
   weightedHopInputTokensSql,
   weightedHopTotalTokensSql,
@@ -79,8 +80,18 @@ export function resolveUsageBreakdownRange(
   period: UsageBreakdownPeriod,
   now = new Date(),
 ): { from: Date; to: Date } {
+  // Match the analytics selector exactly: WIB calendar-aligned windows ending
+  // now (3d = today + previous 2 WIB dates), not rolling N×24 hours.
+  if (now.getTime() === Date.now() || Math.abs(now.getTime() - Date.now()) < 1000) {
+    const range = resolvePeriodRange(period);
+    return { from: range.start, to: range.end || now };
+  }
+  const wibOffset = 7 * 60 * 60 * 1000;
+  const wibNow = new Date(now.getTime() + wibOffset);
+  wibNow.setUTCHours(0, 0, 0, 0);
+  const todayStart = new Date(wibNow.getTime() - wibOffset);
   const days = Number.parseInt(period, 10);
-  return { from: new Date(now.getTime() - days * DAY_MS), to: now };
+  return { from: new Date(todayStart.getTime() - (days - 1) * DAY_MS), to: now };
 }
 
 function n(value: unknown): number {
