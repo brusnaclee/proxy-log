@@ -107,15 +107,21 @@ export function UsageExplanationCard() {
               </div>
               <div className="mt-3 space-y-2 text-sm text-muted-foreground">
                 <p>
-                  Input counted starts from the upstream usage meter on {formatNumber(data.composition.creditHops)} calls
-                  {data.composition.localHops > 0 ? ` and local token multipliers on ${formatNumber(data.composition.localHops)} calls` : ""}.
-                  {" "}The first call in a prompt is counted fully; later calls use the configured follow-up weight
-                  {data.composition.inputHopWeightMode === "first_rest_flat" ? ` (${data.composition.followUpInputWeightPercent}%)` : ""}.
+                  <span className="font-medium text-foreground">Upstream-metered path ({formatNumber(data.composition.creditHops)} calls):</span>{" "}
+                  {formatNumber(data.composition.creditBillableInputTokens + data.composition.creditCachedInputTokens)} processed input tokens
+                  {" "}were reported as {formatNumber(data.composition.upstreamInputBeforeWeight)} input credit units;
+                  {" "}{formatNumber(data.composition.creditOutputTokens)} generated output tokens were reported as {formatNumber(data.composition.upstreamOutputBeforeWeight)} output credit units.
                 </p>
+                {data.composition.localHops > 0 && <p>
+                  <span className="font-medium text-foreground">Local fallback path ({formatNumber(data.composition.localHops)} calls):</span>{" "}
+                  {formatNumber(data.composition.localBillableInputTokens + data.composition.localCachedInputTokens)} processed input tokens became
+                  {" "}{formatNumber(data.composition.localInputBeforeWeight)} input units after model multipliers;
+                  {" "}{formatNumber(data.composition.localOutputTokens)} output tokens became {formatNumber(data.composition.localOutputBeforeWeight)} output units.
+                </p>}
                 <p>
-                  Before hop weighting: {formatNumber(data.composition.upstreamInputBeforeWeight + data.composition.localInputBeforeWeight)} input units
-                  {" "}and {formatNumber(data.composition.upstreamOutputBeforeWeight + data.composition.localOutputBeforeWeight)} output units.
-                  After the canonical rules: {formatNumber(data.towardLimit.input)} input counted and {formatNumber(data.towardLimit.output)} output counted.
+                  <span className="font-medium text-foreground">Hop weighting:</span> first call per prompt is 100%
+                  {data.composition.inputHopWeightMode === "first_rest_flat" ? `; later calls are ${data.composition.followUpInputWeightPercent}%` : ""}.
+                  {" "}Final: {formatNumber(data.towardLimit.input)} input counted + {formatNumber(data.towardLimit.output)} output counted = {formatNumber(data.towardLimit.total)} toward limits.
                 </p>
               </div>
             </section>

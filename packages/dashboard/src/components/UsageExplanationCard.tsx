@@ -171,11 +171,22 @@ export function UsageExplanationCard({ keyId }: { keyId: number }) {
                 <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
                   <p className="font-medium text-foreground">Counted-value composition</p>
                   <p className="mt-1">
-                    Before hop weighting: {formatNumber(data.composition.upstreamInputBeforeWeight + data.composition.localInputBeforeWeight)} input units
-                    {" "}and {formatNumber(data.composition.upstreamOutputBeforeWeight + data.composition.localOutputBeforeWeight)} output units.
+                    <span className="text-foreground">Upstream-metered ({formatNumber(data.composition.creditHops)} calls):</span>{" "}
+                    {formatNumber(data.composition.creditBillableInputTokens + data.composition.creditCachedInputTokens)} processed input
+                    {" "}→ {formatNumber(data.composition.upstreamInputBeforeWeight)} input credit units;
+                    {" "}{formatNumber(data.composition.creditOutputTokens)} generated output
+                    {" "}→ {formatNumber(data.composition.upstreamOutputBeforeWeight)} output credit units.
                   </p>
+                  {data.composition.localHops > 0 && <p className="mt-1">
+                    <span className="text-foreground">Local fallback ({formatNumber(data.composition.localHops)} calls):</span>{" "}
+                    {formatNumber(data.composition.localBillableInputTokens + data.composition.localCachedInputTokens)} processed input
+                    {" "}→ {formatNumber(data.composition.localInputBeforeWeight)} multiplied input units;
+                    {" "}{formatNumber(data.composition.localOutputTokens)} output
+                    {" "}→ {formatNumber(data.composition.localOutputBeforeWeight)} multiplied output units.
+                  </p>}
                   <p className="mt-1">
-                    Final: {formatNumber(data.towardLimit.input)} input counted + {formatNumber(data.towardLimit.output)} output counted
+                    Hop rule: first call is 100%{data.composition.inputHopWeightMode === "first_rest_flat" ? `; later calls are ${data.composition.followUpInputWeightPercent}%` : ""}.
+                    {" "}Final: {formatNumber(data.towardLimit.input)} input counted + {formatNumber(data.towardLimit.output)} output counted
                     {" "}= {formatNumber(data.towardLimit.total)} toward limits.
                   </p>
                 </div>

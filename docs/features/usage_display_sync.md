@@ -75,6 +75,25 @@ counted and Output counted. Retries, continuations, tool steps, upstream usage
 credits, model multipliers, and hop weights can all change the counted values.
 The API's `composition` object exposes how many calls used each source and the
 pre-weight input/output units so Portal/Admin/Discord can explain the result.
+It also exposes the raw processed input/output attached to each path, allowing
+the UI to render a complete reconciliation:
+
+```text
+upstream-metered calls:
+  processed input tokens → input credit units
+  generated output tokens → output credit units
+
+local-fallback calls:
+  processed input tokens × model multiplier → local input units
+  generated output tokens × model multiplier → local output units
+
+input units × hop schedule + output units → counted toward limits
+```
+
+The UI must not imply that upstream credit units equal raw tokens. Credit units
+are the upstream's reported usage measure. For non-credit providers, the local
+fallback remains directly derived from raw input/output and configured model
+multipliers.
 
 `Usage Today` quota bars are calendar-day counters since **00:00 WIB** and are
 independent from the analytics period selector. Transparent explanation periods

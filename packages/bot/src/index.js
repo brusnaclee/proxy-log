@@ -7200,6 +7200,7 @@ function buildTransparentUsageEmbed(data, targetUserId, days) {
 	const billable = usage.billable ?? {};
 	const activity = usage.activity ?? {};
 	const towardLimit = usage.towardLimit;
+	const composition = usage.composition ?? {};
 	const meter = usage.meter ?? towardLimit ?? {};
 	const limit = usage.limit ?? usage.towardLimit ?? {};
 	const period = usage.period ?? {};
@@ -7215,7 +7216,21 @@ function buildTransparentUsageEmbed(data, targetUserId, days) {
 			? formatCanonicalAmount(amount, unit)
 			: `${formatCanonicalAmount(amount, unit)} / ${formatCanonicalAmount(limitValue, unit)}`;
 
-	const explanation = plainUsageExplanation(meter.explanation ?? usage.explanation);
+	const explanation = composition.creditHops != null
+		? truncateDiscord(
+				`Upstream meter (${canonicalNumber(composition.creditHops).toLocaleString('en-US')} calls): ` +
+				`${formatCanonicalAmount(canonicalNumber(composition.creditBillableInputTokens) + canonicalNumber(composition.creditCachedInputTokens), unit)} processed input → ` +
+				`${formatCanonicalAmount(composition.upstreamInputBeforeWeight, unit)} input credit units; ` +
+				`${formatCanonicalAmount(composition.creditOutputTokens, unit)} generated output → ` +
+				`${formatCanonicalAmount(composition.upstreamOutputBeforeWeight, unit)} output credit units.\n` +
+				(composition.localHops > 0
+					? `Local fallback (${canonicalNumber(composition.localHops).toLocaleString('en-US')} calls): model multipliers produced ` +
+						`${formatCanonicalAmount(composition.localInputBeforeWeight, unit)} input + ${formatCanonicalAmount(composition.localOutputBeforeWeight, unit)} output units.\n`
+					: '') +
+				`Hop rule: first call 100%; later calls ${canonicalNumber(composition.followUpInputWeightPercent)}%.`,
+				950,
+			)
+		: plainUsageExplanation(meter.explanation ?? usage.explanation);
 	const countedUnit = towardLimit?.unit ?? unit;
 	const processedInput =
 		billable.input == null && billable.cache == null

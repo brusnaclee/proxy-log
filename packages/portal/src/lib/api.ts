@@ -415,6 +415,12 @@ export interface UsageExplanationResponse {
   composition: {
     creditHops: number;
     localHops: number;
+    creditBillableInputTokens: number;
+    creditCachedInputTokens: number;
+    creditOutputTokens: number;
+    localBillableInputTokens: number;
+    localCachedInputTokens: number;
+    localOutputTokens: number;
     upstreamInputBeforeWeight: number;
     upstreamOutputBeforeWeight: number;
     localInputBeforeWeight: number;

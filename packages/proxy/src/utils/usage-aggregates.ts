@@ -36,6 +36,12 @@ export interface UsageBreakdownTotals {
 export interface UsageMeterComposition {
   creditHops: number;
   localHops: number;
+  creditBillableInputTokens: number;
+  creditCachedInputTokens: number;
+  creditOutputTokens: number;
+  localBillableInputTokens: number;
+  localCachedInputTokens: number;
+  localOutputTokens: number;
   upstreamInputBeforeWeight: number;
   upstreamOutputBeforeWeight: number;
   localInputBeforeWeight: number;
@@ -154,6 +160,24 @@ async function meterComposition(
   const [row] = await db.select({
     creditHops: sql<number>`COUNT(*) FILTER (WHERE COALESCE(upstream_credits, 0) > 0)`,
     localHops: sql<number>`COUNT(*) FILTER (WHERE COALESCE(upstream_credits, 0) <= 0)`,
+    creditBillableInputTokens: sql<number>`COALESCE(SUM(
+      CASE WHEN COALESCE(upstream_credits, 0) > 0 THEN COALESCE(prompt_tokens, 0) ELSE 0 END
+    ), 0)`,
+    creditCachedInputTokens: sql<number>`COALESCE(SUM(
+      CASE WHEN COALESCE(upstream_credits, 0) > 0 THEN COALESCE(cached_tokens, 0) ELSE 0 END
+    ), 0)`,
+    creditOutputTokens: sql<number>`COALESCE(SUM(
+      CASE WHEN COALESCE(upstream_credits, 0) > 0 THEN COALESCE(completion_tokens, 0) ELSE 0 END
+    ), 0)`,
+    localBillableInputTokens: sql<number>`COALESCE(SUM(
+      CASE WHEN COALESCE(upstream_credits, 0) <= 0 THEN COALESCE(prompt_tokens, 0) ELSE 0 END
+    ), 0)`,
+    localCachedInputTokens: sql<number>`COALESCE(SUM(
+      CASE WHEN COALESCE(upstream_credits, 0) <= 0 THEN COALESCE(cached_tokens, 0) ELSE 0 END
+    ), 0)`,
+    localOutputTokens: sql<number>`COALESCE(SUM(
+      CASE WHEN COALESCE(upstream_credits, 0) <= 0 THEN COALESCE(completion_tokens, 0) ELSE 0 END
+    ), 0)`,
     upstreamInputBeforeWeight: sql<number>`COALESCE(SUM(
       CASE WHEN COALESCE(upstream_credits, 0) > 0
         THEN GREATEST(0, COALESCE(upstream_credits, 0) - COALESCE(upstream_credits_out, 0))
@@ -178,6 +202,12 @@ async function meterComposition(
   return {
     creditHops: n(row?.creditHops),
     localHops: n(row?.localHops),
+    creditBillableInputTokens: n(row?.creditBillableInputTokens),
+    creditCachedInputTokens: n(row?.creditCachedInputTokens),
+    creditOutputTokens: n(row?.creditOutputTokens),
+    localBillableInputTokens: n(row?.localBillableInputTokens),
+    localCachedInputTokens: n(row?.localCachedInputTokens),
+    localOutputTokens: n(row?.localOutputTokens),
     upstreamInputBeforeWeight: n(row?.upstreamInputBeforeWeight),
     upstreamOutputBeforeWeight: n(row?.upstreamOutputBeforeWeight),
     localInputBeforeWeight: n(row?.localInputBeforeWeight),
