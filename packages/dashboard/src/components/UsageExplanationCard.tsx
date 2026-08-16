@@ -57,7 +57,10 @@ function BreakdownTable({ title, rows, nameKey }: { title: string; rows: UsageEx
                       In {number(row.inputTowardLimit)} · Out {number(row.outputTowardLimit)}
                     </div>
                     {row.composition && <div className="mt-0.5 whitespace-nowrap text-[10px] font-normal text-muted-foreground">
-                      Credits {number(row.composition.upstreamInputBeforeWeight)} in · {number(row.composition.upstreamOutputBeforeWeight)} out
+                      1 input token ≈ {((row.composition.upstreamInputBeforeWeight + row.composition.localInputBeforeWeight) /
+                        Math.max(1, row.composition.creditBillableInputTokens + row.composition.creditCachedInputTokens + row.composition.localBillableInputTokens + row.composition.localCachedInputTokens)).toFixed(2)} counted
+                      {" · "}1 output token ≈ {((row.composition.upstreamOutputBeforeWeight + row.composition.localOutputBeforeWeight) /
+                        Math.max(1, row.composition.creditOutputTokens + row.composition.localOutputTokens)).toFixed(2)} counted
                     </div>}
                   </td>
                   <td className="px-3 py-2.5 text-right tabular-nums">{number(row.turns)} / {number(row.apiCalls)}</td>

@@ -38,7 +38,10 @@ function BreakdownTable({ rows, kind }: { rows: UsageExplanationBreakdown[]; kin
                 In {formatNumber(value(row, "inputTowardLimit"))} · Out {formatNumber(value(row, "outputTowardLimit"))}
               </div>
               {c && <div className="mt-0.5 whitespace-nowrap text-[10px] font-normal text-muted-foreground">
-                Credits {formatNumber(c.upstreamInputBeforeWeight)} in · {formatNumber(c.upstreamOutputBeforeWeight)} out
+                1 input token ≈ {((c.upstreamInputBeforeWeight + c.localInputBeforeWeight) /
+                  Math.max(1, c.creditBillableInputTokens + c.creditCachedInputTokens + c.localBillableInputTokens + c.localCachedInputTokens)).toFixed(2)} counted
+                {" · "}1 output token ≈ {((c.upstreamOutputBeforeWeight + c.localOutputBeforeWeight) /
+                  Math.max(1, c.creditOutputTokens + c.localOutputTokens)).toFixed(2)} counted
               </div>}
             </td>
           </tr>;
@@ -120,6 +123,14 @@ export function UsageExplanationCard() {
                   {formatNumber(data.composition.creditBillableInputTokens + data.composition.creditCachedInputTokens)} processed input tokens
                   {" "}were reported as {formatNumber(data.composition.upstreamInputBeforeWeight)} input credit units;
                   {" "}{formatNumber(data.composition.creditOutputTokens)} generated output tokens were reported as {formatNumber(data.composition.upstreamOutputBeforeWeight)} output credit units.
+                </p>
+                <p>
+                  <span className="font-medium text-foreground">Effective conversion in this period:</span>{" "}
+                  1 processed input token ≈ {((data.composition.upstreamInputBeforeWeight + data.composition.localInputBeforeWeight) /
+                    Math.max(1, data.composition.creditBillableInputTokens + data.composition.creditCachedInputTokens + data.composition.localBillableInputTokens + data.composition.localCachedInputTokens)).toFixed(2)} counted input units;
+                  {" "}1 generated output token ≈ {((data.composition.upstreamOutputBeforeWeight + data.composition.localOutputBeforeWeight) /
+                    Math.max(1, data.composition.creditOutputTokens + data.composition.localOutputTokens)).toFixed(2)} counted output units.
+                  These are weighted averages for the selected period and can change by provider/model.
                 </p>
                 {data.composition.localHops > 0 && <p>
                   <span className="font-medium text-foreground">Local fallback path ({formatNumber(data.composition.localHops)} calls):</span>{" "}

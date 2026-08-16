@@ -1079,6 +1079,7 @@ portal.get("/stats/compare", async (c) => {
       promptTokens: stats?.promptTokens || 0,
       billablePromptTokens: stats?.billablePromptTokens || 0,
       cachedTokens: stats?.cachedTokens || 0,
+      inputProcessed: (stats?.billablePromptTokens || 0) + (stats?.cachedTokens || 0),
       completionTokens: stats?.completionTokens || 0,
       cost: { prompt: promptCost, completion: completionCost, total: promptCost + completionCost },
     };

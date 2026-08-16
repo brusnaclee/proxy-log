@@ -574,12 +574,12 @@ export default function OverviewPage() {
       { label: t("Prompts"), today: formatNumber(today.requests), yesterday: formatNumber(yesterday.requests), diff: pct(today.requests, yesterday.requests) },
       { label: t("API Calls"), today: formatNumber(today.apiCalls || 0), yesterday: formatNumber(yesterday.apiCalls || 0), diff: pct(today.apiCalls || 0, yesterday.apiCalls || 0) },
       {
-        label: t("Input Tokens"),
-        today: formatInputBreakdown(today.billablePromptTokens, today.cachedTokens, today.promptTokens).label,
-        yesterday: formatInputBreakdown(yesterday.billablePromptTokens, yesterday.cachedTokens, yesterday.promptTokens).label,
+        label: "Counted Input",
+        today: `${formatNumber(today.promptTokens)} counted · ${formatNumber(today.inputProcessed || 0)} processed`,
+        yesterday: `${formatNumber(yesterday.promptTokens)} counted · ${formatNumber(yesterday.inputProcessed || 0)} processed`,
         diff: pct(today.promptTokens, yesterday.promptTokens),
       },
-      { label: t("Output Tokens"), today: formatNumber(today.completionTokens), yesterday: formatNumber(yesterday.completionTokens), diff: pct(today.completionTokens, yesterday.completionTokens) },
+      { label: "Counted Output", today: formatNumber(today.completionTokens), yesterday: formatNumber(yesterday.completionTokens), diff: pct(today.completionTokens, yesterday.completionTokens) },
       { label: t("Est. Cost"), today: formatCost(today.cost.total), yesterday: formatCost(yesterday.cost.total), diff: pct(today.cost.total, yesterday.cost.total) },
     ];
 

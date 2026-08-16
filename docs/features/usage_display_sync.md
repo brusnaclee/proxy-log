@@ -108,6 +108,22 @@ limit are explicitly Counted Input / Counted Output meter units. Plans without
 an input/output limit omit those rows; dedicated pools keep their own scope and
 reset semantics.
 
+For readability, grouped rows do not repeat credit units when they are equal to
+the final counted values. They show effective period ratios instead:
+
+```text
+1 processed input token ≈ N counted input units
+1 generated output token ≈ M counted output units
+```
+
+These ratios are weighted averages for that exact period and group, not fixed
+provider prices. They can change when the model/provider mix, cache usage,
+upstream credit reporting, local multipliers, or hop schedule changes.
+
+Today-vs-Yesterday uses explicit **Counted Input** / **Counted Output** labels.
+Counted Input also includes Input processed as context so the comparison cannot
+be mistaken for a raw-token comparison.
+
 `Usage Today` quota bars are calendar-day counters since **00:00 WIB** and are
 independent from the analytics period selector. Transparent explanation periods
 use the same WIB calendar-aligned boundaries as analytics (`1d` = Today,
