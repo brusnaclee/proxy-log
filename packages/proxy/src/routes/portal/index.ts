@@ -734,6 +734,8 @@ portal.get("/me", async (c) => {
       billablePromptTokens: usageToday?.billablePromptTokens || 0,
       cachedTokens: usageToday?.cachedTokens || 0,
       fullInputTokens: (usageToday as any)?.fullInputTokens || 0,
+      rawProcessedInput: (usageToday as any)?.rawProcessedInput || 0,
+      rawCompletionTokens: (usageToday as any)?.rawCompletionTokens || 0,
       completionTokens: usageToday?.completionTokens || 0,
       // Rolling prompt window usage (matches Discord), NOT all-day requests
       promptCount: promptUsed,
