@@ -1,5 +1,6 @@
 import { and, sql, type SQL } from "drizzle-orm";
 import { db } from "../db/index.js";
+import { requestLogs } from "../db/schema.js";
 import {
   hopCountSql,
   turnCountSql,
