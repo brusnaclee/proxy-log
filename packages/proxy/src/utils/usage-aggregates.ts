@@ -329,8 +329,11 @@ export async function getKeyUsageBreakdown(
 ) {
   const { from, to } = resolveUsageBreakdownRange(period, now);
   const [key] = await db.select({ isTrial: apiKeys.isTrial }).from(apiKeys).where(eq(apiKeys.id, apiKeyId));
+  const { listDedicatedQuotaRules, sqlExcludeDedicatedModels } = await import("./rate-limit.js");
+  const excludeDedicated = sqlExcludeDedicatedModels(await listDedicatedQuotaRules(apiKeyId));
+  const where = and(keyWhere(apiKeyId, from, to), excludeDedicated)!;
   return buildUsageBreakdown(
-    keyWhere(apiKeyId, from, to),
+    where,
     period,
     from,
     to,
