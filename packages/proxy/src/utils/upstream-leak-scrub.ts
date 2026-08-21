@@ -217,7 +217,8 @@ export function scrubUpstreamLeakJson<T>(payload: T): T {
  */
 export class StreamHoldbackScrubber {
   private buf = "";
-  constructor(private readonly holdChars = 360) {}
+  /** ~footer length; keep small so short replies aren't held until finish/[DONE]. */
+  constructor(private readonly holdChars = 96) {}
 
   push(chunk: string): string {
     if (!chunk) return "";

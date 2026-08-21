@@ -3378,12 +3378,13 @@ proxy.all('/*', async (c) => {
 										? Math.max(estimateTokens(finalized.completionText), 1)
 										: 0;
 
+								const hasVisibleAutoOutput =
+									Boolean(String(finalized.completionText || '').trim()) ||
+									autoHasActualToolCalls;
 								if (
 									trialResponse.status >= 200 &&
 									trialResponse.status < 300 &&
-									rawCompletionTokens === 0 &&
-									!finalized.completionText &&
-									!autoHasActualToolCalls
+									!hasVisibleAutoOutput
 								) {
 									const errorMsg = `Auto model "${candidate.modelId}" returned empty streaming response`;
 									console.warn(`[auto-stream] ${errorMsg}`);
@@ -4799,13 +4800,28 @@ proxy.all('/*', async (c) => {
 	// their SSE needs format-specific builders, so they pass through as-is.
 	// ns2s: client wants JSON, upstream streams; the existing looksSse
 	// assembler converts the SSE back into a single JSON response.
+	//
+	// Amanai Claude Opus streaming often emits finish/usage before content (or
+	// usage with no visible deltas). Cursor stops early → empty bubble @200.
+	// Force non-stream upstream + fake SSE for that family only.
+	const forceAmanaiOpusS2ns =
+		isStreaming &&
+		!isAnthropicRequest &&
+		!isResponsesApi &&
+		providerIsAmanaiCompat(targetProvider) &&
+		/claude-opus/i.test(String(model || requestBody?.model || ''));
 	const tsStreamToNonstreamWanted =
 		isStreaming &&
-		resolvedTsFlags.streamToNonstream &&
+		(resolvedTsFlags.streamToNonstream || forceAmanaiOpusS2ns) &&
 		!isAnthropicRequest &&
 		!isResponsesApi;
 	const tsNonstreamToStreamWanted =
 		!isStreaming && resolvedTsFlags.nonstreamToStream;
+	if (forceAmanaiOpusS2ns && !resolvedTsFlags.streamToNonstream) {
+		console.log(
+			`[stream-translate] auto s2ns for amanai opus (${model}) — upstream stream unreliable for Cursor`,
+		);
+	}
 
 	// ─── Sanitize message roles (amanai-safe allowlist) ─────────────────────
 	if (requestBody && Array.isArray((requestBody as any).messages)) {
@@ -6190,8 +6206,9 @@ proxy.all('/*', async (c) => {
 							? Math.max(estimateTokens(finalized.completionText), 1)
 							: 0;
 
-					// Guard: emit SSE error when upstream returned 200 but stream had no content.
-					// Skip if finish_reason is length/max_tokens (valid truncate, not empty — OmniRoute #3572).
+					// Guard: emit SSE error when upstream returned 200 but stream had no
+					// visible content/tools. Do NOT trust usage.completion_tokens alone —
+					// amanai opus often sends usage>0 with empty deltas (Cursor empty @200).
 					const streamFinishReason = String(
 						(finalized as any)?.finishReason ||
 							(finalized as any)?.finish_reason ||
@@ -6199,17 +6216,18 @@ proxy.all('/*', async (c) => {
 					).toLowerCase();
 					const isValidTruncate =
 						streamFinishReason === 'length' || streamFinishReason === 'max_tokens';
+					const hasVisibleStreamOutput =
+						Boolean(String(finalized.completionText || '').trim()) ||
+						hasActualToolCalls;
 					if (
 						statusCode >= 200 &&
 						statusCode < 300 &&
-						rawCompletionTokens === 0 &&
-						!finalized.completionText &&
-						!hasActualToolCalls &&
+						!hasVisibleStreamOutput &&
 						!isValidTruncate
 					) {
 						const errorMsg =
 							`Upstream returned empty content for ${model}. Prompt quota was NOT charged. Try again or switch model.`;
-						console.warn(`[proxy] ${errorMsg}`);
+						console.warn(`[proxy] ${errorMsg} (usage_completion_tokens=${rawCompletionTokens})`);
 						releasePromptReservations();
 						const toolsList = Array.from(toolNameSet);
 						const logEntry = {
@@ -6777,14 +6795,12 @@ proxy.all('/*', async (c) => {
 					choice?.reasoning_content ||
 					choice?.reasoning ||
 					'';
-				const upstreamTokens = openaiParsed?.usage?.completion_tokens;
+				// Ignore usage.completion_tokens alone — amanai may report tokens with empty message.
 				const isEmptyCompletion =
-					!hasToolCalls &&
-					(!choiceContent || choiceContent.length === 0) &&
-					(upstreamTokens == null || upstreamTokens === 0);
+					!hasToolCalls && !String(choiceContent || '').trim();
 
 				if (isEmptyCompletion) {
-					errorMessage = `Upstream model "${model}" returned empty response (0 tokens)`;
+					errorMessage = `Upstream model "${model}" returned empty response`;
 					statusCode = 502;
 					releasePromptReservations();
 					console.warn(`[proxy] ${errorMessage}`);
