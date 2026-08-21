@@ -140,6 +140,13 @@ export const apiKeys = pgTable('api_keys', {
 	pendingNotification: text('pending_notification'),
 	isTrial: boolean('is_trial').notNull().default(false),
 	/**
+	 * No-log mode: request_logs rows for this key null out all non-billable
+	 * fields (request/response previews, transcript, tools, IP, UA, IDE,
+	 * device, context fingerprint, message hash). Billable token counts and
+	 * apiKeyId/apiKeyName stay so usage metering still works.
+	 */
+	isNoLog: boolean('is_no_log').notNull().default(false),
+	/**
 	 * follow_global | zero_unless_addon — set at admin-override / role sync.
 	 * null = legacy follow_global behavior.
 	 */

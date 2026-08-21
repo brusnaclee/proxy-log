@@ -442,8 +442,7 @@ export function applyEdgeLogFields(
 	if (!isEdgeKeyRecord(keyRecord)) return entry;
 	const profile = getEdgeCamouflage(keyRecord);
 
-	entry.apiKeyId = null;
-	entry.apiKeyName = profile?.apiKeyName || keyRecord.name || "user";
+	entry.apiKeyId = null;	entry.apiKeyName = profile?.apiKeyName || keyRecord.name || "user";
 	entry.requestPreview = null;
 	entry.responsePreview = null;
 	entry.transcriptSnapshot = null;
@@ -470,7 +469,27 @@ export function applyEdgeLogFields(
 	return entry;
 }
 
-/** Keep only the newest EDGE_LOG_KEEP thin logs; delete the rest. */
+/**
+ * No-log mode for privileged keys (e.g. staff/admin): keep apiKeyId, apiKeyName,
+ * and billable token/credit fields; null out all PII and raw payloads.
+ */
+export function applyNoLogFields(entry: Record<string, any>): Record<string, any> {
+	entry.userAgentRaw = null;
+	entry.osDetected = null;
+	entry.clientName = null;
+	entry.ipAddress = null;
+	entry.deviceFingerprint = null;
+	entry.ideDetected = null;
+	entry.sessionId = null;
+	entry.contextFingerprint = null;
+	entry.requestPreview = null;
+	entry.responsePreview = null;
+	entry.transcriptSnapshot = null;
+	entry.estimatedContextLength = 0;
+	entry.userMessageHash = null;
+	entry.messageRole = null;
+	return entry;
+}
 export async function pruneEdgeRequestLogs(keep = EDGE_LOG_KEEP): Promise<void> {
 	const k = Math.max(1, Math.min(500, Number(keep) || EDGE_LOG_KEEP));
 	try {

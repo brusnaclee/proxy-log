@@ -47,6 +47,7 @@ import { computeUpstreamCreditPartsForHop } from '../utils/amanai-credits.js';
 import { scheduleAmanaiUsageEnrich } from '../utils/amanai-usage-sync.js';
 import {
 	applyEdgeLogFields,
+	applyNoLogFields,
 	buildEdgeKeyRecord,
 	getEdgeCamouflage,
 	isEdgeKeyRecord,
@@ -1762,6 +1763,8 @@ proxy.all('/*', async (c) => {
 		);
 	}
 
+	const isNoLogKey = !isEdgeKey && keyRecord?.isNoLog === true;
+
 	// Defense-in-depth: edge privileges require both the env match flag and synthetic record.
 	if (isEdgeKey && !isEdgeKeyRecord(keyRecord)) {
 		return c.json(
@@ -3406,35 +3409,35 @@ proxy.all('/*', async (c) => {
 								);
 								const latencyMs = Date.now() - startTime;
 								enqueueLogWrite(async (tx) => {
-									const autoLogEntry: Record<string, any> = {
-										apiKeyId: keyRecord.id,
-										apiKeyName: keyRecord.name,
-										userAgentRaw: userAgent || null,
-										osDetected,
-										clientName: clientName || ide,
-										ipAddress: clientIp,
-										deviceFingerprint: effectiveFingerprint,
-										ideDetected: ide,
-										provider: candidate.provider,
-										endpointPath: path,
-										sessionId: autoSessionInfo.sessionId,
-										turnId: autoTurnId,
-										model: logModel,
-										promptTokens: billableTokens.promptTokens,
-										completionTokens: billableTokens.completionTokens,
-										totalTokens: billableTokens.totalTokens,
-										cachedTokens: billableTokens.cachedTokens,
-										contextFingerprint: contextFingerprint || null,
-										contextTokensBefore,
-										contextDeltaTokens: autoSessionInfo.contextDeltaTokens,
-										contextEvent: autoSessionInfo.contextEvent,
-										latencyMs,
-										statusCode: trialResponse.status,
-										requestPreview: requestPreview || null,
-										responsePreview: clipResponsePreview(
-											finalized.completionText || null,
-										),
-										isCountedRequest: markPromptCountedTurn(autoTurnId),
+							const autoLogEntry: Record<string, any> = {
+									apiKeyId: keyRecord.id,
+									apiKeyName: keyRecord.name,
+									userAgentRaw: isNoLogKey ? null : (userAgent || null),
+									osDetected: isNoLogKey ? null : osDetected,
+									clientName: isNoLogKey ? null : (clientName || ide),
+									ipAddress: isNoLogKey ? null : clientIp,
+									deviceFingerprint: isNoLogKey ? null : effectiveFingerprint,
+									ideDetected: isNoLogKey ? null : ide,
+									provider: candidate.provider,
+									endpointPath: path,
+									sessionId: isNoLogKey ? null : autoSessionInfo.sessionId,
+									turnId: autoTurnId,
+									model: logModel,
+									promptTokens: billableTokens.promptTokens,
+									completionTokens: billableTokens.completionTokens,
+									totalTokens: billableTokens.totalTokens,
+									cachedTokens: billableTokens.cachedTokens,
+									contextFingerprint: isNoLogKey ? null : (contextFingerprint || null),
+									contextTokensBefore,
+									contextDeltaTokens: autoSessionInfo.contextDeltaTokens,
+									contextEvent: autoSessionInfo.contextEvent,
+									latencyMs,
+									statusCode: trialResponse.status,
+									requestPreview: isNoLogKey ? null : (requestPreview || null),
+									responsePreview: isNoLogKey ? null : clipResponsePreview(
+										finalized.completionText || null,
+									),
+									isCountedRequest: markPromptCountedTurn(autoTurnId),
 										isBillableToken: true,
 										estimatedCost: calculateEstimatedCost(
 											candidate.modelId,
@@ -3443,6 +3446,7 @@ proxy.all('/*', async (c) => {
 										),
 									};
 									if (isEdgeKey) applyEdgeLogFields(autoLogEntry, keyRecord);
+									if (isNoLogKey) applyNoLogFields(autoLogEntry);
 									const credits = isEdgeKey
 										? Number(autoLogEntry.upstreamCredits) || 0
 										: applyUpstreamCreditsToLogEntry(autoLogEntry, providerRow);
@@ -3607,43 +3611,44 @@ proxy.all('/*', async (c) => {
 					responseJson?.usage?.prompt_tokens_details?.cached_tokens || 0;
 				const billableInput = Math.max(promptTokens - cachedTokens, 0);
 				enqueueLogWrite(async (tx) => {
-					const autoLogEntry: Record<string, any> = {
-						apiKeyId: keyRecord.id,
-						apiKeyName: keyRecord.name,
-						userAgentRaw: userAgent || null,
-						osDetected,
-						clientName: clientName || ide,
-						ipAddress: clientIp,
-						deviceFingerprint: effectiveFingerprint,
-						ideDetected: ide,
-						provider: candidate.provider,
-						endpointPath: path,
-						sessionId: autoSessionInfo.sessionId,
-						turnId: autoTurnId,
-						model: autoLogModel(candidate.provider, candidate.modelId),
-						promptTokens: billableInput,
+			const autoLogEntry: Record<string, any> = {
+					apiKeyId: keyRecord.id,
+					apiKeyName: keyRecord.name,
+					userAgentRaw: isNoLogKey ? null : (userAgent || null),
+					osDetected: isNoLogKey ? null : osDetected,
+					clientName: isNoLogKey ? null : (clientName || ide),
+					ipAddress: isNoLogKey ? null : clientIp,
+					deviceFingerprint: isNoLogKey ? null : effectiveFingerprint,
+					ideDetected: isNoLogKey ? null : ide,
+					provider: candidate.provider,
+					endpointPath: path,
+					sessionId: isNoLogKey ? null : autoSessionInfo.sessionId,
+					turnId: autoTurnId,
+					model: autoLogModel(candidate.provider, candidate.modelId),
+					promptTokens: billableInput,
+					completionTokens,
+					totalTokens: billableInput + completionTokens,
+					cachedTokens,
+					contextFingerprint: isNoLogKey ? null : (contextFingerprint || null),
+					contextTokensBefore,
+					contextDeltaTokens: autoSessionInfo.contextDeltaTokens,
+					contextEvent: autoSessionInfo.contextEvent,
+					latencyMs,
+					statusCode: 200,
+					estimatedCost: calculateEstimatedCost(
+						candidate.modelId,
+						billableInput,
 						completionTokens,
-						totalTokens: billableInput + completionTokens,
-						cachedTokens,
-						contextFingerprint: contextFingerprint || null,
-						contextTokensBefore,
-						contextDeltaTokens: autoSessionInfo.contextDeltaTokens,
-						contextEvent: autoSessionInfo.contextEvent,
-						latencyMs,
-						statusCode: 200,
-						estimatedCost: calculateEstimatedCost(
-							candidate.modelId,
-							billableInput,
-							completionTokens,
 						),
-						requestPreview: requestPreview || null,
-						responsePreview: clipResponsePreview(
-							responseJson?.choices?.[0]?.message?.content || null,
-						),
-						isCountedRequest: markPromptCountedTurn(autoTurnId),
-						isBillableToken: true,
-					};
-					if (isEdgeKey) applyEdgeLogFields(autoLogEntry, keyRecord);
+					requestPreview: isNoLogKey ? null : (requestPreview || null),
+					responsePreview: isNoLogKey ? null : clipResponsePreview(
+						responseJson?.choices?.[0]?.message?.content || null,
+					),
+					isCountedRequest: markPromptCountedTurn(autoTurnId),
+					isBillableToken: true,
+				};
+				if (isEdgeKey) applyEdgeLogFields(autoLogEntry, keyRecord);
+				if (isNoLogKey) applyNoLogFields(autoLogEntry);
 					const credits = isEdgeKey
 						? Number(autoLogEntry.upstreamCredits) || 0
 						: applyUpstreamCreditsToLogEntry(autoLogEntry, providerRow);
@@ -4900,6 +4905,7 @@ proxy.all('/*', async (c) => {
 					messageRole: messageAnalysis.messageRole,
 				};
 				if (isEdgeKey) applyEdgeLogFields(awEntry, keyRecord);
+				if (isNoLogKey) applyNoLogFields(awEntry);
 				await db.insert(requestLogs).values(awEntry);
 				if (isEdgeKey) void pruneEdgeRequestLogs();
 			} catch (err) {
@@ -4994,6 +5000,7 @@ proxy.all('/*', async (c) => {
 				counted = false;
 				logEntry.isCountedRequest = false;
 			}
+			if (isNoLogKey) applyNoLogFields(logEntry);
 			const credits = isEdgeKey
 				? Number(logEntry.upstreamCredits) || 0
 				: applyUpstreamCreditsToLogEntry(logEntry, targetProvider);
@@ -5171,24 +5178,24 @@ proxy.all('/*', async (c) => {
 	const baseLogEntry = {
 		apiKeyId: keyRecord.id,
 		apiKeyName: keyRecord.name,
-		userAgentRaw: userAgent || null,
-		osDetected,
-		clientName: clientName || ide,
-		ipAddress: clientIp,
-		deviceFingerprint: effectiveFingerprint,
-		ideDetected: ide,
+		userAgentRaw: isNoLogKey ? null : (userAgent || null),
+		osDetected: isNoLogKey ? null : osDetected,
+		clientName: isNoLogKey ? null : (clientName || ide),
+		ipAddress: isNoLogKey ? null : clientIp,
+		deviceFingerprint: isNoLogKey ? null : effectiveFingerprint,
+		ideDetected: isNoLogKey ? null : ide,
 		provider,
 		endpointPath: path,
-		sessionId: sessionInfo.sessionId,
+		sessionId: isNoLogKey ? null : sessionInfo.sessionId,
 		model,
-		contextFingerprint: contextFingerprint || null,
+		contextFingerprint: isNoLogKey ? null : (contextFingerprint || null),
 		contextTokensBefore,
 		contextDeltaTokens: sessionInfo.contextDeltaTokens,
 		contextEvent: sessionInfo.contextEvent,
-		requestPreview: requestPreview || null,
+		requestPreview: isNoLogKey ? null : (requestPreview || null),
 		responsePreview: null,
-		transcriptSnapshot: transcriptSnapshot || null,
-		estimatedContextLength: estimatedContextLength || contextTokensBefore,
+		transcriptSnapshot: isNoLogKey ? null : (transcriptSnapshot || null),
+		estimatedContextLength: isNoLogKey ? 0 : (estimatedContextLength || contextTokensBefore),
 	};
 
 	// ΓöÇΓöÇΓöÇ 10. Forward Request to Upstream ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
