@@ -246,7 +246,10 @@ export class StreamHoldbackScrubber {
 
 /**
  * Apply holdback to OpenAI chat.completion.chunk delta.content; scrub rest of payload.
- * Returns text that should be injected as an extra chunk before [DONE] when flushing.
+ * On finish_reason, flush pending holdback into this same chunk so short answers are
+ * not stuck behind finish (when content arrived before finish).
+ * Call StreamFinishDeferral.deferFromChunk AFTER consumeStreamPayload so clients that
+ * stop at finish_reason still see late content chunks that arrive after finish.
  */
 export function scrubOpenAiStreamChunk(
   data: any,
@@ -254,11 +257,78 @@ export function scrubOpenAiStreamChunk(
 ): any {
   if (!data || typeof data !== "object") return data;
   const choice = data?.choices?.[0];
-  const delta = choice?.delta;
-  if (holdback && delta && typeof delta.content === "string" && delta.content.length > 0) {
+  if (!choice || typeof choice !== "object") {
+    return scrubUpstreamLeakJson(data);
+  }
+  if (!choice.delta || typeof choice.delta !== "object") {
+    choice.delta = {};
+  }
+  const delta = choice.delta;
+  if (holdback && typeof delta.content === "string" && delta.content.length > 0) {
     delta.content = holdback.push(delta.content);
   }
+  // Short replies stay in holdback until flush; if finish arrives first, release now.
+  if (holdback && choice.finish_reason) {
+    const pending = holdback.flush();
+    if (pending) {
+      delta.content = `${typeof delta.content === "string" ? delta.content : ""}${pending}`;
+    }
+  }
   return scrubUpstreamLeakJson(data);
+}
+
+/**
+ * Some upstreams (amanai opus stream) emit finish_reason:stop before the final
+ * content delta. Clients like Cursor stop reading at finish and show empty.
+ * Strip finish for the wire, then emit a finish chunk right before [DONE].
+ */
+export class StreamFinishDeferral {
+  private finishReason: string | null = null;
+  private usage: unknown = undefined;
+  private meta: { id?: string; model?: string; created?: number } = {};
+
+  deferFromChunk(data: any): void {
+    const choice = data?.choices?.[0];
+    if (!choice?.finish_reason) return;
+    this.finishReason = String(choice.finish_reason);
+    if (data.usage != null) this.usage = data.usage;
+    if (typeof data.id === "string") this.meta.id = data.id;
+    if (typeof data.model === "string") this.meta.model = data.model;
+    if (typeof data.created === "number") this.meta.created = data.created;
+    choice.finish_reason = null;
+  }
+
+  hasDeferred(): boolean {
+    return this.finishReason != null;
+  }
+
+  /** SSE data line including trailing newlines, or null. */
+  buildFinishSseLine(lastChunk: any | null): string | null {
+    if (!this.finishReason) return null;
+    const id =
+      this.meta.id ||
+      (lastChunk && typeof lastChunk.id === "string" && lastChunk.id) ||
+      `chatcmpl-finish-${Date.now()}`;
+    const model =
+      this.meta.model ||
+      (lastChunk && typeof lastChunk.model === "string" && lastChunk.model) ||
+      undefined;
+    const payload: any = {
+      id,
+      object: "chat.completion.chunk",
+      created:
+        this.meta.created ||
+        (lastChunk && typeof lastChunk.created === "number"
+          ? lastChunk.created
+          : Math.floor(Date.now() / 1000)),
+      choices: [{ index: 0, delta: {}, finish_reason: this.finishReason }],
+    };
+    if (model) payload.model = model;
+    if (this.usage != null) payload.usage = this.usage;
+    this.finishReason = null;
+    this.usage = undefined;
+    return `data: ${JSON.stringify(payload)}\n\n`;
+  }
 }
 
 export function buildOpenAiContentFlushChunk(

@@ -5,6 +5,7 @@ import {
   scrubUpstreamLeakText,
   scrubUpstreamLeakJson,
   StreamHoldbackScrubber,
+  StreamFinishDeferral,
   scrubOpenAiStreamChunk,
   buildOpenAiContentFlushChunk,
 } from "./upstream-leak-scrub.js";
@@ -153,6 +154,63 @@ describe("upstream-leak-scrub", () => {
     assert.ok(line);
     assert.ok(!line!.includes("SUPERSECRET"));
     assert.ok(!/delivered by amanai/i.test(line!));
+  });
+
+  it("flushes holdback into finish_reason chunk (Cursor stops at finish)", () => {
+    const hb = new StreamHoldbackScrubber(360);
+    const contentChunk = {
+      id: "chatcmpl-short",
+      model: "claude-opus-4.8",
+      choices: [{ index: 0, delta: { content: "hello" }, finish_reason: null }],
+    };
+    scrubOpenAiStreamChunk(contentChunk, hb);
+    assert.equal(contentChunk.choices[0].delta.content, "");
+    assert.equal(hb.pending(), 5);
+
+    const finishChunk = {
+      id: "chatcmpl-short",
+      model: "claude-opus-4.8",
+      choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+      usage: { prompt_tokens: 10, completion_tokens: 1 },
+    };
+    scrubOpenAiStreamChunk(finishChunk, hb);
+    assert.equal(finishChunk.choices[0].delta.content, "hello");
+    assert.equal(finishChunk.choices[0].finish_reason, "stop");
+    assert.equal(hb.pending(), 0);
+  });
+
+  it("defers finish_reason so late content can arrive before stop", () => {
+    const hb = new StreamHoldbackScrubber(360);
+    const defer = new StreamFinishDeferral();
+
+    const earlyFinish = {
+      id: "chatcmpl-late",
+      model: "claude-opus-4.8",
+      choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+      usage: { prompt_tokens: 2168, completion_tokens: 1 },
+    };
+    scrubOpenAiStreamChunk(earlyFinish, hb);
+    defer.deferFromChunk(earlyFinish);
+    assert.equal(earlyFinish.choices[0].finish_reason, null);
+    assert.equal(defer.hasDeferred(), true);
+
+    const lateContent = {
+      id: "chatcmpl-late",
+      model: "claude-opus-4.8",
+      choices: [{ index: 0, delta: { content: "hello" }, finish_reason: null }],
+    };
+    scrubOpenAiStreamChunk(lateContent, hb);
+    assert.equal(lateContent.choices[0].delta.content, "");
+    assert.equal(hb.pending(), 5);
+
+    const flushed = hb.flush();
+    const contentLine = buildOpenAiContentFlushChunk(lateContent, flushed);
+    assert.ok(contentLine?.includes('"hello"'));
+    const finishLine = defer.buildFinishSseLine(lateContent);
+    assert.ok(finishLine);
+    assert.ok(finishLine!.includes('"finish_reason":"stop"'));
+    assert.ok(finishLine!.includes('"prompt_tokens":2168'));
+    assert.equal(defer.hasDeferred(), false);
   });
 
   it("does not throw on empty / non-string", () => {

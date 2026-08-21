@@ -210,6 +210,7 @@ import {
 	type ReasoningProfile,
 } from '../utils/reasoning-profile.js';
 import {
+	StreamFinishDeferral,
 	StreamHoldbackScrubber,
 	buildOpenAiContentFlushChunk,
 	registerUpstreamHost,
@@ -3187,6 +3188,7 @@ proxy.all('/*', async (c) => {
 						let anthropicBuffer = '';
 						let autoHasActualToolCalls = false;
 						const streamHoldback = new StreamHoldbackScrubber();
+						const streamFinishDeferral = new StreamFinishDeferral();
 						const anthropicStreamState = isAnthropicAuto
 							? createStreamState(autoLogModel(candidate.provider, candidate.modelId))
 							: null;
@@ -3215,21 +3217,43 @@ proxy.all('/*', async (c) => {
 															JSON.parse(line.slice(6)),
 															streamHoldback,
 														);
+														if (detectToolCallsInResponse(data)) {
+															autoHasActualToolCalls = true;
+														}
+														consumeStreamPayload(acc, data);
+														streamFinishDeferral.deferFromChunk(data);
 														controller.enqueue(
 															new TextEncoder().encode(
 																`data: ${JSON.stringify(data)}\n\n`,
 															),
 														);
-														if (detectToolCallsInResponse(data)) {
-															autoHasActualToolCalls = true;
-														}
-														consumeStreamPayload(acc, data);
 													} catch {
 														controller.enqueue(
 															new TextEncoder().encode(line + '\n\n'),
 														);
 													}
 												} else {
+													if (line === 'data: [DONE]' || line.startsWith('data: [DONE]')) {
+														const flushed = streamHoldback.flush();
+														const flushLine = buildOpenAiContentFlushChunk(
+															lastStreamChunk,
+															flushed,
+														);
+														if (flushLine) {
+															controller.enqueue(
+																new TextEncoder().encode(flushLine),
+															);
+														}
+														const finishLine =
+															streamFinishDeferral.buildFinishSseLine(
+																lastStreamChunk,
+															);
+														if (finishLine) {
+															controller.enqueue(
+																new TextEncoder().encode(finishLine),
+															);
+														}
+													}
 													controller.enqueue(
 														new TextEncoder().encode(line + '\n\n'),
 													);
@@ -3271,6 +3295,15 @@ proxy.all('/*', async (c) => {
 													),
 												);
 											}
+											const finishLine =
+												streamFinishDeferral.buildFinishSseLine(
+													lastStreamChunk,
+												);
+											if (finishLine) {
+												controller.enqueue(
+													new TextEncoder().encode(finishLine),
+												);
+											}
 											controller.enqueue(new TextEncoder().encode(`${line}\n`));
 											continue;
 										}
@@ -3293,6 +3326,7 @@ proxy.all('/*', async (c) => {
 												lastStreamChunk = data;
 												noteStreamDeltaFields(data, streamDeltaState);
 												consumeStreamPayload(acc, data);
+												streamFinishDeferral.deferFromChunk(data);
 												controller.enqueue(
 													new TextEncoder().encode(
 														`data: ${JSON.stringify(data)}\n\n`,
@@ -3323,6 +3357,13 @@ proxy.all('/*', async (c) => {
 								);
 								if (flushLine) {
 									controller.enqueue(new TextEncoder().encode(flushLine));
+								}
+								{
+									const finishLine =
+										streamFinishDeferral.buildFinishSseLine(lastStreamChunk);
+									if (finishLine) {
+										controller.enqueue(new TextEncoder().encode(finishLine));
+									}
 								}
 								const finalized = finalizeCompletion(acc);
 								const rawCompletionTokens = finalized.completionTokens
@@ -5735,6 +5776,7 @@ proxy.all('/*', async (c) => {
 			let openaiSawDone = false;
 			let anthropicSawDone = false;
 			const streamHoldback = new StreamHoldbackScrubber();
+			const streamFinishDeferral = new StreamFinishDeferral();
 
 			const { readable, writable } = new TransformStream({
 				transform(chunk, controller) {
@@ -5795,14 +5837,16 @@ proxy.all('/*', async (c) => {
 											JSON.parse(line.slice(6)),
 											streamHoldback,
 										);
-										const encoded = new TextEncoder().encode(
-											`data: ${JSON.stringify(data)}\n\n`,
-										);
-										controller.enqueue(encoded);
 										appendToolsFromPayload(data);
 										if (detectToolCallsInResponse(data))
 											hasActualToolCalls = true;
 										consumeStreamPayload(acc, data);
+										streamFinishDeferral.deferFromChunk(data);
+										controller.enqueue(
+											new TextEncoder().encode(
+												`data: ${JSON.stringify(data)}\n\n`,
+											),
+										);
 									} catch {
 										controller.enqueue(
 											new TextEncoder().encode(line + '\n\n'),
@@ -5818,6 +5862,15 @@ proxy.all('/*', async (c) => {
 										if (flushLine) {
 											controller.enqueue(
 												new TextEncoder().encode(flushLine),
+											);
+										}
+										const finishLine =
+											streamFinishDeferral.buildFinishSseLine(
+												lastStreamChunk,
+											);
+										if (finishLine) {
+											controller.enqueue(
+												new TextEncoder().encode(finishLine),
 											);
 										}
 									}
@@ -5872,6 +5925,31 @@ proxy.all('/*', async (c) => {
 							if (!line.startsWith('data:')) continue;
 							const payloadText = line.slice(5).trim();
 							if (payloadText === '[DONE]') {
+								const holdFlushed = streamHoldback.flush();
+								const holdFlushLine = buildOpenAiContentFlushChunk(
+									lastStreamChunk,
+									holdFlushed,
+								);
+								if (holdFlushLine) {
+									const convertedHold = convertOpenAIChunkToAnthropicEvents(
+										holdFlushLine.trimEnd(),
+										clientAnthropicStreamState,
+									);
+									if (convertedHold) {
+										controller.enqueue(new TextEncoder().encode(convertedHold));
+									}
+								}
+								const finishLine =
+									streamFinishDeferral.buildFinishSseLine(lastStreamChunk);
+								if (finishLine) {
+									const convertedFinish = convertOpenAIChunkToAnthropicEvents(
+										finishLine.trimEnd(),
+										clientAnthropicStreamState,
+									);
+									if (convertedFinish) {
+										controller.enqueue(new TextEncoder().encode(convertedFinish));
+									}
+								}
 								const flushed = flushAnthropicStream(clientAnthropicStreamState);
 								if (flushed) controller.enqueue(new TextEncoder().encode(flushed));
 								continue;
@@ -5889,6 +5967,7 @@ proxy.all('/*', async (c) => {
 								appendToolsFromPayload(data);
 								if (detectToolCallsInResponse(data)) hasActualToolCalls = true;
 								consumeStreamPayload(acc, data);
+								streamFinishDeferral.deferFromChunk(data);
 								const converted = convertOpenAIChunkToAnthropicEvents(
 									`data: ${JSON.stringify(data)}`,
 									clientAnthropicStreamState,
@@ -5934,6 +6013,11 @@ proxy.all('/*', async (c) => {
 											),
 										);
 									}
+									const finishLine =
+										streamFinishDeferral.buildFinishSseLine(lastStreamChunk);
+									if (finishLine) {
+										controller.enqueue(new TextEncoder().encode(finishLine));
+									}
 									controller.enqueue(new TextEncoder().encode(`${line}\n`));
 									continue;
 								}
@@ -5957,6 +6041,7 @@ proxy.all('/*', async (c) => {
 										if (detectToolCallsInResponse(data))
 											hasActualToolCalls = true;
 										consumeStreamPayload(acc, data);
+										streamFinishDeferral.deferFromChunk(data);
 										controller.enqueue(
 											new TextEncoder().encode(
 												`data: ${JSON.stringify(data)}\n\n`,
@@ -6052,6 +6137,13 @@ proxy.all('/*', async (c) => {
 						);
 						if (flushLine) {
 							controller.enqueue(new TextEncoder().encode(flushLine));
+						}
+					}
+					{
+						const finishLine =
+							streamFinishDeferral.buildFinishSseLine(lastStreamChunk);
+						if (finishLine) {
+							controller.enqueue(new TextEncoder().encode(finishLine));
 						}
 					}
 					if (
