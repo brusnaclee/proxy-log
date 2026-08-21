@@ -219,10 +219,6 @@ export class StreamHoldbackScrubber {
   private buf = "";
   constructor(private readonly holdChars = 360) {}
 
-  pending(): number {
-    return this.buf.length;
-  }
-
   push(chunk: string): string {
     if (!chunk) return "";
     this.buf += chunk;
