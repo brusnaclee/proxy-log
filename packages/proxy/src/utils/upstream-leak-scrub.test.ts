@@ -189,23 +189,23 @@ describe("upstream-leak-scrub", () => {
       choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
       usage: { prompt_tokens: 2168, completion_tokens: 1 },
     };
-    scrubOpenAiStreamChunk(earlyFinish, hb);
+    scrubOpenAiStreamChunk(earlyFinish, hb, defer);
     defer.deferFromChunk(earlyFinish);
     assert.equal(earlyFinish.choices[0].finish_reason, null);
+    assert.equal(earlyFinish.usage, undefined);
     assert.equal(defer.hasDeferred(), true);
+    assert.equal(StreamFinishDeferral.isWireNoopChunk(earlyFinish), true);
 
     const lateContent = {
       id: "chatcmpl-late",
       model: "claude-opus-4.8",
       choices: [{ index: 0, delta: { content: "hello" }, finish_reason: null }],
     };
-    scrubOpenAiStreamChunk(lateContent, hb);
-    assert.equal(lateContent.choices[0].delta.content, "");
-    assert.equal(hb.pending(), 5);
+    scrubOpenAiStreamChunk(lateContent, hb, defer);
+    // After premature finish, holdback is bypassed so Cursor sees text immediately.
+    assert.equal(lateContent.choices[0].delta.content, "hello");
+    assert.equal(hb.pending(), 0);
 
-    const flushed = hb.flush();
-    const contentLine = buildOpenAiContentFlushChunk(lateContent, flushed);
-    assert.ok(contentLine?.includes('"hello"'));
     const finishLine = defer.buildFinishSseLine(lateContent);
     assert.ok(finishLine);
     assert.ok(finishLine!.includes('"finish_reason":"stop"'));

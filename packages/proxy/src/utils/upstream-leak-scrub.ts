@@ -245,42 +245,9 @@ export class StreamHoldbackScrubber {
 }
 
 /**
- * Apply holdback to OpenAI chat.completion.chunk delta.content; scrub rest of payload.
- * On finish_reason, flush pending holdback into this same chunk so short answers are
- * not stuck behind finish (when content arrived before finish).
- * Call StreamFinishDeferral.deferFromChunk AFTER consumeStreamPayload so clients that
- * stop at finish_reason still see late content chunks that arrive after finish.
- */
-export function scrubOpenAiStreamChunk(
-  data: any,
-  holdback: StreamHoldbackScrubber | null,
-): any {
-  if (!data || typeof data !== "object") return data;
-  const choice = data?.choices?.[0];
-  if (!choice || typeof choice !== "object") {
-    return scrubUpstreamLeakJson(data);
-  }
-  if (!choice.delta || typeof choice.delta !== "object") {
-    choice.delta = {};
-  }
-  const delta = choice.delta;
-  if (holdback && typeof delta.content === "string" && delta.content.length > 0) {
-    delta.content = holdback.push(delta.content);
-  }
-  // Short replies stay in holdback until flush; if finish arrives first, release now.
-  if (holdback && choice.finish_reason) {
-    const pending = holdback.flush();
-    if (pending) {
-      delta.content = `${typeof delta.content === "string" ? delta.content : ""}${pending}`;
-    }
-  }
-  return scrubUpstreamLeakJson(data);
-}
-
-/**
- * Some upstreams (amanai opus stream) emit finish_reason:stop before the final
- * content delta. Clients like Cursor stop reading at finish and show empty.
- * Strip finish for the wire, then emit a finish chunk right before [DONE].
+ * Some upstreams (amanai opus stream) emit finish_reason:stop (+ usage) before the
+ * final content delta. Clients like Cursor stop when they see usage/finish and show
+ * empty. Strip finish+usage for the wire, then emit a finish chunk right before [DONE].
  */
 export class StreamFinishDeferral {
   private finishReason: string | null = null;
@@ -296,10 +263,29 @@ export class StreamFinishDeferral {
     if (typeof data.model === "string") this.meta.model = data.model;
     if (typeof data.created === "number") this.meta.created = data.created;
     choice.finish_reason = null;
+    // Mid-stream usage is treated as "stream complete" by Cursor / some OpenAI SDKs.
+    if (data.usage != null) delete data.usage;
   }
 
   hasDeferred(): boolean {
     return this.finishReason != null;
+  }
+
+  /** True when chunk has nothing left to show after finish/usage were stripped. */
+  static isWireNoopChunk(data: any): boolean {
+    if (!data || typeof data !== "object") return true;
+    if (data.usage != null) return false;
+    const choice = data?.choices?.[0];
+    if (!choice) return true;
+    if (choice.finish_reason) return false;
+    const d = choice.delta;
+    if (!d || typeof d !== "object") return true;
+    if (typeof d.role === "string" && d.role) return false;
+    if (typeof d.content === "string" && d.content.length > 0) return false;
+    if (typeof d.reasoning_content === "string" && d.reasoning_content) return false;
+    if (typeof d.reasoning === "string" && d.reasoning) return false;
+    if (Array.isArray(d.tool_calls) && d.tool_calls.length > 0) return false;
+    return true;
   }
 
   /** SSE data line including trailing newlines, or null. */
@@ -329,6 +315,44 @@ export class StreamFinishDeferral {
     this.usage = undefined;
     return `data: ${JSON.stringify(payload)}\n\n`;
   }
+}
+
+/**
+ * Apply holdback to OpenAI chat.completion.chunk delta.content; scrub rest of payload.
+ * On finish_reason, flush pending holdback into this same chunk.
+ * After StreamFinishDeferral captured a premature finish, bypass holdback so late
+ * content is emitted immediately (before the client gives up).
+ */
+export function scrubOpenAiStreamChunk(
+  data: any,
+  holdback: StreamHoldbackScrubber | null,
+  finishDeferral?: StreamFinishDeferral | null,
+): any {
+  if (!data || typeof data !== "object") return data;
+  const choice = data?.choices?.[0];
+  if (!choice || typeof choice !== "object") {
+    return scrubUpstreamLeakJson(data);
+  }
+  if (!choice.delta || typeof choice.delta !== "object") {
+    choice.delta = {};
+  }
+  const delta = choice.delta;
+  if (holdback && typeof delta.content === "string" && delta.content.length > 0) {
+    if (finishDeferral?.hasDeferred()) {
+      const pending = holdback.flush();
+      delta.content = `${pending}${delta.content}`;
+    } else {
+      delta.content = holdback.push(delta.content);
+    }
+  }
+  // Short replies stay in holdback until flush; if finish arrives first, release now.
+  if (holdback && choice.finish_reason) {
+    const pending = holdback.flush();
+    if (pending) {
+      delta.content = `${typeof delta.content === "string" ? delta.content : ""}${pending}`;
+    }
+  }
+  return scrubUpstreamLeakJson(data);
 }
 
 export function buildOpenAiContentFlushChunk(

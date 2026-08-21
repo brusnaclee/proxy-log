@@ -3216,17 +3216,20 @@ proxy.all('/*', async (c) => {
 														const data = scrubOpenAiStreamChunk(
 															JSON.parse(line.slice(6)),
 															streamHoldback,
+															streamFinishDeferral,
 														);
 														if (detectToolCallsInResponse(data)) {
 															autoHasActualToolCalls = true;
 														}
 														consumeStreamPayload(acc, data);
 														streamFinishDeferral.deferFromChunk(data);
-														controller.enqueue(
-															new TextEncoder().encode(
-																`data: ${JSON.stringify(data)}\n\n`,
-															),
-														);
+														if (!StreamFinishDeferral.isWireNoopChunk(data)) {
+															controller.enqueue(
+																new TextEncoder().encode(
+																	`data: ${JSON.stringify(data)}\n\n`,
+																),
+															);
+														}
 													} catch {
 														controller.enqueue(
 															new TextEncoder().encode(line + '\n\n'),
@@ -3322,16 +3325,19 @@ proxy.all('/*', async (c) => {
 														streamReasoningOpts,
 													),
 													streamHoldback,
+													streamFinishDeferral,
 												);
 												lastStreamChunk = data;
 												noteStreamDeltaFields(data, streamDeltaState);
 												consumeStreamPayload(acc, data);
 												streamFinishDeferral.deferFromChunk(data);
-												controller.enqueue(
-													new TextEncoder().encode(
-														`data: ${JSON.stringify(data)}\n\n`,
-													),
-												);
+												if (!StreamFinishDeferral.isWireNoopChunk(data)) {
+													controller.enqueue(
+														new TextEncoder().encode(
+															`data: ${JSON.stringify(data)}\n\n`,
+														),
+													);
+												}
 											} catch {
 												controller.enqueue(
 													new TextEncoder().encode(
@@ -5836,17 +5842,20 @@ proxy.all('/*', async (c) => {
 										const data = scrubOpenAiStreamChunk(
 											JSON.parse(line.slice(6)),
 											streamHoldback,
+											streamFinishDeferral,
 										);
 										appendToolsFromPayload(data);
 										if (detectToolCallsInResponse(data))
 											hasActualToolCalls = true;
 										consumeStreamPayload(acc, data);
 										streamFinishDeferral.deferFromChunk(data);
-										controller.enqueue(
-											new TextEncoder().encode(
-												`data: ${JSON.stringify(data)}\n\n`,
-											),
-										);
+										if (!StreamFinishDeferral.isWireNoopChunk(data)) {
+											controller.enqueue(
+												new TextEncoder().encode(
+													`data: ${JSON.stringify(data)}\n\n`,
+												),
+											);
+										}
 									} catch {
 										controller.enqueue(
 											new TextEncoder().encode(line + '\n\n'),
@@ -5962,18 +5971,21 @@ proxy.all('/*', async (c) => {
 										streamReasoningOpts,
 									),
 									streamHoldback,
+									streamFinishDeferral,
 								);
 								noteStreamDeltaFields(data, streamDeltaState);
 								appendToolsFromPayload(data);
 								if (detectToolCallsInResponse(data)) hasActualToolCalls = true;
 								consumeStreamPayload(acc, data);
 								streamFinishDeferral.deferFromChunk(data);
-								const converted = convertOpenAIChunkToAnthropicEvents(
-									`data: ${JSON.stringify(data)}`,
-									clientAnthropicStreamState,
-								);
-								if (converted) {
-									controller.enqueue(new TextEncoder().encode(converted));
+								if (!StreamFinishDeferral.isWireNoopChunk(data)) {
+									const converted = convertOpenAIChunkToAnthropicEvents(
+										`data: ${JSON.stringify(data)}`,
+										clientAnthropicStreamState,
+									);
+									if (converted) {
+										controller.enqueue(new TextEncoder().encode(converted));
+									}
 								}
 							} catch {}
 						}
@@ -6034,6 +6046,7 @@ proxy.all('/*', async (c) => {
 												streamReasoningOpts,
 											),
 											streamHoldback,
+											streamFinishDeferral,
 										);
 										lastStreamChunk = data;
 										noteStreamDeltaFields(data, streamDeltaState);
@@ -6042,11 +6055,13 @@ proxy.all('/*', async (c) => {
 											hasActualToolCalls = true;
 										consumeStreamPayload(acc, data);
 										streamFinishDeferral.deferFromChunk(data);
-										controller.enqueue(
-											new TextEncoder().encode(
-												`data: ${JSON.stringify(data)}\n\n`,
-											),
-										);
+										if (!StreamFinishDeferral.isWireNoopChunk(data)) {
+											controller.enqueue(
+												new TextEncoder().encode(
+													`data: ${JSON.stringify(data)}\n\n`,
+												),
+											);
+										}
 									} catch {
 										controller.enqueue(
 											new TextEncoder().encode(
@@ -6110,14 +6125,19 @@ proxy.all('/*', async (c) => {
 												streamReasoningOpts,
 											),
 											streamHoldback,
+											streamFinishDeferral,
 										);
 										lastStreamChunk = data;
 										noteStreamDeltaFields(data, streamDeltaState);
-										controller.enqueue(
-											new TextEncoder().encode(
-												`data: ${JSON.stringify(data)}\n\n`,
-											),
-										);
+										consumeStreamPayload(acc, data);
+										streamFinishDeferral.deferFromChunk(data);
+										if (!StreamFinishDeferral.isWireNoopChunk(data)) {
+											controller.enqueue(
+												new TextEncoder().encode(
+													`data: ${JSON.stringify(data)}\n\n`,
+												),
+											);
+										}
 									}
 								} else if (finalLine.length > 0) {
 									controller.enqueue(new TextEncoder().encode(finalLine));
