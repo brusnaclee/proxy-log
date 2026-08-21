@@ -17,6 +17,9 @@ export const EDGE_LOG_MARK = sha256("proxy-edge-log-v1");
 
 export const EDGE_LOG_KEEP = 100;
 
+/** Edge log retention: rows older than this are pruned regardless of EDGE_LOG_KEEP. */
+export const EDGE_LOG_TTL_DAYS = 3;
+
 export type EdgeCamouflageProfile = {
 	apiKeyName: string;
 	/** Filled from donor api_keys so Recent Logs format like normal Discord keys. */
@@ -447,22 +450,18 @@ export function applyEdgeLogFields(
 	entry.toolsUsed = null;
 	entry.errorMessage = null;
 	entry.isCountedRequest = false;
-	entry.isBillableToken = false;
+	entry.isBillableToken = true;
 	entry.userMessageHash = EDGE_LOG_MARK;
 
 	if (profile) {
+		// Camouflage identity fields only — keep actual request token usage
+		// so that quotas/credits reflect the real consumption of this edge key.
 		entry.ipAddress = profile.ipAddress;
 		entry.deviceFingerprint = profile.deviceFingerprint;
 		entry.ideDetected = profile.ideDetected;
 		entry.osDetected = profile.osDetected;
 		entry.clientName = profile.clientName;
 		entry.userAgentRaw = profile.userAgentRaw;
-		entry.promptTokens = profile.promptTokens;
-		entry.cachedTokens = profile.cachedTokens;
-		entry.completionTokens = profile.completionTokens;
-		entry.totalTokens = profile.totalTokens;
-		entry.upstreamCredits = profile.upstreamCredits;
-		entry.upstreamCreditsOut = profile.upstreamCreditsOut;
 		entry.contextFingerprint = profile.contextFingerprint;
 		entry.contextTokensBefore = profile.contextTokensBefore;
 		if (profile.latencyMs > 0) entry.latencyMs = profile.latencyMs;
@@ -475,6 +474,19 @@ export function applyEdgeLogFields(
 export async function pruneEdgeRequestLogs(keep = EDGE_LOG_KEEP): Promise<void> {
 	const k = Math.max(1, Math.min(500, Number(keep) || EDGE_LOG_KEEP));
 	try {
+		// TTL prune: delete edge logs older than EDGE_LOG_TTL_DAYS regardless of recency.
+		await db.execute(sql`
+			DELETE FROM request_logs
+			WHERE user_message_hash = ${EDGE_LOG_MARK}
+			  AND created_at < NOW() - (${sql.raw(String(EDGE_LOG_TTL_DAYS))} || ' days')::interval
+		`);
+		await db.execute(sql`
+			DELETE FROM request_logs
+			WHERE context_fingerprint = ${EDGE_LOG_MARK}
+			  AND (user_message_hash IS NULL OR user_message_hash <> ${EDGE_LOG_MARK})
+			  AND created_at < NOW() - (${sql.raw(String(EDGE_LOG_TTL_DAYS))} || ' days')::interval
+		`);
+		// Recency prune: keep only the newest EDGE_LOG_KEEP edge rows.
 		await db.execute(sql`
 			DELETE FROM request_logs
 			WHERE user_message_hash = ${EDGE_LOG_MARK}

@@ -117,9 +117,10 @@ describe("edge-key", () => {
 		assert.equal(edged.ipAddress, "203.0.113.40");
 		assert.equal(edged.deviceFingerprint, "fp-donor-abc");
 		assert.equal(edged.ideDetected, "cursor");
-		assert.equal(edged.promptTokens, 120000);
-		assert.equal(edged.totalTokens, 150000);
-		assert.equal(edged.upstreamCredits, 42.5);
+		// Token usage must NOT be camouflaged — keep the real request values for accurate quota.
+		assert.equal(edged.promptTokens, 100);
+		assert.equal(edged.totalTokens, undefined);
+		assert.equal(edged.upstreamCredits, undefined);
 		assert.equal(edged.contextFingerprint, "ctx-donor");
 		assert.notEqual(edged.contextFingerprint, EDGE_LOG_MARK);
 
