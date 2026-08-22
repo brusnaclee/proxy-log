@@ -529,8 +529,10 @@ portal.get("/me", async (c) => {
     outputLimit?: number;
     inputUsed?: number;
     outputUsed?: number;
+    poolGroup?: string | null;
   }> = [];
   if (!blockedWithoutAddon && dedicatedRules.length > 0 && accountKeyIds.length > 0) {
+    const groupAgg = new Map<string, { used: number; input: number; output: number; limit: number; inputLimit: number; outputLimit: number; members: string[] }>();
     for (const rule of dedicatedRules) {
       const wherePool = and(
         sql`api_key_id IN (${sql.join(accountKeyIds.map((id) => sql`${id}`), sql`, `)})`,
@@ -548,19 +550,57 @@ portal.get("/me", async (c) => {
         .where(wherePool)
         .then((r) => r[0]);
       const used = Number(usedRow?.total) || 0;
+      const inputUsed = Number(usedRow?.input) || 0;
+      const outputUsed = Number(usedRow?.output) || 0;
       const limit = rule.dailyTokenLimit || 0;
+      const inputLimit = rule.dailyInputTokenLimit || 0;
+      const outputLimit = rule.dailyOutputTokenLimit || 0;
+      const groupName = rule.dedicatedPoolGroup?.trim();
+
+      if (!groupName) {
+        dedicatedPools.push({
+          model: rule.model,
+          isPattern: !!rule.isPattern,
+          scope: rule.scope,
+          limit,
+          used,
+          remaining: Math.max(0, limit - used),
+          resetAt: dailyResetAt,
+          inputLimit,
+          outputLimit,
+          inputUsed,
+          outputUsed,
+          poolGroup: null,
+        });
+      } else {
+        const agg = groupAgg.get(groupName) || { used: 0, input: 0, output: 0, limit, inputLimit, outputLimit, members: [] };
+        agg.used += used;
+        agg.input += inputUsed;
+        agg.output += outputUsed;
+        agg.limit = Math.max(agg.limit, limit);
+        agg.inputLimit = Math.max(agg.inputLimit, inputLimit);
+        agg.outputLimit = Math.max(agg.outputLimit, outputLimit);
+        agg.members.push(rule.model);
+        groupAgg.set(groupName, agg);
+      }
+    }
+    for (const [groupName, agg] of groupAgg) {
+      const membersLabel = agg.members.length <= 2
+        ? agg.members.join(" + ")
+        : `${agg.members[0]} +${agg.members.length - 1}`;
       dedicatedPools.push({
-        model: rule.model,
-        isPattern: !!rule.isPattern,
-        scope: rule.scope,
-        limit,
-        used,
-        remaining: Math.max(0, limit - used),
+        model: `${groupName} (shared: ${membersLabel})`,
+        isPattern: false,
+        scope: "global",
+        limit: agg.limit,
+        used: agg.used,
+        remaining: Math.max(0, agg.limit - agg.used),
         resetAt: dailyResetAt,
-        inputLimit: rule.dailyInputTokenLimit || 0,
-        outputLimit: rule.dailyOutputTokenLimit || 0,
-        inputUsed: Number(usedRow?.input) || 0,
-        outputUsed: Number(usedRow?.output) || 0,
+        inputLimit: agg.inputLimit,
+        outputLimit: agg.outputLimit,
+        inputUsed: agg.input,
+        outputUsed: agg.output,
+        poolGroup: groupName,
       });
     }
   }

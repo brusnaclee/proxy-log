@@ -515,7 +515,7 @@ export async function buildLiveUsageForKey(
 
 	const dedicatedPools: NonNullable<LiveUsagePayload['dedicatedPools']> = [];
 	if (!blockedWithoutAddon && dedicatedRules.length > 0) {
-		const groupAgg = new Map<string, { used: number; input: number; output: number; fullInput: number }>();
+		const groupAgg = new Map<string, { used: number; input: number; output: number; fullInput: number; limit: number; inputLimit: number; outputLimit: number; members: string[] }>();
 		for (const rule of dedicatedRules) {
 			const wherePool = and(
 				inArray(requestLogs.apiKeyId, keyIds),
@@ -533,13 +533,16 @@ export async function buildLiveUsageForKey(
 				.from(requestLogs)
 				.where(wherePool)
 				.then((r) => r[0]);
-			const groupKey = rule.dedicatedPoolGroup?.trim() || `__single__${rule.id}`;
 			const used = Number(usedRow?.total) || 0;
 			const inputUsed = Number(usedRow?.input) || 0;
 			const outputUsed = Number(usedRow?.output) || 0;
 			const fullInput = Number(usedRow?.fullInput) || 0;
-			if (groupKey.startsWith('__single__')) {
-				const limit = rule.dailyTokenLimit || 0;
+			const limit = rule.dailyTokenLimit || 0;
+			const inputLimit = rule.dailyInputTokenLimit || 0;
+			const outputLimit = rule.dailyOutputTokenLimit || 0;
+			const groupName = rule.dedicatedPoolGroup?.trim();
+
+			if (!groupName) {
 				dedicatedPools.push({
 					model: rule.model,
 					isPattern: !!rule.isPattern,
@@ -548,44 +551,54 @@ export async function buildLiveUsageForKey(
 					used,
 					remaining: Math.max(0, limit - used),
 					resetAt: dailyResetAt,
-					inputLimit: rule.dailyInputTokenLimit || 0,
-					outputLimit: rule.dailyOutputTokenLimit || 0,
+					inputLimit,
+					outputLimit,
 					inputUsed,
 					outputUsed,
 					fullInputTokens: fullInput,
 					poolGroup: null,
 				});
 			} else {
-				const agg = groupAgg.get(groupKey) || { used: 0, input: 0, output: 0, fullInput: 0 };
+				const agg = groupAgg.get(groupName) || {
+					used: 0,
+					input: 0,
+					output: 0,
+					fullInput: 0,
+					limit,
+					inputLimit,
+					outputLimit,
+					members: [],
+				};
 				agg.used += used;
 				agg.input += inputUsed;
 				agg.output += outputUsed;
 				agg.fullInput += fullInput;
-				groupAgg.set(groupKey, agg);
+				agg.limit = Math.max(agg.limit, limit);
+				agg.inputLimit = Math.max(agg.inputLimit, inputLimit);
+				agg.outputLimit = Math.max(agg.outputLimit, outputLimit);
+				agg.members.push(rule.model);
+				groupAgg.set(groupName, agg);
 			}
 		}
-		for (const rule of dedicatedRules) {
-			const groupKey = rule.dedicatedPoolGroup?.trim();
-			if (!groupKey) continue;
-			const agg = groupAgg.get(groupKey);
-			if (!agg) continue;
-			const limit = rule.dailyTokenLimit || 0;
+		for (const [groupName, agg] of groupAgg) {
+			const membersLabel = agg.members.length <= 2
+				? agg.members.join(" + ")
+				: `${agg.members[0]} +${agg.members.length - 1}`;
 			dedicatedPools.push({
-				model: `${groupKey} (shared: ${rule.model})`,
-				isPattern: !!rule.isPattern,
-				scope: rule.scope,
-				limit,
+				model: `${groupName} (shared: ${membersLabel})`,
+				isPattern: false,
+				scope: "global",
+				limit: agg.limit,
 				used: agg.used,
-				remaining: Math.max(0, limit - agg.used),
+				remaining: Math.max(0, agg.limit - agg.used),
 				resetAt: dailyResetAt,
-				inputLimit: rule.dailyInputTokenLimit || 0,
-				outputLimit: rule.dailyOutputTokenLimit || 0,
+				inputLimit: agg.inputLimit,
+				outputLimit: agg.outputLimit,
 				inputUsed: agg.input,
 				outputUsed: agg.output,
 				fullInputTokens: agg.fullInput,
-				poolGroup: groupKey,
+				poolGroup: groupName,
 			});
-			break;
 		}
 	}
 
