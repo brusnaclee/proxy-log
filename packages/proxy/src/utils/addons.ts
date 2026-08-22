@@ -6,6 +6,7 @@ import { getTeaseLimitForModel, isTeaseModelFromLimits } from "./tease-limits-ca
 
 export type ActiveAddon = Addon & {
   assignmentId: number;
+  startsAt: Date | null;
   expiresAt: Date | null;
 };
 
@@ -116,6 +117,7 @@ export async function getActiveAddonsForUser(opts: {
       byId.set(r.addon.id, {
         ...r.addon,
         assignmentId: r.assignmentId,
+        startsAt: r.startsAt,
         expiresAt: r.expiresAt,
       });
     }

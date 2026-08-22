@@ -127,6 +127,7 @@ export interface MeResponse {
   };
   activeAddons?: Array<{
     name: string;
+    startsAt: string | null;
     expiresAt: string | null;
     dailyTokenLimit: number;
   }>;

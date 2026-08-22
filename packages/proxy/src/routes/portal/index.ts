@@ -768,6 +768,7 @@ portal.get("/me", async (c) => {
     },
     activeAddons: activeAddons.map((a) => ({
       name: a.name,
+      startsAt: a.startsAt ? new Date(a.startsAt).toISOString() : null,
       expiresAt: a.expiresAt ? new Date(a.expiresAt).toISOString() : null,
       dailyTokenLimit: a.dailyTokenLimit || 0,
     })),

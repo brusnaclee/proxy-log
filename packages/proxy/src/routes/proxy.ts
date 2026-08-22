@@ -1283,9 +1283,13 @@ async function createChatSession(params: {
 	isUserPrompt?: boolean; // false for sub-agent spawned sessions
 	messageAnalysis?: MessageAnalysis;
 	requestBody?: any; // raw request body for session name extraction
+	isNoLog?: boolean;
 }) {
 	const sessionId = `chat_${generateSessionId().slice(0, 24)}`;
 	const now = new Date();
+	if (params.isNoLog) {
+		return sessionId;
+	}
 	const sessionName = deriveSessionName(
 		params.requestBody,
 		params.requestPreview,
@@ -1331,6 +1335,7 @@ async function resolveChatSession(params: {
 	messageAnalysis: MessageAnalysis;
 	requestBody?: any;
 	requestToolCount?: number;
+	isNoLog?: boolean;
 }): Promise<{
 	sessionId: string;
 	contextEvent: ContextEvent;
@@ -1338,6 +1343,17 @@ async function resolveChatSession(params: {
 	gapMs: number;
 	isNewUserPrompt: boolean;
 }> {
+	// Staff/no-log keys: emit a synthetic session id and never touch chat_sessions.
+	if (params.isNoLog) {
+		const sessionId = `chat_${generateSessionId().slice(0, 24)}`;
+		return {
+			sessionId,
+			contextEvent: 'new_session',
+			contextDeltaTokens: params.contextTokensBefore || 0,
+			gapMs: 0,
+			isNewUserPrompt: true,
+		};
+	}
 	// ΓöÇΓöÇΓöÇ Find the most recent session for this device ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 	const latest = await db
 		.select()
@@ -2628,21 +2644,22 @@ proxy.all('/*', async (c) => {
 			autoIsNewPrompt = true;
 		} else {
 			const deviceLockKey = `${keyRecord.id}:${effectiveFingerprint}`;
-			const autoSessionResult = await withDeviceLock(deviceLockKey, async () => {
-				const sessionResult = await resolveChatSession({
-					apiKeyId: keyRecord.id,
-					apiKeyName: keyRecord.name,
-					ipAddress: clientIp,
-					deviceFingerprint: effectiveFingerprint,
-					ideDetected: ide,
-					provider: 'auto',
-					model: 'auto',
-					contextFingerprint,
-					contextTokensBefore,
-					requestPreview,
-					messageAnalysis,
-				});
-				if (messageAnalysis.messageHash) {
+		const autoSessionResult = await withDeviceLock(deviceLockKey, async () => {
+			const sessionResult = await resolveChatSession({
+				apiKeyId: keyRecord.id,
+				apiKeyName: keyRecord.name,
+				ipAddress: clientIp,
+				deviceFingerprint: effectiveFingerprint,
+				ideDetected: ide,
+				provider: 'auto',
+				model: 'auto',
+				contextFingerprint,
+				contextTokensBefore,
+				requestPreview,
+				messageAnalysis,
+				isNoLog: isNoLogKey,
+			});
+			if (!isNoLogKey && messageAnalysis.messageHash) {
 					sessionHashCache.set(
 						sessionResult.sessionId,
 						messageAnalysis.messageHash,
@@ -4098,13 +4115,14 @@ proxy.all('/*', async (c) => {
 				messageAnalysis,
 				requestBody,
 				requestToolCount: requestToolNames.length,
+				isNoLog: isNoLogKey,
 			});
 
 			const isNewPrompt = sessionInfo.isNewUserPrompt;
 
 			// We fetch the latest session row here to check consecutive tool followups
 			let consecutiveCount = 0;
-			if (sessionInfo.sessionId) {
+			if (!isNoLogKey && sessionInfo.sessionId) {
 				const dbSess = await db
 					.select({
 						consecutiveToolFollowups: chatSessions.consecutiveToolFollowups,
@@ -4115,26 +4133,26 @@ proxy.all('/*', async (c) => {
 				consecutiveCount = dbSess?.consecutiveToolFollowups || 0;
 			}
 
-			// Sync non-hash session tracking before upstream (hash updated only after successful count).
-			{
-				const syncUpdates: Record<string, any> = {
-					lastSeenAt: new Date(),
-					model,
-				};
-				if (messageAnalysis.messageRole) {
-					syncUpdates.lastMessageRole = messageAnalysis.messageRole;
-				}
-				if (contextTokensBefore > 0) {
-					syncUpdates.lastContextTokens = contextTokensBefore;
-				}
-				if (contextFingerprint) {
-					syncUpdates.contextFingerprint = contextFingerprint;
-				}
-				await db
-					.update(chatSessions)
-					.set(syncUpdates)
-					.where(eq(chatSessions.sessionId, sessionInfo.sessionId));
+		// Sync non-hash session tracking before upstream (hash updated only after successful count).
+		if (!isNoLogKey) {
+			const syncUpdates: Record<string, any> = {
+				lastSeenAt: new Date(),
+				model,
+			};
+			if (messageAnalysis.messageRole) {
+				syncUpdates.lastMessageRole = messageAnalysis.messageRole;
 			}
+			if (contextTokensBefore > 0) {
+				syncUpdates.lastContextTokens = contextTokensBefore;
+			}
+			if (contextFingerprint) {
+				syncUpdates.contextFingerprint = contextFingerprint;
+			}
+			await db
+				.update(chatSessions)
+				.set(syncUpdates)
+				.where(eq(chatSessions.sessionId, sessionInfo.sessionId));
+		}
 
 			return {
 				sessionInfo,
@@ -5732,7 +5750,7 @@ proxy.all('/*', async (c) => {
 		let statusCode = upstreamResponse.status;
 
 		// ΓöÇΓöÇΓöÇ 11. Register/Update Device ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-		if (!isEdgeKey) {
+		if (!isEdgeKey && !isNoLogKey) {
 		if (existingDevice) {
 			await db
 				.update(devices)

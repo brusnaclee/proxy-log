@@ -219,6 +219,7 @@ addonsApi.get("/addon-assignments", async (c) => {
       assignment: addonAssignments,
       addonName: addons.name,
       addonAllowlist: addons.modelAllowlist,
+      addonDailyLimit: addons.dailyTokenLimit,
     })
     .from(addonAssignments)
     .innerJoin(addons, eq(addonAssignments.addonId, addons.id))
@@ -229,6 +230,7 @@ addonsApi.get("/addon-assignments", async (c) => {
       ...r.assignment,
       addonName: r.addonName,
       modelAllowlistParsed: parseAllowlist(r.addonAllowlist),
+      dailyTokenLimit: r.addonDailyLimit,
     })),
   });
 });
@@ -304,6 +306,32 @@ addonsApi.post("/addon-assignments", async (c) => {
     .returning();
 
   if (body.discordUserId) {
+    let apiKeyForDm: string | null = null;
+    let keyIdForAssignment: number | null = body.apiKeyId || null;
+    try {
+      const { ensureApiKeyForDiscordUser } = await import("../../utils/key-auto-create.js");
+      const ensured = await ensureApiKeyForDiscordUser({
+        discordUserId: body.discordUserId,
+        note: `add-on assign: ${addon.name}`,
+      });
+      if (ensured) {
+        keyIdForAssignment = ensured.keyId;
+        if (!ensured.alreadyExists) {
+          apiKeyForDm = ensured.apiKey;
+        }
+        try {
+          await db
+            .update(addonAssignments)
+            .set({ apiKeyId: ensured.keyId })
+            .where(eq(addonAssignments.id, row.id));
+          body.apiKeyId = ensured.keyId;
+        } catch {
+          // non-fatal — link update optional
+        }
+      }
+    } catch (e) {
+      console.warn("[addon-assign] ensureApiKey failed:", (e as Error)?.message);
+    }
     try {
       const { queueUserNotificationByDiscord } = await import("../../utils/user-notify.js");
       const roleHint = addon.discordRoleId
@@ -318,6 +346,22 @@ addonsApi.post("/addon-assignments", async (c) => {
           `.\nKuota harian pack: ${(addon.dailyTokenLimit || 0).toLocaleString()} tokens.` +
           roleHint,
       });
+      if (apiKeyForDm) {
+        try {
+          const { formatPhantomCredentialsMessage } = await import("../../utils/user-notify.js");
+          await queueUserNotificationByDiscord(body.discordUserId, {
+            type: "admin_override_created",
+            title: "🔑 API Key Proxy Anda",
+            message: formatPhantomCredentialsMessage({
+              endpoint: `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`,
+              apiKey: apiKeyForDm,
+              intro: "Akun Anda belum punya API key. Key berikut dibuat otomatis saat add-on di-assign:",
+            }),
+          } as any);
+        } catch {
+          // DM of new key optional; non-fatal
+        }
+      }
     } catch {
       // notification optional; non-fatal
     }

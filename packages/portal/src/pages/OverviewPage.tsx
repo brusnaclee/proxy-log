@@ -426,12 +426,22 @@ export default function OverviewPage() {
         {hasAddon && (
           <div className="rounded-lg border border-border/60 bg-muted/20 p-2.5 space-y-1 text-xs">
             {(user.activeAddons || []).map((a) => (
-              <div key={a.name} className="flex justify-between gap-2 text-muted-foreground">
-                <span className="font-mono text-foreground">{a.name}</span>
-                <span>
-                  +{(a.dailyTokenLimit / 1e6).toFixed(0)}M/day
-                  {a.expiresAt ? ` · sampai ${formatAddonExpiry(a.expiresAt)}` : ""}
-                </span>
+              <div key={a.name} className="flex flex-col gap-0.5">
+                <div className="flex justify-between gap-2 text-muted-foreground">
+                  <span className="font-mono text-foreground">{a.name}</span>
+                  <span>
+                    +{(a.dailyTokenLimit / 1e6).toFixed(0)}M/day
+                    {a.expiresAt ? ` · sampai ${formatAddonExpiry(a.expiresAt)}` : ""}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-2 text-[10px] text-muted-foreground">
+                  <span>
+                    Mulai: {a.startsAt ? formatAddonExpiry(a.startsAt) : "—"}
+                  </span>
+                  <span>
+                    {a.expiresAt ? `Berakhir: ${formatAddonExpiry(a.expiresAt)}` : "Tanpa kedaluwarsa"}
+                  </span>
+                </div>
               </div>
             ))}
             {user.perModelPromptsBypassedByAddon && (

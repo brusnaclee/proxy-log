@@ -1330,10 +1330,12 @@ export interface AddonAssignmentEntry {
   startsAt: string;
   expiresAt: string | null;
   isActive: boolean;
+  startMode?: "now" | "after_expiry" | "custom" | string;
   assignedBy: string;
   createdAt: string;
   addonName?: string;
   modelAllowlistParsed?: string[];
+  dailyTokenLimit?: number;
 }
 
 export type AddonWritePayload = Partial<AddonEntry> & {
@@ -1369,6 +1371,8 @@ export const addonsApi = {
     discordUserId?: string;
     apiKeyId?: number;
     expiresAt?: string | null;
+    startsAt?: string | null;
+    startMode?: "now" | "after_expiry" | "custom";
   }) =>
     request<{ success: boolean; assignment: AddonAssignmentEntry }>("/addon-assignments", {
       method: "POST",

@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { Package, Plus, Trash2, UserPlus, RefreshCw, Loader2, X, Pencil, Save } from "lucide-react";
+import { Package, Plus, Trash2, UserPlus, RefreshCw, Loader2, X, Pencil, Save, ChevronDown, ChevronRight, Clock, CalendarClock } from "lucide-react";
 import {
   addonsApi,
   globalSettings,
@@ -147,7 +147,10 @@ export default function AddonsPage() {
   const [assignAddonId, setAssignAddonId] = useState<number | "">("");
   const [assignDiscordId, setAssignDiscordId] = useState("");
   const [assignExpires, setAssignExpires] = useState("");
+  const [assignStartsAt, setAssignStartsAt] = useState("");
+  const [assignStartMode, setAssignStartMode] = useState<"now" | "after_expiry" | "custom">("now");
   const [phantomInputLimit, setPhantomInputLimit] = useState(0);
+  const [expandedUsers, setExpandedUsers] = useState<Record<string, boolean>>({});
 
   const activePackSummary = useMemo(
     () =>
@@ -157,6 +160,52 @@ export default function AddonsPage() {
         .join(" · ") || "—",
     [addons],
   );
+
+  const groupedAssignments = useMemo(() => {
+    const byUser: Record<string, AddonAssignmentEntry[]> = {};
+    for (const a of assignments) {
+      const key = a.discordUserId || `key:${a.apiKeyId ?? "?"}`;
+      if (!byUser[key]) byUser[key] = [];
+      byUser[key].push(a);
+    }
+    for (const key of Object.keys(byUser)) {
+      byUser[key].sort((x, y) => {
+        const xActive = x.isActive && (!x.expiresAt || new Date(x.expiresAt) > new Date());
+        const yActive = y.isActive && (!y.expiresAt || new Date(y.expiresAt) > new Date());
+        if (xActive !== yActive) return xActive ? -1 : 1;
+        const xStart = new Date(x.startsAt).getTime();
+        const yStart = new Date(y.startsAt).getTime();
+        return yStart - xStart;
+      });
+    }
+    return byUser;
+  }, [assignments]);
+
+  const toggleUserExpand = (key: string) => {
+    setExpandedUsers((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const fmtDate = (iso: string | null | undefined) => {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    return d.toLocaleString("id-ID", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
+  const statusLabel = (row: AddonAssignmentEntry) => {
+    const now = new Date();
+    const start = new Date(row.startsAt);
+    const end = row.expiresAt ? new Date(row.expiresAt) : null;
+    if (!row.isActive) return "off";
+    if (start > now) return "scheduled";
+    if (end && end <= now) return "expired";
+    return "active";
+  };
 
   const formatLocalDatetime = (d: Date) => {
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -311,8 +360,12 @@ export default function AddonsPage() {
         addonId: Number(assignAddonId),
         discordUserId: assignDiscordId.trim(),
         expiresAt: assignExpires ? new Date(assignExpires).toISOString() : null,
+        startsAt: assignStartMode === "custom" && assignStartsAt ? new Date(assignStartsAt).toISOString() : null,
+        startMode: assignStartMode,
       });
       setAssignDiscordId("");
+      setAssignStartsAt("");
+      setAssignStartMode("now");
       const pack = addons.find((a) => a.id === Number(assignAddonId));
       applyDefaultExpiry(pack);
       await load();
@@ -329,6 +382,15 @@ export default function AddonsPage() {
       await load();
     } catch (e: any) {
       setError(e?.message || "Failed to remove assignment");
+    }
+  };
+
+  const toggleAssignmentActive = async (row: AddonAssignmentEntry) => {
+    try {
+      await addonsApi.updateAssignment(row.id, { isActive: !row.isActive });
+      await load();
+    } catch (e: any) {
+      setError(e?.message || "Failed to update assignment");
     }
   };
 
@@ -586,8 +648,34 @@ export default function AddonsPage() {
               <Input className="mt-1 font-mono text-sm" value={assignDiscordId} onChange={(e) => setAssignDiscordId(e.target.value)} placeholder="595540191310118934" />
             </div>
             <div>
+              <Label>Start mode</Label>
+              <select
+                className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                value={assignStartMode}
+                onChange={(e) => setAssignStartMode(e.target.value as "now" | "after_expiry" | "custom")}
+              >
+                <option value="now">Now (stackable — active immediately)</option>
+                <option value="after_expiry">After current pack expires (auto-chain)</option>
+                <option value="custom">Custom start date</option>
+              </select>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                "After expiry" chains the new pack to start when the user's active assignment for this add-on ends.
+              </p>
+            </div>
+            {assignStartMode === "custom" && (
+              <div>
+                <Label>Starts at (custom)</Label>
+                <Input className="mt-1" type="datetime-local" value={assignStartsAt} onChange={(e) => setAssignStartsAt(e.target.value)} />
+              </div>
+            )}
+            <div>
               <Label>Expires (optional)</Label>
               <Input className="mt-1" type="datetime-local" value={assignExpires} onChange={(e) => setAssignExpires(e.target.value)} />
+              {assignStartMode === "after_expiry" && (
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  Leave empty — expiry auto-calculated as (chained start + pack duration).
+                </p>
+              )}
             </div>
             <Button onClick={() => void assign()} disabled={saving || !assignAddonId || !assignDiscordId.trim()}>
               <UserPlus className="h-4 w-4 mr-1" /> Assign
@@ -649,41 +737,113 @@ export default function AddonsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Assignments</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Grouped per user — click a user to expand their assignment history (active first, then expired/scheduled).
+          </p>
         </CardHeader>
-        <CardContent className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-muted-foreground border-b">
-                <th className="p-2">Add-on</th>
-                <th className="p-2">Discord user</th>
-                <th className="p-2">Expires</th>
-                <th className="p-2">Status</th>
-                <th className="p-2"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {assignments.map((row) => (
-                <tr key={row.id} className="border-b border-border/40">
-                  <td className="p-2">{row.addonName || row.addonId}</td>
-                  <td className="p-2 font-mono text-xs">{row.discordUserId || "-"}</td>
-                  <td className="p-2 text-xs">{row.expiresAt ? new Date(row.expiresAt).toLocaleString() : "never"}</td>
-                  <td className="p-2">
-                    <Badge variant={row.isActive ? "default" : "secondary"}>{row.isActive ? "active" : "off"}</Badge>
-                  </td>
-                  <td className="p-2">
-                    <Button variant="ghost" size="icon" onClick={() => void removeAssignment(row.id)}>
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-              {assignments.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="p-3 text-muted-foreground">No assignments yet.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+        <CardContent className="space-y-2">
+          {Object.keys(groupedAssignments).length === 0 && (
+            <p className="p-3 text-sm text-muted-foreground">No assignments yet.</p>
+          )}
+          {Object.entries(groupedAssignments).map(([userKey, rows]) => {
+            const expanded = !!expandedUsers[userKey];
+            const activeRow = rows.find(
+              (r) =>
+                r.isActive &&
+                (!r.expiresAt || new Date(r.expiresAt) > new Date()) &&
+                new Date(r.startsAt) <= new Date(),
+            );
+            const scheduledRow = rows.find(
+              (r) => r.isActive && new Date(r.startsAt) > new Date(),
+            );
+            return (
+              <div key={userKey} className="rounded-md border border-border/60 overflow-hidden">
+                <button
+                  className="w-full flex items-center justify-between gap-2 p-3 hover:bg-accent/40 text-left"
+                  onClick={() => toggleUserExpand(userKey)}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    {expanded ? (
+                      <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    )}
+                    <span className="font-mono text-sm truncate">{userKey}</span>
+                    <Badge variant={activeRow ? "default" : scheduledRow ? "secondary" : "outline"}>
+                      {activeRow ? "active" : scheduledRow ? "scheduled" : "expired"}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0">
+                    <span className="hidden sm:flex items-center gap-1">
+                      <Package className="h-3 w-3" />
+                      {(activeRow || scheduledRow || rows[0])?.addonName || "—"}
+                    </span>
+                    {activeRow?.expiresAt && (
+                      <span className="hidden md:flex items-center gap-1">
+                        <CalendarClock className="h-3 w-3" />
+                        {fmtDate(activeRow.expiresAt)}
+                      </span>
+                    )}
+                    <span className="text-[10px]">{rows.length} assign.</span>
+                  </div>
+                </button>
+                {expanded && (
+                  <div className="border-t border-border/40 divide-y divide-border/30">
+                    {rows.map((row) => {
+                      const st = statusLabel(row);
+                      return (
+                        <div key={row.id} className="p-3 text-sm grid gap-2 sm:grid-cols-[1fr_auto]">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-medium">{row.addonName || `#${row.addonId}`}</span>
+                              <Badge
+                                variant={st === "active" ? "default" : st === "scheduled" ? "secondary" : "outline"}
+                              >
+                                {st}
+                              </Badge>
+                              {row.startMode && row.startMode !== "now" && (
+                                <Badge variant="outline" className="text-[10px]">
+                                  {row.startMode === "after_expiry" ? "chained" : row.startMode}
+                                </Badge>
+                              )}
+                            </div>
+                            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                              <span className="flex items-center gap-1">
+                                <Clock className="h-3 w-3" /> Start: {fmtDate(row.startsAt)}
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <CalendarClock className="h-3 w-3" /> Expires: {fmtDate(row.expiresAt)}
+                              </span>
+                              <span>By: {row.assignedBy || "—"}</span>
+                              {row.dailyTokenLimit != null && row.dailyTokenLimit > 0 && (
+                                <span>{formatNumber(row.dailyTokenLimit)} tok/day</span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 justify-end">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => void toggleAssignmentActive(row)}
+                            >
+                              {row.isActive ? "Deactivate" : "Reactivate"}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => void removeAssignment(row.id)}
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </CardContent>
       </Card>
     </div>
