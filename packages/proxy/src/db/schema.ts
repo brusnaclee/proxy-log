@@ -666,6 +666,13 @@ export const addonAssignments = pgTable('addon_assignments', {
 	startsAt: timestamp('starts_at').notNull().defaultNow(),
 	expiresAt: timestamp('expires_at'),
 	isActive: boolean('is_active').notNull().default(true),
+	/**
+	 * Scheduling mode for this assignment:
+	 * - now (default): active immediately, stacks with existing active packs
+	 * - after_expiry: starts when the user's latest active assignment for this addon expires
+	 * - custom: starts at startsAt (admin-chosen), expires at expiresAt
+	 */
+	startMode: text('start_mode').notNull().default('now'),
 	assignedBy: text('assigned_by').notNull().default('dashboard'),
 	/** grant | revoke | null — bot polls and applies pack discordRoleId */
 	roleSyncAction: text('role_sync_action'),

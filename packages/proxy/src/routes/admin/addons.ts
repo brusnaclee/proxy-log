@@ -239,26 +239,53 @@ addonsApi.post("/addon-assignments", async (c) => {
     discordUserId?: string;
     apiKeyId?: number;
     expiresAt?: string | null;
+    startsAt?: string | null;
+    startMode?: 'now' | 'after_expiry' | 'custom';
     assignedBy?: string;
   }>();
   if (!body.addonId) return c.json({ error: "addonId is required" }, 400);
   if (!body.discordUserId && !body.apiKeyId) {
     return c.json({ error: "discordUserId or apiKeyId is required" }, 400);
   }
+  const startMode = body.startMode || 'now';
 
-  const [addon] = await db.select().from(addons).where(eq(addons.id, body.addonId));
+  // Fetch addon definition (for default duration + name).
+  const [addon] = await db.select().from(addons).where(eq(addons.id, body.addonId)).limit(1);
   if (!addon) return c.json({ error: "Addon not found" }, 404);
 
-  if (body.apiKeyId) {
-    const [key] = await db.select().from(apiKeys).where(eq(apiKeys.id, body.apiKeyId));
-    if (!key) return c.json({ error: "API key not found" }, 404);
+  // Compute startsAt based on startMode.
+  let startsAt: Date;
+  if (startMode === 'custom' && body.startsAt) {
+    startsAt = new Date(body.startsAt);
+  } else if (startMode === 'after_expiry' && body.discordUserId) {
+    // Chain after the user's latest active+unexpired assignment for this addon.
+    const [latest] = await db
+      .select()
+      .from(addonAssignments)
+      .where(
+        and(
+          eq(addonAssignments.addonId, body.addonId),
+          eq(addonAssignments.discordUserId, body.discordUserId),
+          eq(addonAssignments.isActive, true),
+        ),
+      )
+      .orderBy(desc(addonAssignments.expiresAt))
+      .limit(1);
+    if (latest?.expiresAt && new Date(latest.expiresAt) > new Date()) {
+      startsAt = new Date(latest.expiresAt);
+    } else {
+      startsAt = new Date();
+    }
+  } else {
+    // now (default) — active immediately, stackable with existing packs.
+    startsAt = new Date();
   }
 
   let expiresAt: Date | null = null;
   if (body.expiresAt) {
     expiresAt = new Date(body.expiresAt);
   } else if ((addon.defaultDurationDays || 0) > 0) {
-    expiresAt = new Date(Date.now() + addon.defaultDurationDays * 24 * 60 * 60 * 1000);
+    expiresAt = new Date(startsAt.getTime() + addon.defaultDurationDays * 24 * 60 * 60 * 1000);
   }
 
   const [row] = await db
@@ -267,36 +294,46 @@ addonsApi.post("/addon-assignments", async (c) => {
       addonId: body.addonId,
       discordUserId: body.discordUserId || null,
       apiKeyId: body.apiKeyId || null,
+      startsAt,
       expiresAt,
-      assignedBy: body.assignedBy || "dashboard",
-      isActive: true,
-      roleSyncAction: addon.discordRoleId && body.discordUserId ? "grant" : null,
-    } as any)
+      isActive: startMode === 'now' || (startMode === 'after_expiry' && startsAt <= new Date()) || (startMode === 'custom' && startsAt <= new Date()),
+      startMode,
+      assignedBy: body.assignedBy || 'dashboard',
+      roleSyncAction: 'grant',
+    })
     .returning();
+
+  if (body.discordUserId) {
+    try {
+      const { queueUserNotificationByDiscord } = await import("../../utils/user-notify.js");
+      const roleHint = addon.discordRoleId
+        ? `\nRole Discord add-on akan di-sync otomatis (<@&${addon.discordRoleId}>).`
+        : "";
+      await queueUserNotificationByDiscord(body.discordUserId, {
+        type: "addon_assigned",
+        title: "✅ Add-on Aktif",
+        message:
+          `Add-on **${addon.name}** telah diaktifkan` +
+          (expiresAt ? ` (berakhir <t:${Math.floor(expiresAt.getTime() / 1000)}:F>)` : "") +
+          `.\nKuota harian pack: ${(addon.dailyTokenLimit || 0).toLocaleString()} tokens.` +
+          roleHint,
+      });
+    } catch {
+      // notification optional; non-fatal
+    }
+    try {
+      const { syncUserKeyAccessAfterAddonChange } = await import("../../utils/key-access-lifecycle.js");
+      await syncUserKeyAccessAfterAddonChange(body.discordUserId, `add-on assigned: ${addon.name}`);
+    } catch {
+      // optional sync; non-fatal
+    }
+  }
 
   await applyMaxDevicesForAssignment({
     maxDevices: addon.maxDevices || 0,
     discordUserId: body.discordUserId,
     apiKeyId: body.apiKeyId,
   });
-
-  if (body.discordUserId) {
-    const { queueUserNotificationByDiscord } = await import("../../utils/user-notify.js");
-    const roleHint = addon.discordRoleId
-      ? `\nRole Discord add-on akan di-sync otomatis (<@&${addon.discordRoleId}>).`
-      : "";
-    await queueUserNotificationByDiscord(body.discordUserId, {
-      type: "addon_assigned",
-      title: "✅ Add-on Aktif",
-      message:
-        `Add-on **${addon.name}** telah diaktifkan` +
-        (expiresAt ? ` (berakhir <t:${Math.floor(expiresAt.getTime() / 1000)}:F>)` : "") +
-        `.\nKuota harian pack: ${(addon.dailyTokenLimit || 0).toLocaleString()} tokens.` +
-        roleHint,
-    });
-    const { syncUserKeyAccessAfterAddonChange } = await import("../../utils/key-access-lifecycle.js");
-    await syncUserKeyAccessAfterAddonChange(body.discordUserId, `add-on assigned: ${addon.name}`);
-  }
 
   return c.json({ success: true, assignment: row });
 });
