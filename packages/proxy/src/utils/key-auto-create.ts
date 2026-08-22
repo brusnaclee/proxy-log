@@ -8,6 +8,7 @@ import {
 	resolveDiscordRoles,
 } from "./discord-roles.js";
 import { queueUserNotification, formatPhantomCredentialsMessage } from "./user-notify.js";
+import { getProxyPublicEndpoint } from "./proxy-public-url.js";
 
 /**
  * Ensures a Discord user has at least one active, non-trial API key.
@@ -36,7 +37,7 @@ export async function ensureApiKeyForDiscordUser(opts: {
 	if (!discordUserId) return null;
 
 	const [config] = await db.select().from(adminConfig).limit(1);
-	const endpoint = `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`;
+	const endpoint = getProxyPublicEndpoint();
 
 	const [existing] = await db
 		.select()

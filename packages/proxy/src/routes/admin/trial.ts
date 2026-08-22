@@ -17,6 +17,7 @@ import {
 } from "../../utils/trial-routing.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
 import { queueTrialNotification } from "../../utils/trial-notify.js";
+import { getProxyPublicEndpoint } from "../../utils/proxy-public-url.js";
 import {
   countUserTrials,
   findActiveTrialByDiscordUser,
@@ -311,7 +312,7 @@ export async function claimTrialForUser(body: {
     expiresAt,
   });
 
-  const endpoint = `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`;
+  const endpoint = getProxyPublicEndpoint();
   const gpyModels = await listGpyCatalogModels(config);
   const dmTemplates = parseTrialDmTemplates(config.trialDmTemplates);
 
@@ -419,7 +420,7 @@ export async function adminTrialAction(body: {
       expiresAt: newExpiry.toISOString(),
       expiresAtFormatted: `<t:${Math.floor(newExpiry.getTime() / 1000)}:F>`,
       apiKey: key?.key || "",
-      endpoint: `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`,
+      endpoint: getProxyPublicEndpoint(),
       upgradePhantom: upgradeText,
     });
     return { success: true, expiresAt: newExpiry.toISOString() };
@@ -508,7 +509,7 @@ export async function adminTrialAction(body: {
       expiresAt,
     });
 
-    const endpoint = `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`;
+    const endpoint = getProxyPublicEndpoint();
     const gpyModels = await listGpyCatalogModels(config);
     const templates = parseTrialDmTemplates(config.trialDmTemplates);
     const modelList = gpyModels.slice(0, 30).map((m) => `• \`${m}\``).join("\n") || "• (lihat /v1/models)";

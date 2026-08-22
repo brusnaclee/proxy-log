@@ -115,6 +115,8 @@ export default function KeyDetailPage() {
   const [newKeyModelOverrideDailyOutputTokenLimit, setNewKeyModelOverrideDailyOutputTokenLimit] = useState(0);
   const [newKeyModelOverrideDedicatedQuota, setNewKeyModelOverrideDedicatedQuota] = useState(false);
   const [keyModelMatchPreview, setKeyModelMatchPreview] = useState<{ ids: string[]; total: number }>({ ids: [], total: 0 });
+  const [keyLimitSelectEnabled, setKeyLimitSelectEnabled] = useState(false);
+  const [keyLimitSelectedIds, setKeyLimitSelectedIds] = useState<string[]>([]);
   const [trialInfo, setTrialInfo] = useState<TrialUserRow | null>(null);
   const [trialHistory, setTrialHistory] = useState<Array<{
     id: number;
@@ -1441,11 +1443,61 @@ export API_TIMEOUT_MS=500000`}
                 {newKeyModelOverride.length > 0 && (
                   <div className="mt-1 space-y-1 text-xs text-muted-foreground">
                     {newKeyModelOverrideIsPattern ? (
-                      <>
-                        <div>
-                          Pattern akan apply ke <b>{keyModelMatchPreview.total}</b> model yang mengandung substring <span className="font-mono">"{newKeyModelOverride}"</span>:
-                        </div>
-                        {keyModelMatchPreview.total > 0 && (
+                      <div>
+                        Pattern akan apply ke <b>{keyModelMatchPreview.total}</b> model yang mengandung substring{" "}
+                        <span className="font-mono">"{newKeyModelOverride}"</span>
+                        {keyModelMatchPreview.total === 0 && (
+                          <div className="text-amber-600 dark:text-amber-400 mt-1">
+                            Belum ada model di catalog yang cocok. Pattern tetap tersimpan untuk model baru.
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div>
+                        {keyModelMatchPreview.total > 0
+                          ? `Cocok ${keyModelMatchPreview.total} model di catalog`
+                          : "Tidak ada model di catalog yang cocok (entry exact tetap bisa disimpan)"}
+                      </div>
+                    )}
+                    {keyModelMatchPreview.total > 0 && (
+                      <div className="space-y-2 border rounded-md p-2 bg-background/40">
+                        <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={keyLimitSelectEnabled}
+                            onChange={(e) => {
+                              const on = e.target.checked;
+                              setKeyLimitSelectEnabled(on);
+                              if (on) {
+                                setNewKeyModelOverrideIsPattern(false);
+                                if (keyLimitSelectedIds.length === 0) {
+                                  setKeyLimitSelectedIds([...keyModelMatchPreview.ids]);
+                                }
+                              } else {
+                                setKeyLimitSelectedIds([]);
+                              }
+                            }}
+                          />
+                          <span className="text-[10px] font-medium">Apply limit to selected models</span>
+                        </label>
+                        {keyLimitSelectEnabled ? (
+                          <div className="max-h-32 overflow-y-auto divide-y divide-border/40 border rounded">
+                            {keyModelMatchPreview.ids.map((m) => (
+                              <label key={m} className="flex items-center gap-2 px-2 py-1 font-mono text-[10px] cursor-pointer hover:bg-accent/40">
+                                <input
+                                  type="checkbox"
+                                  checked={keyLimitSelectedIds.includes(m)}
+                                  onChange={() => {
+                                    setKeyLimitSelectedIds((prev) =>
+                                      prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m],
+                                    );
+                                  }}
+                                />
+                                <span className="truncate">{m}</span>
+                              </label>
+                            ))}
+                          </div>
+                        ) : (
                           <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto p-1 border rounded bg-background/40">
                             {keyModelMatchPreview.ids.map((m) => (
                               <span key={m} className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 font-mono text-[10px]">
@@ -1454,22 +1506,11 @@ export API_TIMEOUT_MS=500000`}
                             ))}
                             {keyModelMatchPreview.total > keyModelMatchPreview.ids.length && (
                               <span className="px-1.5 py-0.5 rounded bg-muted text-muted-foreground text-[10px]">
-                                ...{(keyModelMatchPreview.total - keyModelMatchPreview.ids.length).toLocaleString()} lagi
+                                +{(keyModelMatchPreview.total - keyModelMatchPreview.ids.length).toLocaleString()}
                               </span>
                             )}
                           </div>
                         )}
-                        {keyModelMatchPreview.total === 0 && (
-                          <div className="text-amber-600 dark:text-amber-400">
-                            Belum ada model di catalog yang cocok. Pattern tetap tersimpan dan akan apply ke model baru yang mengandung substring ini.
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <div>
-                        {keyModelMatchPreview.total > 0
-                          ? `Cocok dengan ${keyModelMatchPreview.total} model di catalog: ${keyModelMatchPreview.ids.slice(0, 3).join(", ")}${keyModelMatchPreview.total > 3 ? ` +${keyModelMatchPreview.total - 3}` : ""}`
-                          : "Tidak ada model di catalog yang cocok (entry exact akan tersimpan, tidak match ke model lain)"}
                       </div>
                     )}
                   </div>
@@ -1539,8 +1580,7 @@ export API_TIMEOUT_MS=500000`}
                         dedicatedQuota: newKeyModelOverrideDedicatedQuota,
                       };
                       for (const m of keyModelMatchPreview.ids) {
-                        const bare = m.includes("/") ? m.slice(m.lastIndexOf("/") + 1) : m;
-                        await keys.setModelLimit(parseInt(id), bare, { ...limits, isPattern: false });
+                        await keys.setModelLimit(parseInt(id), m, { ...limits, isPattern: false });
                       }
                       setNewKeyModelOverride("");
                       setNewKeyModelOverrideIsPattern(false);
@@ -1559,15 +1599,25 @@ export API_TIMEOUT_MS=500000`}
                 )}
                 <Button onClick={async () => {
                   if (!id || !newKeyModelOverride) return;
-                  await keys.setModelLimit(parseInt(id), newKeyModelOverride, {
+                  const limits = {
                     promptLimit: newKeyModelOverrideLimit,
                     dailyTokenLimit: newKeyModelOverrideDailyTokenLimit,
                     monthlyTokenLimit: newKeyModelOverrideMonthlyTokenLimit,
                     dailyInputTokenLimit: newKeyModelOverrideDailyInputTokenLimit,
                     dailyOutputTokenLimit: newKeyModelOverrideDailyOutputTokenLimit,
-                    isPattern: newKeyModelOverrideIsPattern,
                     dedicatedQuota: newKeyModelOverrideDedicatedQuota,
-                  });
+                  };
+                  if (keyLimitSelectEnabled) {
+                    if (keyLimitSelectedIds.length === 0) return;
+                    for (const m of keyLimitSelectedIds) {
+                      await keys.setModelLimit(parseInt(id), m, { ...limits, isPattern: false });
+                    }
+                  } else {
+                    await keys.setModelLimit(parseInt(id), newKeyModelOverride, {
+                      ...limits,
+                      isPattern: newKeyModelOverrideIsPattern,
+                    });
+                  }
                   setNewKeyModelOverride("");
                   setNewKeyModelOverrideIsPattern(false);
                   setNewKeyModelOverrideLimit(0);
@@ -1577,9 +1627,13 @@ export API_TIMEOUT_MS=500000`}
                   setNewKeyModelOverrideDailyOutputTokenLimit(0);
                   setNewKeyModelOverrideDedicatedQuota(false);
                   setKeyModelMatchPreview({ ids: [], total: 0 });
+                  setKeyLimitSelectEnabled(false);
+                  setKeyLimitSelectedIds([]);
                   const ml = await keys.getModelLimits(parseInt(id)); setKeyModelLimits(ml.data || []);
                 }}>
-                  {newKeyModelOverrideIsPattern
+                  {keyLimitSelectEnabled
+                    ? `Save ${keyLimitSelectedIds.length} Selected`
+                    : newKeyModelOverrideIsPattern
                     ? `Simpan Pattern (auto ke ${keyModelMatchPreview.total} model)`
                     : "Save Model Override"}
                 </Button>

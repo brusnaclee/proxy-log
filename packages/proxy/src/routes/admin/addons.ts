@@ -3,6 +3,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { addonAssignments, addons, apiKeys } from "../../db/schema.js";
 import { parseAllowlist, parseModelDailyLimits, parsePatternList } from "../../utils/addons.js";
+import { getProxyPublicEndpoint } from "../../utils/proxy-public-url.js";
 
 const addonsApi = new Hono();
 
@@ -353,7 +354,7 @@ addonsApi.post("/addon-assignments", async (c) => {
             type: "admin_override_created",
             title: "🔑 API Key Proxy Anda",
             message: formatPhantomCredentialsMessage({
-              endpoint: `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`,
+              endpoint: getProxyPublicEndpoint(),
               apiKey: apiKeyForDm,
               intro: "Akun Anda belum punya API key. Key berikut dibuat otomatis saat add-on di-assign:",
             }),

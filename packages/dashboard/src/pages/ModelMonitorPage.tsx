@@ -44,19 +44,7 @@ export default function ModelMonitorPage() {
           const progress = await monitor.getSweepProgress();
           setSweepState({ running: progress.status === "running", progress });
           if (progress.status === "running") {
-            // Realtime refresh: pull model table every tick
-            const res = await monitor.getModels();
-            setData(res.data);
-            setSummary({
-              total: res.summary.total,
-              online: res.summary.online,
-              offline: res.summary.offline,
-              timeout: res.summary.timeout,
-              probeOk: res.summary.probeOk ?? 0,
-            });
-            if (res.monitorAutoMode || res.summary.monitorAutoMode) {
-              setMonitorAutoMode(String(res.monitorAutoMode || res.summary.monitorAutoMode));
-            }
+            await loadData();
           }
           if (progress.status !== "running") {
             clearInterval(interval);
@@ -92,15 +80,7 @@ export default function ModelMonitorPage() {
           const progress = await monitor.getSweepProgress();
           setSweepState({ running: progress.status === "running", progress });
           if (progress.status === "running") {
-            const res = await monitor.getModels();
-            setData(res.data);
-            setSummary({
-              total: res.summary.total,
-              online: res.summary.online,
-              offline: res.summary.offline,
-              timeout: res.summary.timeout,
-              probeOk: res.summary.probeOk ?? 0,
-            });
+            await loadData();
           }
           if (progress.status !== "running") {
             clearInterval(interval);
@@ -173,7 +153,10 @@ export default function ModelMonitorPage() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await monitor.getModels();
+      const res = await monitor.getModels({
+        provider: upstreamFilter,
+        vendor: modelVendorFilter,
+      });
       setData(res.data);
       setActiveProviders(Array.isArray(res.activeProviders) ? res.activeProviders : []);
       setSummary({
@@ -188,7 +171,7 @@ export default function ModelMonitorPage() {
       }
     } catch {}
     setLoading(false);
-  }, []);
+  }, [upstreamFilter, modelVendorFilter]);
 
   const handleSyncCatalog = async () => {
     setSyncingCatalog(true);
@@ -238,8 +221,8 @@ export default function ModelMonitorPage() {
   }, [activeTab, catalogData.length, loadCatalog]);
 
   const handleExport = () => {
-    const online  = data.filter(d => d.isOnline);
-    const offline = data.filter(d => !d.isOnline);
+    const online  = filtered.filter(d => d.isOnline);
+    const offline = filtered.filter(d => !d.isOnline);
     const dateStr = new Date().toISOString().split("T")[0];
 
     const makeRows = (items: typeof data) => items.map(d => [
@@ -259,7 +242,7 @@ export default function ModelMonitorPage() {
         name: "All Models",
         note: `${summary.online} online, ${summary.offline} offline, ${summary.timeout} timeout  -  as of ${new Date().toLocaleString()}`,
         headers: ["Model", "Upstream", "Vendor", "Status", "Latency (ms)", "HTTP Status", "Error", "Last Checked", "Base URL"],
-        rows: makeRows(data),
+        rows: makeRows(filtered),
       },
       {
         name: "Online",
@@ -278,18 +261,13 @@ export default function ModelMonitorPage() {
   };
 
   const upstreamOptions = useMemo(() => {
-    const fromData = data.map((d) => d.provider || "unknown");
-    const merged = new Set([...activeProviders, ...fromData]);
+    const merged = new Set(activeProviders);
     return ["all", ...[...merged].sort((a, b) => a.localeCompare(b))];
-  }, [data, activeProviders]);
+  }, [activeProviders]);
 
   const vendorOptions = useMemo(() => {
-    let rows = data;
-    if (upstreamFilter !== "all") {
-      rows = rows.filter(d => (d.provider || "unknown") === upstreamFilter);
-    }
-    return ["all", ...new Set(rows.map(d => modelVendorOf(d.modelId)))].sort();
-  }, [data, upstreamFilter]);
+    return ["all", ...new Set(data.map((d) => d.modelVendor || modelVendorOf(d.modelId)))].sort();
+  }, [data]);
 
   useEffect(() => {
     if (modelVendorFilter !== "all" && !vendorOptions.includes(modelVendorFilter)) {
@@ -299,12 +277,6 @@ export default function ModelMonitorPage() {
 
   const filtered = useMemo(() => {
     let rows = [...data];
-    if (upstreamFilter !== "all") {
-      rows = rows.filter(d => (d.provider || "unknown") === upstreamFilter);
-    }
-    if (modelVendorFilter !== "all") {
-      rows = rows.filter(d => modelVendorOf(d.modelId) === modelVendorFilter);
-    }
     rows.sort((a, b) => {
       if (sortMode === "name") return a.modelId.localeCompare(b.modelId);
       if (sortMode === "latency") return (a.latencyMs || 999999) - (b.latencyMs || 999999);
@@ -313,7 +285,7 @@ export default function ModelMonitorPage() {
       return (a.latencyMs || 0) - (b.latencyMs || 0);
     });
     return rows;
-  }, [data, upstreamFilter, modelVendorFilter, sortMode]);
+  }, [data, sortMode]);
 
   const handleBulkOverride = async (
     action: "on" | "off",
@@ -719,7 +691,7 @@ export default function ModelMonitorPage() {
                   <tr key={`${d.provider || "unknown"}:${d.modelId}`} className="data-row hover:bg-muted/10 transition-colors border-b border-border/30">
                     <td className="py-3 px-4 font-mono text-xs">{d.modelId}</td>
                     <td className="py-3 px-4 text-xs text-muted-foreground">{d.provider || "-"}</td>
-                    <td className="py-3 px-4 text-xs text-muted-foreground">{modelVendorOf(d.modelId)}</td>
+                    <td className="py-3 px-4 text-xs text-muted-foreground">{d.modelVendor || modelVendorOf(d.modelId)}</td>
                     <td className="py-3 px-4 text-center">
                       <Badge variant={d.isOnline ? "success" : "destructive"} className="text-[10px]">
                         {d.isOnline ? "ON" : "OFF"}

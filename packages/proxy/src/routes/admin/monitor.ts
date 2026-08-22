@@ -258,8 +258,23 @@ monitor.get("/internal/monitor/auto-mode", async (c) => {
   return c.json({ mode });
 });
 
+function summarizeMonitorRows(rows: Array<{ isOnline: boolean; httpStatus: number | null; probeOk?: boolean }>, mode: string) {
+  return {
+    total: rows.length,
+    online: rows.filter((d) => d.isOnline).length,
+    offline: rows.filter((d) => !d.isOnline && (d.httpStatus ?? 0) !== 0).length,
+    timeout: rows.filter((d) => !d.isOnline && (d.httpStatus ?? 0) === 0).length,
+    probeOk: rows.filter((d) => d.probeOk).length,
+    monitorAutoMode: mode,
+  };
+}
+
 monitor.get("/monitor/models", async (c) => {
   const activeNames = await getActiveProviderNames();
+  const providerFilter = c.req.query("provider");
+  const vendorFilter = c.req.query("vendor");
+  const providerQ = providerFilter && providerFilter !== "all" ? String(providerFilter) : null;
+  const vendorQ = vendorFilter && vendorFilter !== "all" ? String(vendorFilter) : null;
 
   // One row per (model_id, provider): latest checked_at, then highest id.
   // Prevents duplicate Fail+OK rows from concurrent upsert races.
@@ -291,23 +306,32 @@ monitor.get("/monitor/models", async (c) => {
     }));
 
   const aliasIndex = await loadVendorAliasIndex();
-  const publicData = data.map((d) => ({
+  let publicData = data.map((d) => ({
     ...d,
     modelId: publicizeMonitorModelId(d.provider, d.modelId, aliasIndex),
+    modelVendor: publicVendorOf(d.provider, d.modelId, aliasIndex),
   }));
+
+  if (providerQ) {
+    publicData = publicData.filter((d) => d.provider === providerQ);
+  }
+  if (vendorQ) {
+    publicData = publicData.filter((d) =>
+      vendorFilterMatches(d.provider, d.modelId, vendorQ, aliasIndex),
+    );
+  }
 
   const mode = await getMonitorAutoMode();
   const activeProviders = [...activeNames].sort((a, b) => a.localeCompare(b));
-  const summary = {
-    total: publicData.length,
-    online: publicData.filter((d) => d.isOnline).length,
-    offline: publicData.filter((d) => !d.isOnline && d.httpStatus !== 0).length,
-    timeout: publicData.filter((d) => !d.isOnline && d.httpStatus === 0).length,
-    probeOk: publicData.filter((d) => d.probeOk).length,
-    monitorAutoMode: mode,
-  };
+  const summary = summarizeMonitorRows(publicData, mode);
 
-  return c.json({ data: publicData, summary, monitorAutoMode: mode, activeProviders });
+  return c.json({
+    data: publicData,
+    summary,
+    monitorAutoMode: mode,
+    activeProviders,
+    filters: { provider: providerQ, vendor: vendorQ },
+  });
 });
 
 // GET history for a specific model
@@ -455,11 +479,24 @@ monitor.get("/internal/monitor/models", async (c) => {
     .filter((d) => d.provider && activeNames.has(d.provider));
 
   const aliasIndex = await loadVendorAliasIndex();
+  const { getClientCatalogFlags } = await import("../../utils/model-monitor-store.js");
   return c.json({
-    data: data.map((d) => ({
-      ...d,
-      modelId: publicizeMonitorModelId(d.provider, d.modelId, aliasIndex),
-    })),
+    data: data.map((d) => {
+      const flags = getClientCatalogFlags({
+        published: d.isOnline,
+        httpStatus: d.httpStatus,
+      });
+      return {
+        ...d,
+        modelId: publicizeMonitorModelId(d.provider, d.modelId, aliasIndex),
+        modelVendor: publicVendorOf(d.provider, d.modelId, aliasIndex),
+        published: flags.published,
+        probeOk: flags.probeOk,
+        visible: flags.visible,
+        clientOnline: flags.clientOnline,
+        requestable: flags.requestable,
+      };
+    }),
   });
 });
 

@@ -102,6 +102,9 @@ export default function SettingsPage() {
   /** When on: matched models can be locked (addon-only) via per-row checkboxes. */
   const [matchLockEnabled, setMatchLockEnabled] = useState(false);
   const [matchLockedIds, setMatchLockedIds] = useState<string[]>([]);
+  /** When on: save exact limit rows only for checked models (not whole pattern). */
+  const [limitSelectEnabled, setLimitSelectEnabled] = useState(false);
+  const [limitSelectedIds, setLimitSelectedIds] = useState<string[]>([]);
   const [newModelOverrideLimit, setNewModelOverrideLimit] = useState(0);
   const [newModelOverrideDailyTokenLimit, setNewModelOverrideDailyTokenLimit] = useState(0);
   const [newModelOverrideMonthlyTokenLimit, setNewModelOverrideMonthlyTokenLimit] = useState(0);
@@ -299,6 +302,27 @@ export default function SettingsPage() {
     setGlobalModelMatchPreview({ ids: [], total: 0 });
     setMatchLockEnabled(false);
     setMatchLockedIds([]);
+    setLimitSelectEnabled(false);
+    setLimitSelectedIds([]);
+  };
+
+  const overrideLimitsPayload = () => ({
+    promptLimit: newModelOverrideLimit,
+    dailyTokenLimit: newModelOverrideDailyTokenLimit,
+    monthlyTokenLimit: newModelOverrideMonthlyTokenLimit,
+    dailyInputTokenLimit: newModelOverrideDailyInputTokenLimit,
+    dailyOutputTokenLimit: newModelOverrideDailyOutputTokenLimit,
+    dedicatedQuota: newModelOverrideDedicatedQuota,
+  });
+
+  /** Full catalog id for exact rows (avoid bare "grok-4.5" matching all providers). */
+  const exactModelKey = (catalogId: string) => String(catalogId || "").trim();
+
+  const saveExactOverrides = async (ids: string[]) => {
+    const limits = overrideLimitsPayload();
+    for (const m of ids) {
+      await globalSettings.setModelLimit(exactModelKey(m), { ...limits, isPattern: false });
+    }
   };
 
   const applyMatchPreview = (ids: string[], total: number, pattern: string, required: string[]) => {
@@ -1141,7 +1165,28 @@ export default function SettingsPage() {
 
                               {globalModelMatchPreview.ids.length > 0 && (
                                 <div className="space-y-2 border rounded-md p-2 bg-background/50">
-                                  <div className="flex flex-wrap items-center gap-2">
+                                  <div className="flex flex-wrap items-center gap-3">
+                                    <label className="inline-flex items-center gap-1.5 cursor-pointer text-foreground">
+                                      <input
+                                        type="checkbox"
+                                        checked={limitSelectEnabled}
+                                        onChange={(e) => {
+                                          const on = e.target.checked;
+                                          setLimitSelectEnabled(on);
+                                          if (on) {
+                                            setNewModelOverrideIsPattern(false);
+                                            if (limitSelectedIds.length === 0) {
+                                              setLimitSelectedIds([...globalModelMatchPreview.ids]);
+                                            }
+                                          } else {
+                                            setLimitSelectedIds([]);
+                                          }
+                                        }}
+                                      />
+                                      <span className="text-xs font-medium">
+                                        Apply limit to selected models
+                                      </span>
+                                    </label>
                                     <label className="inline-flex items-center gap-1.5 cursor-pointer text-foreground">
                                       <input
                                         type="checkbox"
@@ -1156,6 +1201,31 @@ export default function SettingsPage() {
                                         Lock matched models (addon only)
                                       </span>
                                     </label>
+                                    {limitSelectEnabled && (
+                                      <>
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="sm"
+                                          className="h-6 text-[10px]"
+                                          onClick={() => setLimitSelectedIds([...globalModelMatchPreview.ids])}
+                                        >
+                                          Select all limits
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="sm"
+                                          className="h-6 text-[10px]"
+                                          onClick={() => setLimitSelectedIds([])}
+                                        >
+                                          Clear limits
+                                        </Button>
+                                        <span className="text-[10px] text-muted-foreground">
+                                          {limitSelectedIds.length}/{globalModelMatchPreview.ids.length} for limit
+                                        </span>
+                                      </>
+                                    )}
                                     {matchLockEnabled && (
                                       <>
                                         <Button
@@ -1165,7 +1235,7 @@ export default function SettingsPage() {
                                           className="h-6 text-[10px]"
                                           onClick={() => setMatchLockedIds([...globalModelMatchPreview.ids])}
                                         >
-                                          Select all
+                                          Select all locks
                                         </Button>
                                         <Button
                                           type="button"
@@ -1183,22 +1253,45 @@ export default function SettingsPage() {
                                     )}
                                   </div>
                                   <p className="text-[10px] text-muted-foreground">
-                                    {matchLockEnabled
-                                      ? "Ceklis model yang wajib add-on. Uncek = Phantom bisa pakai tanpa pack. Disimpan ke Models requiring add-on (exact id)."
-                                      : "Centang \"Lock matched models\" lalu pilih satu-satu atau Select all."}
+                                    {limitSelectEnabled
+                                      ? "Centang kolom Limit untuk model yang dapat override/dedicated pool. Uncheck Pattern / batch jika hanya beberapa model."
+                                      : matchLockEnabled
+                                        ? "Centang kolom Lock untuk model wajib add-on."
+                                        : 'Centang "Apply limit to selected models" untuk pilih per model, atau pakai Pattern / batch di bawah.'}
                                   </p>
                                   <div className="max-h-40 overflow-y-auto divide-y divide-border/40 border rounded bg-background/40">
+                                    <div className="grid grid-cols-[auto_auto_1fr] gap-2 px-2 py-1 text-[9px] uppercase tracking-wide text-muted-foreground border-b border-border/40">
+                                      <span>Limit</span>
+                                      <span>Lock</span>
+                                      <span>Model</span>
+                                    </div>
                                     {globalModelMatchPreview.ids.map((m) => {
+                                      const forLimit = limitSelectedIds.includes(m);
                                       const locked = matchLockedIds.includes(m);
                                       return (
-                                        <label
+                                        <div
                                           key={m}
-                                          className={`flex items-center gap-2 px-2 py-1.5 font-mono text-[10px] cursor-pointer hover:bg-accent/40 ${
-                                            matchLockEnabled && locked
-                                              ? "text-amber-700 dark:text-amber-300"
-                                              : "text-foreground"
+                                          className={`grid grid-cols-[auto_auto_1fr] gap-2 items-center px-2 py-1.5 font-mono text-[10px] hover:bg-accent/40 ${
+                                            forLimit
+                                              ? "text-emerald-700 dark:text-emerald-300"
+                                              : locked
+                                                ? "text-amber-700 dark:text-amber-300"
+                                                : "text-foreground"
                                           }`}
                                         >
+                                          <input
+                                            type="checkbox"
+                                            disabled={!limitSelectEnabled}
+                                            checked={limitSelectEnabled && forLimit}
+                                            onChange={() => {
+                                              setLimitSelectedIds((prev) =>
+                                                prev.includes(m)
+                                                  ? prev.filter((x) => x !== m)
+                                                  : [...prev, m],
+                                              );
+                                            }}
+                                            title="Apply limit to this model"
+                                          />
                                           <input
                                             type="checkbox"
                                             disabled={!matchLockEnabled}
@@ -1210,14 +1303,10 @@ export default function SettingsPage() {
                                                   : [...prev, m],
                                               );
                                             }}
+                                            title="Require add-on for this model"
                                           />
-                                          <span className="truncate flex-1">{m}</span>
-                                          {matchLockEnabled && locked && (
-                                            <span className="shrink-0 text-[9px] uppercase tracking-wide text-amber-600 dark:text-amber-400">
-                                              lock
-                                            </span>
-                                          )}
-                                        </label>
+                                          <span className="truncate">{m}</span>
+                                        </div>
                                       );
                                     })}
                                   </div>
@@ -1290,18 +1379,7 @@ export default function SettingsPage() {
                                 }))) return;
                                 setLoading(true);
                                 try {
-                                  const limits = {
-                                    promptLimit: newModelOverrideLimit,
-                                    dailyTokenLimit: newModelOverrideDailyTokenLimit,
-                                    monthlyTokenLimit: newModelOverrideMonthlyTokenLimit,
-                                    dailyInputTokenLimit: newModelOverrideDailyInputTokenLimit,
-                                    dailyOutputTokenLimit: newModelOverrideDailyOutputTokenLimit,
-                                    dedicatedQuota: newModelOverrideDedicatedQuota,
-                                  };
-                                  for (const m of globalModelMatchPreview.ids) {
-                                    const bare = bareModelId(m);
-                                    await globalSettings.setModelLimit(bare, { ...limits, isPattern: false });
-                                  }
+                                  await saveExactOverrides(globalModelMatchPreview.ids);
                                   if (matchLockEnabled || matchLockedIds.length > 0 || globalModelMatchPreview.ids.some((id) => isLockedByPatterns(id, addonRequiredModels))) {
                                     await syncAddonLocksForMatches(
                                       globalModelMatchPreview.ids,
@@ -1328,14 +1406,33 @@ export default function SettingsPage() {
                               if (!newModelOverride) return;
                               setLoading(true);
                               try {
+                                if (limitSelectEnabled) {
+                                  if (limitSelectedIds.length === 0) {
+                                    setError("Pilih minimal 1 model untuk apply limit.");
+                                    return;
+                                  }
+                                  await saveExactOverrides(limitSelectedIds);
+                                  if (
+                                    globalModelMatchPreview.ids.length > 0 &&
+                                    (matchLockEnabled ||
+                                      matchLockedIds.length > 0 ||
+                                      globalModelMatchPreview.ids.some((id) =>
+                                        isLockedByPatterns(id, addonRequiredModels),
+                                      ))
+                                  ) {
+                                    await syncAddonLocksForMatches(
+                                      globalModelMatchPreview.ids,
+                                      matchLockEnabled ? matchLockedIds : [],
+                                      newModelOverride,
+                                    );
+                                  }
+                                  setMessage(
+                                    `Limit tersimpan untuk ${limitSelectedIds.length} model exact${matchLockEnabled && matchLockedIds.length ? ` · ${matchLockedIds.length} locked add-on` : ""}.`,
+                                  );
+                                } else {
                                 await globalSettings.setModelLimit(newModelOverride, {
-                                  promptLimit: newModelOverrideLimit,
-                                  dailyTokenLimit: newModelOverrideDailyTokenLimit,
-                                  monthlyTokenLimit: newModelOverrideMonthlyTokenLimit,
-                                  dailyInputTokenLimit: newModelOverrideDailyInputTokenLimit,
-                                  dailyOutputTokenLimit: newModelOverrideDailyOutputTokenLimit,
+                                  ...overrideLimitsPayload(),
                                   isPattern: newModelOverrideIsPattern,
-                                  dedicatedQuota: newModelOverrideDedicatedQuota,
                                 });
                                 if (
                                   globalModelMatchPreview.ids.length > 0 &&
@@ -1359,6 +1456,7 @@ export default function SettingsPage() {
                                   setMessage(
                                     `Model override untuk "${newModelOverride}" tersimpan${matchLockEnabled && matchLockedIds.length ? " · locked" : ""}.`,
                                   );
+                                }
                                 }
                               } catch (e: any) {
                                 setError(`Gagal simpan: ${e?.message || e}`);

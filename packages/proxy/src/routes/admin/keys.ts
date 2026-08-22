@@ -29,6 +29,7 @@ import {
   resolveDiscordRoles,
 } from "../../utils/discord-roles.js";
 import { queueUserNotification, formatPhantomCredentialsMessage } from "../../utils/user-notify.js";
+import { getProxyPublicEndpoint } from "../../utils/proxy-public-url.js";
 import { getKeyUsageBreakdown, parseUsageBreakdownPeriod } from "../../utils/usage-aggregates.js";
 
 async function mapWithConcurrency<T, R>(
@@ -407,7 +408,7 @@ keys.post("/keys/override-discord", async (c) => {
     return c.json({ error: "Valid discordUserId required (15-25 digits), or leave empty for custom key" }, 400);
   }
   const discordUserId = hasDiscord ? rawId : null;
-  const endpoint = `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`;
+  const endpoint = getProxyPublicEndpoint();
   const [config] = await db.select().from(adminConfig).limit(1);
 
   let resolved = resolveDiscordRoles([], {
@@ -967,7 +968,7 @@ keys.post("/keys/:id/rotate", async (c) => {
   if (!key) return c.json({ error: "API key not found" }, 404);
 
   const newKey = generateApiKey();
-  const endpoint = `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`;
+  const endpoint = getProxyPublicEndpoint();
   await db.update(apiKeys).set({
     key: newKey, keyPrefix: getKeyPrefix(newKey), keyHash: sha256(newKey),
     updatedAt: new Date(),

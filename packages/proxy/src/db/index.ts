@@ -42,8 +42,7 @@ export async function initializeDatabase() {
 		await pool.query(`ALTER TABLE model_limits ADD COLUMN IF NOT EXISTS is_pattern boolean NOT NULL DEFAULT false`);
 		await pool.query(`CREATE INDEX IF NOT EXISTS idx_model_limits_pattern ON model_limits (is_pattern)`);
 		await pool.query(`ALTER TABLE model_limits ADD COLUMN IF NOT EXISTS dedicated_quota boolean NOT NULL DEFAULT false`);
-		// Dedicated pool: tokitoV2/gcli/grok-4.5* (catalog prefix; not all grok-4.5)
-		// Drop previous broad seed if present; rename legacy tokito/ label.
+		// Dedicated pool: tokitoV2/gcli/grok-4.5 + grok-4.6 (exact catalog ids, 30M each)
 		await pool.query(
 			`DELETE FROM model_limits
 			 WHERE scope = 'global' AND scope_id = 0 AND model = 'grok-4.5'
@@ -54,33 +53,44 @@ export async function initializeDatabase() {
 			 WHERE scope = 'global' AND scope_id = 0 AND model = 'tokito/gcli/grok-4.5'
 			   AND is_pattern = true`,
 		);
-		const grokSeed = await pool.query(
-			`SELECT id FROM model_limits
-			 WHERE scope = 'global' AND scope_id = 0 AND model = 'tokitoV2/gcli/grok-4.5' AND is_pattern = true
-			 LIMIT 1`,
+		// Drop legacy pattern row — exact per-model rows below
+		await pool.query(
+			`DELETE FROM model_limits
+			 WHERE scope = 'global' AND scope_id = 0
+			   AND model IN ('tokitoV2/gcli/grok-4.5', 'tokitoV2/gcli/grok-4.6')
+			   AND is_pattern = true`,
 		);
-		if (grokSeed.rows[0]?.id) {
-			await pool.query(
-				`UPDATE model_limits SET
-				   daily_token_limit = 30000000,
-				   dedicated_quota = true,
-				   prompt_limit = 0,
-				   monthly_token_limit = 0,
-				   daily_input_token_limit = 0,
-				   daily_output_token_limit = 0
-				 WHERE id = $1`,
-				[grokSeed.rows[0].id],
+		for (const gcliModel of ["tokitoV2/gcli/grok-4.5", "tokitoV2/gcli/grok-4.6"]) {
+			const existing = await pool.query(
+				`SELECT id FROM model_limits
+				 WHERE scope = 'global' AND scope_id = 0 AND model = $1 AND is_pattern = false
+				 LIMIT 1`,
+				[gcliModel],
 			);
-		} else {
-			await pool.query(
-				`INSERT INTO model_limits (
-				   scope, scope_id, model, is_pattern, dedicated_quota,
-				   prompt_limit, daily_token_limit, monthly_token_limit,
-				   daily_input_token_limit, daily_output_token_limit
-				 ) VALUES ('global', 0, 'tokitoV2/gcli/grok-4.5', true, true, 0, 30000000, 0, 0, 0)`,
-			);
+			if (existing.rows[0]?.id) {
+				await pool.query(
+					`UPDATE model_limits SET
+					   daily_token_limit = 30000000,
+					   dedicated_quota = true,
+					   prompt_limit = 0,
+					   monthly_token_limit = 0,
+					   daily_input_token_limit = 0,
+					   daily_output_token_limit = 0
+					 WHERE id = $1`,
+					[existing.rows[0].id],
+				);
+			} else {
+				await pool.query(
+					`INSERT INTO model_limits (
+					   scope, scope_id, model, is_pattern, dedicated_quota,
+					   prompt_limit, daily_token_limit, monthly_token_limit,
+					   daily_input_token_limit, daily_output_token_limit
+					 ) VALUES ('global', 0, $1, false, true, 0, 30000000, 0, 0, 0)`,
+					[gcliModel],
+				);
+			}
 		}
-		console.log('✅ Applied idempotent model_limits migrations (+ tokitoV2/gcli/grok-4.5 dedicated 30M)');
+		console.log('✅ Applied idempotent model_limits migrations (+ gcli grok-4.5/4.6 dedicated 30M exact)');
 	} catch (err: any) {
 		console.warn('⚠️ model_limits idempotent migration warning:', err?.message || err);
 	}

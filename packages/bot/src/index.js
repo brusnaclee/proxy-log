@@ -64,7 +64,7 @@ const PROXY_INTERNAL_BASE_URL =
 	`http://localhost:${process.env.PORT || '3000'}`;
 const PROXY_PUBLIC_BASE_URL =
 	process.env.PROXY_PUBLIC_BASE_URL ||
-	`http://localhost:${process.env.PORT || '3000'}`;
+	'https://api.tokito.xyz/v1';
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || '';
 
 let TOKITO_API_KEY = process.env.TOKITO_API_KEY || '';
@@ -1897,18 +1897,20 @@ async function refreshLatencyFromProxy() {
 				};
 				newEntries.push(entry);
 				const key = entryKey(entry);
+				const published = Boolean(row.published ?? row.isOnline);
+				const probeOk = Boolean(row.probeOk ?? (Number(row.httpStatus) >= 200 && Number(row.httpStatus) < 300));
+				const clientOnline = Boolean(row.clientOnline ?? (published && probeOk));
 				newLatency.set(key, {
-					// clientOnline = published AND probe OK (green / requestable)
-					ok: Boolean(row.isOnline) && Number(row.httpStatus) >= 200 && Number(row.httpStatus) < 300,
-					// Discord list = Published ON only (admin force-off stays hidden)
-					visible: Boolean(row.isOnline),
+					// Align with portal /v1/models: clientOnline = Published AND Probe OK
+					ok: clientOnline,
+					visible: Boolean(row.visible ?? published),
 					ms: row.latencyMs || 0,
 					checkedAt: row.checkedAt
 						? new Date(row.checkedAt).getTime()
 						: Date.now(),
 					status: row.httpStatus || 0,
 					error: row.errorMessage || null,
-					published: Boolean(row.isOnline),
+					published,
 				});
 			}
 
@@ -2765,9 +2767,18 @@ function listModels(
 		);
 	}
 	if (modelVendor !== 'all') {
-		items = items.filter(
-			(e) => providerOf(e.modelId) === modelVendor || e.modelId === 'auto',
-		);
+		const aliasesByProvider = runtime._vendorAliases || {};
+		items = items.filter((e) => {
+			if (e.modelId === 'auto') return true;
+			const real = providerOf(e.modelId);
+			if (real === modelVendor) return true;
+			const full = publicizeDisplayModel(e.provider, e.modelId, aliasesByProvider);
+			const suffix = full.startsWith(`${e.provider}/`)
+				? full.slice(e.provider.length + 1)
+				: full;
+			const pubVendor = providerOf(suffix.includes('/') ? suffix : e.modelId);
+			return pubVendor === modelVendor || real === modelVendor;
+		});
 	}
 
 	items.sort((a, b) => a.modelId.localeCompare(b.modelId));

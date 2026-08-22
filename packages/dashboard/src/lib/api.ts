@@ -852,7 +852,13 @@ export interface ModelMonitorResponse {
 }
 
 export const monitor = {
-  getModels: () => request<ModelMonitorResponse>("/monitor/models"),
+  getModels: (params?: { provider?: string; vendor?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.provider && params.provider !== "all") qs.set("provider", params.provider);
+    if (params?.vendor && params.vendor !== "all") qs.set("vendor", params.vendor);
+    const q = qs.toString();
+    return request<ModelMonitorResponse>(`/monitor/models${q ? `?${q}` : ""}`);
+  },
   getModelHistory: (modelId: string) => request<ModelMonitorEntry[]>(`/monitor/models/${encodeURIComponent(modelId)}/history`),
   getModelDetails: () => request<{ object: string; data: any[] }>("/monitor/models/details"),
   triggerSweep: (opts?: { manual?: boolean }) =>

@@ -33,6 +33,7 @@ import { getModelCatalogResponse } from "../../utils/model-catalog.js";
 import { resolveKeyPromptLimit, resolveKeyApiCallLimit } from "../../utils/trial-config.js";
 import { listGpyCatalogModels } from "../../utils/trial-routing.js";
 import { pickPrimaryNonTrialKey } from "../../utils/api-key-primary.js";
+import { getProxyPublicEndpoint } from "../../utils/proxy-public-url.js";
 
 const internal = new Hono();
 
@@ -193,7 +194,7 @@ internal.post("/internal/verify-user", async (c) => {
     created,
     keyId,
     apiKey: keyPlaintext,
-    endpoint: `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`,
+    endpoint: getProxyPublicEndpoint(),
     policy: {
       maxDevices,
       note: "Max device policy enforced for Discord-provisioned keys",
@@ -299,7 +300,7 @@ internal.post("/internal/refresh-user-key", async (c) => {
   return c.json({
     success: true,
     apiKey: newKey,
-    endpoint: `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`,
+    endpoint: getProxyPublicEndpoint(),
   });
 });
 
@@ -387,7 +388,7 @@ internal.get("/internal/key-for-user/:userId", async (c) => {
       isTrial: false,
       keyId: primary.id,
       provisionedBy: primary.provisionedBy,
-      endpoint: `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`,
+      endpoint: getProxyPublicEndpoint(),
     });
   }
 
@@ -402,7 +403,7 @@ internal.get("/internal/key-for-user/:userId", async (c) => {
     isTrial: anyKey.isTrial,
     keyId: anyKey.id,
     provisionedBy: anyKey.provisionedBy,
-    endpoint: `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`,
+    endpoint: getProxyPublicEndpoint(),
   });
 });
 
@@ -1414,7 +1415,7 @@ internal.post("/internal/rotate-all-keys", async (c) => {
   const authErr = checkInternal(c);
   if (authErr) return authErr;
 
-  const endpoint = `${process.env.PROXY_PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || "3000"}`}/v1`;
+  const endpoint = getProxyPublicEndpoint();
   const activeKeys = await db.select().from(apiKeys).where(eq(apiKeys.isActive, true));
   const now = new Date();
 
