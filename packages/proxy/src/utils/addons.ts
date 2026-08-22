@@ -549,6 +549,9 @@ const VIBECODE_ALLOWLIST = [
   "gpt-5.6-luna",
   "codex",
   "glm-5.2",
+  "glm-5.3",
+  "deepseek-v4-flash-0731",
+  "deepseek-v4-pro",
   "minimax-m2.7",
   "minimax-m3",
   "grok-4.5",
@@ -567,30 +570,39 @@ export async function ensureVibecodeCatalog(): Promise<void> {
   }> = [
     {
       name: "vibecode-5m",
-      insertDescription: "Vibecode pack (edit daily limit & description in Admin → Add-ons)",
+      insertDescription: "Deprecated — deactivated",
+      insertDaily: 0,
+      insertSubcaps: {},
+      days: 15,
+      active: false,
+      discordRoleId: null as string | null,
+    },
+    {
+      name: "vibecode-10m",
+      insertDescription: "Deprecated — deactivated",
+      insertDaily: 0,
+      insertSubcaps: {},
+      days: 30,
+      active: false,
+      discordRoleId: null as string | null,
+    },
+    {
+      name: "vibecode-50m",
+      insertDescription: "Vibecode pack — 50M/day (edit in Admin → Add-ons)",
       insertDaily: 0,
       insertSubcaps: {},
       days: 15,
       active: true,
-      discordRoleId: "1530923797220167710",
+      discordRoleId: "1354682641961582632",
     },
     {
-      name: "vibecode-10m",
-      insertDescription: "Vibecode pack (edit daily limit & description in Admin → Add-ons)",
+      name: "vibecode-100m",
+      insertDescription: "Vibecode pack — 100M/day (edit in Admin → Add-ons)",
       insertDaily: 0,
       insertSubcaps: {},
       days: 30,
       active: true,
-      discordRoleId: "1530923797220167710",
-    },
-    {
-      name: "vibecode-3m",
-      insertDescription: "Deprecated — deactivated",
-      insertDaily: 0,
-      insertSubcaps: {},
-      days: 7,
-      active: false,
-      discordRoleId: null as string | null,
+      discordRoleId: "1354682641961582632",
     },
   ];
 
@@ -622,6 +634,12 @@ export async function ensureVibecodeCatalog(): Promise<void> {
         isActive: p.active,
         discordRoleId: p.discordRoleId,
       });
+    } else if (!p.active) {
+      // Deactivate packs we no longer ship (keep the row so admin can see history).
+      await db
+        .update(addons)
+        .set({ isActive: p.active, updatedAt: new Date() })
+        .where(eq(addons.id, existing.id));
     }
   }
 
