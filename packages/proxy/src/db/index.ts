@@ -44,6 +44,7 @@ export async function initializeDatabase() {
 		await pool.query(`ALTER TABLE model_limits ADD COLUMN IF NOT EXISTS dedicated_quota boolean NOT NULL DEFAULT false`);
 		await pool.query(`ALTER TABLE model_limits ADD COLUMN IF NOT EXISTS dedicated_pool_group text`);
 		await pool.query(`CREATE INDEX IF NOT EXISTS idx_model_limits_dedicated_pool_group ON model_limits (dedicated_pool_group) WHERE dedicated_pool_group IS NOT NULL`);
+		await pool.query(`ALTER TABLE model_limits ADD COLUMN IF NOT EXISTS prompt_limit_bypass boolean NOT NULL DEFAULT false`);
 		// Shared dedicated pool: gcli grok-4.5 + grok-4.6 → 30M total (group: gcli-grok)
 		await pool.query(
 			`DELETE FROM model_limits

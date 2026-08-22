@@ -454,6 +454,8 @@ export const modelLimits = pgTable('model_limits', {
 	dedicatedQuota: boolean('dedicated_quota').notNull().default(false),
 	/** Optional shared pool group: rules with same non-empty group share one limit bucket. */
 	dedicatedPoolGroup: text('dedicated_pool_group'),
+	/** When true: key-scoped row means "explicit unlimited prompt" (bypass global per-model prompt rule). */
+	promptLimitBypass: boolean('prompt_limit_bypass').notNull().default(false),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
 }, (table) => ({
 	scopeModelIdx: index('idx_model_limits_scope_model').on(table.scope, table.scopeId, table.model),

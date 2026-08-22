@@ -1273,6 +1273,7 @@ keys.put("/keys/:id/model-limits", async (c) => {
     isPattern?: boolean;
     dedicatedQuota?: boolean;
     dedicatedPoolGroup?: string | null;
+    promptLimitBypass?: boolean;
   }>();
   if (!body.model || body.model.trim() === "") return c.json({ error: "model is required" }, 400);
   const modelName = body.model.trim();
@@ -1286,6 +1287,7 @@ keys.put("/keys/:id/model-limits", async (c) => {
   const dedicatedPoolGroup = body.dedicatedPoolGroup != null
     ? String(body.dedicatedPoolGroup).trim() || null
     : null;
+  const promptLimitBypass = !!body.promptLimitBypass;
 
   if (dedicatedQuota && dailyTokenLimit <= 0) {
     return c.json({ error: "dedicatedQuota requires dailyTokenLimit > 0" }, 400);
@@ -1299,7 +1301,8 @@ keys.put("/keys/:id/model-limits", async (c) => {
     ["key", keyId, modelName, isPattern],
   );
 
-  if (limit > 0 || dailyTokenLimit > 0 || monthlyTokenLimit > 0 || dailyInputTokenLimit > 0 || dailyOutputTokenLimit > 0) {
+  const hasAnyLimit = limit > 0 || dailyTokenLimit > 0 || monthlyTokenLimit > 0 || dailyInputTokenLimit > 0 || dailyOutputTokenLimit > 0 || promptLimitBypass;
+  if (hasAnyLimit) {
     if (existing.rows[0]?.id) {
       await pool.query(
         `UPDATE model_limits SET
@@ -1309,9 +1312,10 @@ keys.put("/keys/:id/model-limits", async (c) => {
            daily_input_token_limit = $4,
            daily_output_token_limit = $5,
            dedicated_quota = $6,
-           dedicated_pool_group = $7
-         WHERE id = $8`,
-        [limit, dailyTokenLimit, monthlyTokenLimit, dailyInputTokenLimit, dailyOutputTokenLimit, dedicatedQuota, dedicatedPoolGroup, existing.rows[0].id],
+           dedicated_pool_group = $7,
+           prompt_limit_bypass = $8
+         WHERE id = $9`,
+        [limit, dailyTokenLimit, monthlyTokenLimit, dailyInputTokenLimit, dailyOutputTokenLimit, dedicatedQuota, dedicatedPoolGroup, promptLimitBypass, existing.rows[0].id],
       );
     } else {
       await db.insert(modelLimits).values({
@@ -1323,6 +1327,7 @@ keys.put("/keys/:id/model-limits", async (c) => {
         dailyOutputTokenLimit,
         dedicatedQuota,
         dedicatedPoolGroup,
+        promptLimitBypass,
       } as any);
     }
   } else if (existing.rows[0]?.id) {
@@ -1332,7 +1337,7 @@ keys.put("/keys/:id/model-limits", async (c) => {
   return c.json({
     success: true, model: modelName, isPattern, dedicatedQuota,
     promptLimit: limit, dailyTokenLimit, monthlyTokenLimit, dailyInputTokenLimit, dailyOutputTokenLimit,
-    dedicatedPoolGroup,
+    dedicatedPoolGroup, promptLimitBypass,
   });
 });
 

@@ -68,13 +68,22 @@ async function loadKeyWindowStarts(apiKeyIds: number[]): Promise<{
 type ModelLimitRow = typeof modelLimits.$inferSelect;
 
 /** True if the override row defines any enforceable limit (prompt and/or tokens). */
+/** Per-model prompt bypass override: a key-scoped row with prompt_limit = 0 and
+ * a non-null prompt_limit means "explicitly 0 = unlimited" (overrides global).
+ * We can't store null prompt_limit (NOT NULL), so we use a separate flag column
+ * to mark "this is an explicit unlimited override". */
+export function overrideIsPromptBypass(m: ModelLimitRow): boolean {
+  return !!((m as any).promptLimitBypass);
+}
+
 export function overrideHasLimits(m: ModelLimitRow): boolean {
   return (
     (m.promptLimit || 0) > 0 ||
     (m.dailyTokenLimit || 0) > 0 ||
     (m.monthlyTokenLimit || 0) > 0 ||
     (m.dailyInputTokenLimit || 0) > 0 ||
-    (m.dailyOutputTokenLimit || 0) > 0
+    (m.dailyOutputTokenLimit || 0) > 0 ||
+    overrideIsPromptBypass(m)
   );
 }
 
@@ -360,7 +369,8 @@ export async function listDedicatedQuotaRules(apiKeyId: number): Promise<Dedicat
     dailyInputTokenLimit: m.dailyInputTokenLimit || 0,
     dailyOutputTokenLimit: m.dailyOutputTokenLimit || 0,
     dedicatedPoolGroup: (m as any).dedicatedPoolGroup ?? null,
-  }));
+    promptLimitBypass: !!(m as any).promptLimitBypass,
+  })) as any;
 }
 
 /** SQL fragment: model column matches a dedicated rule (exact family or substring pattern). */
@@ -590,7 +600,21 @@ export async function checkModelPromptLimit(
   let effectiveLimit = 0;
   let source: "override" | "key_default" | "global_default" | "tease_default" | "none" = "none";
 
-  if (activeOverride && activeOverride.promptLimit > 0) {
+  if (activeOverride && overrideIsPromptBypass(activeOverride)) {
+    // Key-scoped explicit unlimited: bypass global per-model prompt rule.
+    effectiveLimit = 0;
+    source = "override";
+    return {
+      allowed: true,
+      remaining: 0,
+      resetMs: 0,
+      used: 0,
+      effectiveLimit: 0,
+      source,
+      overrideModel: activeOverride.model,
+      overrideIsPattern: !!activeOverride.isPattern,
+    };
+  } else if (activeOverride && activeOverride.promptLimit > 0) {
     effectiveLimit = activeOverride.promptLimit;
     source = "override";
   } else if (perKeyDefaultLimit > 0) {
