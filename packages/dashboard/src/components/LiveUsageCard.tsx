@@ -368,8 +368,8 @@ export function LiveUsageCard({
             }
             return (
               <ProgressBar
-                key={`${p.scope}:${p.model}:${p.isPattern}`}
-                label={`${p.model}${p.isPattern ? " (pattern)" : ""} · ${p.scope}`}
+                key={`${p.scope}:${p.model}:${p.isPattern}:${p.poolGroup ?? ""}`}
+                label={`${p.model}${p.isPattern ? " (pattern)" : ""}${p.poolGroup ? ` · shared` : ""} · ${p.scope}`}
                 value={p.used}
                 max={p.limit}
                 remaining={p.remaining}

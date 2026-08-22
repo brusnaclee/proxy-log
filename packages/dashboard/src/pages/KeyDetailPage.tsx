@@ -114,6 +114,7 @@ export default function KeyDetailPage() {
   const [newKeyModelOverrideDailyInputTokenLimit, setNewKeyModelOverrideDailyInputTokenLimit] = useState(0);
   const [newKeyModelOverrideDailyOutputTokenLimit, setNewKeyModelOverrideDailyOutputTokenLimit] = useState(0);
   const [newKeyModelOverrideDedicatedQuota, setNewKeyModelOverrideDedicatedQuota] = useState(false);
+  const [newKeyModelOverrideDedicatedPoolGroup, setNewKeyModelOverrideDedicatedPoolGroup] = useState("");
   const [keyModelMatchPreview, setKeyModelMatchPreview] = useState<{ ids: string[]; total: number }>({ ids: [], total: 0 });
   const [keyLimitSelectEnabled, setKeyLimitSelectEnabled] = useState(false);
   const [keyLimitSelectedIds, setKeyLimitSelectedIds] = useState<string[]>([]);
@@ -1560,6 +1561,21 @@ export API_TIMEOUT_MS=500000`}
                   </span>
                 </label>
               </div>
+              {newKeyModelOverrideDedicatedQuota && (
+                <div className="col-span-2 md:col-span-3">
+                  <Label className="text-xs">Dedicated pool group (opsional)</Label>
+                  <Input
+                    type="text"
+                    value={newKeyModelOverrideDedicatedPoolGroup}
+                    onChange={(e) => setNewKeyModelOverrideDedicatedPoolGroup(e.target.value)}
+                    placeholder="kosong = per-model pool · isi nama grup = shared pool antar model"
+                    className="mt-1"
+                  />
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    Isi nama grup (mis. <code>gcli-grok</code>) untuk shared pool: beberapa model berbagi satu limit. Kosongkan untuk dedicated pool per model.
+                  </p>
+                </div>
+              )}
               <div className="col-span-2 md:col-span-3 flex flex-wrap items-center justify-end gap-2">
                 {newKeyModelOverrideIsPattern && keyModelMatchPreview.total > 0 && (
                   <Button
@@ -1578,6 +1594,7 @@ export API_TIMEOUT_MS=500000`}
                         dailyInputTokenLimit: newKeyModelOverrideDailyInputTokenLimit,
                         dailyOutputTokenLimit: newKeyModelOverrideDailyOutputTokenLimit,
                         dedicatedQuota: newKeyModelOverrideDedicatedQuota,
+                        dedicatedPoolGroup: newKeyModelOverrideDedicatedQuota ? (newKeyModelOverrideDedicatedPoolGroup.trim() || null) : null,
                       };
                       for (const m of keyModelMatchPreview.ids) {
                         await keys.setModelLimit(parseInt(id), m, { ...limits, isPattern: false });
@@ -1590,6 +1607,7 @@ export API_TIMEOUT_MS=500000`}
                       setNewKeyModelOverrideDailyInputTokenLimit(0);
                       setNewKeyModelOverrideDailyOutputTokenLimit(0);
                       setNewKeyModelOverrideDedicatedQuota(false);
+                      setNewKeyModelOverrideDedicatedPoolGroup("");
                       setKeyModelMatchPreview({ ids: [], total: 0 });
                       const ml = await keys.getModelLimits(parseInt(id)); setKeyModelLimits(ml.data || []);
                     }}
@@ -1606,6 +1624,7 @@ export API_TIMEOUT_MS=500000`}
                     dailyInputTokenLimit: newKeyModelOverrideDailyInputTokenLimit,
                     dailyOutputTokenLimit: newKeyModelOverrideDailyOutputTokenLimit,
                     dedicatedQuota: newKeyModelOverrideDedicatedQuota,
+                    dedicatedPoolGroup: newKeyModelOverrideDedicatedQuota ? (newKeyModelOverrideDedicatedPoolGroup.trim() || null) : null,
                   };
                   if (keyLimitSelectEnabled) {
                     if (keyLimitSelectedIds.length === 0) return;
@@ -1626,6 +1645,7 @@ export API_TIMEOUT_MS=500000`}
                   setNewKeyModelOverrideDailyInputTokenLimit(0);
                   setNewKeyModelOverrideDailyOutputTokenLimit(0);
                   setNewKeyModelOverrideDedicatedQuota(false);
+                  setNewKeyModelOverrideDedicatedPoolGroup("");
                   setKeyModelMatchPreview({ ids: [], total: 0 });
                   setKeyLimitSelectEnabled(false);
                   setKeyLimitSelectedIds([]);

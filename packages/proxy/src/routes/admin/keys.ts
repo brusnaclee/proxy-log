@@ -1272,6 +1272,7 @@ keys.put("/keys/:id/model-limits", async (c) => {
     dailyOutputTokenLimit?: number;
     isPattern?: boolean;
     dedicatedQuota?: boolean;
+    dedicatedPoolGroup?: string | null;
   }>();
   if (!body.model || body.model.trim() === "") return c.json({ error: "model is required" }, 400);
   const modelName = body.model.trim();
@@ -1282,6 +1283,9 @@ keys.put("/keys/:id/model-limits", async (c) => {
   const monthlyTokenLimit = Math.max(0, body.monthlyTokenLimit || 0);
   const dailyInputTokenLimit = Math.max(0, body.dailyInputTokenLimit || 0);
   const dailyOutputTokenLimit = Math.max(0, body.dailyOutputTokenLimit || 0);
+  const dedicatedPoolGroup = body.dedicatedPoolGroup != null
+    ? String(body.dedicatedPoolGroup).trim() || null
+    : null;
 
   if (dedicatedQuota && dailyTokenLimit <= 0) {
     return c.json({ error: "dedicatedQuota requires dailyTokenLimit > 0" }, 400);
@@ -1304,9 +1308,10 @@ keys.put("/keys/:id/model-limits", async (c) => {
            monthly_token_limit = $3,
            daily_input_token_limit = $4,
            daily_output_token_limit = $5,
-           dedicated_quota = $6
-         WHERE id = $7`,
-        [limit, dailyTokenLimit, monthlyTokenLimit, dailyInputTokenLimit, dailyOutputTokenLimit, dedicatedQuota, existing.rows[0].id],
+           dedicated_quota = $6,
+           dedicated_pool_group = $7
+         WHERE id = $8`,
+        [limit, dailyTokenLimit, monthlyTokenLimit, dailyInputTokenLimit, dailyOutputTokenLimit, dedicatedQuota, dedicatedPoolGroup, existing.rows[0].id],
       );
     } else {
       await db.insert(modelLimits).values({
@@ -1317,7 +1322,8 @@ keys.put("/keys/:id/model-limits", async (c) => {
         dailyInputTokenLimit,
         dailyOutputTokenLimit,
         dedicatedQuota,
-      });
+        dedicatedPoolGroup,
+      } as any);
     }
   } else if (existing.rows[0]?.id) {
     await pool.query(`DELETE FROM model_limits WHERE id = $1`, [existing.rows[0].id]);
@@ -1326,6 +1332,7 @@ keys.put("/keys/:id/model-limits", async (c) => {
   return c.json({
     success: true, model: modelName, isPattern, dedicatedQuota,
     promptLimit: limit, dailyTokenLimit, monthlyTokenLimit, dailyInputTokenLimit, dailyOutputTokenLimit,
+    dedicatedPoolGroup,
   });
 });
 

@@ -111,6 +111,7 @@ export default function SettingsPage() {
   const [newModelOverrideDailyInputTokenLimit, setNewModelOverrideDailyInputTokenLimit] = useState(0);
   const [newModelOverrideDailyOutputTokenLimit, setNewModelOverrideDailyOutputTokenLimit] = useState(0);
   const [newModelOverrideDedicatedQuota, setNewModelOverrideDedicatedQuota] = useState(false);
+  const [newModelOverrideDedicatedPoolGroup, setNewModelOverrideDedicatedPoolGroup] = useState("");
   const [upstreamEndpoint, setUpstreamEndpoint] = useState("");
   const [upstreamApiKey, setUpstreamApiKey] = useState("");
   const [showApiKey, setShowApiKey] = useState(false);
@@ -299,6 +300,7 @@ export default function SettingsPage() {
     setNewModelOverrideDailyInputTokenLimit(0);
     setNewModelOverrideDailyOutputTokenLimit(0);
     setNewModelOverrideDedicatedQuota(false);
+    setNewModelOverrideDedicatedPoolGroup("");
     setGlobalModelMatchPreview({ ids: [], total: 0 });
     setMatchLockEnabled(false);
     setMatchLockedIds([]);
@@ -313,6 +315,7 @@ export default function SettingsPage() {
     dailyInputTokenLimit: newModelOverrideDailyInputTokenLimit,
     dailyOutputTokenLimit: newModelOverrideDailyOutputTokenLimit,
     dedicatedQuota: newModelOverrideDedicatedQuota,
+    dedicatedPoolGroup: newModelOverrideDedicatedQuota ? (newModelOverrideDedicatedPoolGroup.trim() || null) : null,
   });
 
   /** Full catalog id for exact rows (avoid bare "grok-4.5" matching all providers). */
@@ -1365,6 +1368,23 @@ export default function SettingsPage() {
                             </span>
                           </label>
                         </div>
+                        {newModelOverrideDedicatedQuota && (
+                          <div className="col-span-2 md:col-span-3">
+                            <Label className="text-xs">
+                              Dedicated pool group (opsional)
+                            </Label>
+                            <Input
+                              type="text"
+                              value={newModelOverrideDedicatedPoolGroup}
+                              onChange={(e) => setNewModelOverrideDedicatedPoolGroup(e.target.value)}
+                              placeholder="kosong = per-model pool · isi nama grup = shared pool antar model"
+                              className="mt-1"
+                            />
+                            <p className="text-[10px] text-muted-foreground mt-1">
+                              Isi nama grup (mis. <code>gcli-grok</code>) untuk shared pool: beberapa model berbagi satu limit. Kosongkan untuk dedicated pool per model.
+                            </p>
+                          </div>
+                        )}
                         <div className="col-span-2 md:col-span-3 flex flex-wrap items-center justify-end gap-2">
                           {newModelOverrideIsPattern && globalModelMatchPreview.total > 0 && (
                             <Button

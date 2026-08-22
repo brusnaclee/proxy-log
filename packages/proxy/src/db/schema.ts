@@ -452,6 +452,8 @@ export const modelLimits = pgTable('model_limits', {
 	isPattern: boolean('is_pattern').notNull().default(false),
 	/** When true + dailyTokenLimit > 0: usage excluded from account daily/input/output */
 	dedicatedQuota: boolean('dedicated_quota').notNull().default(false),
+	/** Optional shared pool group: rules with same non-empty group share one limit bucket. */
+	dedicatedPoolGroup: text('dedicated_pool_group'),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
 }, (table) => ({
 	scopeModelIdx: index('idx_model_limits_scope_model').on(table.scope, table.scopeId, table.model),

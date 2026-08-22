@@ -332,6 +332,8 @@ export type DedicatedQuotaRule = {
   monthlyTokenLimit: number;
   dailyInputTokenLimit: number;
   dailyOutputTokenLimit: number;
+  /** Shared pool group: rules with same group share one limit bucket. */
+  dedicatedPoolGroup?: string | null;
 };
 
 function rowIsDedicated(m: ModelLimitRow): boolean {
@@ -357,6 +359,7 @@ export async function listDedicatedQuotaRules(apiKeyId: number): Promise<Dedicat
     monthlyTokenLimit: m.monthlyTokenLimit || 0,
     dailyInputTokenLimit: m.dailyInputTokenLimit || 0,
     dailyOutputTokenLimit: m.dailyOutputTokenLimit || 0,
+    dedicatedPoolGroup: (m as any).dedicatedPoolGroup ?? null,
   }));
 }
 

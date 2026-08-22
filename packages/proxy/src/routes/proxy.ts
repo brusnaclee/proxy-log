@@ -132,9 +132,10 @@ import {
 	getWindowResetMs,
 	listDedicatedQuotaRules,
 	findDedicatedRuleForModel,
+	sqlMatchDedicatedRule,
+	sqlExcludeDedicatedModels,
 	parseRateLimitWindow,
 	normalizeModelForLimit,
-	sqlExcludeDedicatedModels,
 } from '../utils/rate-limit.js';
 import {
 	countReserved,
@@ -4624,6 +4625,7 @@ proxy.all('/*', async (c) => {
 				dailyInputTokenLimit: overrideDailyInputToken,
 				dailyOutputTokenLimit: overrideDailyOutputToken,
 			} = modelOverride;
+			const overridePoolGroup = (modelOverride as { dedicatedPoolGroup?: string | null }).dedicatedPoolGroup || null;
 
 			const dw = new Date(wibNow);
 			dw.setUTCHours(0, 0, 0, 0);
@@ -4637,10 +4639,25 @@ proxy.all('/*', async (c) => {
 				? getPatternModelMatchCondition(modelOverride.model)
 				: getModelMatchCondition(normalizedModelForToken);
 
+			// Shared dedicated pool: if this override has a group, sum usage across ALL
+			// dedicated rules in the same group (multiple models share one limit).
+			let sharedGroupRules: typeof dedicatedRules = [];
+			if (overridePoolGroup) {
+				sharedGroupRules = dedicatedRules.filter(
+					(r) => (r.dedicatedPoolGroup || null) === overridePoolGroup,
+				);
+			}
+
 			if (overrideDailyToken && overrideDailyToken > 0) {
+				const groupMatch = sharedGroupRules.length
+					? sql`(${sql.join(
+							sharedGroupRules.map((r) => sqlMatchDedicatedRule(r)),
+							sql` OR `,
+						)})`
+					: modelMatch;
 				const whereClause = and(
 					accountKeyFilter,
-					modelMatch,
+					groupMatch,
 					sql`created_at >= ${ds}`,
 					BILLABLE_LOG_SQL,
 				);
@@ -4650,10 +4667,13 @@ proxy.all('/*', async (c) => {
 					.where(whereClause)
 					.then((r) => r[0]);
 				if (du && du.total >= overrideDailyToken) {
+					const label = overridePoolGroup
+						? `shared pool "${overridePoolGroup}"`
+						: `model "${model}"`;
 					return c.json(
 						{
 							error: {
-								message: `Daily token limit reached for model "${model}": ${du.total.toLocaleString()}/${overrideDailyToken.toLocaleString()} tokens today. ${dailyResetEta}.`,
+								message: `Daily token limit reached for ${label}: ${du.total.toLocaleString()}/${overrideDailyToken.toLocaleString()} tokens today. ${dailyResetEta}.`,
 								type: 'rate_limit_error',
 								code: 'model_daily_token_limit_exceeded',
 							},
