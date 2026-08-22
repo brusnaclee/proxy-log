@@ -849,6 +849,8 @@ export interface ModelMonitorResponse {
   monitorAutoMode?: string;
   /** All active upstream names (even if no monitor rows yet). */
   activeProviders?: string[];
+  vendorOptions?: string[];
+  filters?: { provider: string | null; vendor: string | null };
 }
 
 export const monitor = {

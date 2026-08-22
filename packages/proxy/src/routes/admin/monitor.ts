@@ -286,50 +286,64 @@ monitor.get("/monitor/models", async (c) => {
     ORDER BY model_id, COALESCE(provider, ''), checked_at DESC, id DESC
   `)).rows as any[];
 
+  const aliasIndex = await loadVendorAliasIndex();
+  const seen = new Set<string>();
   const data = rows
-    .map((d) => ({
-      id: d.id,
-      modelId: d.model_id,
-      provider: d.provider,
-      isOnline: d.is_online,
-      latencyMs: d.latency_ms,
-      httpStatus: d.http_status,
-      errorMessage: d.error_message,
-      baseUrl: d.base_url,
-      checkedAt: d.checked_at,
-    }))
-    .filter((d) => d.provider && activeNames.has(d.provider))
+    .map((d) => {
+      const provider = d.provider || "unknown";
+      const pubModelId = publicizeMonitorModelId(provider, d.model_id, aliasIndex);
+      const pubVendor = modelVendorOf(pubModelId);
+      return {
+        id: d.id,
+        modelId: pubModelId,
+        provider,
+        modelVendor: pubVendor,
+        isOnline: d.is_online,
+        latencyMs: d.latency_ms,
+        httpStatus: d.http_status,
+        errorMessage: d.error_message,
+        baseUrl: d.base_url,
+        checkedAt: d.checked_at,
+      };
+    })
+    .filter((d) => {
+      // Keep only rows whose upstream is active in provider table
+      const upstreamActive = activeNames.has(d.provider);
+      if (!upstreamActive) return false;
+      const key = `${d.provider}|${d.modelId}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
     .map((d) => ({
       ...d,
       probeOk: isProbeOk(d.httpStatus),
       forceDeactivated: isForceDeactivatedMessage(d.errorMessage),
     }));
 
-  const aliasIndex = await loadVendorAliasIndex();
-  let publicData = data.map((d) => ({
-    ...d,
-    modelId: publicizeMonitorModelId(d.provider, d.modelId, aliasIndex),
-    modelVendor: publicVendorOf(d.provider, d.modelId, aliasIndex),
-  }));
-
-  if (providerQ) {
-    publicData = publicData.filter((d) => d.provider === providerQ);
-  }
-  if (vendorQ) {
-    publicData = publicData.filter((d) =>
-      vendorFilterMatches(d.provider, d.modelId, vendorQ, aliasIndex),
-    );
-  }
+  const publicData = data.filter((d) => {
+    if (providerQ && d.provider !== providerQ) return false;
+    if (vendorQ && d.modelVendor !== vendorQ) return false;
+    return true;
+  });
 
   const mode = await getMonitorAutoMode();
   const activeProviders = [...activeNames].sort((a, b) => a.localeCompare(b));
+  const vendorOptions = ["all", ...new Set(data.map((d) => d.modelVendor))]
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
   const summary = summarizeMonitorRows(publicData, mode);
+
+  console.log(
+    `[monitor/models] filters: provider=${providerQ || "all"} vendor=${vendorQ || "all"} -> ${publicData.length}/${data.length} rows`,
+  );
 
   return c.json({
     data: publicData,
     summary,
     monitorAutoMode: mode,
     activeProviders,
+    vendorOptions,
     filters: { provider: providerQ, vendor: vendorQ },
   });
 });

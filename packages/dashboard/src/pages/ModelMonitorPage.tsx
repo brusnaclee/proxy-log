@@ -266,10 +266,14 @@ export default function ModelMonitorPage() {
   }, [activeProviders]);
 
   const vendorOptions = useMemo(() => {
-    return ["all", ...new Set(data.map((d) => d.modelVendor || modelVendorOf(d.modelId)))].sort();
-  }, [data]);
-
-  useEffect(() => {
+    if (!data.length) return ["all"];
+    const set = new Set<string>();
+    for (const d of data) {
+      const v = d.modelVendor || modelVendorOf(d.modelId);
+      if (v) set.add(v);
+    }
+    return ["all", ...[...set].sort()];
+  }, [data]);  useEffect(() => {
     if (modelVendorFilter !== "all" && !vendorOptions.includes(modelVendorFilter)) {
       setModelVendorFilter("all");
     }
