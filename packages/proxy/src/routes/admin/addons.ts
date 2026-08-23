@@ -261,9 +261,10 @@ addonsApi.post("/addon-assignments", async (c) => {
   if (startMode === 'custom' && body.startsAt) {
     startsAt = new Date(body.startsAt);
   } else if (startMode === 'after_expiry' && body.discordUserId) {
-    // Chain after the user's latest assignment end for this addon.
-    // Do NOT depend on isActive here: old expired/reactivated rows can exist,
-    // but we always want the furthest expiresAt for proper extension chaining.
+    // Chain after the user's latest assignment window for this addon.
+    // IMPORTANT: do not require isActive=true here, because a scheduled/chained row
+    // can be inactive until its startsAt arrives. We still must chain after its
+    // expiresAt rather than falling back to an older historical row.
     const [latest] = await db
       .select()
       .from(addonAssignments)
@@ -273,7 +274,7 @@ addonsApi.post("/addon-assignments", async (c) => {
           eq(addonAssignments.discordUserId, body.discordUserId),
         ),
       )
-      .orderBy(desc(addonAssignments.expiresAt))
+      .orderBy(desc(addonAssignments.expiresAt), desc(addonAssignments.id))
       .limit(1);
     if (latest?.expiresAt && new Date(latest.expiresAt) > new Date()) {
       startsAt = new Date(latest.expiresAt);
