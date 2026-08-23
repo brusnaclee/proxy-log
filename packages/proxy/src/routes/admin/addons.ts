@@ -385,9 +385,51 @@ addonsApi.post("/addon-assignments", async (c) => {
 
 addonsApi.patch("/addon-assignments/:id", async (c) => {
   const id = parseInt(c.req.param("id"));
-  const body = await c.req.json<{ isActive?: boolean; expiresAt?: string | null }>();
+  const body = await c.req.json<{
+    isActive?: boolean;
+    expiresAt?: string | null;
+    reactivateMode?: "toggle" | "chain_new";
+  }>();
   const [existing] = await db.select().from(addonAssignments).where(eq(addonAssignments.id, id)).limit(1);
   if (!existing) return c.json({ error: "Assignment not found" }, 404);
+
+  if (body.isActive === true && body.reactivateMode === "chain_new" && existing.discordUserId) {
+    const [addon] = await db.select().from(addons).where(eq(addons.id, existing.addonId)).limit(1);
+    if (!addon) return c.json({ error: "Add-on not found" }, 404);
+
+    const [latest] = await db
+      .select()
+      .from(addonAssignments)
+      .where(and(eq(addonAssignments.addonId, existing.addonId), eq(addonAssignments.discordUserId, existing.discordUserId)))
+      .orderBy(desc(addonAssignments.expiresAt), desc(addonAssignments.id))
+      .limit(1);
+
+    const now = new Date();
+    const startsAt =
+      latest?.expiresAt && new Date(latest.expiresAt) > now
+        ? new Date(latest.expiresAt)
+        : now;
+    const expiresAt = new Date(
+      startsAt.getTime() + Math.max(0, addon.defaultDurationDays || 0) * 24 * 60 * 60 * 1000,
+    );
+
+    const [created] = await db
+      .insert(addonAssignments)
+      .values({
+        addonId: existing.addonId,
+        discordUserId: existing.discordUserId,
+        apiKeyId: existing.apiKeyId,
+        startsAt,
+        expiresAt,
+        isActive: startsAt <= now,
+        startMode: "after_expiry",
+        assignedBy: body.reactivateMode,
+        roleSyncAction: startsAt <= now ? "grant" : "none",
+      } as any)
+      .returning();
+
+    return c.json({ success: true, chained: true, assignment: created });
+  }
 
   const updates: Record<string, unknown> = {};
   if (body.isActive !== undefined) updates.isActive = Boolean(body.isActive);

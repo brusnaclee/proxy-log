@@ -1389,7 +1389,7 @@ export const addonsApi = {
       method: "POST",
       body: JSON.stringify(data),
     }),
-  updateAssignment: (id: number, data: { isActive?: boolean; expiresAt?: string | null }) =>
+  updateAssignment: (id: number, data: { isActive?: boolean; expiresAt?: string | null; reactivateMode?: "toggle" | "chain_new" }) =>
     request<{ success: boolean }>(`/addon-assignments/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),

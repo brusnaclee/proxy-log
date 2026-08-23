@@ -387,7 +387,21 @@ export default function AddonsPage() {
 
   const toggleAssignmentActive = async (row: AddonAssignmentEntry) => {
     try {
-      await addonsApi.updateAssignment(row.id, { isActive: !row.isActive });
+      if (!row.isActive) {
+        const ok = await notify.confirm({
+          title: "Reactivate as new chained assignment?",
+          message:
+            "This will create a new assignment that starts after the latest assignment expires. It will not reuse the old expired date range.",
+          confirmLabel: "Create chained assignment",
+        });
+        if (!ok) return;
+        await addonsApi.updateAssignment(row.id, {
+          isActive: true,
+          reactivateMode: "chain_new",
+        });
+      } else {
+        await addonsApi.updateAssignment(row.id, { isActive: false });
+      }
       await load();
     } catch (e: any) {
       setError(e?.message || "Failed to update assignment");
@@ -826,7 +840,7 @@ export default function AddonsPage() {
                               size="sm"
                               onClick={() => void toggleAssignmentActive(row)}
                             >
-                              {row.isActive ? "Deactivate" : "Reactivate"}
+                              {row.isActive ? "Deactivate" : "Chain New"}
                             </Button>
                             <Button
                               variant="ghost"
