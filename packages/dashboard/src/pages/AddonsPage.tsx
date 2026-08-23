@@ -752,7 +752,7 @@ export default function AddonsPage() {
         <CardHeader>
           <CardTitle className="text-base">Assignments</CardTitle>
           <p className="text-xs text-muted-foreground">
-            Grouped per user — click a user to expand their assignment history (active first, then expired/scheduled).
+            Grouped per user — click a user to expand history. Chained assignments now start after the latest expiry for that add-on.
           </p>
         </CardHeader>
         <CardContent className="space-y-2">
