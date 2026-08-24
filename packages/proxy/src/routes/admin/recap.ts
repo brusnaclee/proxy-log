@@ -110,13 +110,11 @@ recap.post("/internal/recap/:discordUserId", async (c) => {
   const key = await findKeyByDiscordUser(discordUserId);
 
   const win = getRecapWindow();
-  // Mid-month (window closed): interactive views should open the *previous*
-  // completed month (where cached recaps exist). Otherwise every "lihat orang
-  // lain" targets the in-progress month with no cache → AI generate → 503 busy.
-  let yearMonth = body.yearMonth || win.yearMonth;
-  if (body.interactive && !body.yearMonth && !win.isOpen) {
-    yearMonth = previousYearMonth(win.yearMonth);
-  }
+  // Always target the window month. An older interactive fallback (previous
+  // month when the window was closed) made mid-month tests show LAST month's
+  // data; the template-narrative fallback already covers the no-cache/no-AI
+  // case, so redirecting months is no longer needed.
+  const yearMonth = body.yearMonth || win.yearMonth;
   const monthLabel = monthLabelFromYearMonth(yearMonth);
   const today = wibTodayDateStr();
 
