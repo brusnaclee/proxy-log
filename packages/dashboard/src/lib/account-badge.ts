@@ -100,6 +100,8 @@ export function formatAddonExpiry(
 /**
  * Resolve display badges. Always hides Admin Override variants.
  * Pass hasAddon / addons to force Add-on chip (expiry shown separately in UI).
+ * When addons/hasAddon is provided, a stale stored "addon" badge is stripped
+ * unless the user actually has an active pack.
  */
 export function resolveDisplayBadges(
 	accountType?: string | null,
@@ -113,8 +115,10 @@ export function resolveDisplayBadges(
 			raw.unshift(accountType);
 		}
 	}
+	const addonOptsProvided =
+		opts != null && (opts.hasAddon !== undefined || opts.addons !== undefined);
 	const hasAddon =
-		opts?.hasAddon ||
+		!!opts?.hasAddon ||
 		(Array.isArray(opts?.addons) && opts!.addons!.length > 0);
 	if (hasAddon && !raw.some((b) => normalizeBadgeKey(b) === "addon")) {
 		raw.push("addon");
@@ -127,6 +131,11 @@ export function resolveDisplayBadges(
 				.filter((b) => b && !HIDDEN.has(b)),
 		),
 	];
+
+	// Stale DB badge: strip "addon" when caller confirmed there is no active pack.
+	if (addonOptsProvided && !hasAddon) {
+		uniq = uniq.filter((b) => b !== "addon");
+	}
 
 	// Prefer specific staff roles (Moderator / Troubleshooter / Contributor)
 	// over a generic "Staff" chip when Discord already gave the subtype.

@@ -217,11 +217,13 @@ export async function syncUserKeyAccess(
 	const r = await resolveRolesForUser(uid, opts?.roleIds, opts?.rolesKnown);
 	const { hasPhantom, hasStaff, rolesConfirmed, resolved } = r;
 
-	// Belt-and-suspenders: Discord pack role (e.g. vibecode) also counts as
-	// active add-on keep — even if assignment row lookup briefly misses.
+	// Badge + quota: ONLY real assignment rows. Discord pack roles may still
+	// keep key access (hasAddonDiscordRole) but never invent an "addon" badge —
+	// tier-role collisions previously stamped Premium users as add-on holders.
 	const addonRoleIds = await listActiveAddonDiscordRoleIds();
 	const hasAddonDiscordRole = r.roleIds.some((id) => addonRoleIds.has(String(id)));
-	const hasActiveAddon = activeAddons.length > 0 || hasAddonDiscordRole;
+	const hasAssignedAddon = activeAddons.length > 0;
+	const hasActiveAddon = hasAssignedAddon || hasAddonDiscordRole;
 
 	const accountTier =
 		resolved.primary === "none"
@@ -235,9 +237,9 @@ export async function syncUserKeyAccess(
 				? "staff"
 				: resolved.primary;
 	const badges = resolved.badges.filter(
-		(b) => b && b !== "none" && b !== "admin_override",
+		(b) => b && b !== "none" && b !== "admin_override" && b !== "addon",
 	);
-	if (hasActiveAddon && !badges.includes("addon")) badges.push("addon");
+	if (hasAssignedAddon) badges.push("addon");
 	// Pro/Premium with pack: zero_unless_addon base stays 0; pack supplies quota until expiry
 	const limitMode =
 		resolved.primary === "none" && hasActiveAddon
@@ -257,8 +259,8 @@ export async function syncUserKeyAccess(
 				updatedAt: new Date(),
 			})
 			.where(and(eq(apiKeys.discordUserId, uid), eq(apiKeys.isTrial, false)));
-	} else if (hasActiveAddon) {
-		// Still stamp addon badge without clobbering existing role badges
+	} else if (hasAssignedAddon) {
+		// Stamp addon badge without clobbering existing role badges
 		for (const key of keys) {
 			let existing: string[] = [];
 			try {
@@ -272,6 +274,26 @@ export async function syncUserKeyAccess(
 					.update(apiKeys)
 					.set({
 						accountBadges: JSON.stringify([...existing, "addon"]),
+						updatedAt: new Date(),
+					})
+					.where(eq(apiKeys.id, key.id));
+			}
+		}
+	} else {
+		// Strip stale addon badge when assignment is gone (even if Discord fetch failed)
+		for (const key of keys) {
+			let existing: string[] = [];
+			try {
+				existing = JSON.parse((key as any).accountBadges || "[]");
+				if (!Array.isArray(existing)) existing = [];
+			} catch {
+				existing = [];
+			}
+			if (existing.includes("addon")) {
+				await db
+					.update(apiKeys)
+					.set({
+						accountBadges: JSON.stringify(existing.filter((b) => b !== "addon")),
 						updatedAt: new Date(),
 					})
 					.where(eq(apiKeys.id, key.id));

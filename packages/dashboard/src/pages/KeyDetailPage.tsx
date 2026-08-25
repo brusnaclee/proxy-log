@@ -561,7 +561,7 @@ export default function KeyDetailPage() {
               </Badge>
             )}
             {resolveDisplayBadges(keyData.accountTier, keyData.accountBadges, {
-              addons: keyData.activeAddons || keyData.liveUsage?.activeAddons,
+              addons: keyData.activeAddons || keyData.liveUsage?.activeAddons || [],
             }).map((b) => {
               const addons = keyData.activeAddons || keyData.liveUsage?.activeAddons || [];
               return (

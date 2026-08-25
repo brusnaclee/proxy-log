@@ -213,6 +213,7 @@ keys.get("/keys", async (c) => {
         : [];
       const hasAddon = !key.isTrial && activeAddons.length > 0;
       if (hasAddon && !accountBadges.includes("addon")) accountBadges = [...accountBadges, "addon"];
+      else if (!hasAddon) accountBadges = accountBadges.filter((b) => b !== "addon");
 
       const addonBonus = sumAddonDailyTokenBonus(activeAddons);
       const stack = resolveAddonQuotaStack({
@@ -757,6 +758,8 @@ keys.get("/keys/:id", async (c) => {
   const activeAddons = liveUsage?.activeAddons || [];
   if (activeAddons.length > 0 && !accountBadges.includes("addon")) {
     accountBadges = [...accountBadges, "addon"];
+  } else if (activeAddons.length === 0) {
+    accountBadges = accountBadges.filter((b) => b !== "addon");
   }
   const tierRaw = String((key as any).accountTier || "").trim();
   const accountTier =

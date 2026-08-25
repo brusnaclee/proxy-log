@@ -306,7 +306,7 @@ export default function KeysPage() {
             : g.discordUserId || "Unlinked keys";
           const primary = g.keys.find((k) => k.isPrimary) || g.keys[0];
           const headerBadges = resolveDisplayBadges(primary?.accountTier, primary?.accountBadges, {
-            addons: primary?.activeAddons,
+            addons: primary?.activeAddons || [],
           });
           const headerAddons = primary?.activeAddons || [];
           return (

@@ -705,6 +705,8 @@ portal.get("/me", async (c) => {
   }
   if (!isTrial && activeAddons.length > 0 && !accountBadges.includes("addon")) {
     accountBadges = [...accountBadges, "addon"];
+  } else if (activeAddons.length === 0) {
+    accountBadges = accountBadges.filter((b) => b !== "addon");
   }
 
   const tierRaw = String((primaryKey as any)?.accountTier || "").trim();
