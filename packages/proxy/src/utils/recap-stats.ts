@@ -747,8 +747,8 @@ export async function getMonthLeaderboard(yearMonth: string): Promise<{
       SELECT hops.api_key_id,
         hops.turn_id,
         k.discord_user_id AS discord_user_id,
-        k.discord_username AS discord_username,
-        k.name AS api_key_name,
+        NULLIF(TRIM(k.discord_username), '') AS discord_username,
+        NULLIF(TRIM(k.name), '') AS api_key_name,
         (CASE
           WHEN COALESCE(hops.uc, 0) > 0 THEN GREATEST(0, hops.uc - hops.uc_out) * (${sql.raw(w)})
           ELSE hops.inn * (${sql.raw(w)}) * CASE WHEN COALESCE(a.trial_only, false) THEN 1 ELSE ${input} END
@@ -778,16 +778,21 @@ export async function getMonthLeaderboard(yearMonth: string): Promise<{
     GROUP BY COALESCE(h.discord_user_id, h.api_key_id::text), h.discord_user_id
   `)).rows as any[];
 
-  const entries: LeaderboardEntry[] = rows.map((r) => ({
-    apiKeyId: num(r.api_key_id) || null,
-    discordUserId: r.discord_user_id || null,
-    discordUsername: r.discord_username || null,
-    apiKeyName: r.api_key_name || null,
-    requests: num(r.requests),
-    tokens: Math.round(num(r.tokens)),
-    inputTokens: Math.round(num(r.input_tokens)),
-    outputTokens: Math.round(num(r.output_tokens)),
-  }));
+  const entries: LeaderboardEntry[] = rows.map((r) => {
+    const apiKeyName = r.api_key_name ? String(r.api_key_name) : null;
+    const discordUsername = r.discord_username ? String(r.discord_username) : null;
+    return {
+      apiKeyId: num(r.api_key_id) || null,
+      discordUserId: r.discord_user_id || null,
+      // Prefer Discord username; fall back to API key name so ranking never says "Anonim".
+      discordUsername: discordUsername || apiKeyName,
+      apiKeyName,
+      requests: num(r.requests),
+      tokens: Math.round(num(r.tokens)),
+      inputTokens: Math.round(num(r.input_tokens)),
+      outputTokens: Math.round(num(r.output_tokens)),
+    };
+  });
 
   const byRequests = [...entries].sort((a, b) => b.requests - a.requests);
   const byTokens = [...entries].sort((a, b) => b.tokens - a.tokens);
@@ -940,14 +945,23 @@ export async function getRaceTimelapse(
       let c = 0;
       for (const d of days) { c += perDay.get(d) || 0; cumulative.push(c); }
       users.push({
-        name: e.discordUsername || null,
+        name: e.discordUsername || e.apiKeyName || null,
         avatar: null,
         rank: active.indexOf(e) + 1,
         isMe: e.apiKeyId != null && accountSet.has(e.apiKeyId),
         cumulative,
       });
     }
-    return { users, myRank: myIdx + 1, baseRank: lo + 1, totalParticipants: active.length };
+    // Drop nameless racers (no Discord username AND no API key name).
+    const named = users.filter((u) => !!String(u.name || "").trim());
+    if (named.length < 2) return null;
+    const myNamedIdx = named.findIndex((u) => u.isMe);
+    return {
+      users: named,
+      myRank: myNamedIdx >= 0 ? myNamedIdx + 1 : myIdx + 1,
+      baseRank: lo + 1,
+      totalParticipants: active.length,
+    };
   };
 
   const byRequests = await buildTrack(leaderboard.byRequests, "requests");

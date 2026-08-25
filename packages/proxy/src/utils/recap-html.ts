@@ -623,16 +623,18 @@ function mediaTag(asset: { url: string; type: string } | null | undefined, base:
 }
 
 function renderLeaderboardList(rows: LeaderboardRow[], viewerId: string | null, unit: string): string {
-  if (!rows.length) return `<div class="caption">Belum ada data peringkat.</div>`;
-  return rows.map((r) => {
+  const visible = rows.filter((r) => String(r.discordUsername || "").trim());
+  if (!visible.length) return `<div class="caption">Belum ada data peringkat.</div>`;
+  return visible.map((r) => {
+    const name = String(r.discordUsername).trim();
     const me = viewerId && r.discordUserId === viewerId ? " me" : "";
     const av = r.avatarUrl
       ? `<img class="lb-av" loading="lazy" alt="" src="${escapeHtml(r.avatarUrl)}" onerror="this.style.visibility='hidden'">`
-      : `<div class="lb-av" style="display:grid;place-items:center;background:rgba(255,255,255,.1)">${escapeHtml((r.discordUsername || "?").slice(0, 1).toUpperCase())}</div>`;
+      : `<div class="lb-av" style="display:grid;place-items:center;background:rgba(255,255,255,.1)">${escapeHtml(name.slice(0, 1).toUpperCase())}</div>`;
     return `<div class="lb-item${me}">
       <span class="lb-rank">${crownSvg(r.rank) || "#" + r.rank}</span>
       ${av}
-      <span class="lb-name">${escapeHtml(r.discordUsername || "Anonim")}</span>
+      <span class="lb-name">${escapeHtml(name)}</span>
       <span class="lb-val">${fmtNum(r.value)} ${escapeHtml(unit)}</span>
     </div>`;
   }).join("");
@@ -1449,7 +1451,7 @@ const RECAP_JS = `
         row.className='bcr-row'+(u.isMe?' me':'');
         var av=u.avatar?('<img class="bcr-av" loading="lazy" src="'+u.avatar+'" onerror="this.style.visibility=\\'hidden\\'">'):'<span class="bcr-av"></span>';
         row.innerHTML='<span class="bcr-rank"></span><div class="bcr-bar"><div class="bcr-fill"></div>'+
-          '<div class="bcr-meta">'+av+'<span class="bcr-name">'+(u.name?String(u.name):'Anonim')+(u.isMe?' (kamu)':'')+'</span>'+
+          '<div class="bcr-meta">'+av+'<span class="bcr-name">'+(u.name?String(u.name):'')+(u.isMe?' (kamu)':'')+'</span>'+
           '<span class="bcr-val">0</span></div></div>';
         rowsEl.appendChild(row);
         rowEls[i]=row;

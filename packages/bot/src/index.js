@@ -5446,7 +5446,7 @@ function buildTestimonialEmbed(t) {
 	const embed = new EmbedBuilder()
 		.setColor(0xf59e0b)
 		.setAuthor({
-			name: t.discordUsername || 'Anonim',
+			name: t.discordUsername || t.apiKeyName || 'Peserta',
 			iconURL: t.avatarUrl || undefined,
 		})
 		.setTitle(`${stars}`)

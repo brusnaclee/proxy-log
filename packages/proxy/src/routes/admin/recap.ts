@@ -344,14 +344,25 @@ async function persistLeaderboard(
 
   const rows: any[] = [];
   const build = (list: LeaderboardEntry[], category: "requests" | "tokens") => {
-    list.filter((e) => (category === "requests" ? e.requests > 0 : e.tokens > 0))
-      .slice(0, 10)
-      .forEach((e, i) => {
+    list
+      .filter((e) => (category === "requests" ? e.requests > 0 : e.tokens > 0))
+      .map((e) => {
         const prev = e.discordUserId ? avatarByUser.get(e.discordUserId) : undefined;
+        const displayName =
+          (e.discordUsername && String(e.discordUsername).trim()) ||
+          (e.apiKeyName && String(e.apiKeyName).trim()) ||
+          (prev?.username && String(prev.username).trim()) ||
+          "";
+        return { e, prev, displayName };
+      })
+      // Never publish nameless/"Anonim" rows — prefer key name; skip if still empty.
+      .filter(({ displayName }) => !!displayName)
+      .slice(0, 10)
+      .forEach(({ e, prev, displayName }, i) => {
         rows.push({
           yearMonth, category, rank: i + 1,
           discordUserId: e.discordUserId,
-          discordUsername: e.discordUsername || prev?.username || null,
+          discordUsername: displayName,
           avatarUrl: prev?.avatarUrl || null,
           value: category === "requests" ? e.requests : e.tokens,
         });

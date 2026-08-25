@@ -591,11 +591,14 @@ const VIBECODE_ALLOWLIST = [
   "grok-4.5",
 ];
 
+/** Dedicated Vibecode Discord role — NOT Premium/Pro/Phantom/Staff. */
+export const VIBECODE_DISCORD_ROLE_ID = "1530923797220167710";
+
 /** Upsert Vibecode catalog pack shells — limits/description/subcaps are admin-owned in Add-ons UI. */
 export async function ensureVibecodeCatalog(): Promise<void> {
-  // NEVER hardcode Premium/Pro/Phantom/Staff role IDs here. That collision made
-  // every Premium member look like they had an add-on pack. Pack Discord roles
-  // are optional and admin-owned; leave null unless a dedicated pack-only role exists.
+  // Pack Discord role must stay the dedicated Vibecode role. Never use Premium
+  // (or any other tier role) — that collision stamped every Premium member as
+  // an add-on holder.
   const packs: Array<{
     name: string;
     insertDescription: string;
@@ -638,16 +641,23 @@ export async function ensureVibecodeCatalog(): Promise<void> {
     },
   ];
 
+  const tierRoles = await loadKnownTierRoleIds();
+
   for (const p of packs) {
     const [existing] = await db.select().from(addons).where(eq(addons.name, p.name)).limit(1);
     if (existing) {
-      // Preserve admin-edited limits/copy/role; only refresh duration + active flag.
-      // Do NOT re-fill discordRoleId from a hardcoded tier role.
+      const currentRole = String(existing.discordRoleId || "").trim();
+      // Keep a custom non-tier role if admin set one; otherwise pin dedicated Vibecode role.
+      const nextRole =
+        currentRole && !tierRoles.has(currentRole)
+          ? currentRole
+          : VIBECODE_DISCORD_ROLE_ID;
       await db
         .update(addons)
         .set({
           defaultDurationDays: p.days,
           isActive: p.active,
+          discordRoleId: nextRole,
           updatedAt: new Date(),
         })
         .where(eq(addons.id, existing.id));
@@ -664,10 +674,9 @@ export async function ensureVibecodeCatalog(): Promise<void> {
         maxDevices: 2,
         defaultDurationDays: p.days,
         isActive: p.active,
-        discordRoleId: null,
+        discordRoleId: VIBECODE_DISCORD_ROLE_ID,
       });
     } else if (!p.active) {
-      // Deactivate packs we no longer ship (keep the row so admin can see history).
       await db
         .update(addons)
         .set({ isActive: p.active, updatedAt: new Date() })
@@ -675,12 +684,11 @@ export async function ensureVibecodeCatalog(): Promise<void> {
     }
   }
 
-  // Clear any pack role that collides with a known membership tier role.
-  const tierRoles = await loadKnownTierRoleIds();
+  // Belt: any pack still pointing at a membership tier role → dedicated Vibecode role.
   if (tierRoles.size) {
     await db
       .update(addons)
-      .set({ discordRoleId: null, updatedAt: new Date() })
+      .set({ discordRoleId: VIBECODE_DISCORD_ROLE_ID, updatedAt: new Date() })
       .where(inArray(addons.discordRoleId, [...tierRoles]));
   }
 }
