@@ -500,9 +500,15 @@ monitor.get("/internal/monitor/models", async (c) => {
         published: d.isOnline,
         httpStatus: d.httpStatus,
       });
+      const displayModelId = publicizeMonitorModelId(d.provider, d.modelId, aliasIndex);
       return {
         ...d,
-        modelId: publicizeMonitorModelId(d.provider, d.modelId, aliasIndex),
+        // Keep RAW modelId for bot sweeps/probes. Public form is display-only —
+        // rewriting modelId here made Discord probe public aliases (vibecode/…)
+        // against upstream and flip Online/Offline out of sync with portal.
+        modelId: d.modelId,
+        rawModelId: d.modelId,
+        displayModelId,
         modelVendor: publicVendorOf(d.provider, d.modelId, aliasIndex),
         published: flags.published,
         probeOk: flags.probeOk,

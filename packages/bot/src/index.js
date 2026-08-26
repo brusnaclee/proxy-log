@@ -1882,10 +1882,14 @@ async function refreshLatencyFromProxy() {
 				const provider = row.provider;
 				const provKeys = runtime.providerKeys.get(provider) || [];
 				const prev = runtime.modelEntries.find(
-					(e) => e.modelId === row.modelId && e.provider === provider,
+					(e) =>
+						e.modelId === (row.rawModelId || row.modelId) &&
+						e.provider === provider,
 				);
+				const rawModelId = String(row.rawModelId || row.modelId || '');
 				const entry = {
-					modelId: row.modelId,
+					modelId: rawModelId,
+					displayModelId: row.displayModelId || rawModelId,
 					provider,
 					baseUrl: row.baseUrl || prev?.baseUrl || '',
 					apiKey:
@@ -1911,6 +1915,8 @@ async function refreshLatencyFromProxy() {
 					status: row.httpStatus || 0,
 					error: row.errorMessage || null,
 					published,
+					probeOk,
+					fromProxy: true,
 				});
 			}
 
@@ -1926,6 +1932,8 @@ async function refreshLatencyFromProxy() {
 				`[tokito-monitor] refreshed ${newEntries.length} models from proxy DB`,
 			);
 		}
+		// Catalog status (same source as portal / Discord details) overrides icons.
+		await refreshCatalogStatusFromProxy();
 		// Fallback: kalau provider gpy di DB tidak return gpy/ di /v1/models,
 		// inject manual list dari trial-models endpoint supaya trial user panel
 		// tetap bisa lihat model gpy.
@@ -1936,6 +1944,83 @@ async function refreshLatencyFromProxy() {
 			err.message || JSON.stringify(err),
 		);
 	}
+}
+
+/**
+ * Source of truth for Discord Model Status icons: same endpoint as portal
+ * `/v1/models` enrichment (`is_online` = clientOnline). Overrides any stale
+ * bot-local probe results in runtime.latency.
+ */
+async function refreshCatalogStatusFromProxy() {
+	try {
+		const detailsData = await proxyInternal('/admin/internal/models/details');
+		const rows = Array.isArray(detailsData?.data) ? detailsData.data : [];
+		runtime._modelDetailsCache = rows;
+		const byId = new Map();
+		for (const m of rows) {
+			const id = String(m.id || '').trim();
+			if (!id || id === 'auto') continue;
+			byId.set(id.toLowerCase(), m);
+			const slash = id.indexOf('/');
+			if (slash > 0) byId.set(id.slice(slash + 1).toLowerCase(), m);
+		}
+		runtime._catalogById = byId;
+
+		let patched = 0;
+		for (const entry of runtime.modelEntries) {
+			const key = entryKey(entry);
+			const lt = runtime.latency.get(key) || {};
+			const hit =
+				lookupCatalogModel(entry) ||
+				byId.get(String(entry.displayModelId || '').toLowerCase()) ||
+				byId.get(String(entry.modelId || '').toLowerCase()) ||
+				byId.get(`${entry.provider}/${entry.modelId}`.toLowerCase());
+			if (!hit) continue;
+			const online = Boolean(hit.is_online);
+			runtime.latency.set(key, {
+				...lt,
+				ok: online,
+				visible: true,
+				published: true,
+				ms: hit.latency_ms != null ? hit.latency_ms : lt.ms,
+				status: online ? (lt.status && lt.status >= 200 ? lt.status : 200) : (lt.status || 503),
+				fromCatalog: true,
+			});
+			patched++;
+		}
+		console.log(
+			`[tokito-monitor] catalog status applied to ${patched}/${runtime.modelEntries.length} entries (${rows.length} catalog models)`,
+		);
+	} catch (err) {
+		console.error(
+			'[tokito-monitor] catalog status refresh failed:',
+			err.message || err,
+		);
+	}
+}
+
+function lookupCatalogModel(entry) {
+	const byId = runtime._catalogById;
+	if (!byId || !byId.size) return null;
+	const aliasesByProvider = runtime._vendorAliases || {};
+	const displayFull = publicizeDisplayModel(
+		entry.provider,
+		entry.displayModelId || entry.modelId,
+		aliasesByProvider,
+	);
+	const candidates = [
+		entry.catalogId,
+		displayFull,
+		entry.displayModelId,
+		`${entry.provider}/${entry.displayModelId || entry.modelId}`,
+		`${entry.provider}/${entry.modelId}`,
+		entry.modelId,
+	];
+	for (const c of candidates) {
+		const hit = byId.get(String(c || '').toLowerCase());
+		if (hit) return hit;
+	}
+	return null;
 }
 
 async function runLatencyTest() {
@@ -2753,12 +2838,56 @@ function listModels(
 			apiKey: '',
 		};
 		items.unshift(autoEntry);
-		// Public Discord: Published ON only (matches portal /v1/models). Force-off stays hidden.
-		items = items.filter((e) => {
-			if (e.modelId === 'auto') return true;
-			const lt = runtime.latency.get(entryKey(e));
-			return Boolean(lt?.visible);
-		});
+		// Public Discord: only models that appear in portal catalog (/v1/models),
+		// with Online/Offline from the same is_online source.
+		const catalog = runtime._modelDetailsCache || [];
+		if (catalog.length > 0) {
+			const catalogEntries = [];
+			for (const m of catalog) {
+				const id = String(m.id || '').trim();
+				if (!id || id === 'auto') continue;
+				const provider =
+					m.active_provider ||
+					(id.includes('/') ? id.slice(0, id.indexOf('/')) : 'proxy');
+				const slash = id.indexOf('/');
+				const modelId =
+					slash > 0 && id.slice(0, slash) === provider
+						? id.slice(slash + 1)
+						: id.includes('/')
+							? id.slice(id.indexOf('/') + 1)
+							: id;
+				const existing = runtime.modelEntries.find(
+					(e) =>
+						e.provider === provider &&
+						(e.modelId === modelId ||
+							e.displayModelId === modelId ||
+							`${e.provider}/${e.modelId}` === id ||
+							publicizeDisplayModel(
+								e.provider,
+								e.displayModelId || e.modelId,
+								runtime._vendorAliases || {},
+							) === id),
+				);
+				catalogEntries.push(
+					existing || {
+						modelId,
+						displayModelId: modelId,
+						provider,
+						baseUrl: '',
+						apiKey: '',
+						catalogId: id,
+					},
+				);
+			}
+			items = [autoEntry, ...catalogEntries];
+		} else {
+			// Fallback: Published ON only from monitor rows
+			items = items.filter((e) => {
+				if (e.modelId === 'auto') return true;
+				const lt = runtime.latency.get(entryKey(e));
+				return Boolean(lt?.visible);
+			});
+		}
 	}
 
 	if (upstreamProvider !== 'all') {
@@ -2831,6 +2960,20 @@ function displayLatencyForEntry(entry, session) {
 	if (session?.trialMode) {
 		return { ok: true, ms: lt?.ms ?? null, status: 200 };
 	}
+	// Prefer catalog (portal) online flag whenever we have it.
+	const hit = lookupCatalogModel(entry);
+	if (hit) {
+		const online = Boolean(hit.is_online);
+		return {
+			...(lt || {}),
+			ok: online,
+			visible: true,
+			published: true,
+			ms: hit.latency_ms != null ? hit.latency_ms : lt?.ms ?? null,
+			status: online ? (lt?.status && lt.status >= 200 ? lt.status : 200) : (lt?.status || 503),
+			fromCatalog: true,
+		};
+	}
 	return lt;
 }
 
@@ -2893,11 +3036,13 @@ function buildTokitoEmbed(kind, session) {
 			return `🤖 \`auto\` | **Auto-select**: picks fastest online model automatically`;
 		}
 
-		const displayFull = publicizeDisplayModel(
-			entry.provider,
-			entry.modelId,
-			aliasesByProvider,
-		);
+		const displayFull =
+			entry.catalogId ||
+			publicizeDisplayModel(
+				entry.provider,
+				entry.displayModelId || entry.modelId,
+				aliasesByProvider,
+			);
 		const displaySuffix = displayFull.startsWith(`${entry.provider}/`)
 			? displayFull.slice(entry.provider.length + 1)
 			: displayFull;
@@ -9219,6 +9364,9 @@ client.on('interactionCreate', async (interaction) => {
 
 			if (session.kind === 'details') {
 				await ensureModelDetailsCache();
+			} else {
+				// Keep Online/Offline icons aligned with portal across pages.
+				await refreshCatalogStatusFromProxy().catch(() => {});
 			}
 
 			await ensureVendorAliasCache();
@@ -9284,6 +9432,8 @@ client.on('interactionCreate', async (interaction) => {
 			}
 			if (session.kind === 'details') {
 				await ensureModelDetailsCache();
+			} else {
+				await refreshCatalogStatusFromProxy().catch(() => {});
 			}
 			await ensureVendorAliasCache();
 			const { embed, components } = buildTokitoEmbed(session.kind, session);
