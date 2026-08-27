@@ -421,7 +421,11 @@ function normalizeToolCallArray(toolCalls: any[]): void {
 		if (!tc.function || typeof tc.function !== 'object') {
 			tc.function = { name: '', arguments: '' };
 		} else {
+			// Keep non-empty names; only fill null/undefined (never invent "unknown").
 			if (tc.function.name == null) tc.function.name = '';
+			else if (typeof tc.function.name === 'string') {
+				tc.function.name = tc.function.name.trim();
+			}
 			if (tc.function.arguments == null) tc.function.arguments = '';
 		}
 	}

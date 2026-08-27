@@ -63,18 +63,34 @@ export interface UpstreamUsage {
 export interface CompletionAccumulator {
   text: string;
   toolArgs: Map<string, string>;
+  /** Parallel to toolArgs — first non-empty function.name seen per call index/id. */
+  toolNames: Map<string, string>;
   hadUsage: boolean;
   usage: UpstreamUsage;
 }
 
 export function makeAccumulator(): CompletionAccumulator {
-  return { text: "", toolArgs: new Map(), hadUsage: false, usage: {} };
+  return {
+    text: "",
+    toolArgs: new Map(),
+    toolNames: new Map(),
+    hadUsage: false,
+    usage: {},
+  };
 }
 
 function appendToolArg(acc: CompletionAccumulator, idx: any, fragment: string) {
   if (!fragment) return;
   const key = idx == null ? "default" : String(idx);
   acc.toolArgs.set(key, (acc.toolArgs.get(key) || "") + fragment);
+}
+
+function noteToolName(acc: CompletionAccumulator, idx: any, name: unknown) {
+  if (typeof name !== "string") return;
+  const n = name.trim();
+  if (!n) return;
+  const key = idx == null ? "default" : String(idx);
+  if (!acc.toolNames.has(key)) acc.toolNames.set(key, n);
 }
 
 function captureUsage(acc: CompletionAccumulator, usage: any) {
@@ -181,6 +197,7 @@ export function consumeStreamPayload(acc: CompletionAccumulator, data: any): voi
       if (typeof delta.reasoning_content === "string") acc.text += delta.reasoning_content;
       if (Array.isArray(delta.tool_calls)) {
         for (const tc of delta.tool_calls) {
+          noteToolName(acc, tc.index ?? tc.id, tc?.function?.name);
           const fragment = tc?.function?.arguments;
           if (typeof fragment === "string") appendToolArg(acc, tc.index ?? tc.id, fragment);
         }
@@ -193,6 +210,7 @@ export function consumeStreamPayload(acc: CompletionAccumulator, data: any): voi
       if (typeof message.reasoning_content === "string") acc.text += message.reasoning_content;
       if (Array.isArray(message.tool_calls)) {
         for (const tc of message.tool_calls) {
+          noteToolName(acc, tc.id ?? tc.index, tc?.function?.name);
           const args = tc?.function?.arguments;
           if (typeof args === "string") appendToolArg(acc, tc.id ?? tc.index, args);
           else if (args != null) appendToolArg(acc, tc.id ?? tc.index, safeJsonStringify(args));
@@ -232,10 +250,17 @@ export function finalizeCompletion(acc: CompletionAccumulator): {
   hasUpstreamUsage: boolean;
 } {
   let completionText = acc.text;
-  if (acc.toolArgs.size > 0) {
+  if (acc.toolArgs.size > 0 || acc.toolNames.size > 0) {
     const tail: string[] = [];
-    for (const [key, value] of acc.toolArgs) {
-      tail.push("[tool_call:" + key + " " + value + "]");
+    const keys = new Set([...acc.toolArgs.keys(), ...acc.toolNames.keys()]);
+    for (const key of keys) {
+      const name = acc.toolNames.get(key);
+      const value = acc.toolArgs.get(key) || "";
+      tail.push(
+        name
+          ? "[tool_call:" + key + " " + name + " " + value + "]"
+          : "[tool_call:" + key + " " + value + "]",
+      );
     }
     completionText = (completionText ? completionText + "\n" : "") + tail.join("\n");
   }

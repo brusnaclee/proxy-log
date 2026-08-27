@@ -13,6 +13,10 @@ import {
 	expandUpstreamIdCandidates,
 	findForbiddenRawVendor,
 	realVendorsForClientVendor,
+	stripModelCollisionTag,
+	isPublicAliasOnlyVendor,
+	filterForwardableUpstreamIds,
+	preferRealVendorHits,
 	type VendorAliasIndex,
 } from "./vendor-aliases.js";
 
@@ -148,5 +152,54 @@ describe("vendor-aliases", () => {
 		);
 		assert.equal(toPublicOwnedBy("amanai", "", aliases), "vibecode");
 		assert.equal(toPublicOwnedBy("system", "leaf-only", aliases), "system");
+	});
+
+	it("stripModelCollisionTag removes log · hop suffix", () => {
+		assert.equal(
+			stripModelCollisionTag("phantom/vibecode/claude-opus-4.8 · amanai"),
+			"phantom/vibecode/claude-opus-4.8",
+		);
+		assert.equal(
+			stripModelCollisionTag("amanai/claude-opus-4.8 · amanai"),
+			"amanai/claude-opus-4.8",
+		);
+		assert.equal(
+			stripModelCollisionTag("phantom/vibecode/claude-opus-4.8"),
+			"phantom/vibecode/claude-opus-4.8",
+		);
+	});
+
+	it("public-only alias ids are not forwardable (vibecode twin)", () => {
+		const aliases = { amanai: "vibecode" };
+		assert.equal(isPublicAliasOnlyVendor("vibecode", aliases), true);
+		assert.equal(isPublicAliasOnlyVendor("amanai", aliases), false);
+		assert.deepEqual(
+			filterForwardableUpstreamIds(
+				["vibecode/claude-opus-4.8", "amanai/claude-opus-4.8"],
+				aliases,
+			),
+			["amanai/claude-opus-4.8"],
+		);
+		assert.deepEqual(
+			preferRealVendorHits(
+				["vibecode/claude-opus-4.8", "amanai/claude-opus-4.8"],
+				aliases,
+			),
+			["amanai/claude-opus-4.8"],
+		);
+	});
+
+	it("chain aliases: ikan stays forwardable (real key + public target)", () => {
+		const aliases = { ikan: "amanai", tokito: "ikan" };
+		assert.equal(isPublicAliasOnlyVendor("amanai", aliases), true);
+		assert.equal(isPublicAliasOnlyVendor("ikan", aliases), false);
+		assert.equal(isPublicAliasOnlyVendor("tokito", aliases), false);
+		assert.deepEqual(
+			filterForwardableUpstreamIds(
+				["amanai/glm", "ikan/glm", "tokito/glm"],
+				aliases,
+			),
+			["ikan/glm", "tokito/glm"],
+		);
 	});
 });

@@ -183,6 +183,71 @@ export function realVendorsForClientVendor(
 	return out;
 }
 
+/**
+ * Strip log-only collision disambiguator (` · {realVendor}`) before resolve.
+ * OpenCode / clients sometimes echo the annotated log id back as `model`.
+ */
+export function stripModelCollisionTag(modelId: string): string {
+	const trimmed = String(modelId ?? "").trim();
+	const via = /^(.+?)\s+·\s+(\S+)$/.exec(trimmed);
+	return via ? via[1].trim() : trimmed;
+}
+
+/**
+ * True when vendor is only a public alias target (never a real upstream key).
+ * Example: aliases `{ amanai: "vibecode" }` → vibecode is public-only.
+ * Chain `{ ikan: "amanai", tokito: "ikan" }` → amanai public-only; ikan is still a real key.
+ */
+export function isPublicAliasOnlyVendor(
+	vendor: string,
+	aliases: VendorAliasMap,
+): boolean {
+	const vLower = String(vendor || "")
+		.trim()
+		.toLowerCase();
+	if (!vLower || !aliases || !Object.keys(aliases).length) return false;
+	const isRealKey = Object.keys(aliases).some(
+		(r) => r.toLowerCase() === vLower,
+	);
+	const isPubTarget = Object.values(aliases).some(
+		(p) => p && String(p).toLowerCase() === vLower,
+	);
+	return Boolean(isPubTarget && !isRealKey);
+}
+
+/** Drop public-only alias ids (e.g. vibecode/…) — must never be forwarded upstream. */
+export function filterForwardableUpstreamIds(
+	ids: string[],
+	aliases: VendorAliasMap,
+): string[] {
+	if (!Array.isArray(ids) || !ids.length) return [];
+	if (!aliases || !Object.keys(aliases).length) return [...ids];
+	return ids.filter((id) => {
+		const v = vendorOf(id);
+		return !v || !isPublicAliasOnlyVendor(v, aliases);
+	});
+}
+
+/**
+ * Prefer ids whose vendor is a real alias key. True multi-real collisions may
+ * still leave multiple hits (caller may pick among reals only).
+ */
+export function preferRealVendorHits(
+	ids: string[],
+	aliases: VendorAliasMap,
+): string[] {
+	if (!Array.isArray(ids) || ids.length <= 1) return ids ? [...ids] : [];
+	if (!aliases || !Object.keys(aliases).length) return [...ids];
+	const reals = ids.filter((id) => {
+		const v = vendorOf(id);
+		if (!v) return false;
+		return Object.keys(aliases).some(
+			(r) => r.toLowerCase() === v.toLowerCase(),
+		);
+	});
+	return reals.length ? reals : [...ids];
+}
+
 /** Public log id; when collision resolved, append ` · {realVendor}`. */
 export function toPublicLogModelId(
 	providerName: string,

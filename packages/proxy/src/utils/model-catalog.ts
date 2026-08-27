@@ -13,8 +13,11 @@ import { getClientCatalogFlags } from "./model-monitor-store.js";
 import { seedMonitorModelsFromList } from "./model-monitor-store.js";
 import {
   expandUpstreamIdCandidates,
+  filterForwardableUpstreamIds,
   getAliasesForProviderName,
   loadVendorAliasIndex,
+  preferRealVendorHits,
+  stripModelCollisionTag,
   toPublicOwnedBy,
   toPublicUpstreamId,
   toRealUpstreamId,
@@ -808,7 +811,8 @@ export async function parseModelWithProvider(modelId: string): Promise<{
   forcedProviderName: string | null;
   matchCount: number;
 }> {
-  const raw = String(modelId || "").trim();
+  // Clients may echo log ids with collision tags (` · amanai`) — strip before resolve.
+  const raw = stripModelCollisionTag(String(modelId || "").trim());
   if (!raw.includes("/")) {
     return { upstreamModel: raw, forcedProviderName: null, matchCount: 1 };
   }
@@ -828,6 +832,7 @@ export async function parseModelWithProvider(modelId: string): Promise<{
     peeled.push(prefix);
     rest = rest.slice(slashIdx + 1);
   }
+  rest = stripModelCollisionTag(rest);
 
   if (!forcedProviderName) {
     return { upstreamModel: raw, forcedProviderName: null, matchCount: 1 };
@@ -883,7 +888,8 @@ function providerUsesNestedModelIds(
  * Pick bare vs nested (`amanai/glm-5.2`) form based on catalog + monitor.
  * Never bare-peel amanai-style providers when rest has no slash — that caused
  * mass 404 Unknown model: glm-5.2.
- * When multiple known reals match the same public vendor (alias collision), pick randomly.
+ * Never forward public-only alias ids (e.g. vibecode/…) even if a stale monitor
+ * twin exists. When multiple *real* vendors collide, pick randomly among reals.
  */
 async function resolveUpstreamModelId(
   providerName: string,
@@ -892,9 +898,10 @@ async function resolveUpstreamModelId(
 ): Promise<{ upstreamModel: string; matchCount: number }> {
   const aliasIndex = await loadVendorAliasIndex();
   const aliases = getAliasesForProviderName(aliasIndex, providerName);
-  const restForms = expandUpstreamIdCandidates(rest, aliases);
+  const cleanRest = stripModelCollisionTag(rest);
+  const restForms = expandUpstreamIdCandidates(cleanRest, aliases);
 
-  const cacheKey = `${providerName}\0${rest}\0${peeled.join("/")}\0${restForms.join("|")}`;
+  const cacheKey = `${providerName}\0${cleanRest}\0${peeled.join("/")}\0${restForms.join("|")}`;
   const cached = upstreamModelResolveCache.get(cacheKey);
   let knownHits: string[] | null =
     cached && cached.expiresAt > Date.now() ? cached.hits : null;
@@ -934,7 +941,14 @@ async function resolveUpstreamModelId(
       if (r.modelId) known.add(r.modelId);
     }
 
-    knownHits = candidates.filter((c) => known.has(c));
+    // Drop public-only twins (vibecode/…) so they never win a random coin-flip.
+    knownHits = preferRealVendorHits(
+      filterForwardableUpstreamIds(
+        candidates.filter((c) => known.has(c)),
+        aliases,
+      ),
+      aliases,
+    );
 
     if (knownHits.length === 0) {
       const nestedProvider = providerUsesNestedModelIds(
@@ -944,7 +958,16 @@ async function resolveUpstreamModelId(
         prov?.compatProfile,
       );
       // Prefer real upstream vendor form for forwarding
-      let resolved = restForms.find((f) => f !== rest && known.has(f)) || restForms[0] || rest;
+      let resolved =
+        restForms.find(
+          (f) =>
+            f !== cleanRest &&
+            known.has(f) &&
+            filterForwardableUpstreamIds([f], aliases).length > 0,
+        ) ||
+        restForms.find((f) => filterForwardableUpstreamIds([f], aliases).length > 0) ||
+        restForms[0] ||
+        cleanRest;
       const realPreferred = expandUpstreamIdCandidates(resolved, aliases).find((f) =>
         Object.keys(aliases).some((real) => f.toLowerCase().startsWith(real.toLowerCase() + "/")),
       );
@@ -961,8 +984,14 @@ async function resolveUpstreamModelId(
       }
 
       // Final: if still on public alias vendor, flip to real for upstream
-      resolved = expandUpstreamIdCandidates(resolved, aliases).find((c) => known.has(c))
-        || toRealUpstreamId(resolved, aliases);
+      const knownReal = preferRealVendorHits(
+        filterForwardableUpstreamIds(
+          expandUpstreamIdCandidates(resolved, aliases).filter((c) => known.has(c)),
+          aliases,
+        ),
+        aliases,
+      );
+      resolved = knownReal[0] || toRealUpstreamId(resolved, aliases);
 
       knownHits = [resolved];
     }

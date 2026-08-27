@@ -87,3 +87,40 @@ describe("Anthropic SSE usage → billable", () => {
 		assert.equal(billable.cachedTokens, 900);
 	});
 });
+
+describe("tool_call preview includes function name", () => {
+	it("records name from streaming deltas into response preview text", () => {
+		const acc = makeAccumulator();
+		consumeStreamPayload(acc, {
+			choices: [
+				{
+					delta: {
+						tool_calls: [
+							{
+								index: 0,
+								function: { name: "run_terminal_command", arguments: "" },
+							},
+						],
+					},
+				},
+			],
+		});
+		consumeStreamPayload(acc, {
+			choices: [
+				{
+					delta: {
+						tool_calls: [
+							{
+								index: 0,
+								function: { arguments: '{"command":"ls"}' },
+							},
+						],
+					},
+				},
+			],
+		});
+		const fin = finalizeCompletion(acc);
+		assert.match(fin.completionText, /\[tool_call:0 run_terminal_command/);
+		assert.match(fin.completionText, /"command":"ls"/);
+	});
+});

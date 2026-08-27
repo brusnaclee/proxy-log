@@ -1,6 +1,12 @@
 import { db } from "../db/index.js";
 import { adminConfig, modelMonitor, modelTestState, providers } from "../db/schema.js";
 import { eq, and, sql } from "drizzle-orm";
+import {
+  getAliasesForProviderName,
+  isPublicAliasOnlyVendor,
+  loadVendorAliasIndex,
+  toRealUpstreamId,
+} from "./vendor-aliases.js";
 
 /**
  * Data is valid until the next scheduled test replaces it.
@@ -100,8 +106,11 @@ export async function seedMonitorModelsFromList(
 ): Promise<number> {
   let count = 0;
   const now = new Date();
+  const aliasIndex = await loadVendorAliasIndex();
+  const aliases = getAliasesForProviderName(aliasIndex, providerName);
   for (const modelId of modelIds) {
-    const id = String(modelId || "").trim();
+    // Always store real upstream ids — public alias twins (vibecode/…) break resolve.
+    const id = toRealUpstreamId(String(modelId || "").trim(), aliases);
     if (!id) continue;
     const existing = await db
       .select({ id: modelMonitor.id })
@@ -200,6 +209,15 @@ export async function upsertModelStatus(
   const nowStr = now.toISOString().replace("T", " ").substring(0, 19);
   const mode = source === "admin" ? "auto" : await getMonitorAutoMode();
 
+  // Normalize to real upstream id so public alias twins cannot reappear.
+  let modelId = String(params.modelId || "").trim();
+  if (params.provider && modelId) {
+    const aliasIndex = await loadVendorAliasIndex();
+    const aliases = getAliasesForProviderName(aliasIndex, params.provider);
+    modelId = toRealUpstreamId(modelId, aliases);
+  }
+  params = { ...params, modelId };
+
   const existing = await db
     .select()
     .from(modelMonitor)
@@ -290,6 +308,28 @@ export async function upsertModelStatus(
       baseUrl: params.baseUrl,
       checkedAt: now,
     });
+  }
+
+  // Drop stale public-alias monitor twins (e.g. vibecode/x when real is amanai/x).
+  if (params.provider && params.modelId.includes("/")) {
+    const aliasIndex = await loadVendorAliasIndex();
+    const aliases = getAliasesForProviderName(aliasIndex, params.provider);
+    const leaf = params.modelId.slice(params.modelId.indexOf("/") + 1);
+    for (const pub of Object.values(aliases)) {
+      if (!pub || !isPublicAliasOnlyVendor(pub, aliases)) continue;
+      const twinId = `${pub}/${leaf}`;
+      if (twinId === params.modelId) continue;
+      await db.execute(sql`
+        DELETE FROM model_monitor
+        WHERE model_id = ${twinId}
+          AND COALESCE(provider, '') = ${params.provider || ""}
+      `);
+      await db.execute(sql`
+        DELETE FROM model_test_state
+        WHERE model_id = ${twinId}
+          AND COALESCE(provider, '') = ${params.provider || ""}
+      `);
+    }
   }
 
   // Retry state tracks probe health (sweep), not admin toggles.
