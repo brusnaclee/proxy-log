@@ -1484,7 +1484,11 @@ internal.post("/internal/clear-notification/:keyId", async (c) => {
 });
 
 // --- Enriched Model Details (for Discord bot) --------------------------------
+// Same visibility + is_online (clientOnline) as portal /v1/models.
 internal.get("/internal/models/details", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+
   const {
     getModelCatalogResponse,
     getAllClientCatalogMonitorRows,

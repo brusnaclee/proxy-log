@@ -2089,6 +2089,8 @@ async function runLatencyTest() {
 	runtime.lastLatencyAt = now;
 
 	await pushMetricsToProxy();
+	// Re-apply portal is_online so Discord icons don't stick on local probe results.
+	await refreshCatalogStatusFromProxy().catch(() => {});
 }
 
 // ─── Smart Retry: Test a single model and return latency result ────────────────
@@ -2389,6 +2391,13 @@ async function sweepModelsParallel(entries, label) {
 	}
 	runtime.lastLatencyAt = Date.now();
 	console.log(`[tokito-monitor] ${label} complete`);
+	// Sweeps update probe fields in DB; Discord icons must still follow portal catalog.
+	await refreshCatalogStatusFromProxy().catch((err) =>
+		console.error(
+			`[tokito-monitor] catalog re-apply after ${label} failed:`,
+			err.message || err,
+		),
+	);
 }
 
 // ─── Smart Retry: Full sweep — test ALL models, push results individually ─────
@@ -2881,12 +2890,9 @@ function listModels(
 			}
 			items = [autoEntry, ...catalogEntries];
 		} else {
-			// Fallback: Published ON only from monitor rows
-			items = items.filter((e) => {
-				if (e.modelId === 'auto') return true;
-				const lt = runtime.latency.get(entryKey(e));
-				return Boolean(lt?.visible);
-			});
+			// No portal catalog yet — do NOT fall back to probe-only entries
+			// (that was the "fixed then broken again" loop). Show auto only.
+			items = [autoEntry];
 		}
 	}
 
@@ -2960,7 +2966,8 @@ function displayLatencyForEntry(entry, session) {
 	if (session?.trialMode) {
 		return { ok: true, ms: lt?.ms ?? null, status: 200 };
 	}
-	// Prefer catalog (portal) online flag whenever we have it.
+	// Discord icons MUST match portal /v1/models is_online — never trust
+	// bot-local probe sweeps (they overwrite latency every 10m and drift).
 	const hit = lookupCatalogModel(entry);
 	if (hit) {
 		const online = Boolean(hit.is_online);
@@ -2970,11 +2977,19 @@ function displayLatencyForEntry(entry, session) {
 			visible: true,
 			published: true,
 			ms: hit.latency_ms != null ? hit.latency_ms : lt?.ms ?? null,
-			status: online ? (lt?.status && lt.status >= 200 ? lt.status : 200) : (lt?.status || 503),
+			status: online
+				? lt?.status && lt.status >= 200
+					? lt.status
+					: 200
+				: lt?.status && lt.status >= 400
+					? lt.status
+					: 503,
 			fromCatalog: true,
 		};
 	}
-	return lt;
+	// Stale probe-only rows → treat as unknown (⚪), not 🟢/🔴 from local probe.
+	if (lt?.fromCatalog) return lt;
+	return null;
 }
 
 function resolveModelDetailsMeta(entry, detailsCache) {
@@ -2997,17 +3012,14 @@ function resolveModelDetailsMeta(entry, detailsCache) {
 	);
 }
 
-async function ensureModelDetailsCache() {
-	if (runtime._modelDetailsCache?.length) return;
-	try {
-		const detailsData = await proxyInternal('/admin/internal/models/details');
-		runtime._modelDetailsCache = detailsData?.data || [];
-	} catch (err) {
-		console.error(
-			'[tokito] Failed to fetch model details cache:',
-			err.message || err,
+async function ensureModelDetailsCache(force = false) {
+	if (!force && runtime._modelDetailsCache?.length) return;
+	// refreshCatalogStatusFromProxy loads /models/details and patches icons.
+	await refreshCatalogStatusFromProxy();
+	if (!runtime._modelDetailsCache?.length) {
+		console.warn(
+			'[tokito] model details cache still empty after catalog refresh',
 		);
-		runtime._modelDetailsCache = runtime._modelDetailsCache || [];
 	}
 }
 
@@ -9206,41 +9218,18 @@ client.on('interactionCreate', async (interaction) => {
 				// Immediately acknowledge to prevent 10s timeout
 				await interaction.deferReply({ ephemeral: true });
 
-				// Refresh data from proxy DB for fresh results
+				// Refresh monitor rows + force portal catalog (is_online) every open.
 				await refreshLatencyFromProxy();
-
-				// Load enriched catalog metadata for details view (and trial gpy panel)
-				if (kind === 'details') {
-					try {
-						const detailsData = await proxyInternal(
-							'/admin/internal/models/details',
-						);
-						runtime._modelDetailsCache = detailsData?.data || [];
-					} catch (err) {
-						console.error(
-							'[tokito] Failed to fetch model details:',
-							err.message || JSON.stringify(err),
-						);
-						runtime._modelDetailsCache = [];
-					}
-				}
+				await ensureModelDetailsCache(true);
 
 				const session = createTokitoSession(interaction.user.id, kind, access);
 				if (session.trialMode) {
 					session.trialCache = await getTrialModelsCached();
 					if (
-						kind === 'details' &&
-						(!runtime._modelDetailsCache ||
-							runtime._modelDetailsCache.length === 0)
+						!runtime._modelDetailsCache ||
+						runtime._modelDetailsCache.length === 0
 					) {
-						try {
-							const detailsData = await proxyInternal(
-								'/admin/internal/models/details',
-							);
-							runtime._modelDetailsCache = detailsData?.data || [];
-						} catch {
-							/* ignore */
-						}
+						await ensureModelDetailsCache(true);
 					}
 				}
 				// Store interaction for message deletion on expiry
@@ -9362,11 +9351,8 @@ client.on('interactionCreate', async (interaction) => {
 				return;
 			}
 
-			if (session.kind === 'details') {
-				await ensureModelDetailsCache();
-			} else {
-				// Keep Online/Offline icons aligned with portal across pages.
-				await refreshCatalogStatusFromProxy().catch(() => {});
+			if (session.kind === 'details' || session.kind === 'status' || session.kind === 'latency') {
+				await ensureModelDetailsCache(true);
 			}
 
 			await ensureVendorAliasCache();
@@ -9430,11 +9416,7 @@ client.on('interactionCreate', async (interaction) => {
 				session.sortMode = interaction.values[0] || session.sortMode;
 				session.page = 0;
 			}
-			if (session.kind === 'details') {
-				await ensureModelDetailsCache();
-			} else {
-				await refreshCatalogStatusFromProxy().catch(() => {});
-			}
+			await ensureModelDetailsCache(true);
 			await ensureVendorAliasCache();
 			const { embed, components } = buildTokitoEmbed(session.kind, session);
 			await interaction.update({ embeds: [embed], components });
