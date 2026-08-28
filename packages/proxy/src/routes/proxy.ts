@@ -2281,20 +2281,24 @@ proxy.all('/*', async (c) => {
 					.includes('application/json');
 				const isTextLike = contentType.toLowerCase().startsWith('text/');
 
-				if (isProbablyJson || isTextLike) {
-					const bodyText = new TextDecoder().decode(requestBodyBytes);
-					if (bodyText) {
-						try {
-							requestBody = JSON.parse(bodyText);
-							// Re-encode to ensure clean JSON bytes for upstream
-							requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
-						} catch {
-							const normalizedBody = bodyText.replace(/\s+/g, ' ').trim();
-							requestPreview = normalizedBody.slice(0, 12_000);
-							transcriptSnapshot = normalizedBody.slice(0, 12_000);
-							contextTokensBefore = estimateTokens(normalizedBody);
-							estimatedContextLength = contextTokensBefore;
-						}
+				// Many clients (custom harnesses, some SDKs) send a JSON body without a
+				// proper Content-Type. Without this, requestBody stays null and the proxy
+				// reports model "unknown" even though the body contains a valid model.
+				const bodyText = new TextDecoder().decode(requestBodyBytes);
+				const looksLikeJson = /^\s*[[{]/.test(bodyText);
+
+				if ((isProbablyJson || isTextLike || looksLikeJson) && bodyText) {
+					try {
+						requestBody = JSON.parse(bodyText);
+						// Re-encode to ensure clean JSON bytes for upstream
+						requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
+					} catch {
+						requestBody = null;
+						const normalizedBody = bodyText.replace(/\s+/g, ' ').trim();
+						requestPreview = normalizedBody.slice(0, 12_000);
+						transcriptSnapshot = normalizedBody.slice(0, 12_000);
+						contextTokensBefore = estimateTokens(normalizedBody);
+						estimatedContextLength = contextTokensBefore;
 					}
 				}
 			}
