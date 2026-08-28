@@ -2318,6 +2318,24 @@ proxy.all('/*', async (c) => {
 		}
 	}
 
+	// Fallback: some clients pass the model via ?model= query param or a `model`
+	// header instead of the JSON body. The proxy only reads the body by default,
+	// which produced the confusing `model "unknown"` error. Honor those too.
+	if (model === 'unknown' || !String(model || '').trim()) {
+		const queryModel = c.req.query('model');
+		const headerModel = c.req.header('model');
+		const fallbackModel = (queryModel || headerModel || '').trim();
+		if (fallbackModel) {
+			model = fallbackModel;
+			// Inject into body so downstream forwarding/translation sees it too.
+			if (requestBody && typeof requestBody === 'object') {
+				requestBody.model = fallbackModel;
+				requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
+			}
+			console.log(`[proxy] model taken from ${queryModel ? '?model= query' : 'model header'}: "${fallbackModel}"`);
+		}
+	}
+
 	// ─── 7a. Responses API Conversion (/v1/responses -> /v1/chat/completions) ───
 	// Codex CLI and some clients use the OpenAI Responses API format.
 	// Convert to Chat Completions format for upstream providers that don't support it.
