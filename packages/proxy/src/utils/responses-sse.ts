@@ -114,25 +114,38 @@ export function responsesSseFromChatPayload(
 		ensureMessageScaffold(state, out);
 		for (const tc of toolDeltas) {
 			if (!tc) continue;
-			if (tc.id && tc.function?.name) {
+			const name =
+				(typeof tc.function?.name === "string" && tc.function.name.trim()) ||
+				(typeof tc.name === "string" && tc.name.trim()) ||
+				"";
+			const args =
+				(typeof tc.function?.arguments === "string" && tc.function.arguments) ||
+				(typeof tc.arguments === "string" && tc.arguments) ||
+				"";
+			// OpenAI streams often send name on the first delta with only `index` (no id yet).
+			// Dropping those made Responses clients see nameless function_calls.
+			const callId =
+				(typeof tc.id === "string" && tc.id) ||
+				(tc.index != null ? `call_idx_${tc.index}` : "");
+			if (name) {
 				out.push(
 					sse("response.output_item.added", {
 						type: "response.output_item.added",
 						output_index: 0,
 						item: {
 							type: "function_call",
-							id: tc.id,
-							call_id: tc.id,
-							name: tc.function.name,
-							arguments: tc.function.arguments || "",
+							id: callId || `call_${Date.now()}`,
+							call_id: callId || `call_${Date.now()}`,
+							name,
+							arguments: args,
 						},
 					}),
 				);
-			} else if (typeof tc.function?.arguments === "string" && tc.function.arguments) {
+			} else if (args) {
 				out.push(
 					sse("response.function_call_arguments.delta", {
 						type: "response.function_call_arguments.delta",
-						delta: tc.function.arguments,
+						delta: args,
 					}),
 				);
 			}

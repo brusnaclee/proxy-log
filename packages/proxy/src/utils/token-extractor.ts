@@ -197,9 +197,11 @@ export function consumeStreamPayload(acc: CompletionAccumulator, data: any): voi
       if (typeof delta.reasoning_content === "string") acc.text += delta.reasoning_content;
       if (Array.isArray(delta.tool_calls)) {
         for (const tc of delta.tool_calls) {
-          noteToolName(acc, tc.index ?? tc.id, tc?.function?.name);
-          const fragment = tc?.function?.arguments;
+          // Flat (name/arguments at root) or nested (function.*) — gcli/grok may send either.
+          noteToolName(acc, tc.index ?? tc.id, tc?.function?.name ?? tc?.name);
+          const fragment = tc?.function?.arguments ?? tc?.arguments;
           if (typeof fragment === "string") appendToolArg(acc, tc.index ?? tc.id, fragment);
+          else if (fragment != null) appendToolArg(acc, tc.index ?? tc.id, safeJsonStringify(fragment));
         }
       }
     }
@@ -210,8 +212,8 @@ export function consumeStreamPayload(acc: CompletionAccumulator, data: any): voi
       if (typeof message.reasoning_content === "string") acc.text += message.reasoning_content;
       if (Array.isArray(message.tool_calls)) {
         for (const tc of message.tool_calls) {
-          noteToolName(acc, tc.id ?? tc.index, tc?.function?.name);
-          const args = tc?.function?.arguments;
+          noteToolName(acc, tc.id ?? tc.index, tc?.function?.name ?? tc?.name);
+          const args = tc?.function?.arguments ?? tc?.arguments;
           if (typeof args === "string") appendToolArg(acc, tc.id ?? tc.index, args);
           else if (args != null) appendToolArg(acc, tc.id ?? tc.index, safeJsonStringify(args));
         }

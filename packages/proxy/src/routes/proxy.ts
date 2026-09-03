@@ -29,6 +29,7 @@ import {
 	finalizeResponsesSse,
 	responsesSseFromChatPayload,
 } from '../utils/responses-sse.js';
+import { normalizeToolCallArray } from '../utils/tool-call-normalize.js';
 import { sanitizeChatMessageRoles } from '../utils/sanitize-message-roles.js';
 import {
 	convertResponseToOpenAI,
@@ -405,30 +406,6 @@ function backfillOpenAIMessageContent<T extends { content?: unknown; reasoning_c
 		normalizeToolCallArray(msg.tool_calls);
 	}
 	return message;
-}
-
-/**
- * Phantom/9router/conduit often omit streaming tool_calls[].index.
- * OpenAI SDKs accumulate by index — missing index → tools dropped → Empty message.
- */
-function normalizeToolCallArray(toolCalls: any[]): void {
-	if (!Array.isArray(toolCalls)) return;
-	for (let i = 0; i < toolCalls.length; i++) {
-		const tc = toolCalls[i];
-		if (!tc || typeof tc !== 'object') continue;
-		if (tc.index == null || tc.index === '') tc.index = i;
-		if (!tc.type) tc.type = 'function';
-		if (!tc.function || typeof tc.function !== 'object') {
-			tc.function = { name: '', arguments: '' };
-		} else {
-			// Keep non-empty names; only fill null/undefined (never invent "unknown").
-			if (tc.function.name == null) tc.function.name = '';
-			else if (typeof tc.function.name === 'string') {
-				tc.function.name = tc.function.name.trim();
-			}
-			if (tc.function.arguments == null) tc.function.arguments = '';
-		}
-	}
 }
 
 function backfillOpenAIResponseContent(

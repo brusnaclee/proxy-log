@@ -35,4 +35,41 @@ describe("responses-sse", () => {
 		});
 		assert.ok(fin.some((s) => s.includes("response.completed")));
 	});
+
+	it("emits function_call when name arrives with only index (no id)", () => {
+		const state = createResponsesSseState(3);
+		const mid = responsesSseFromChatPayload(state, {
+			choices: [
+				{
+					delta: {
+						tool_calls: [
+							{
+								index: 0,
+								type: "function",
+								function: { name: "run_terminal_command", arguments: "" },
+							},
+						],
+					},
+				},
+			],
+		});
+		assert.ok(mid.some((s) => s.includes("function_call")));
+		assert.ok(mid.some((s) => s.includes("run_terminal_command")));
+	});
+
+	it("emits function_call from flat name/arguments shape", () => {
+		const state = createResponsesSseState(4);
+		const mid = responsesSseFromChatPayload(state, {
+			choices: [
+				{
+					delta: {
+						tool_calls: [
+							{ index: 0, id: "call_x", name: "read_file", arguments: "{}" },
+						],
+					},
+				},
+			],
+		});
+		assert.ok(mid.some((s) => s.includes("read_file")));
+	});
 });

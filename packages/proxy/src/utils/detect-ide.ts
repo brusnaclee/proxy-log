@@ -29,6 +29,8 @@ const IDE_PATTERNS: [RegExp, string][] = [
 	[/codex/i, "Codex"],
 	[/opencode.*vscode/i, "OpenCode (VS Code)"],
 	[/opencode/i, "OpenCode"],
+	// xAI Grok Build harness (grok-pager / grok-shell) — before body "n8n" false-positive
+	[/grok-pager|grok-shell|grok.?build/i, "Grok Build"],
 	// Trae can identify itself explicitly. Its observed bare `hertz` UA is only
 	// ByteDance's generic Go HTTP stack, not proof of the IDE; classify that as
 	// generic below and require a body marker/toolset before calling it Trae.
@@ -204,6 +206,9 @@ export function detectIdeFromContent(requestBody: any, transcriptSnapshot?: stri
 	if (searchText.includes("[subagent context]")) return "Hermes";
 	if (searchText.includes("[retry after the previous model attempt")) return "Hermes";
 	if (searchText.includes("hermes/cache/documents")) return "Hermes";
+
+	// === Grok Build (body markers; UA handled in IDE_PATTERNS) ===
+	if (searchText.includes("grok-pager") || searchText.includes("grok-shell")) return "Grok Build";
 
 	// === N8N Workflow ===
 	if (searchText.includes("n8n")) return "n8n Workflow";
