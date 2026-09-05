@@ -44,10 +44,24 @@ describe("normalizeToolCallArray", () => {
 		assert.equal(toolCalls[0].function.name, "grep");
 	});
 
-	it("leaves null name as empty string (never unknown)", () => {
-		const toolCalls = [{ function: { name: null, arguments: null } }];
+	it("strips empty function.name on arguments-only continuation deltas", () => {
+		// Chunk 2 shape from gcli/grok — name wiped to "" would break Grok Build.
+		const toolCalls = [
+			{
+				index: 0,
+				type: "function",
+				function: { name: "", arguments: '{"command":"git clone x"}' },
+			},
+		];
 		normalizeToolCallArray(toolCalls);
-		assert.equal(toolCalls[0].function.name, "");
-		assert.equal(toolCalls[0].function.arguments, "");
+		assert.equal("name" in toolCalls[0].function, false);
+		assert.equal(toolCalls[0].function.arguments, '{"command":"git clone x"}');
+	});
+
+	it("strips empty name when field was null", () => {
+		const toolCalls = [{ function: { name: null, arguments: "partial" } }];
+		normalizeToolCallArray(toolCalls);
+		assert.equal("name" in toolCalls[0].function, false);
+		assert.equal(toolCalls[0].function.arguments, "partial");
 	});
 });

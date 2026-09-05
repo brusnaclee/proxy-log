@@ -5,9 +5,16 @@
  *   nested: { type, id, function: { name, arguments } }
  *   flat:   { type, id, name, arguments }
  *
- * Clients (OpenAI SDK, Grok Build / grok-shell) read `function.name`.
- * If we invent an empty `function` wrapper without copying flat fields,
- * the IDE sees a blank tool name → "Agent tried calling a tool that doesn't exist".
+ * Clients (OpenAI SDK, Grok Build / grok-shell) accumulate by index and often do
+ *   toolCall.function.name = delta.function.name
+ * If a later arguments-only delta carries `name: ""` (or we invent it), the
+ * client WIPEs the real name from chunk 1 → "Agent tried calling a tool that
+ * doesn't exist".
+ *
+ * Rules:
+ * - Copy flat → nested when flat has a real name/args
+ * - Never invent "unknown"
+ * - Never emit/leave empty-string `function.name` on the wire — omit the field
  */
 
 function asArgString(v: unknown): string {
@@ -20,6 +27,11 @@ function asArgString(v: unknown): string {
 	}
 }
 
+function cleanName(v: unknown): string {
+	if (typeof v !== "string") return "";
+	return v.trim();
+}
+
 export function normalizeToolCallArray(toolCalls: any[]): void {
 	if (!Array.isArray(toolCalls)) return;
 	for (let i = 0; i < toolCalls.length; i++) {
@@ -28,26 +40,36 @@ export function normalizeToolCallArray(toolCalls: any[]): void {
 		if (tc.index == null || tc.index === "") tc.index = i;
 		if (!tc.type) tc.type = "function";
 
-		const flatName = typeof tc.name === "string" ? tc.name.trim() : "";
-		const flatArgs = tc.arguments != null ? asArgString(tc.arguments) : "";
+		const flatName = cleanName(tc.name);
+		const hasFlatArgs = Object.prototype.hasOwnProperty.call(tc, "arguments");
+		const flatArgs = hasFlatArgs ? asArgString(tc.arguments) : "";
 
 		if (!tc.function || typeof tc.function !== "object") {
-			tc.function = {
-				name: flatName,
-				arguments: flatArgs,
-			};
+			tc.function = {} as { name?: string; arguments?: string };
+			if (flatName) tc.function.name = flatName;
+			if (hasFlatArgs) tc.function.arguments = flatArgs;
 		} else {
-			// Keep non-empty names; only fill null/undefined/empty from flat twin.
-			// Never invent "unknown".
-			if (tc.function.name == null || tc.function.name === "") {
+			const nestedName = cleanName(tc.function.name);
+			if (nestedName) {
+				tc.function.name = nestedName;
+			} else if (flatName) {
 				tc.function.name = flatName;
-			} else if (typeof tc.function.name === "string") {
-				tc.function.name = tc.function.name.trim();
+			} else {
+				// Absent or empty — drop so later arg deltas don't wipe client state.
+				delete tc.function.name;
 			}
+
 			if (tc.function.arguments == null || tc.function.arguments === "") {
-				if (flatArgs) tc.function.arguments = flatArgs;
-				else if (tc.function.arguments == null) tc.function.arguments = "";
+				if (hasFlatArgs) tc.function.arguments = flatArgs;
+				else if (tc.function.arguments == null && hasFlatArgs === false) {
+					// leave undefined on pure name-setup chunks
+				}
 			}
+		}
+
+		// Also drop empty flat name so dual-shape clients don't wipe either.
+		if (typeof tc.name === "string" && !cleanName(tc.name)) {
+			delete tc.name;
 		}
 	}
 }
