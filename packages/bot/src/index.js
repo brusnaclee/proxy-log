@@ -71,6 +71,8 @@ let TOKITO_API_KEY = process.env.TOKITO_API_KEY || '';
 let TOKITO_CHANNEL_ID = process.env.TOKITO_CHANNEL_ID || '1470313934752972993'; // Default channel ID for panel
 const TOKITO_BASE_URL =
 	process.env.TOKITO_BASE_URL || 'https://api.tokito.xyz/v1';
+/** Dedicated bot key for live `/v1/models` verification (no per-model probe). */
+const API_DEDICATE_KEY = process.env.API_DEDICATE || '';
 const TOKITO_STATUS_INTERVAL_MS =
 	parseInt(process.env.TOKITO_STATUS_INTERVAL_MS) || 3600000;
 const TOKITO_LATENCY_INTERVAL_MS =
@@ -2966,6 +2968,38 @@ function displayLatencyForEntry(entry, session) {
 	if (session?.trialMode) {
 		return { ok: true, ms: lt?.ms ?? null, status: 200 };
 	}
+	// Live gateway override (API Checker panel): if we just hit
+	// `https://api.tokito.xyz/v1/models` with API_DEDICATE, prefer that signal
+	// over the DB-cached model_monitor (which can be hours/days stale when
+	// monitor_auto_mode=off).
+	const live = runtime._liveGateway;
+	if (live && live.fetchedAt && Date.now() - live.fetchedAt < 5 * 60_000) {
+		const aliasesByProvider = runtime._vendorAliases || {};
+		const displayFull = publicizeDisplayModel(
+			entry.provider,
+			entry.displayModelId || entry.modelId,
+			aliasesByProvider,
+		);
+		const candidates = [
+			displayFull,
+			entry.displayModelId,
+			`${entry.provider}/${entry.displayModelId || entry.modelId}`,
+			`${entry.provider}/${entry.modelId}`,
+			entry.modelId,
+		]
+			.map((c) => String(c || '').toLowerCase())
+			.filter(Boolean);
+		const matched = candidates.some((c) => live.ids.has(c));
+		return {
+			...(lt || {}),
+			ok: matched,
+			visible: true,
+			published: true,
+			ms: matched ? live.ms : lt?.ms ?? null,
+			status: matched ? 200 : lt?.status || 404,
+			fromLive: true,
+		};
+	}
 	// Discord icons MUST match portal /v1/models is_online — never trust
 	// bot-local probe sweeps (they overwrite latency every 10m and drift).
 	const hit = lookupCatalogModel(entry);
@@ -3025,6 +3059,158 @@ async function ensureModelDetailsCache(force = false) {
 
 async function ensureVendorAliasCache() {
 	runtime._vendorAliases = await loadVendorAliases();
+}
+
+/**
+ * Live gateway verification: hit the public proxy `/v1/models` endpoint with
+ * the dedicated bot key. Returns:
+ *   { ok, models: [{ id, rawId, provider }], ms, httpStatus, error }
+ * Used by the Discord API Checker panel so it shows fresh data, not the
+ * DB-cached `model_monitor` rows that drift when `monitor_auto_mode=off`.
+ */
+async function fetchLiveGatewayModels() {
+	if (!API_DEDICATE_KEY) {
+		return { ok: false, error: 'API_DEDICATE not configured', models: [] };
+	}
+	const base = PROXY_PUBLIC_BASE_URL.replace(/\/+$/, '');
+	const url = base.endsWith('/v1') ? `${base}/models` : `${base}/v1/models`;
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), 12_000);
+	const startedAt = Date.now();
+	try {
+		const res = await fetch(url, {
+			method: 'GET',
+			headers: {
+				Accept: 'application/json',
+				Authorization: `Bearer ${API_DEDICATE_KEY}`,
+			},
+			signal: controller.signal,
+		});
+		clearTimeout(timeout);
+		const ms = Date.now() - startedAt;
+		const text = await res.text();
+		if (!res.ok) {
+			return {
+				ok: false,
+				ms,
+				httpStatus: res.status,
+				error: `HTTP ${res.status}`,
+				models: [],
+			};
+		}
+		let payload;
+		try {
+			payload = JSON.parse(text);
+		} catch {
+			return { ok: false, ms, httpStatus: res.status, error: 'Bad JSON', models: [] };
+		}
+		const arr = Array.isArray(payload)
+			? payload
+			: Array.isArray(payload?.data)
+				? payload.data
+				: [];
+		const models = arr
+			.map((m) => {
+				if (typeof m === 'string') {
+					const slash = m.indexOf('/');
+					return {
+						rawId: m,
+						id: m,
+						provider: slash > 0 ? m.slice(0, slash) : 'proxy',
+					};
+				}
+				const id = String(m?.id || '').trim();
+				if (!id) return null;
+				const slash = id.indexOf('/');
+				return {
+					rawId: id,
+					id,
+					provider: slash > 0 ? id.slice(0, slash) : (m?.owned_by || 'proxy'),
+				};
+			})
+			.filter(Boolean);
+		return { ok: true, ms, httpStatus: res.status, models };
+	} catch (err) {
+		clearTimeout(timeout);
+		return {
+			ok: false,
+			ms: Date.now() - startedAt,
+			httpStatus: 0,
+			error: err?.message || String(err),
+			models: [],
+		};
+	}
+}
+
+/**
+ * Overwrite `runtime.latency` from a live `/v1/models` response. We don't
+ * know per-model status from this endpoint — only that the gateway is up and
+ * the model is in the public catalog. So:
+ *   - For models that the public catalog returns → mark ONLINE (gateway reachable)
+ *   - For models the bot tracks but the public catalog does NOT return → mark OFFLINE
+ *   - The DB stale `model_monitor` rows are bypassed for the panel.
+ */
+async function refreshFromLiveGateway() {
+	const live = await fetchLiveGatewayModels();
+	if (!live.ok) {
+		console.warn(
+			`[tokito-monitor] live gateway /v1/models failed: ${live.error} (http=${live.httpStatus}, ${live.ms}ms)`,
+		);
+		runtime._liveGateway = {
+			ok: false,
+			ms: live.ms || 0,
+			httpStatus: live.httpStatus || 0,
+			error: live.error || 'unknown',
+			fetchedAt: Date.now(),
+			ids: new Set(),
+		};
+		return live;
+	}
+	const liveIds = new Set(live.models.map((m) => m.id.toLowerCase()));
+	runtime._liveGateway = {
+		ok: true,
+		ms: live.ms,
+		httpStatus: live.httpStatus,
+		error: null,
+		fetchedAt: Date.now(),
+		ids: liveIds,
+	};
+	let patched = 0;
+	for (const entry of runtime.modelEntries) {
+		if (entry.modelId === 'auto') continue;
+		const key = entryKey(entry);
+		const aliasesByProvider = runtime._vendorAliases || {};
+		const displayFull = publicizeDisplayModel(
+			entry.provider,
+			entry.displayModelId || entry.modelId,
+			aliasesByProvider,
+		);
+		const candidates = [
+			displayFull,
+			entry.displayModelId,
+			`${entry.provider}/${entry.displayModelId || entry.modelId}`,
+			`${entry.provider}/${entry.modelId}`,
+			entry.modelId,
+		]
+			.map((c) => String(c || '').toLowerCase())
+			.filter(Boolean);
+		const hit = candidates.some((c) => liveIds.has(c));
+		const prev = runtime.latency.get(key) || {};
+		runtime.latency.set(key, {
+			...prev,
+			ok: hit,
+			visible: prev?.visible ?? true,
+			published: prev?.published ?? true,
+			ms: hit ? live.ms : prev?.ms ?? null,
+			status: hit ? 200 : 404,
+			fromLive: true,
+		});
+		if (hit) patched++;
+	}
+	console.log(
+		`[tokito-monitor] live gateway /v1/models: ${live.models.length} catalog rows, ${patched} bot entries matched (${live.ms}ms)`,
+	);
+	return live;
 }
 
 function buildTokitoEmbed(kind, session) {
@@ -9221,6 +9407,11 @@ client.on('interactionCreate', async (interaction) => {
 				// Refresh monitor rows + force portal catalog (is_online) every open.
 				await refreshLatencyFromProxy();
 				await ensureModelDetailsCache(true);
+				// Live gateway verification: hit the public /v1/models with
+				// API_DEDICATE so the panel reflects the actual current catalog
+				// instead of the DB-cached model_monitor (which can be hours old
+				// when monitor_auto_mode=off).
+				const live = await refreshFromLiveGateway();
 
 				const session = createTokitoSession(interaction.user.id, kind, access);
 				if (session.trialMode) {
@@ -9238,8 +9429,13 @@ client.on('interactionCreate', async (interaction) => {
 				const { embed, components } = buildTokitoEmbed(kind, session);
 
 				// Add endpoint info footer to the embed
+				const liveStatus = live
+					? live.ok
+						? `live: ${live.models.length} models (${live.ms}ms)`
+						: `live: failed (${live.error || 'unknown'})`
+					: 'live: skipped';
 				embed.setFooter({
-					text: `Endpoint: ${PROXY_PUBLIC_BASE_URL}  •  ${embed.data.footer?.text || ''}`.trim(),
+					text: `Endpoint: ${PROXY_PUBLIC_BASE_URL}  •  ${liveStatus}`.trim(),
 				});
 
 				// Edit with actual results
