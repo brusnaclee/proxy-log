@@ -36,7 +36,16 @@ With `turnsPerPrompt = N`:
 
 So **46 API calls → 0 prompts**; **100 API calls → 1 prompt**; **1000 → 10**.
 
-## IDE preservation
+## Leaderboards (Discord / admin Top Users & Top Models by Prompts)
+
+Prompt rankings go through [`account-usage-stats.ts`](packages/proxy/src/utils/account-usage-stats.ts):
+
+- **Top Users — By Prompts:** `getAccountUsageAggregates` → `requests = floor(turns / N)` for diluted accounts
+- **Top Models — By Prompts:** `getTopModelsByPromptRequests` → each account contributes `floor(turns_on_model / N)` toward the model total
+
+Token rankings are **not** diluted (real hop-weighted usage).
+
+So Kyra with 504 raw turns today shows **5** prompts on the user board; her minimax turns contribute `floor(N/100)` to that model’s prompt rank.
 
 For no-log keys with `noLogKeepIde`:
 

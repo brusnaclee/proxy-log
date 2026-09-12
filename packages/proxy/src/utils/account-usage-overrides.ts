@@ -54,6 +54,26 @@ export async function getAccountUsageOverride(
 	return map[discordUserId] || null;
 }
 
+/** Apply turnsPerPrompt dilution: floor(rawTurns / N). N<=0 → unchanged. */
+export function dilutePromptCount(
+	rawTurns: number,
+	turnsPerPrompt: number | null | undefined,
+): number {
+	const n = Math.floor(Number(turnsPerPrompt) || 0);
+	const turns = Math.max(0, Math.floor(Number(rawTurns) || 0));
+	if (n <= 0) return turns;
+	return Math.floor(turns / n);
+}
+
+/** Look up dilution N for a Discord user from a preloaded overrides map. */
+export function turnsPerPromptForUser(
+	discordUserId: string | null | undefined,
+	overrides: Record<string, AccountUsageOverride>,
+): number {
+	if (!discordUserId) return 0;
+	return Math.floor(Number(overrides[discordUserId]?.turnsPerPrompt) || 0);
+}
+
 /** Synchronous version for write-path hot loop; returns null on cold cache. */
 export function getAccountUsageOverrideCached(
 	discordUserId: string | null | undefined,

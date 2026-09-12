@@ -29,6 +29,7 @@ import {
   getAccountUsageAggregates,
   sortTopByRequests,
   sortTopByTokens,
+  getTopModelsByPromptRequests,
 } from "../../utils/account-usage-stats.js";
 import { getModelCatalogResponse } from "../../utils/model-catalog.js";
 import { resolveKeyPromptLimit, resolveKeyApiCallLimit } from "../../utils/trial-config.js";
@@ -510,25 +511,7 @@ internal.get("/internal/stats/ranking", async (c) => {
   const monthDate = monthStartFinal;
 
   async function getTopModelsByRequests(since: Date) {
-    const rows = sanitizeRows(
-      (
-        await db.execute(
-          modelLimitCreditBreakdownSql(
-            sql`created_at >= ${since} AND status_code BETWEEN 200 AND 299`,
-            { limit: 10 },
-          ),
-        )
-      ).rows as any[],
-      ["requests", "promptTokens", "completionTokens", "tokens"],
-    );
-    return rows
-      .map((r: any) => ({
-        model: r.model,
-        count: Number(r.requests) || 0,
-        tokens: Math.round(Number(r.tokens) || 0),
-      }))
-      .sort((a, b) => b.count - a.count || b.tokens - a.tokens)
-      .slice(0, 10);
+    return getTopModelsByPromptRequests(since, 10);
   }
 
   async function getTopModelsByTokens(since: Date) {
