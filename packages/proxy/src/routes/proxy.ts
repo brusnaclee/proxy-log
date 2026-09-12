@@ -20,6 +20,9 @@ import {
 	resolveTokenSaverFlags,
 } from '../utils/token-saver/index.js';
 import {
+	getAccountUsageOverride,
+} from '../utils/account-usage-overrides.js';
+import {
 	applyAntiWaste,
 	buildAntiWasteShortCircuitJson,
 	buildAntiWasteShortCircuitSse,
@@ -137,6 +140,7 @@ import {
 	sqlExcludeDedicatedModels,
 	parseRateLimitWindow,
 	normalizeModelForLimit,
+	countAccountTurnHitsInWindow,
 } from '../utils/rate-limit.js';
 import {
 	countReserved,
@@ -1830,6 +1834,15 @@ proxy.all('/*', async (c) => {
 	const osDetected = detectOperatingSystem(userAgent, platformHint);
 	let normalizedIde = normalizeIdeName(ide);
 
+	// Per-account override (Kyra): keep IDE on no-log, turn→prompt dilution.
+	const accountOverride = await getAccountUsageOverride(keyRecord?.discordUserId ?? null);
+	const noLogKeepIde = !!(isNoLogKey && accountOverride?.noLogKeepIde);
+	const turnsPerPrompt = (accountOverride?.turnsPerPrompt && accountOverride.turnsPerPrompt > 0)
+		? Math.floor(accountOverride.turnsPerPrompt)
+		: 0; // 0 = disabled
+	// Sliding window for the dilution gate: matches the prompt window's effective period (default 24h for proxy).
+	const turnsPerPromptWindowMs = 24 * 60 * 60 * 1000;
+
 	// Canonical fingerprint = machine|ide slot (IDE change = new slot).
 	const fingerprint = canonicalFingerprintForRequest(
 		userAgent,
@@ -2707,6 +2720,8 @@ proxy.all('/*', async (c) => {
 					accountKeyIds,
 					effectivePromptLimit,
 					effectivePromptLimitWindow,
+					undefined,
+					turnsPerPrompt,
 				);
 				if (!plCheck.allowed) {
 					const windowMs = parseRateLimitWindow(effectivePromptLimitWindow);
@@ -3467,7 +3482,19 @@ proxy.all('/*', async (c) => {
 										),
 									};
 									if (isEdgeKey) applyEdgeLogFields(autoLogEntry, keyRecord);
-									if (isNoLogKey) applyNoLogFields(autoLogEntry);
+									if (isNoLogKey) {
+										autoLogEntry._ideDetectedToPreserve = noLogKeepIde ? (autoLogEntry.ideDetected || null) : null;
+										applyNoLogFields(autoLogEntry, noLogKeepIde);
+									}
+									// Kyra dilution: only every Nth counted hop becomes a prompt.
+									if (autoLogEntry.isCountedRequest && turnsPerPrompt > 0) {
+										const turnHits = await countAccountTurnHitsInWindow(
+											accountKeyIds,
+											turnsPerPromptWindowMs,
+											autoLogEntry.turnId,
+										);
+										autoLogEntry.isCountedRequest = ((turnHits + 1) % turnsPerPrompt) === 0;
+									}
 									const credits = isEdgeKey
 										? Number(autoLogEntry.upstreamCredits) || 0
 										: applyUpstreamCreditsToLogEntry(autoLogEntry, providerRow);
@@ -3669,7 +3696,19 @@ proxy.all('/*', async (c) => {
 					isBillableToken: true,
 				};
 				if (isEdgeKey) applyEdgeLogFields(autoLogEntry, keyRecord);
-				if (isNoLogKey) applyNoLogFields(autoLogEntry);
+				if (isNoLogKey) {
+					autoLogEntry._ideDetectedToPreserve = noLogKeepIde ? (autoLogEntry.ideDetected || null) : null;
+					applyNoLogFields(autoLogEntry, noLogKeepIde);
+				}
+				// Kyra dilution: only every Nth counted hop becomes a prompt.
+				if (autoLogEntry.isCountedRequest && turnsPerPrompt > 0) {
+					const turnHits = await countAccountTurnHitsInWindow(
+						accountKeyIds,
+						turnsPerPromptWindowMs,
+						autoLogEntry.turnId,
+					);
+					autoLogEntry.isCountedRequest = ((turnHits + 1) % turnsPerPrompt) === 0;
+				}
 					const credits = isEdgeKey
 						? Number(autoLogEntry.upstreamCredits) || 0
 						: applyUpstreamCreditsToLogEntry(autoLogEntry, providerRow);
@@ -4211,7 +4250,7 @@ proxy.all('/*', async (c) => {
 				keyRecord.perModelPromptLimitWindow || null,
 				config.globalPerModelPromptLimit || 0,
 				config.globalPerModelPromptLimitWindow || '1d',
-				{ teaseDefaultLimit: teaseDefault },
+				{ teaseDefaultLimit: teaseDefault, turnsPerPrompt },
 			);
 
 			if (mlCheck.effectiveLimit > 0) {
@@ -4332,6 +4371,8 @@ proxy.all('/*', async (c) => {
 				accountKeyIds,
 				effectivePromptLimit,
 				effectivePromptLimitWindow,
+				undefined,
+				turnsPerPrompt,
 			);
 			const windowMs = parseRateLimitWindow(effectivePromptLimitWindow);
 			const gScope = globalPromptBucketKey(accountKeyIds);
@@ -4946,7 +4987,10 @@ proxy.all('/*', async (c) => {
 					messageRole: messageAnalysis.messageRole,
 				};
 				if (isEdgeKey) applyEdgeLogFields(awEntry, keyRecord);
-				if (isNoLogKey) applyNoLogFields(awEntry);
+				if (isNoLogKey) {
+					awEntry._ideDetectedToPreserve = noLogKeepIde ? (awEntry.ideDetected || null) : null;
+					applyNoLogFields(awEntry, noLogKeepIde);
+				}
 				await db.insert(requestLogs).values(awEntry);
 				if (isEdgeKey) void pruneEdgeRequestLogs();
 			} catch (err) {
@@ -5033,6 +5077,16 @@ proxy.all('/*', async (c) => {
 			counted = true;
 		}
 
+		// Kyra-style dilution: meter as turns; only every Nth counted hop becomes a prompt.
+		if (counted && turnsPerPrompt > 0 && isBillableToken) {
+			const turnHits = await countAccountTurnHitsInWindow(
+				accountKeyIds,
+				turnsPerPromptWindowMs,
+				logEntry.turnId,
+			);
+			counted = ((turnHits + 1) % turnsPerPrompt) === 0;
+		}
+
 		enqueueLogWrite(async (tx) => {
 			logEntry.isCountedRequest = counted ? true : false;
 			logEntry.isBillableToken = isBillableToken ? true : false;
@@ -5041,7 +5095,13 @@ proxy.all('/*', async (c) => {
 				counted = false;
 				logEntry.isCountedRequest = false;
 			}
-			if (isNoLogKey) applyNoLogFields(logEntry);
+			if (isNoLogKey) {
+				logEntry._ideDetectedToPreserve = noLogKeepIde ? (logEntry.ideDetected || null) : null;
+				applyNoLogFields(logEntry, noLogKeepIde);
+				if (noLogKeepIde) {
+					logEntry.clientName = logEntry.clientName || logEntry.ideDetected || null;
+				}
+			}
 			const credits = isEdgeKey
 				? Number(logEntry.upstreamCredits) || 0
 				: applyUpstreamCreditsToLogEntry(logEntry, targetProvider);

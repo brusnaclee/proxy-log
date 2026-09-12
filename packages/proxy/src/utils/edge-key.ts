@@ -472,14 +472,19 @@ export function applyEdgeLogFields(
 /**
  * No-log mode for privileged keys (e.g. staff/admin): keep apiKeyId, apiKeyName,
  * and billable token/credit fields; null out all PII and raw payloads.
+ * If noLogKeepIde is enabled (account_usage_overrides), retain ideDetected on request_logs.
  */
-export function applyNoLogFields(entry: Record<string, any>): Record<string, any> {
+export function applyNoLogFields(
+	entry: Record<string, any>,
+	noLogKeepIde?: boolean,
+): Record<string, any> {
 	entry.userAgentRaw = null;
 	entry.osDetected = null;
+	// Strip clientName unless we're keeping IDE — in that case set it from IDE below.
 	entry.clientName = null;
 	entry.ipAddress = null;
 	entry.deviceFingerprint = null;
-	entry.ideDetected = null;
+	if (!noLogKeepIde) entry.ideDetected = null;
 	entry.sessionId = null;
 	entry.contextFingerprint = null;
 	entry.requestPreview = null;
@@ -488,6 +493,10 @@ export function applyNoLogFields(entry: Record<string, any>): Record<string, any
 	entry.estimatedContextLength = 0;
 	entry.userMessageHash = null;
 	entry.messageRole = null;
+	// Restore IDE when keeping IDE for no-log keys.
+	if (noLogKeepIde && entry._ideDetectedToPreserve) {
+		entry.ideDetected = entry._ideDetectedToPreserve as string | undefined;
+	}
 	return entry;
 }
 export async function pruneEdgeRequestLogs(keep = EDGE_LOG_KEEP): Promise<void> {

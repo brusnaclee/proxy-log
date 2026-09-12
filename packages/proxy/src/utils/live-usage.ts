@@ -51,6 +51,7 @@ import {
 	sumAddonDailyTokenBonus,
 } from './addons.js';
 import { buildModelPromptUsage } from './model-prompt-usage.js';
+import { getAccountUsageOverride } from './account-usage-overrides.js';
 
 export type LimitSource = 'override' | 'global' | 'none' | 'addon';
 
@@ -227,6 +228,10 @@ export async function buildLiveUsageForKey(
 	const monthStart = new Date(wibMonthStartSql().replace(' ', 'T') + 'Z');
 	const { dailyResetAt, monthlyResetAt } = resetTimestamps();
 	const tmOpts = key.isTrial ? { isTrial: true as const } : undefined;
+
+	// Per-account usage overrides (Kyra: turn→prompt dilution, no-log keep IDE).
+	const accountUsageOverride = await getAccountUsageOverride(key.discordUserId ?? null);
+	const turnsPerPromptForKey = accountUsageOverride?.turnsPerPrompt || 0;
 
 	let scope: 'account' | 'key' = 'key';
 	let accountKeys: KeyRow[] = [key];
@@ -463,6 +468,7 @@ export async function buildLiveUsageForKey(
 			promptLimit,
 			promptLimitWindow,
 			promptWindowStartRaw,
+			turnsPerPromptForKey,
 		);
 		promptUsed = plCheck.used;
 		promptResetMins = Math.ceil(plCheck.resetMs / 60000);

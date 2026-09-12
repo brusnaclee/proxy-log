@@ -105,6 +105,13 @@ export const adminConfig = pgTable('admin_config', {
 	 * Defaults: premium/pro = zero_unless_addon; phantom + staff = follow_global
 	 */
 	roleLimitModes: text('role_limit_modes').notNull().default('{}'),
+	/**
+	 * JSON map keyed by Discord user id (snowflake) with per-account usage overrides.
+	 * Shape: { "<discordUserId>": { turnsPerPrompt?: number, noLogKeepIde?: boolean } }
+	 * - turnsPerPrompt: meter as turns; only every Nth counted request counts as a prompt (no-log path).
+	 * - noLogKeepIde: when true, no-log keys keep `ideDetected` (other PII stays stripped).
+	 */
+	accountUsageOverrides: text('account_usage_overrides').notNull().default('{}'),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
 	updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });

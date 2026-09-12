@@ -47,10 +47,24 @@ test_ps.txt
 test_node.txt
 agent-tools/
 
+# Ad-hoc audit / debug captures (NEVER commit — may contain API keys / IPs / UAs)
+audit-*.txt
+deploy-out.txt
+live-out.txt
+restart-out.txt
+pm2-err.txt
+pm2-tail.txt
+tsc-out.txt
+.commit-msg.txt
+
 # Local-only ops scripts (keep on disk, never on GitHub)
 scripts/
 packages/**/scripts/
 **/scripts/
+
+# Local-only ad-hoc verify / bootstrap scripts (must NOT be committed)
+_*.mjs
+**/_*.mjs
 
 # Documentation & editor (local only)
 docs/

@@ -30,6 +30,8 @@ Details about the SQLite schema, models, and data flows.
 Deep dives into specific functionalities and integrations.
 - [Discord Bot Integration](features/discord_bot_integration.md)
 - [Rate Limiting and Tokens](features/rate_limiting_and_tokens.md)
+- [Account Usage Overrides (Kyra mode)](features/account_usage_overrides.md)
+- [Model Catalog: clientOnline = Published](features/model_catalog_published.md)
 - [Usage Display Sync (shared vs per-key)](features/usage_display_sync.md)
 - [Key Access Lifecycle (Phantom / Pro / Add-on)](features/key_access_lifecycle.md)
 - [Reset Timestamp Display Sync](features/reset_timestamp_display.md)

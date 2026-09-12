@@ -53,9 +53,10 @@ export function isProbeOk(httpStatus: number | null | undefined): boolean {
 /**
  * Client catalog / Discord / chat access matrix:
  * - visible: show in /v1/models, portal, Discord when admin Published ON
- * - requestable: allow chat when Published ON (Probe is advisory — stale Fail must not 503)
- * - clientOnline: label "Online" only when Published AND Probe OK
- * Admin Model Monitor always lists all models regardless.
+ * - requestable: allow chat when admin Published ON (probe is informational only — clients must
+ *   mirror admin 1:1 so DC / user dashboard / gate agree even when probe is stale or failing)
+ * - clientOnline: equals admin Published. Probe OK no longer suppresses Online label.
+ * Admin Model Monitor still shows Probe separately for ops.
  */
 export type ClientCatalogFlags = {
   published: boolean;
@@ -75,7 +76,7 @@ export function getClientCatalogFlags(params: {
     published,
     probeOk,
     visible: published,
-    clientOnline: published && probeOk,
+    clientOnline: published,
     requestable: published,
   };
 }

@@ -441,13 +441,19 @@ export function findDedicatedRuleForModel(
  * Count prompts as distinct turns (1 turn = 1 prompt) in a **fixed** window
  * that starts on the first request (`prompt_window_start`) and cliffs to 0
  * after windowMs (e.g. 50 / 5h → reset at start+5h, not sliding oldest+5h).
+ *
+ * If `turnsPerPrompt > 0` (per-account override), the meter becomes "turn hits":
+ * each counted turn still hits the underlying hop, but the prompt counter only
+ * advances every Nth turn. We query `COUNT(*) FILTER (WHERE is_counted_request)`,
+ * which matches the write-path gate (writes only set is_counted_request on the Nth turn).
  */
 export async function checkPromptLimit(
   apiKeyId: number | number[],
   promptLimit: number,
   windowStr: string,
   fixedWindowStart?: string | null,
-): Promise<{ allowed: boolean; remaining: number; resetMs: number; used: number }> {
+  turnsPerPrompt = 0,
+): Promise<{ allowed: boolean; remaining: number; resetMs: number; used: number; turnHits?: number }> {
   if (promptLimit <= 0) return { allowed: true, remaining: -1, resetMs: 0, used: 0 };
   const windowMs = parseRateLimitWindow(windowStr);
   if (windowMs <= 0) return { allowed: true, remaining: -1, resetMs: 0, used: 0 };
@@ -465,8 +471,10 @@ export async function checkPromptLimit(
     ? new Date(fixed.windowStartMs)
     : new Date(nowMs - windowMs);
 
+  const diluted = turnsPerPrompt > 0;
   const usage = await db.select({
-    count: sql<number>`COUNT(DISTINCT ${requestLogs.turnId})`,
+    turnHits: sql<number>`COUNT(DISTINCT ${requestLogs.turnId})`,
+    countedPrompts: sql<number>`COALESCE(SUM(CASE WHEN ${requestLogs.isCountedRequest} THEN 1 ELSE 0 END), 0)::int`,
     oldest: sql<string | null>`MIN(${requestLogs.createdAt})`,
   })
     .from(requestLogs)
@@ -477,7 +485,10 @@ export async function checkPromptLimit(
       sql`turn_id IS NOT NULL`,
     ));
 
-  const used = Number(usage[0]?.count) || 0;
+  const turnHitsRaw = Number(usage[0]?.turnHits) || 0;
+  const countedPromptsRaw = Number(usage[0]?.countedPrompts) || 0;
+  // Both formulas MUST agree for non-diluted: countedPrompts == turnHits/N floor.
+  const used = diluted ? countedPromptsRaw : turnHitsRaw;
   let resetMs = fixed.active ? fixed.resetMs : 0;
   if (!fixed.active) {
     const oldestRaw = usage[0]?.oldest;
@@ -491,7 +502,29 @@ export async function checkPromptLimit(
     remaining: Math.max(0, promptLimit - used),
     resetMs,
     used,
+    turnHits: turnHitsRaw,
   };
+}
+
+/** Count turn hits (DISTINCT turn_id) for diluted accounts — write-side gate. */
+export async function countAccountTurnHitsInWindow(
+  apiKeyId: number | number[],
+  windowMs: number,
+  excludeTurnId?: string | null,
+): Promise<number> {
+  const apiKeyIds = normalizeKeyIds(apiKeyId);
+  const since = new Date(Date.now() - Math.max(1, windowMs));
+  const rows = await db
+    .select({ c: sql<number>`COUNT(DISTINCT ${requestLogs.turnId})` })
+    .from(requestLogs)
+    .where(and(
+      keyIdMatch(apiKeyIds),
+      gte(requestLogs.createdAt, since),
+      sql`status_code BETWEEN 200 AND 299`,
+      sql`turn_id IS NOT NULL`,
+      excludeTurnId ? sql`${requestLogs.turnId} <> ${excludeTurnId}` : sql`true`,
+    ));
+  return Number(rows[0]?.c) || 0;
 }
 
 /**
@@ -564,6 +597,8 @@ export async function getApiCallWindowResetMs(
 export type CheckModelPromptLimitOpts = {
   /** Fallback when no override/default applies (e.g. non-addon Claude/GPT-5.6 tease = 3). */
   teaseDefaultLimit?: number;
+  /** Per-account turn→prompt dilution (e.g. Kyra = 100). */
+  turnsPerPrompt?: number;
 };
 
 /**
@@ -675,8 +710,10 @@ export async function checkModelPromptLimit(
     windowStartDate = new Date(nowMs - windowMs);
   }
 
+  const diluted = !!(opts && opts.turnsPerPrompt && opts.turnsPerPrompt > 0);
   const usage = await db.select({
-    count: sql<number>`COUNT(DISTINCT ${requestLogs.turnId})`,
+    turnHits: sql<number>`COUNT(DISTINCT ${requestLogs.turnId})`,
+    countedPrompts: sql<number>`COALESCE(SUM(CASE WHEN ${requestLogs.isCountedRequest} THEN 1 ELSE 0 END), 0)::int`,
     oldest: sql<string | null>`MIN(${requestLogs.createdAt})`,
   })
     .from(requestLogs)
@@ -688,7 +725,9 @@ export async function checkModelPromptLimit(
       sql`turn_id IS NOT NULL`,
     ));
 
-  const used = Number(usage[0]?.count) || 0;
+  const turnHitsRaw = Number(usage[0]?.turnHits) || 0;
+  const countedPromptsRaw = Number(usage[0]?.countedPrompts) || 0;
+  const used = diluted ? countedPromptsRaw : turnHitsRaw;
   if (useSlidingReset) {
     const oldestRaw = usage[0]?.oldest;
     if (oldestRaw) {
