@@ -32,9 +32,14 @@ export async function getAccountUsageOverrides(): Promise<Record<string, Account
 	}
 	let parsed: Record<string, AccountUsageOverride> = {};
 	try {
-		const obj = JSON.parse(raw);
+		// Tolerate accidental string-concat of multiple JSON objects from bad seed SQL.
+		const trimmed = String(raw || '{}').trim();
+		const firstObjEnd = trimmed.indexOf('}{');
+		const candidate = firstObjEnd > 0 ? trimmed.slice(0, firstObjEnd + 1) : trimmed;
+		const obj = JSON.parse(candidate);
 		if (obj && typeof obj === 'object') parsed = obj as Record<string, AccountUsageOverride>;
-	} catch {
+	} catch (err) {
+		console.warn('[account-usage-overrides] invalid JSON, ignoring:', (err as Error)?.message || err);
 		parsed = {};
 	}
 	cache = { ts: Date.now(), map: parsed };

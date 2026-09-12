@@ -3450,10 +3450,10 @@ proxy.all('/*', async (c) => {
 									apiKeyName: keyRecord.name,
 									userAgentRaw: isNoLogKey ? null : (userAgent || null),
 									osDetected: isNoLogKey ? null : osDetected,
-									clientName: isNoLogKey ? null : (clientName || ide),
+									clientName: (isNoLogKey && !noLogKeepIde) ? null : (clientName || ide),
 									ipAddress: isNoLogKey ? null : clientIp,
 									deviceFingerprint: isNoLogKey ? null : effectiveFingerprint,
-									ideDetected: isNoLogKey ? null : ide,
+									ideDetected: (isNoLogKey && !noLogKeepIde) ? null : ide,
 									provider: candidate.provider,
 									endpointPath: path,
 									sessionId: isNoLogKey ? null : autoSessionInfo.sessionId,
@@ -3483,7 +3483,7 @@ proxy.all('/*', async (c) => {
 									};
 									if (isEdgeKey) applyEdgeLogFields(autoLogEntry, keyRecord);
 									if (isNoLogKey) {
-										autoLogEntry._ideDetectedToPreserve = noLogKeepIde ? (autoLogEntry.ideDetected || null) : null;
+										autoLogEntry._ideDetectedToPreserve = noLogKeepIde ? (ide || autoLogEntry.ideDetected || null) : null;
 										applyNoLogFields(autoLogEntry, noLogKeepIde);
 									}
 									// Kyra dilution: only every Nth counted hop becomes a prompt.
@@ -3664,10 +3664,10 @@ proxy.all('/*', async (c) => {
 					apiKeyName: keyRecord.name,
 					userAgentRaw: isNoLogKey ? null : (userAgent || null),
 					osDetected: isNoLogKey ? null : osDetected,
-					clientName: isNoLogKey ? null : (clientName || ide),
+					clientName: (isNoLogKey && !noLogKeepIde) ? null : (clientName || ide),
 					ipAddress: isNoLogKey ? null : clientIp,
 					deviceFingerprint: isNoLogKey ? null : effectiveFingerprint,
-					ideDetected: isNoLogKey ? null : ide,
+					ideDetected: (isNoLogKey && !noLogKeepIde) ? null : ide,
 					provider: candidate.provider,
 					endpointPath: path,
 					sessionId: isNoLogKey ? null : autoSessionInfo.sessionId,
@@ -3697,7 +3697,7 @@ proxy.all('/*', async (c) => {
 				};
 				if (isEdgeKey) applyEdgeLogFields(autoLogEntry, keyRecord);
 				if (isNoLogKey) {
-					autoLogEntry._ideDetectedToPreserve = noLogKeepIde ? (autoLogEntry.ideDetected || null) : null;
+					autoLogEntry._ideDetectedToPreserve = noLogKeepIde ? (ide || autoLogEntry.ideDetected || null) : null;
 					applyNoLogFields(autoLogEntry, noLogKeepIde);
 				}
 				// Kyra dilution: only every Nth counted hop becomes a prompt.
@@ -4988,7 +4988,7 @@ proxy.all('/*', async (c) => {
 				};
 				if (isEdgeKey) applyEdgeLogFields(awEntry, keyRecord);
 				if (isNoLogKey) {
-					awEntry._ideDetectedToPreserve = noLogKeepIde ? (awEntry.ideDetected || null) : null;
+					awEntry._ideDetectedToPreserve = noLogKeepIde ? (ide || awEntry.ideDetected || null) : null;
 					applyNoLogFields(awEntry, noLogKeepIde);
 				}
 				await db.insert(requestLogs).values(awEntry);
@@ -5096,7 +5096,7 @@ proxy.all('/*', async (c) => {
 				logEntry.isCountedRequest = false;
 			}
 			if (isNoLogKey) {
-				logEntry._ideDetectedToPreserve = noLogKeepIde ? (logEntry.ideDetected || null) : null;
+				logEntry._ideDetectedToPreserve = noLogKeepIde ? (ide || logEntry.ideDetected || null) : null;
 				applyNoLogFields(logEntry, noLogKeepIde);
 				if (noLogKeepIde) {
 					logEntry.clientName = logEntry.clientName || logEntry.ideDetected || null;
@@ -5281,10 +5281,10 @@ proxy.all('/*', async (c) => {
 		apiKeyName: keyRecord.name,
 		userAgentRaw: isNoLogKey ? null : (userAgent || null),
 		osDetected: isNoLogKey ? null : osDetected,
-		clientName: isNoLogKey ? null : (clientName || ide),
+		clientName: (isNoLogKey && !noLogKeepIde) ? null : (clientName || ide),
 		ipAddress: isNoLogKey ? null : clientIp,
 		deviceFingerprint: isNoLogKey ? null : effectiveFingerprint,
-		ideDetected: isNoLogKey ? null : ide,
+		ideDetected: (isNoLogKey && !noLogKeepIde) ? null : ide,
 		provider,
 		endpointPath: path,
 		sessionId: isNoLogKey ? null : sessionInfo.sessionId,
