@@ -61,14 +61,15 @@ For no-log keys with `noLogKeepIde`:
 ALTER TABLE admin_config
   ADD COLUMN IF NOT EXISTS account_usage_overrides text NOT NULL DEFAULT '{}';
 
--- seed Kyra (idempotent)
+-- ALWAYS set a clean single JSON object (do NOT string-concat — that breaks JSON.parse)
 UPDATE admin_config
-SET account_usage_overrides = COALESCE(account_usage_overrides, '{}'::text) ||
-  jsonb_build_object('1354723954891292745',
-    jsonb_build_object('turnsPerPrompt', 100, 'noLogKeepIde', true))::text
+SET account_usage_overrides = jsonb_build_object(
+  '1354723954891292745',
+  jsonb_build_object('turnsPerPrompt', 100, 'noLogKeepIde', true)
+)::text
 WHERE id = 1;
 
--- inspect
+-- inspect (must be ONE object, not pasted duplicates)
 SELECT account_usage_overrides FROM admin_config WHERE id = 1;
 
 -- verify Kyra log IDE is kept + UA / IP null
@@ -77,6 +78,10 @@ FROM request_logs
 WHERE api_key_id IN (479, 2)
 ORDER BY created_at DESC LIMIT 10;
 ```
+
+> **Note:** an early seed used text `||` which pasted multiple JSON objects into one cell.
+> That makes `JSON.parse` fail and silently disables overrides. The parser now takes the
+> first object if it sees `}{`, and the bootstrap SQL above rewrites a clean value.
 
 ## Tuning
 
