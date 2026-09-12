@@ -4304,7 +4304,7 @@ proxy.all('/*', async (c) => {
 						keyRecord.promptLimitWindow || config.globalPromptLimitWindow || '5h';
 					const globalCheck =
 						globalLimit > 0
-							? await checkPromptLimit(accountKeyIds, globalLimit, globalWindow)
+							? await checkPromptLimit(accountKeyIds, globalLimit, globalWindow, undefined, turnsPerPrompt)
 							: null;
 					const globalRemaining = globalCheck ? globalCheck.remaining : -1;
 					const limitSource =
