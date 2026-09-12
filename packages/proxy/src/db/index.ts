@@ -125,15 +125,18 @@ export async function initializeDatabase() {
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS moderator_role_id text DEFAULT '1354683043478110309'`);
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS role_limit_modes text NOT NULL DEFAULT '{}'`);
 		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS account_usage_overrides text NOT NULL DEFAULT '{}'`);
-		// Seed Kyra (no-log + turn→prompt 100:1) so deploy leaves the JSON populated. Idempotent.
-		await pool.query(
-			`UPDATE admin_config SET account_usage_overrides = COALESCE(account_usage_overrides, '{}'::text) || jsonb_build_object('1354723954891292745', jsonb_build_object('turnsPerPrompt', 100, 'noLogKeepIde', true))::text WHERE id = 1`,
-		);
-		await pool.query(`ALTER TABLE admin_config ADD COLUMN IF NOT EXISTS account_usage_overrides text NOT NULL DEFAULT '{}'`);
-		// Seed Kyra (no-log + turn→prompt 100:1) so deploy leaves the JSON populated. Idempotent.
-		await pool.query(
-			`UPDATE admin_config SET account_usage_overrides = COALESCE(account_usage_overrides, '{}'::text) || jsonb_build_object('1354723954891292745', jsonb_build_object('turnsPerPrompt', 100, 'noLogKeepIde', true))::text WHERE id = 1`,
-		);
+		// Seed Kyra (no-log + turn→prompt 100:1). Merge as jsonb so re-runs stay idempotent.
+		await pool.query(`
+			UPDATE admin_config
+			SET account_usage_overrides = (
+				COALESCE(NULLIF(account_usage_overrides, ''), '{}')::jsonb
+				|| jsonb_build_object(
+					'1354723954891292745',
+					jsonb_build_object('turnsPerPrompt', 100, 'noLogKeepIde', true)
+				)
+			)::text
+			WHERE id = 1
+		`);
 		await pool.query(`UPDATE admin_config SET required_role_id = '1354646304042651728' WHERE required_role_id IS NULL OR required_role_id = ''`);
 		await pool.query(`UPDATE admin_config SET trial_required_role_id = '1354682641961582632' WHERE trial_required_role_id IS NULL OR trial_required_role_id = ''`);
 		await pool.query(`UPDATE admin_config SET pro_role_id = '1354682701453725857' WHERE pro_role_id IS NULL OR pro_role_id = ''`);

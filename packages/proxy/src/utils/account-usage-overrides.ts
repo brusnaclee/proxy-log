@@ -3,8 +3,8 @@
  * Used for Kyra-style accounts where is_no_log breaks turn/session grouping: meter as turns,
  * count every Nth as a prompt, optionally keep IDE on no-log keys.
  */
-import { sql, eq } from 'drizzle-orm';
-import { adminConfig } from '../db/schema';
+import { eq } from 'drizzle-orm';
+import { adminConfig } from '../db/schema.js';
 import { db } from '../db/index.js';
 
 export type AccountUsageOverride = {
@@ -62,6 +62,3 @@ export async function refreshAccountUsageOverridesCache(): Promise<void> {
 	cache = null;
 	await getAccountUsageOverrides();
 }
-
-// Re-export sql for any callers that need to compare turn counts on write path.
-export { sql };
