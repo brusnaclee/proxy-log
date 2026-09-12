@@ -20,6 +20,7 @@ import {
   sqlExcludeDedicatedModels,
   sqlMatchDedicatedRule,
 } from "../../utils/rate-limit.js";
+import { getAccountUsageOverride } from "../../utils/account-usage-overrides.js";
 import { isInternalRequest } from "../../middleware/session.js";
 import { configCache } from "../../utils/cache.js";
 import { BILLABLE_LOG_SQL, VALID_LOG_SQL, turnCountSql, hopCountSql, turnPromptTokensSql, peakPromptTokensSql, turnCompletionTokensSql, turnDisplayCompletionTokensSql, turnBillablePromptTokensSql, turnCachedTokensSql, sanitizeRows, groupedInputSumSql, weightedHopInputTokensSql, weightedHopTotalTokensSql, modelLimitCreditBreakdownSql, normalizeTokenLimitWeightPercent } from "../../utils/counting.js";
@@ -813,7 +814,9 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
   const promptScopeIds = accountKeyIds;
 
   if (globalLimit > 0) {
-    const plCheck = await checkPromptLimit(promptScopeIds, globalLimit, globalWindow, key.promptWindowStart);
+    const accountOverride = await getAccountUsageOverride(key.discordUserId);
+    const turnsPerPrompt = accountOverride?.turnsPerPrompt || 0;
+    const plCheck = await checkPromptLimit(promptScopeIds, globalLimit, globalWindow, key.promptWindowStart, turnsPerPrompt);
     globalUsed = plCheck.used;
     globalResetMins = Math.ceil(plCheck.resetMs / 60000);
     promptResetAt = plCheck.resetMs > 0 ? new Date(Date.now() + plCheck.resetMs).toISOString() : null;

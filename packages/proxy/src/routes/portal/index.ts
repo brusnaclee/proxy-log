@@ -26,6 +26,7 @@ import {
   sqlExcludeDedicatedModels,
   sqlMatchDedicatedRule,
 } from "../../utils/rate-limit.js";
+import { getAccountUsageOverride } from "../../utils/account-usage-overrides.js";
 import { buildModelPromptUsage } from "../../utils/model-prompt-usage.js";
 import { logEmitter } from "../../utils/event-emitter.js";
 import { randomBytes } from "crypto";
@@ -405,11 +406,14 @@ portal.get("/me", async (c) => {
     ? [windowKeyId, ...accountKeyIds.filter((id) => id !== windowKeyId)]
     : accountKeyIds;
   if (primaryKey && promptLimit > 0 && promptScopeIds.length > 0) {
+    const accountOverride = await getAccountUsageOverride(primaryKey.discordUserId);
+    const turnsPerPrompt = accountOverride?.turnsPerPrompt || 0;
     const plCheck = await checkPromptLimit(
       promptScopeIds,
       promptLimit,
       promptLimitWindow,
       primaryKey.promptWindowStart,
+      turnsPerPrompt,
     );
     promptUsed = plCheck.used;
     promptResetMins = Math.ceil(plCheck.resetMs / 60000);
