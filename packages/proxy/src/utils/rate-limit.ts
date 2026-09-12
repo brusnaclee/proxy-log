@@ -474,7 +474,6 @@ export async function checkPromptLimit(
   const diluted = turnsPerPrompt > 0;
   const usage = await db.select({
     turnHits: sql<number>`COUNT(DISTINCT ${requestLogs.turnId})`,
-    countedPrompts: sql<number>`COALESCE(SUM(CASE WHEN ${requestLogs.isCountedRequest} THEN 1 ELSE 0 END), 0)::int`,
     oldest: sql<string | null>`MIN(${requestLogs.createdAt})`,
   })
     .from(requestLogs)
@@ -486,9 +485,11 @@ export async function checkPromptLimit(
     ));
 
   const turnHitsRaw = Number(usage[0]?.turnHits) || 0;
-  const countedPromptsRaw = Number(usage[0]?.countedPrompts) || 0;
-  // Both formulas MUST agree for non-diluted: countedPrompts == turnHits/N floor.
-  const used = diluted ? countedPromptsRaw : turnHitsRaw;
+  // Diluted accounts: always floor(turns/N). Do NOT trust historical is_counted_request
+  // (pre-dilution rows were all counted=true and inflate the bar 1:1 with API calls).
+  const used = diluted
+    ? Math.floor(turnHitsRaw / turnsPerPrompt)
+    : turnHitsRaw;
   let resetMs = fixed.active ? fixed.resetMs : 0;
   if (!fixed.active) {
     const oldestRaw = usage[0]?.oldest;
@@ -713,7 +714,6 @@ export async function checkModelPromptLimit(
   const diluted = !!(opts && opts.turnsPerPrompt && opts.turnsPerPrompt > 0);
   const usage = await db.select({
     turnHits: sql<number>`COUNT(DISTINCT ${requestLogs.turnId})`,
-    countedPrompts: sql<number>`COALESCE(SUM(CASE WHEN ${requestLogs.isCountedRequest} THEN 1 ELSE 0 END), 0)::int`,
     oldest: sql<string | null>`MIN(${requestLogs.createdAt})`,
   })
     .from(requestLogs)
@@ -726,8 +726,9 @@ export async function checkModelPromptLimit(
     ));
 
   const turnHitsRaw = Number(usage[0]?.turnHits) || 0;
-  const countedPromptsRaw = Number(usage[0]?.countedPrompts) || 0;
-  const used = diluted ? countedPromptsRaw : turnHitsRaw;
+  const used = diluted
+    ? Math.floor(turnHitsRaw / (opts!.turnsPerPrompt as number))
+    : turnHitsRaw;
   if (useSlidingReset) {
     const oldestRaw = usage[0]?.oldest;
     if (oldestRaw) {

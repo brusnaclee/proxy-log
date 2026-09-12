@@ -3486,14 +3486,21 @@ proxy.all('/*', async (c) => {
 										autoLogEntry._ideDetectedToPreserve = noLogKeepIde ? (ide || autoLogEntry.ideDetected || null) : null;
 										applyNoLogFields(autoLogEntry, noLogKeepIde);
 									}
-									// Kyra dilution: only every Nth counted hop becomes a prompt.
+									// Kyra dilution: prompt_used = floor(turns/N); flag only when crossing a multiple.
 									if (autoLogEntry.isCountedRequest && turnsPerPrompt > 0) {
+										const windowStr =
+											keyRecord.promptLimitWindow ||
+											config?.globalPromptLimitWindow ||
+											'5h';
+										const windowMs = parseRateLimitWindow(windowStr) || turnsPerPromptWindowMs;
 										const turnHits = await countAccountTurnHitsInWindow(
 											accountKeyIds,
-											turnsPerPromptWindowMs,
+											windowMs,
 											autoLogEntry.turnId,
 										);
-										autoLogEntry.isCountedRequest = ((turnHits + 1) % turnsPerPrompt) === 0;
+										autoLogEntry.isCountedRequest =
+											Math.floor((turnHits + 1) / turnsPerPrompt) >
+											Math.floor(turnHits / turnsPerPrompt);
 									}
 									const credits = isEdgeKey
 										? Number(autoLogEntry.upstreamCredits) || 0
@@ -3700,14 +3707,21 @@ proxy.all('/*', async (c) => {
 					autoLogEntry._ideDetectedToPreserve = noLogKeepIde ? (ide || autoLogEntry.ideDetected || null) : null;
 					applyNoLogFields(autoLogEntry, noLogKeepIde);
 				}
-				// Kyra dilution: only every Nth counted hop becomes a prompt.
+				// Kyra dilution: prompt_used = floor(turns/N); flag only when crossing a multiple.
 				if (autoLogEntry.isCountedRequest && turnsPerPrompt > 0) {
+					const windowStr =
+						keyRecord.promptLimitWindow ||
+						config?.globalPromptLimitWindow ||
+						'5h';
+					const windowMs = parseRateLimitWindow(windowStr) || turnsPerPromptWindowMs;
 					const turnHits = await countAccountTurnHitsInWindow(
 						accountKeyIds,
-						turnsPerPromptWindowMs,
+						windowMs,
 						autoLogEntry.turnId,
 					);
-					autoLogEntry.isCountedRequest = ((turnHits + 1) % turnsPerPrompt) === 0;
+					autoLogEntry.isCountedRequest =
+						Math.floor((turnHits + 1) / turnsPerPrompt) >
+						Math.floor(turnHits / turnsPerPrompt);
 				}
 					const credits = isEdgeKey
 						? Number(autoLogEntry.upstreamCredits) || 0
@@ -5068,23 +5082,29 @@ proxy.all('/*', async (c) => {
 			logEntry.turnId = fallbackTurnId;
 		}
 
-		// First billable hop of each turn counts toward prompt quota / window start.
-		// Gate opens turns via willStartNewTurn (= isNewPrompt || !cachedTurnId); logging
-		// used to require isNewPrompt alone, so sessions with false isNewPrompt never set
-		// is_counted_request — prompt_window_start stayed expired and meters showed 0/N.
-		let counted = false;
+		// First billable hop of each turn. Diluted accounts treat these as "turn hits";
+		// only every Nth becomes a prompt (is_counted_request).
+		let isNewTurnHit = false;
 		if (isBillableToken && markPromptCountedTurn(logEntry.turnId)) {
-			counted = true;
+			isNewTurnHit = true;
 		}
+		let counted = isNewTurnHit;
 
-		// Kyra-style dilution: meter as turns; only every Nth counted hop becomes a prompt.
-		if (counted && turnsPerPrompt > 0 && isBillableToken) {
+		// Kyra-style dilution: prompt_used = floor(turns/N). Flag only when we cross a multiple.
+		if (isNewTurnHit && turnsPerPrompt > 0) {
+			const windowStr =
+				keyRecord.promptLimitWindow ||
+				config?.globalPromptLimitWindow ||
+				'5h';
+			const windowMs = parseRateLimitWindow(windowStr) || turnsPerPromptWindowMs;
 			const turnHits = await countAccountTurnHitsInWindow(
 				accountKeyIds,
-				turnsPerPromptWindowMs,
+				windowMs,
 				logEntry.turnId,
 			);
-			counted = ((turnHits + 1) % turnsPerPrompt) === 0;
+			counted =
+				Math.floor((turnHits + 1) / turnsPerPrompt) >
+				Math.floor(turnHits / turnsPerPrompt);
 		}
 
 		enqueueLogWrite(async (tx) => {
@@ -5170,7 +5190,10 @@ proxy.all('/*', async (c) => {
 					.where(eq(chatSessions.sessionId, sessionInfo.sessionId));
 			}
 
-			if (!isEdgeKey && counted) {
+			// Open/refresh prompt window on every new turn hit. For diluted accounts
+			// (Kyra) is_counted_request is rare (every Nth), but the window must still
+			// advance so floor(turns/N) shares the same 5h cliff as API-call window.
+			if (!isEdgeKey && (turnsPerPrompt > 0 ? isNewTurnHit : counted)) {
 				// Prompt window tracking (distinct-turn quota)
 				const globalWindowStr =
 					keyRecord.promptLimitWindow ||

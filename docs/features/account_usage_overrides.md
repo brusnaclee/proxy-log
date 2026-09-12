@@ -28,13 +28,13 @@ so every hop gets counted as a fresh prompt — for a tool-loop agent this explo
 
 With `turnsPerPrompt = N`:
 
-- Each billable hop that was going to be `is_counted_request` still becomes `+1 turn`.
-- Only every Nth turn gets `is_counted_request = true`.
-- `checkPromptLimit` and `checkModelPromptLimit` return the **counted-prompt** value
-  (`SUM(CASE WHEN is_counted_request THEN 1 ELSE 0 END)`), not `COUNT(DISTINCT turn_id)`.
+- Each billable hop that was going to be a prompt still becomes `+1 turn` (≈ +1 API call for Kyra no-log).
+- Write path sets `is_counted_request = true` only when `floor((turns+1)/N) > floor(turns/N)`.
+- **Read path (gate / portal / Discord):** `prompt_used = floor(turn_count / N)` — never `SUM(is_counted_request)`
+  (historical pre-fix rows were all counted=true and made Prompt bar rise 1:1 with API calls).
 - API-call count, token math, amanai dual-path — unchanged.
 
-So 1000 hops at 100:1 = 10 prompts; API-call count still 1000.
+So **46 API calls → 0 prompts**; **100 API calls → 1 prompt**; **1000 → 10**.
 
 ## IDE preservation
 
