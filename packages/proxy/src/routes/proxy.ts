@@ -5122,9 +5122,20 @@ proxy.all('/*', async (c) => {
 					logEntry.clientName = logEntry.clientName || logEntry.ideDetected || null;
 				}
 			}
-			const credits = isEdgeKey
+			// Error rows (502/empty): skip upstream credit charging. We only persist the
+			// failure for diagnostics; upstream Phantom/Amanai does NOT charge credits
+			// when the request fails — so the local meter must match (0 credits).
+			const logStatusCode = Number(logEntry.statusCode) || 0;
+			const isFailedRow = logStatusCode < 200 || logStatusCode >= 300;
+			const credits = isFailedRow
+				? 0
+				: isEdgeKey
 				? Number(logEntry.upstreamCredits) || 0
 				: applyUpstreamCreditsToLogEntry(logEntry, targetProvider);
+			if (isFailedRow) {
+				logEntry.upstreamCredits = 0;
+				logEntry.upstreamCreditsOut = 0;
+			}
 			const inserted = await tx
 				.insert(requestLogs)
 				.values(logEntry)
