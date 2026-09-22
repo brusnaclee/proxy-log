@@ -1,9 +1,13 @@
 import { Hono } from "hono";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { addonAssignments, addons, apiKeys } from "../../db/schema.js";
 import { parseAllowlist, parseModelDailyLimits, parsePatternList } from "../../utils/addons.js";
 import { getProxyPublicEndpoint } from "../../utils/proxy-public-url.js";
+import {
+	ADDON_KEEP_LATEST,
+	archiveAddonAssignmentsBeyondLimit,
+} from "../../utils/addon-history-trim.js";
 
 const addonsApi = new Hono();
 
@@ -212,9 +216,17 @@ addonsApi.get("/addons/:id/assignments", async (c) => {
 
 addonsApi.get("/addon-assignments", async (c) => {
   const discordUserId = c.req.query("discordUserId");
+  // includeArchived=true returns soft-archived rows too (admin audit).
+  // Default: live rows only.
+  const includeArchived = c.req.query("includeArchived") === "true";
   const conditions = discordUserId
     ? and(eq(addonAssignments.discordUserId, discordUserId))
     : undefined;
+  const whereClause = includeArchived
+    ? conditions
+    : conditions
+      ? and(conditions, isNull(addonAssignments.archivedAt))
+      : isNull(addonAssignments.archivedAt);
   const rows = await db
     .select({
       assignment: addonAssignments,
@@ -224,7 +236,7 @@ addonsApi.get("/addon-assignments", async (c) => {
     })
     .from(addonAssignments)
     .innerJoin(addons, eq(addonAssignments.addonId, addons.id))
-    .where(conditions)
+    .where(whereClause)
     .orderBy(desc(addonAssignments.id));
   return c.json({
     data: rows.map((r) => ({
@@ -233,6 +245,7 @@ addonsApi.get("/addon-assignments", async (c) => {
       modelAllowlistParsed: parseAllowlist(r.addonAllowlist),
       dailyTokenLimit: r.addonDailyLimit,
     })),
+    keepLatest: ADDON_KEEP_LATEST,
   });
 });
 
@@ -382,6 +395,15 @@ addonsApi.post("/addon-assignments", async (c) => {
     apiKeyId: body.apiKeyId,
   });
 
+  // Auto-trim history: keep latest N per scope; older → soft-archive.
+  archiveAddonAssignmentsBeyondLimit()
+    .then((r) => {
+      if (r.archived > 0) console.log(`[addon-history] auto-archived ${r.archived} rows (keepLatest=${r.keepLatest})`);
+    })
+    .catch((err) => {
+      console.warn("[addon-history] trim failed:", (err as Error)?.message || err);
+    });
+
   return c.json({ success: true, assignment: row });
 });
 
@@ -429,6 +451,14 @@ addonsApi.patch("/addon-assignments/:id", async (c) => {
         roleSyncAction: startsAt <= now ? "grant" : "none",
       } as any)
       .returning();
+
+    archiveAddonAssignmentsBeyondLimit()
+      .then((r) => {
+        if (r.archived > 0) console.log(`[addon-history] auto-archived ${r.archived} rows (keepLatest=${r.keepLatest})`);
+      })
+      .catch((err) => {
+        console.warn("[addon-history] trim failed:", (err as Error)?.message || err);
+      });
 
     return c.json({ success: true, chained: true, assignment: created });
   }
@@ -480,21 +510,25 @@ addonsApi.delete("/addon-assignments/:id", async (c) => {
   const id = parseInt(c.req.param("id"));
   const [existing] = await db.select().from(addonAssignments).where(eq(addonAssignments.id, id)).limit(1);
   if (existing?.discordUserId && existing.isActive) {
-    // Mark revoke before delete so bot can still see it — keep row soft-inactive instead
+    // Soft-archive: keep the row for audit but mark archived.
     await db
       .update(addonAssignments)
-      .set({ isActive: false, roleSyncAction: "revoke" } as any)
+      .set({ isActive: false, roleSyncAction: "revoke", archivedAt: new Date() } as any)
       .where(eq(addonAssignments.id, id));
     const { syncUserKeyAccessAfterAddonChange } = await import("../../utils/key-access-lifecycle.js");
     await syncUserKeyAccessAfterAddonChange(existing.discordUserId, "add-on assignment removed");
     return c.json({ success: true, softDeleted: true });
   }
-  await db.delete(addonAssignments).where(eq(addonAssignments.id, id));
+  // Already inactive → just soft-archive it (preserve history; never hard-delete from here).
+  await db
+    .update(addonAssignments)
+    .set({ archivedAt: new Date() })
+    .where(eq(addonAssignments.id, id));
   if (existing?.discordUserId) {
     const { syncUserKeyAccessAfterAddonChange } = await import("../../utils/key-access-lifecycle.js");
-    await syncUserKeyAccessAfterAddonChange(existing.discordUserId, "add-on assignment deleted");
+    await syncUserKeyAccessAfterAddonChange(existing.discordUserId, "add-on assignment archived");
   }
-  return c.json({ success: true });
+  return c.json({ success: true, archived: true });
 });
 
 export default addonsApi;

@@ -827,7 +827,7 @@ portal.get("/me", async (c) => {
             discordUserId,
             apiKeyIds: userKeys.map((k) => k.id),
           },
-          30,
+          10,
         );
       } catch {
         return [];

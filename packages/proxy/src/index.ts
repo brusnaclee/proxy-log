@@ -201,6 +201,15 @@ const PORT = parseInt(process.env.PORT || "3000");
 async function main() {
   // Initialize database (create tables, seed admin)
   await initializeDatabase();
+  try {
+    const { archiveAddonAssignmentsBeyondLimit } = await import("./utils/addon-history-trim.js");
+    const trim = await archiveAddonAssignmentsBeyondLimit();
+    if (trim.archived > 0) {
+      console.log(`[addon-history] startup trim: archived ${trim.archived} (keepLatest=${trim.keepLatest})`);
+    }
+  } catch (err) {
+    console.warn("[addon-history] startup trim failed:", (err as Error)?.message || err);
+  }
   await initializeModelCatalogScheduler();
   initializeMetadataEnrichmentScheduler();
   initializeQuotaGuardScheduler();

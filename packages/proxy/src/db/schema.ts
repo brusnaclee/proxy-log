@@ -687,6 +687,8 @@ export const addonAssignments = pgTable('addon_assignments', {
 	assignedBy: text('assigned_by').notNull().default('dashboard'),
 	/** grant | revoke | null — bot polls and applies pack discordRoleId */
 	roleSyncAction: text('role_sync_action'),
+	/** Soft-delete marker. Auto-cleanup trims oldest rows past `keepLatest` (default 10). */
+	archivedAt: timestamp('archived_at'),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
 }, (table) => ({
 	addonIdx: index('idx_addon_assignments_addon').on(table.addonId),

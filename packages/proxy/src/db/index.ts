@@ -149,6 +149,7 @@ export async function initializeDatabase() {
 		await pool.query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS account_badges text NOT NULL DEFAULT '[]'`);
 		await pool.query(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS account_tier text NOT NULL DEFAULT ''`);
 		await pool.query(`ALTER TABLE addon_assignments ADD COLUMN IF NOT EXISTS role_sync_action text`);
+		await pool.query(`ALTER TABLE addon_assignments ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP`);
 		await pool.query(`
 			CREATE TABLE IF NOT EXISTS trial_users (
 				id SERIAL PRIMARY KEY,

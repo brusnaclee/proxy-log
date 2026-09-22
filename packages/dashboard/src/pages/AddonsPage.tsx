@@ -151,6 +151,7 @@ export default function AddonsPage() {
   const [assignStartMode, setAssignStartMode] = useState<"now" | "after_expiry" | "custom">("now");
   const [phantomInputLimit, setPhantomInputLimit] = useState(0);
   const [expandedUsers, setExpandedUsers] = useState<Record<string, boolean>>({});
+  const [assignmentsOpen, setAssignmentsOpen] = useState(true);
 
   const activePackSummary = useMemo(
     () =>
@@ -373,15 +374,6 @@ export default function AddonsPage() {
       setError(e?.message || "Failed to assign add-on");
     } finally {
       setSaving(false);
-    }
-  };
-
-  const removeAssignment = async (id: number) => {
-    try {
-      await addonsApi.removeAssignment(id);
-      await load();
-    } catch (e: any) {
-      setError(e?.message || "Failed to remove assignment");
     }
   };
 
@@ -749,13 +741,25 @@ export default function AddonsPage() {
       </Card>
 
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Assignments</CardTitle>
-          <p className="text-xs text-muted-foreground">
-            Grouped per user — click a user to expand history. Chained assignments now start after the latest expiry for that add-on.
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-2">
+        <button
+          type="button"
+          className="w-full flex items-center justify-between gap-3 px-6 py-4 text-left"
+          onClick={() => setAssignmentsOpen((v) => !v)}
+        >
+          <div>
+            <CardTitle className="text-base">Add-on history</CardTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Grouped per user — expand a user for up to 10 recent assignments. Deactivate only (no delete). Older rows auto-archive.
+            </p>
+          </div>
+          {assignmentsOpen ? (
+            <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+          ) : (
+            <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+          )}
+        </button>
+        {assignmentsOpen && (
+        <CardContent className="space-y-2 pt-0">
           {Object.keys(groupedAssignments).length === 0 && (
             <p className="p-3 text-sm text-muted-foreground">No assignments yet.</p>
           )}
@@ -842,13 +846,6 @@ export default function AddonsPage() {
                             >
                               {row.isActive ? "Deactivate" : "Chain New"}
                             </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => void removeAssignment(row.id)}
-                            >
-                              <Trash2 className="h-4 w-4 text-destructive" />
-                            </Button>
                           </div>
                         </div>
                       );
@@ -859,6 +856,7 @@ export default function AddonsPage() {
             );
           })}
         </CardContent>
+        )}
       </Card>
     </div>
   );

@@ -773,7 +773,7 @@ keys.get("/keys/:id", async (c) => {
         discordUserId: key.discordUserId,
         apiKeyIds: [key.id],
       },
-      40,
+      10,
     );
   } catch (err) {
     console.warn("[keys/:id] addon history failed:", (err as Error)?.message || err);

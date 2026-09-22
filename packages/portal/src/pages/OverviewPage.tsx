@@ -114,6 +114,7 @@ export default function OverviewPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [cheatSheetOpen, setCheatSheetOpen] = useState(false);
+  const [addonHistoryOpen, setAddonHistoryOpen] = useState(true);
   const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
   const [chartMetric, setChartMetric] = useState<"prompts" | "apiCalls">("prompts");
   const hasLoadedRef = useRef(false);
@@ -508,13 +509,25 @@ export default function OverviewPage() {
     if (user?.accountType === "trial") return null;
     const history = user?.addonHistory || [];
     return (
-      <div className="bg-card border border-border rounded-xl p-4 space-y-3">
-        <div>
-          <h3 className="text-sm font-medium text-foreground">{t("Add-on history")}</h3>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {t("Past and active pack assignments")}
-          </p>
-        </div>
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <button
+          type="button"
+          className="w-full flex items-center justify-between gap-3 p-4 text-left hover:bg-accent/30"
+          onClick={() => setAddonHistoryOpen((v) => !v)}
+        >
+          <div>
+            <h3 className="text-sm font-medium text-foreground">{t("Add-on history")}</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {t("Past and active pack assignments")}
+              {history.length > 0 ? ` · ${history.length}` : ""}
+            </p>
+          </div>
+          <span className="text-muted-foreground text-xs shrink-0">
+            {addonHistoryOpen ? "▾" : "▸"}
+          </span>
+        </button>
+        {addonHistoryOpen && (
+        <div className="px-4 pb-4 space-y-3 border-t border-border/40 pt-3">
         {!history.length ? (
           <p className="text-xs text-muted-foreground py-1">{t("No add-on history yet")}</p>
         ) : (
@@ -562,6 +575,8 @@ export default function OverviewPage() {
               ))}
             </tbody>
           </table>
+        </div>
+        )}
         </div>
         )}
       </div>

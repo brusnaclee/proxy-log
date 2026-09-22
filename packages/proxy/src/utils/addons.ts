@@ -104,6 +104,7 @@ export async function getActiveAddonsForUser(opts: {
     .where(
       and(
         ...conditions,
+        isNull(addonAssignments.archivedAt),
         or(...ownerParts),
         sql`${addonAssignments.startsAt} <= NOW()`,
         or(isNull(addonAssignments.expiresAt), sql`${addonAssignments.expiresAt} > NOW()`),
@@ -188,7 +189,7 @@ export type AddonHistoryRow = {
   dailyTokenLimit: number;
 };
 
-/** All assignments for a Discord user and/or API keys (active + past). */
+/** All assignments for a Discord user and/or API keys (active + past). Soft-archived excluded. */
 export async function listAddonHistoryForUser(
   opts:
     | string
@@ -196,7 +197,7 @@ export async function listAddonHistoryForUser(
         discordUserId?: string | null;
         apiKeyIds?: Array<number | null | undefined>;
       },
-  limit = 50,
+  limit = 10,
 ): Promise<AddonHistoryRow[]> {
   const uid =
     typeof opts === "string"
@@ -219,6 +220,7 @@ export async function listAddonHistoryForUser(
   if (!ownerParts.length) return [];
 
   const now = new Date();
+  const keep = Math.max(1, Math.min(50, Math.floor(Number(limit) || 10)));
   const rows = await db
     .select({
       id: addonAssignments.id,
@@ -232,9 +234,9 @@ export async function listAddonHistoryForUser(
     })
     .from(addonAssignments)
     .innerJoin(addons, eq(addonAssignments.addonId, addons.id))
-    .where(or(...ownerParts))
+    .where(and(or(...ownerParts), isNull(addonAssignments.archivedAt)))
     .orderBy(desc(addonAssignments.startsAt))
-    .limit(limit);
+    .limit(keep);
 
   return rows.map((r) => {
     const expired =

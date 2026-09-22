@@ -65,6 +65,7 @@ export default function KeyDetailPage() {
   const [rotatedKey, setRotatedKey] = useState<string | null>(null);
   const [copiedReveal, setCopiedReveal] = useState(false);
   const [showSetupHint, setShowSetupHint] = useState(false);
+  const [showAddonHistory, setShowAddonHistory] = useState(true);
   const [copied, setCopied] = useState(false);
   const [statusText, setStatusText] = useState<string>("");
   const [accessTargetType, setAccessTargetType] = useState<"fingerprint" | "ip">("fingerprint");
@@ -840,13 +841,28 @@ export API_TIMEOUT_MS=500000`}
 
       {!keyData.isTrial && (
       <Card className="border-border/50">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Add-on history</CardTitle>
-            <p className="text-xs text-muted-foreground">
-              Assignments for Discord {keyData.discordUsername || keyData.discordUserId || "—"}
-            </p>
-          </CardHeader>
-          <CardContent>
+          <button
+            type="button"
+            className="w-full flex items-center justify-between gap-3 px-6 py-4 text-left"
+            onClick={() => setShowAddonHistory((v) => !v)}
+          >
+            <div>
+              <CardTitle className="text-base">Add-on history</CardTitle>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Assignments for Discord {keyData.discordUsername || keyData.discordUserId || "—"}
+                {(keyData.addonHistory?.length || 0) > 0
+                  ? ` · ${keyData.addonHistory!.length} shown (max 10)`
+                  : ""}
+              </p>
+            </div>
+            {showAddonHistory ? (
+              <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+            ) : (
+              <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+            )}
+          </button>
+          {showAddonHistory && (
+          <CardContent className="pt-0">
             {(keyData.addonHistory?.length || 0) === 0 ? (
               <p className="text-xs text-muted-foreground">No add-on history yet</p>
             ) : (
@@ -891,6 +907,7 @@ export API_TIMEOUT_MS=500000`}
             </div>
             )}
           </CardContent>
+          )}
         </Card>
       )}
 
