@@ -5232,7 +5232,7 @@ function buildRecapPanelEmbed(win) {
 		.setDescription(
 			'Jejak ngodingmu bulan ini udah kami rangkum jadi sesuatu yang... menarik. 👀\n' +
 				'Berani buka?\n\n' +
-				'_Testimoni: semua peserta lintas bulan (bergilir)._',
+				'-# Terdapat hadiah bagi yang telah testimoni',
 		)
 		.setFooter({
 			text:
@@ -6728,11 +6728,28 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 			.join(' · ');
 	})();
 	const badgesLine = badgeLabels ? `\nBadges: **${badgeLabels}**` : '';
+	const testiNote =
+		bd && Array.isArray(bd.testimonialGrants) && bd.testimonialGrants.length
+			? bd.testimonialGrants
+					.map((g) => {
+						const until = g.expiresAt
+							? ` hingga <t:${Math.floor(new Date(g.expiresAt).getTime() / 1000)}:D>`
+							: '';
+						return `\n-# Hadiah testimoni +${formatTokens(g.dailyTokens)} input/hari${until} · dari testimoni ${g.monthLabel || g.yearMonth}`;
+					})
+					.join('')
+			: '';
 	const stackNote =
-		bd && bd.addonBonus > 0
+		(bd && bd.addonBonus > 0) || (bd && (bd.testimonialBonus || 0) > 0)
 			? (bd.inputBase || 0) > 0 || (bd.outputBase || 0) > 0
-				? `\n-# Stack: in ${formatTokens(bd.inputBase || 0)} + out ${formatTokens(bd.outputBase || 0)} + pack ${formatTokens(bd.addonBonus)} = ${formatTokens(bd.effective)}`
-				: `\n-# Stack: base ${formatTokens(bd.base)} + pack ${formatTokens(bd.addonBonus)} = ${formatTokens(bd.effective)}`
+				? `\n-# Stack: in ${formatTokens(bd.inputBase || 0)} + out ${formatTokens(bd.outputBase || 0)}` +
+					(bd.addonBonus > 0 ? ` + pack ${formatTokens(bd.addonBonus)}` : '') +
+					((bd.testimonialBonus || 0) > 0 ? ` + testimoni ${formatTokens(bd.testimonialBonus)}` : '') +
+					` = ${formatTokens(bd.effective)}`
+				: `\n-# Stack: base ${formatTokens(bd.base)}` +
+					(bd.addonBonus > 0 ? ` + pack ${formatTokens(bd.addonBonus)}` : '') +
+					((bd.testimonialBonus || 0) > 0 ? ` + testimoni ${formatTokens(bd.testimonialBonus)}` : '') +
+					` = ${formatTokens(bd.effective)}`
 			: '';
 	const addonBlock =
 		Array.isArray(data.activeAddons) && data.activeAddons.length > 0
@@ -6836,10 +6853,10 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 			? (lang === 'id'
 					? `**🎯 Kuota**\nPrompt: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\n` +
 						`-# ℹ️ Prompt per-model dilewati · Input/Output soft sampai Daily Total.\n\n` +
-						`**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}${stackNote}\nBulanan: ${monthlyTokenStr}`
+						`**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}${stackNote}${testiNote}\nBulanan: ${monthlyTokenStr}`
 					: `**🎯 Quotas**\nPrompts: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\n` +
 						`-# ℹ️ Per-model prompts bypassed · Input/Output soft until Daily Total.\n\n` +
-						`**🔢 Token Limits**\nDaily Input: ${dailyInputStr}\nDaily Output: ${dailyOutputStr}\nDaily Total: ${dailyTokenStr}${stackNote}\nMonthly: ${monthlyTokenStr}`) +
+						`**🔢 Token Limits**\nDaily Input: ${dailyInputStr}\nDaily Output: ${dailyOutputStr}\nDaily Total: ${dailyTokenStr}${stackNote}${testiNote}\nMonthly: ${monthlyTokenStr}`) +
 				sharedNote +
 				addonBlock +
 				dedicatedPoolsBlock +
@@ -6848,10 +6865,10 @@ function buildUsageDetailEmbed(data, discordUserId, viewerUserId) {
 			: (lang === 'id'
 					? `**🎯 Kuota**\nPrompt: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\nPer-Model:\n${modelLimitStr}\n` +
 						`-# ℹ️ 1 prompt = 1 turn; tiap hop = 1 API call. Window tetap (cliff reset).\n\n` +
-						`**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}${stackNote}\nBulanan: ${monthlyTokenStr}`
+						`**🔢 Token Limits**\nInput Harian: ${dailyInputStr}\nOutput Harian: ${dailyOutputStr}\nTotal Harian: ${dailyTokenStr}${stackNote}${testiNote}\nBulanan: ${monthlyTokenStr}`
 					: `**🎯 Quotas**\nPrompts: ${globalLimitStr}\nAPI calls: ${apiCallLimitStr}\nPer-Model:\n${modelLimitStr}\n` +
 						`-# ℹ️ 1 prompt = 1 turn; each hop = 1 API call. Fixed window (cliff reset).\n\n` +
-						`**🔢 Token Limits**\nDaily Input: ${dailyInputStr}\nDaily Output: ${dailyOutputStr}\nDaily Total: ${dailyTokenStr}${stackNote}\nMonthly: ${monthlyTokenStr}`) +
+						`**🔢 Token Limits**\nDaily Input: ${dailyInputStr}\nDaily Output: ${dailyOutputStr}\nDaily Total: ${dailyTokenStr}${stackNote}${testiNote}\nMonthly: ${monthlyTokenStr}`) +
 				sharedNote +
 				addonBlock +
 				dedicatedPoolsBlock +

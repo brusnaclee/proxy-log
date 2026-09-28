@@ -409,6 +409,8 @@ export type QuotaStackResult = {
   /** Custom key daily only (0 = unlimited) */
   baseDaily: number;
   addonBonus: number;
+  /** Extra daily input from an active testimonial gacha. Added on top of base + pack. */
+  testimonialBonus: number;
   /** Hard daily total — custom key only (0 = unlimited). Pack does NOT add here. */
   effectiveDaily: number;
   /** Always false — I/O are hard caps */
@@ -444,8 +446,11 @@ export function resolveAddonQuotaStack(opts: {
   dailyInput?: number;
   dailyOutput?: number;
   addonDailyBonus: number;
+  /** Extra daily input from testimonial gacha. Applied only when a positive input cap already exists. */
+  testimonialDailyBonus?: number;
 }): QuotaStackResult {
   const bonus = Math.max(0, opts.addonDailyBonus || 0);
+  const testi = Math.max(0, Math.floor(Number(opts.testimonialDailyBonus) || 0));
   const hasAddon = !!opts.hasActiveAddon;
   const inheritIo = roleInheritsGlobalIo({
     roleLimitMode: opts.roleLimitMode,
@@ -485,30 +490,23 @@ export function resolveAddonQuotaStack(opts: {
     Number(opts.keyDailyTotal ?? opts.keyOrGlobalDaily) || 0,
   );
 
-  if (!hasAddon) {
-    return {
-      dailyInputLimit: baseIn,
-      dailyOutputLimit: baseOut,
-      inputBase: baseIn,
-      outputBase: baseOut,
-      baseDaily: customDaily,
-      addonBonus: 0,
-      effectiveDaily: customDaily,
-      bypassIo: false,
-      bypassPerModelPrompts: false,
-    };
-  }
+  const pack = hasAddon ? bonus : 0;
+  // Unlimited input (no base and no pack, role inherits global which itself is 0)
+  // stays unlimited. A positive cap (global, key, or pack) receives the gacha on top.
+  const hasInputCap = baseIn > 0 || pack > 0;
+  const appliedTestimonial = hasInputCap ? testi : 0;
 
   return {
-    dailyInputLimit: baseIn + bonus,
+    dailyInputLimit: hasInputCap ? baseIn + pack + appliedTestimonial : 0,
     dailyOutputLimit: baseOut,
     inputBase: baseIn,
     outputBase: baseOut,
     baseDaily: customDaily,
-    addonBonus: bonus,
+    addonBonus: pack,
+    testimonialBonus: appliedTestimonial,
     effectiveDaily: customDaily,
     bypassIo: false,
-    bypassPerModelPrompts: true,
+    bypassPerModelPrompts: hasAddon,
   };
 }
 

@@ -19,6 +19,50 @@ describe("resolveAddonQuotaStack (PM rules)", () => {
     assert.equal(s.dailyOutputLimit, G_OUT);
     assert.equal(s.effectiveDaily, 0);
     assert.equal(s.bypassIo, false);
+    assert.equal(s.testimonialBonus, 0);
+  });
+
+  it("Phantom + testimonial gacha: extra daily input on top of global", () => {
+    const s = resolveAddonQuotaStack({
+      hasActiveAddon: false,
+      roleLimitMode: "follow_global",
+      globalDailyInput: G_IN,
+      globalDailyOutput: G_OUT,
+      addonDailyBonus: 0,
+      testimonialDailyBonus: 5_000_000,
+    });
+    assert.equal(s.dailyInputLimit, G_IN + 5_000_000);
+    assert.equal(s.testimonialBonus, 5_000_000);
+    assert.equal(s.inputBase, G_IN);
+    assert.equal(s.addonBonus, 0);
+  });
+
+  it("pack + testimonial stack on input, daily total stays custom-only", () => {
+    const s = resolveAddonQuotaStack({
+      hasActiveAddon: true,
+      roleLimitMode: "follow_global",
+      globalDailyInput: G_IN,
+      globalDailyOutput: G_OUT,
+      addonDailyBonus: PACK,
+      testimonialDailyBonus: 6_000_000,
+    });
+    assert.equal(s.dailyInputLimit, G_IN + PACK + 6_000_000);
+    assert.equal(s.addonBonus, PACK);
+    assert.equal(s.testimonialBonus, 6_000_000);
+    assert.equal(s.effectiveDaily, 0);
+  });
+
+  it("Premium without a pack stays at 0 input so the gacha does not invent a cap", () => {
+    const s = resolveAddonQuotaStack({
+      hasActiveAddon: false,
+      roleLimitMode: "zero_unless_addon",
+      globalDailyInput: G_IN,
+      globalDailyOutput: G_OUT,
+      addonDailyBonus: 0,
+      testimonialDailyBonus: 5_000_000,
+    });
+    assert.equal(s.dailyInputLimit, 0);
+    assert.equal(s.testimonialBonus, 0);
   });
 
   it("Phantom + pack: In = global+pack, Out = global, daily unlimited", () => {

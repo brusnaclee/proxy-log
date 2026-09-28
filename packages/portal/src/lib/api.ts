@@ -124,6 +124,15 @@ export interface MeResponse {
     bypassIo?: boolean;
     inputBase?: number;
     outputBase?: number;
+    dailyTotal?: number;
+    testimonialBonus?: number;
+    testimonialGrants?: Array<{
+      yearMonth: string;
+      monthLabel: string;
+      dailyTokens: number;
+      expiresAt: string;
+      source: string;
+    }>;
   };
   activeAddons?: Array<{
     name: string;

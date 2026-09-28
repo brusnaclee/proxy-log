@@ -33,6 +33,14 @@ export interface RecapHtmlData {
   submitToken?: string | null;
   alreadySubmittedToday?: boolean;
   existingTestimonial?: { stars: number; body: string } | null;
+  testimonialReward?: {
+    yearMonth: string;
+    monthLabel: string;
+    dailyTokens: number;
+    expiresAt: string;
+    source: string;
+    fresh?: boolean;
+  } | null;
   cleanPath?: string;
   /** Card meta from narrative.card (live anime wallpapers + nested tile plan). */
   cardMeta?: {
@@ -411,6 +419,14 @@ transition:width .55s cubic-bezier(.3,.7,.3,1)}
 .bcr-name{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:rgba(255,255,255,.92)}
 .bcr-val{margin-left:auto;font-weight:800;font-size:13px;flex:0 0 auto}
 .testi-done.show{display:block}
+.gacha-overlay{position:fixed;inset:0;z-index:80;display:none;align-items:center;justify-content:center;background:rgba(2,6,23,.72);padding:24px}
+.gacha-overlay.show{display:flex}
+.gacha-card{width:min(420px,100%);background:#0f172a;border:1px solid rgba(255,255,255,.12);border-radius:20px;padding:28px 22px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.45)}
+.gacha-kicker{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#94a3b8}
+.gacha-num{font-size:72px;font-weight:800;line-height:1;margin:10px 0;color:#f8fafc}
+.gacha-unit{font-size:28px;color:#f472b6}
+.gacha-cap{margin-top:8px;color:#cbd5e1;font-size:14px}
+.gacha-close{margin-top:18px}
 .delta-up{color:#34d399}.delta-down{color:#f87171}
 .badges{display:flex;flex-direction:column;gap:10px;width:100%;max-width:520px}
 .badge{display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px 14px;text-align:left}
@@ -1252,19 +1268,31 @@ function buildTestimonialBlock(d: RecapHtmlData): string {
   const prefillBody = existing ? escapeHtml(existing.body) : "";
 
   // Valid token but already submitted today -> show a thank-you note (no form).
+  const rewardLine = d.testimonialReward
+    ? `<div class="caption">Hadiah testimoni +${Math.round(d.testimonialReward.dailyTokens / 1_000_000)} jt input/hari hingga ${escapeHtml(new Date(d.testimonialReward.expiresAt).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }))} · dari testimoni ${escapeHtml(d.testimonialReward.monthLabel)}</div>`
+    : "";
   if (d.alreadySubmittedToday && existing) {
     return `<div class="testi card reveal"><div class="testi-title">💬 Testimoni</div>
-      <div class="caption">Kamu udah kasih testimoni ${"★".repeat(existing.stars)}${"☆".repeat(5 - existing.stars)} hari ini. Makasih! Balik lagi besok ya 🙌</div></div>`;
+      <div class="caption">Kamu udah kasih testimoni ${"★".repeat(existing.stars)}${"☆".repeat(5 - existing.stars)} hari ini. Makasih! Balik lagi besok ya 🙌</div>${rewardLine}</div>`;
   }
   return `<div class="testi card reveal" id="testiBox">
     <div class="testi-title">💬 Tinggalkan Testimoni</div>
-    <div class="caption">Gimana pengalaman ngoding kamu bulan ini? Kasih bintang & cerita singkat.</div>
+    <div class="caption">Gimana pengalaman ngoding kamu bulan ini? Kasih bintang & cerita singkat. Hadiah input harian 7 hari, sekali per bulan.</div>
+    ${rewardLine}
     <div class="stars" id="starPick" role="radiogroup" aria-label="Rating bintang">
       ${[1, 2, 3, 4, 5].map((i) => `<button type="button" class="star" data-v="${i}" aria-label="${i} bintang">★</button>`).join("")}
     </div>
     <textarea id="testiText" maxlength="500" rows="3" placeholder="Tulis testimoni kamu di sini...">${prefillBody}</textarea>
     <button class="btn" id="testiSubmit">Kirim Testimoni</button>
     <div class="testi-done" id="testiDone">Makasih! Testimoni kamu tersimpan 🙌</div>
+    <div class="gacha-overlay" id="gachaOverlay">
+      <div class="gacha-card">
+        <div class="gacha-kicker" id="gachaKicker">Gacha hadiah</div>
+        <div class="gacha-num"><span id="gachaNum">?</span><span class="gacha-unit"> jt</span></div>
+        <div class="gacha-cap" id="gachaCap">Mengocok...</div>
+        <button class="btn gacha-close" id="gachaClose" type="button">Tutup</button>
+      </div>
+    </div>
     <script>window.__RECAP_SUBMIT_TOKEN=${JSON.stringify(d.submitToken)};window.__RECAP_USER_ID=${JSON.stringify(d.viewerDiscordUserId || "")};window.__RECAP_YM=${JSON.stringify(d.yearMonth)};window.__RECAP_PREFILL_STARS=${prefillStars};</script>
   </div>`;
 }
@@ -2025,9 +2053,42 @@ const RECAP_JS = `
         .then(function(res){ if(res.ok&&res.j.success){
             document.getElementById('testiDone').classList.add('show');
             sub.textContent='Terkirim ✓';toast('Makasih atas testimoninya!');
+            if(res.j.reward) playGacha(res.j.reward);
           } else { sub.disabled=false;sub.textContent='Kirim Testimoni';var em=res.j&&res.j.error;toast(typeof em==='string'?em:(em&&em.message)||'Gagal mengirim'); }
         }).catch(function(){sub.disabled=false;sub.textContent='Kirim Testimoni';toast('Gagal mengirim');});
     });
+    var gachaClose=document.getElementById('gachaClose');
+    if(gachaClose) gachaClose.addEventListener('click',function(){document.getElementById('gachaOverlay').classList.remove('show');});
+    function playGacha(rw){
+      var overlay=document.getElementById('gachaOverlay');
+      var num=document.getElementById('gachaNum');
+      var cap=document.getElementById('gachaCap');
+      var kicker=document.getElementById('gachaKicker');
+      if(!overlay||!num) return;
+      var millions=Math.round((rw.dailyTokens||0)/1000000);
+      var when='';
+      try { when=new Date(rw.expiresAt).toLocaleDateString('id-ID',{day:'numeric',month:'short',year:'numeric'}); } catch(e) { when=''; }
+      var line='+'+millions+' jt input/hari selama 7 hari'+(when?' hingga '+when:'')+' · dari testimoni '+(rw.monthLabel||'');
+      overlay.classList.add('show');
+      if(!rw.fresh){
+        if(kicker) kicker.textContent='Bonus bulan ini sudah aktif';
+        num.textContent=String(millions);
+        cap.textContent=line;
+        return;
+      }
+      if(kicker) kicker.textContent='Gacha hadiah';
+      cap.textContent='Mengocok...';
+      var i=0;
+      var timer=setInterval(function(){
+        i++;
+        num.textContent=String(1+Math.floor(Math.random()*10));
+        if(i>=16){
+          clearInterval(timer);
+          num.textContent=String(millions);
+          cap.textContent=line;
+        }
+      },80);
+    }
   }
 })();`;
 

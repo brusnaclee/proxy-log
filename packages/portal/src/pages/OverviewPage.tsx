@@ -299,10 +299,12 @@ export default function OverviewPage() {
               : ` · chat peak ~${formatNumber(ib.peakFullIn)} (info)`;
         }
       }
-      const stack =
-        bd && bd.addonBonus > 0
-          ? `base ${formatNumber(bd.inputBase || bd.base || 0)} + pack ${formatNumber(bd.addonBonus)}`
-          : ctxIn;
+      const stackParts = [
+        `base ${formatNumber(bd?.inputBase || bd?.base || 0)}`,
+      ];
+      if (bd && bd.addonBonus > 0) stackParts.push(`pack ${formatNumber(bd.addonBonus)}`);
+      if (bd && (bd.testimonialBonus || 0) > 0) stackParts.push(`testimoni ${formatNumber(bd.testimonialBonus || 0)}`);
+      const stack = stackParts.length > 1 ? stackParts.join(" + ") : ctxIn;
       bars.push({
         label: "Counted Input",
         value: used,
@@ -311,9 +313,9 @@ export default function OverviewPage() {
         sublabel:
           `${formatNumber(usageToday.rawProcessedInput ?? usageToday.fullInputTokens ?? ((usageToday.billablePromptTokens || 0) + (usageToday.cachedTokens || 0)))} input processed` +
           ` (${formatNumber(usageToday.billablePromptTokens || 0)} billable + ${formatNumber(usageToday.cachedTokens || 0)} cached)` +
-          ` · ${bd && bd.addonBonus > 0 ? `${stack} · ` : ""}${ctxIn}`,
-        source: bd && bd.addonBonus > 0
-          ? "base + pack → input"
+          ` · ${(bd && (bd.addonBonus > 0 || (bd.testimonialBonus || 0) > 0)) ? `${stack} · ` : ""}${ctxIn}`,
+        source: bd && (bd.addonBonus > 0 || (bd.testimonialBonus || 0) > 0)
+          ? `base${bd.addonBonus > 0 ? " + pack" : ""}${(bd.testimonialBonus || 0) > 0 ? " + testimoni" : ""} → input`
           : sourceLabel(limits.dailyInputTokenLimitSource),
         reset: formatReset(user.dailyResetAt),
       });
@@ -460,6 +462,17 @@ export default function OverviewPage() {
                 ))}
               </div>
             )}
+          </div>
+        )}
+        {(user.dailyTokenBreakdown?.testimonialGrants || []).length > 0 && (
+          <div className="rounded-lg border border-border/60 bg-muted/30 p-3 space-y-1 text-xs">
+            {(user.dailyTokenBreakdown?.testimonialGrants || []).map((g) => (
+              <p key={g.yearMonth} className="text-muted-foreground">
+                Hadiah testimoni +{formatNumber(g.dailyTokens)} input/hari hingga{" "}
+                {new Date(g.expiresAt).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })}
+                {" "}· dari testimoni {g.monthLabel}
+              </p>
+            ))}
           </div>
         )}
         <div className="space-y-2">

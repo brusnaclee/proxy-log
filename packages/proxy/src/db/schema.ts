@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { index, integer, pgTable, text, boolean, serial, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+import { bigint, index, integer, pgTable, text, boolean, serial, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 
 // ─── Admin Configuration ───────────────────────────────────────────────────────
 export const adminConfig = pgTable('admin_config', {
@@ -556,7 +556,7 @@ export const recapLeaderboard = pgTable('recap_leaderboard', {
 	discordUserId: text('discord_user_id'),
 	discordUsername: text('discord_username'),
 	avatarUrl: text('avatar_url'),
-	value: integer('value').notNull().default(0),
+	value: bigint('value', { mode: 'number' }).notNull().default(0),
 	createdAt: timestamp('created_at').notNull().defaultNow(),
 }, (table) => ({
 	ymCatRankIdx: uniqueIndex('idx_recap_lb_ym_cat_rank').on(table.yearMonth, table.category, table.rank),
@@ -578,6 +578,23 @@ export const recapTestimonials = pgTable('recap_testimonials', {
 }, (table) => ({
 	userMonthIdx: uniqueIndex('idx_recap_testi_user_month').on(table.discordUserId, table.yearMonth),
 	ymIdx: index('idx_recap_testi_ym').on(table.yearMonth),
+}));
+
+/** One gacha grant per Discord user per recap month. Daily re-submits do not roll again. */
+export const recapTestimonialRewards = pgTable('recap_testimonial_rewards', {
+	id: serial('id').primaryKey(),
+	discordUserId: text('discord_user_id').notNull(),
+	yearMonth: text('year_month').notNull(),
+	stars: integer('stars').notNull().default(5),
+	/** Extra daily input tokens for TESTIMONIAL_REWARD_DAYS. */
+	dailyTokens: integer('daily_tokens').notNull(),
+	startsAt: timestamp('starts_at').notNull().defaultNow(),
+	expiresAt: timestamp('expires_at').notNull(),
+	source: text('source').notNull().default('testimonial'),
+	createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => ({
+	userMonthIdx: uniqueIndex('idx_recap_testi_reward_user_month').on(table.discordUserId, table.yearMonth),
+	expiresIdx: index('idx_recap_testi_reward_expires').on(table.expiresAt),
 }));
 
 // ─── Trial Users ───────────────────────────────────────────────────────────────

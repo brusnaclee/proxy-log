@@ -17,6 +17,7 @@ import { renderRecapHtml, renderMessagePage } from "../utils/recap-html.js";
 import { dayToken } from "./admin/recap.js";
 import { getMonthLeaderboard } from "../utils/recap-stats.js";
 import { getRaceTimelapse } from "../utils/recap-stats.js";
+import { getActiveTestimonialRewards, grantTestimonialRewardOnce } from "../utils/recap-testimonial-reward.js";
 
 const recapWeb = new Hono();
 
@@ -124,6 +125,8 @@ recapWeb.get("/:apiKeyName", async (c) => {
   const existingTesti = (await db.select().from(recapTestimonials)
     .where(and(eq(recapTestimonials.discordUserId, row.discordUserId), eq(recapTestimonials.yearMonth, yearMonth))))[0];
   const alreadySubmittedToday = !!(existingTesti && sameWibDay(existingTesti.updatedAt));
+  const activeRewards = await getActiveTestimonialRewards(row.discordUserId);
+  const testimonialReward = activeRewards.find((g) => g.yearMonth === yearMonth) || activeRewards[0] || null;
 
   // submitToken passed to the page only when the day token is valid; the form
   // is shown when valid AND not yet submitted today (handled in the renderer).
@@ -180,6 +183,7 @@ recapWeb.get("/:apiKeyName", async (c) => {
     submitToken,
     alreadySubmittedToday,
     existingTestimonial: existingTesti ? { stars: existingTesti.stars, body: existingTesti.body } : null,
+    testimonialReward,
     cleanPath: `/recap/${encodeURIComponent(apiKeyName)}`,
     cardMeta: (narrative && narrative.card) || null,
   });
@@ -235,7 +239,8 @@ recapWeb.post("/testimonial", async (c) => {
     await db.insert(recapTestimonials).values({ discordUserId, yearMonth, ...fields });
   }
 
-  return c.json({ success: true });
+  const reward = await grantTestimonialRewardOnce({ discordUserId, yearMonth, stars });
+  return c.json({ success: true, reward });
 });
 
 export default recapWeb;

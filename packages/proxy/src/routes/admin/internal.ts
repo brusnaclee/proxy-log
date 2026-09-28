@@ -787,6 +787,9 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
       })
     : [];
   const addonDailyBonus = sumAddonDailyTokenBonus(activeAddons);
+  const { getActiveTestimonialRewards, sumTestimonialDailyTokens } = await import("../../utils/recap-testimonial-reward.js");
+  const testimonialGrants = await getActiveTestimonialRewards(key.discordUserId);
+  const testimonialDailyBonus = sumTestimonialDailyTokens(testimonialGrants);
   const bypassPerModelPrompts = activeAddons.length > 0;
   const { limit: globalLimit, window: globalWindow } = resolveKeyPromptLimit(key, config);
   let globalUsed = 0;
@@ -923,6 +926,7 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
     globalDailyInput: config?.globalDailyInputTokenLimit,
     globalDailyOutput: config?.globalDailyOutputTokenLimit,
     addonDailyBonus,
+    testimonialDailyBonus,
   });
   const effectiveDailyTokenLimit = quotaStack.effectiveDaily;
 
@@ -1007,6 +1011,8 @@ internal.get("/internal/stats/user-detail/:discordUserId", async (c) => {
       inputBase: quotaStack.inputBase,
       outputBase: quotaStack.outputBase,
       dailyTotal: quotaStack.effectiveDaily,
+      testimonialBonus: quotaStack.testimonialBonus,
+      testimonialGrants,
     },
     activeAddons: activeAddons.map((a) => ({
       name: a.name,

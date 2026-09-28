@@ -333,6 +333,9 @@ portal.get("/me", async (c) => {
   const config = (await db.select().from(adminConfig).limit(1))[0] ?? null;
 
   const { getActiveAddonsForUser, sumAddonDailyTokenBonus, parseModelDailyLimits, resolveAddonQuotaStack } = await import("../../utils/addons.js");
+  const { getActiveTestimonialRewards, sumTestimonialDailyTokens } = await import("../../utils/recap-testimonial-reward.js");
+  const testimonialGrants = await getActiveTestimonialRewards(discordUserId);
+  const testimonialDailyBonus = sumTestimonialDailyTokens(testimonialGrants);
   const activeAddons = !isTrial && primaryKey
     ? await getActiveAddonsForUser({
         discordUserId,
@@ -477,6 +480,7 @@ portal.get("/me", async (c) => {
     globalDailyInput: config?.globalDailyInputTokenLimit,
     globalDailyOutput: config?.globalDailyOutputTokenLimit,
     addonDailyBonus,
+    testimonialDailyBonus,
   });
   const dailyInput = {
     value: quotaStack.dailyInputLimit,
@@ -811,6 +815,8 @@ portal.get("/me", async (c) => {
       inputBase: quotaStack.inputBase,
       outputBase: quotaStack.outputBase,
       dailyTotal: quotaStack.effectiveDaily,
+      testimonialBonus: quotaStack.testimonialBonus,
+      testimonialGrants,
     },
     activeAddons: activeAddons.map((a) => ({
       name: a.name,

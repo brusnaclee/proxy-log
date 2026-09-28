@@ -162,6 +162,10 @@ import {
 	sumAddonDailyTokenBonus,
 	sumAddonMonthlyTokenBonus,
 } from '../utils/addons.js';
+import {
+	getActiveTestimonialRewards,
+	sumTestimonialDailyTokens,
+} from '../utils/recap-testimonial-reward.js';
 import { isBlockedWithoutAddon } from '../utils/role-limit-gate.js';
 import {
 	accountApiKeyCondition,
@@ -2761,6 +2765,9 @@ proxy.all('/*', async (c) => {
 					apiKeyId: keyRecord.id,
 				})
 			: [];
+		const autoTestimonialBonus = keyRecord.discordUserId
+			? sumTestimonialDailyTokens(await getActiveTestimonialRewards(keyRecord.discordUserId))
+			: 0;
 		if (!isEdgeKey && !keyRecord.isTrial && isBlockedWithoutAddon(keyRecord, autoActiveAddons.length)) {
 			return c.json(
 				{
@@ -2798,6 +2805,7 @@ proxy.all('/*', async (c) => {
 					globalDailyInput: config.globalDailyInputTokenLimit,
 					globalDailyOutput: config.globalDailyOutputTokenLimit,
 					addonDailyBonus: sumAddonDailyTokenBonus(autoActiveAddons),
+					testimonialDailyBonus: autoTestimonialBonus,
 				}),
 				dayBonuses,
 			);
@@ -3019,6 +3027,7 @@ proxy.all('/*', async (c) => {
 					globalDailyInput: config.globalDailyInputTokenLimit,
 					globalDailyOutput: config.globalDailyOutputTokenLimit,
 					addonDailyBonus: sumAddonDailyTokenBonus(autoActiveAddons),
+					testimonialDailyBonus: autoTestimonialBonus,
 				}),
 					dayBonuses,
 				);
@@ -4018,6 +4027,9 @@ proxy.all('/*', async (c) => {
 			})
 		: [];
 	// Premium/Pro without add-on: no shared quota and no dedicated pools
+	const testimonialDailyBonus = keyRecord.discordUserId
+		? sumTestimonialDailyTokens(await getActiveTestimonialRewards(keyRecord.discordUserId))
+		: 0;
 	if (!isEdgeKey && !keyRecord.isTrial && isBlockedWithoutAddon(keyRecord, activeAddons.length)) {
 		return c.json(
 			{
@@ -4522,6 +4534,7 @@ proxy.all('/*', async (c) => {
 			globalDailyInput: config.globalDailyInputTokenLimit,
 			globalDailyOutput: config.globalDailyOutputTokenLimit,
 			addonDailyBonus: sumAddonDailyTokenBonus(activeAddons),
+			testimonialDailyBonus,
 		}),
 			dayBonuses,
 		);

@@ -50,6 +50,10 @@ import {
 	resolveAddonQuotaStack,
 	sumAddonDailyTokenBonus,
 } from './addons.js';
+import {
+	getActiveTestimonialRewards,
+	sumTestimonialDailyTokens,
+} from './recap-testimonial-reward.js';
 import { buildModelPromptUsage } from './model-prompt-usage.js';
 import { getAccountUsageOverride } from './account-usage-overrides.js';
 
@@ -139,6 +143,14 @@ export interface LiveUsagePayload {
 		inputBase?: number;
 		outputBase?: number;
 		dailyTotal?: number;
+		testimonialBonus?: number;
+		testimonialGrants?: Array<{
+			yearMonth: string;
+			monthLabel: string;
+			dailyTokens: number;
+			expiresAt: string;
+			source: "testimonial";
+		}>;
 	};
 	activeAddons?: Array<{
 		name: string;
@@ -330,6 +342,8 @@ export async function buildLiveUsageForKey(
 		String((limitKey as any).roleLimitMode || "").trim() === "zero_unless_addon" &&
 		activeAddons.length <= 0;
 	const addonDailyBonus = sumAddonDailyTokenBonus(activeAddons);
+	const testimonialGrants = await getActiveTestimonialRewards(limitKey.discordUserId);
+	const testimonialDailyBonus = sumTestimonialDailyTokens(testimonialGrants);
 
 	const monthly = pickLimit(limitKey.monthlyTokenLimit, cfg?.globalMonthlyTokenLimit);
 	const hasActiveAddon = activeAddons.length > 0;
@@ -345,6 +359,7 @@ export async function buildLiveUsageForKey(
 			globalDailyInput: cfg?.globalDailyInputTokenLimit,
 			globalDailyOutput: cfg?.globalDailyOutputTokenLimit,
 			addonDailyBonus,
+			testimonialDailyBonus,
 		}),
 		dayBonuses,
 	);
@@ -400,6 +415,8 @@ export async function buildLiveUsageForKey(
 		outputBase: stack.outputBase,
 		/** Hard daily total (custom only); 0 = unlimited */
 		dailyTotal: stack.effectiveDaily,
+		testimonialBonus: stack.testimonialBonus,
+		testimonialGrants,
 	};
 	const activeAddonsSummary = activeAddons.map((a) => ({
 		name: a.name,
@@ -672,6 +689,8 @@ export async function buildLiveUsageForKey(
 				bypassIo: false,
 				inputBase: 0,
 				outputBase: 0,
+				testimonialBonus: 0,
+				testimonialGrants: [],
 			},
 			activeAddons: activeAddonsSummary,
 			addonModelTokenCaps: [],

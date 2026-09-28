@@ -86,6 +86,8 @@ keys.get("/keys", async (c) => {
 
     const { getActiveAddonsForUser, sumAddonDailyTokenBonus, resolveAddonQuotaStack } =
       await import("../../utils/addons.js");
+    const { getActiveTestimonialRewardsForUsers, sumTestimonialDailyTokens } =
+      await import("../../utils/recap-testimonial-reward.js");
 
     // Batch aggregates — avoid N+1
     const [deviceRows, todayRows] = await Promise.all([
@@ -180,6 +182,7 @@ keys.get("/keys", async (c) => {
         addonByDiscord.set(uid, []);
       }
     });
+    const testimonialByDiscord = await getActiveTestimonialRewardsForUsers(discordIds);
 
     const softRem = (limit: number, used: number): number | null => {
       if (!(limit > 0)) return null;
@@ -216,6 +219,9 @@ keys.get("/keys", async (c) => {
       else if (!hasAddon) accountBadges = accountBadges.filter((b) => b !== "addon");
 
       const addonBonus = sumAddonDailyTokenBonus(activeAddons);
+      const testimonialGrants = key.discordUserId
+        ? testimonialByDiscord.get(key.discordUserId) || []
+        : [];
       const stack = resolveAddonQuotaStack({
         hasActiveAddon: hasAddon,
         isTrial: !!key.isTrial,
@@ -226,6 +232,7 @@ keys.get("/keys", async (c) => {
         globalDailyInput: config?.globalDailyInputTokenLimit,
         globalDailyOutput: config?.globalDailyOutputTokenLimit,
         addonDailyBonus: addonBonus,
+        testimonialDailyBonus: sumTestimonialDailyTokens(testimonialGrants),
       });
 
       const promptCap = (key.promptLimit && key.promptLimit > 0)

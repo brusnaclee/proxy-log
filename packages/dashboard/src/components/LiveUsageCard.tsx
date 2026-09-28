@@ -380,6 +380,17 @@ export function LiveUsageCard({
           })}
         </div>
       )}
+      {(dailyTokenBreakdown?.testimonialGrants || []).length > 0 && (
+        <div className="rounded-lg border border-border/60 bg-muted/30 p-3 space-y-1 text-xs">
+          {(dailyTokenBreakdown?.testimonialGrants || []).map((g) => (
+            <p key={g.yearMonth} className="text-muted-foreground">
+              Hadiah testimoni +{formatNumber(g.dailyTokens)} input/hari hingga{" "}
+              {new Date(g.expiresAt).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })}
+              {" "}· dari testimoni {g.monthLabel}
+            </p>
+          ))}
+        </div>
+      )}
       {(activeAddons && activeAddons.length > 0) && (
         <div className="rounded-lg border border-border/60 bg-muted/30 p-3 space-y-1.5 text-xs">
           <p className="font-medium text-foreground">Active add-on</p>

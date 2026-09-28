@@ -199,6 +199,27 @@ export async function initializeDatabase() {
 		console.warn('⚠️ user_portal_settings migration warning:', err?.message || err);
 	}
 
+	try {
+		await pool.query(`ALTER TABLE recap_leaderboard ALTER COLUMN value TYPE bigint USING value::bigint`);
+		await pool.query(`
+			CREATE TABLE IF NOT EXISTS recap_testimonial_rewards (
+				id SERIAL PRIMARY KEY,
+				discord_user_id TEXT NOT NULL,
+				year_month TEXT NOT NULL,
+				stars INTEGER NOT NULL DEFAULT 5,
+				daily_tokens INTEGER NOT NULL,
+				starts_at TIMESTAMP NOT NULL DEFAULT NOW(),
+				expires_at TIMESTAMP NOT NULL,
+				source TEXT NOT NULL DEFAULT 'testimonial',
+				created_at TIMESTAMP NOT NULL DEFAULT NOW()
+			)
+		`);
+		await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_recap_testi_reward_user_month ON recap_testimonial_rewards (discord_user_id, year_month)`);
+		await pool.query(`CREATE INDEX IF NOT EXISTS idx_recap_testi_reward_expires ON recap_testimonial_rewards (expires_at)`);
+	} catch (err: any) {
+		console.warn('⚠️ recap reward migration warning:', err?.message || err);
+	}
+
 	// Token Saver columns (admin_config + user_portal_settings)
 	await migrateTokenSaverColumns();
 
