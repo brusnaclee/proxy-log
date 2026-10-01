@@ -2340,6 +2340,35 @@ proxy.all('/*', async (c) => {
 	const isResponsesApi = normalizedPath === '/v1/responses';
 	let forwardPath = path; // path to forward to upstream
 
+	/**
+	 * Flatten a Responses API `content` value into plain text.
+	 * Codex sends content parts ([{type:"input_text",text:"hi"}]) on ordinary
+	 * messages too, so JSON-stringifying them sent literal `{"type":...}`
+	 * text upstream. Keep non-text parts (images) as JSON only when they
+	 * are the whole payload.
+	 */
+	const responsesContentToText = (content: unknown): string => {
+		if (typeof content === 'string') return content;
+		if (content === null || content === undefined) return '';
+		if (Array.isArray(content)) {
+			const text = content
+				.filter(
+					(c: any) =>
+						c &&
+						(c.type === 'output_text' ||
+							c.type === 'input_text' ||
+							c.type === 'text' ||
+							c.type === 'summary_text') &&
+						typeof c.text === 'string',
+				)
+				.map((c: any) => c.text)
+				.join('');
+			if (text) return text;
+			return JSON.stringify(content);
+		}
+		return JSON.stringify(content);
+	};
+
 	// ─── 7a0. Antigravity / Gemini contents → OpenAI chat completions ────────
 	// Antigravity often hits /v1/chat/completions with { request: { contents } }
 	// and no `messages`. Forwarding raw → amanai 400 "messages required" → 502.
@@ -2380,10 +2409,7 @@ proxy.all('/*', async (c) => {
 				if (item.role && item.content !== undefined) {
 					messages.push({
 						role: item.role === 'developer' ? 'system' : item.role,
-						content:
-							typeof item.content === 'string'
-								? item.content
-								: JSON.stringify(item.content),
+						content: responsesContentToText(item.content),
 					});
 				} else if (
 					item.type === 'function_call_output' ||
@@ -2397,18 +2423,35 @@ proxy.all('/*', async (c) => {
 						content:
 							typeof output === 'string' ? output : JSON.stringify(output),
 					});
+				} else if (item.type === 'function_call') {
+					// Assistant tool call from a previous turn. Without this the
+					// conversation lost its tool history and the next upstream
+					// request was rejected with 400 "invalid request".
+					const fnArgs =
+						item.arguments ?? item.input ?? item.args ?? '{}';
+					messages.push({
+						role: 'assistant',
+						content: null,
+						tool_calls: [
+							{
+								id: item.call_id || item.id || `call_${messages.length}`,
+								type: 'function',
+								function: {
+									name: item.name || '',
+									arguments:
+										typeof fnArgs === 'string'
+											? fnArgs
+											: JSON.stringify(fnArgs),
+								},
+							},
+						],
+					});
 				} else if (item.type === 'message' && item.content) {
 					// Responses API message block
-					const textContent = Array.isArray(item.content)
-						? item.content
-								.filter(
-									(c: any) =>
-										c.type === 'output_text' || c.type === 'input_text',
-								)
-								.map((c: any) => c.text)
-								.join('')
-						: String(item.content);
-					messages.push({ role: item.role || 'user', content: textContent });
+					messages.push({
+						role: item.role || 'user',
+						content: responsesContentToText(item.content),
+					});
 				}
 			}
 		}
@@ -2432,19 +2475,38 @@ proxy.all('/*', async (c) => {
 			// Responses API uses flat tools: {name, description, parameters, strict}
 			// Chat Completions needs nested: {type: "function", function: {...}}
 			// (mimo and other strict upstreams reject flat shape with "`function` is not set")
-			chatBody.tools = requestBody.tools.map((t: any) => {
-				if (!t) return t;
-				if (t.function && typeof t.function === "object") return t; // already nested
-				return {
-					type: "function",
-					function: {
-						name: t.name,
-						description: t.description,
-						parameters: t.parameters,
-						strict: t.strict,
-					},
-				};
-			});
+			//
+			// Codex also sends non-function tool types (custom, local_shell,
+			// web_search, ...). OpenAI chat upstreams reject those with a 400
+			// "invalid request", which surfaced as a proxy 502 on
+			// /v1/responses. Convert what we can and drop the rest.
+			chatBody.tools = requestBody.tools
+				.map((t: any) => {
+					if (!t || typeof t !== 'object') return null;
+					if (t.function && typeof t.function === 'object') return t; // already nested
+					const type = String(t.type || 'function');
+					if (type !== 'function') return null; // custom/local_shell/etc — drop
+					const fn = t.function;
+					const name = String(fn?.name || t.name || '').trim();
+					if (!name) return null;
+					return {
+						type: 'function',
+						function: {
+							name,
+							description: fn?.description ?? t.description,
+							// Upstreams reject a missing/null schema; default to a
+							// permissive object so the tool still renders in context.
+							parameters:
+								fn?.parameters ?? t.parameters ?? {
+									type: 'object',
+									properties: {},
+									additionalProperties: true,
+								},
+							strict: fn?.strict ?? t.strict,
+						},
+					};
+				})
+				.filter(Boolean);
 		}
 		if (requestBody.stop) chatBody.stop = requestBody.stop;
 
