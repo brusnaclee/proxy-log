@@ -33,6 +33,7 @@ import {
 	responsesSseFromChatPayload,
 } from '../utils/responses-sse.js';
 import { normalizeToolCallArray } from '../utils/tool-call-normalize.js';
+import { normalizeToolsForUpstream } from '../utils/openai-tools.js';
 import { sanitizeChatMessageRoles } from '../utils/sanitize-message-roles.js';
 import {
 	convertResponseToOpenAI,
@@ -2472,76 +2473,11 @@ proxy.all('/*', async (c) => {
 			chatBody.max_tokens = requestBody.max_tokens;
 		if (requestBody.top_p !== undefined) chatBody.top_p = requestBody.top_p;
 		if (Array.isArray(requestBody.tools)) {
-			// Responses API uses flat tools: {name, description, parameters, strict}
-			// Chat Completions needs nested: {type: "function", function: {...}}
-			// (mimo and other strict upstreams reject flat shape with "`function` is not set")
-			//
-			// Codex also sends non-function tool types (custom, local_shell,
-			// web_search, ...). OpenAI chat upstreams reject those with a 400
-			// "invalid request", which surfaced as a proxy 502 on
-			// /v1/responses. Downgrade them to function tools so Codex still
-			// has a tool to call — dropping them silently killed the agent loop.
-			chatBody.tools = requestBody.tools
-				.map((t: any) => {
-					if (!t || typeof t !== 'object') return null;
-					if (t.function && typeof t.function === 'object') return t; // already nested
-					const type = String(t.type || 'function');
-					const fn = t.function;
-					const name = String(
-						fn?.name ||
-							t.name ||
-							(type === 'local_shell'
-								? 'local_shell'
-								: type === 'web_search'
-									? 'web_search'
-									: type === 'computer_use_preview'
-										? 'computer_use_preview'
-										: ''),
-					).trim();
-					if (!name) return null;
-					return {
-						type: 'function',
-						function: {
-							name,
-							description:
-								fn?.description ??
-								t.description ??
-								(type === 'local_shell'
-									? 'Run a shell command locally in the workspace.'
-									: type === 'web_search'
-										? 'Search the web.'
-										: type === 'custom'
-											? `Custom tool: ${name}`
-											: undefined),
-							// Upstreams reject a missing/null schema; default to a
-							// permissive object so the tool still renders in context.
-							parameters:
-								fn?.parameters ??
-								t.parameters ??
-								(type === 'local_shell'
-									? {
-											type: 'object',
-											properties: {
-												command: { type: 'array', items: { type: 'string' } },
-											},
-											required: ['command'],
-										}
-									: type === 'web_search'
-										? {
-												type: 'object',
-												properties: { query: { type: 'string' } },
-												required: ['query'],
-											}
-										: {
-												type: 'object',
-												properties: {},
-												additionalProperties: true,
-											}),
-							strict: fn?.strict ?? t.strict,
-						},
-					};
-				})
-				.filter(Boolean);
+			// One normaliser for every endpoint: flat, nested and non-function
+			// shapes all become the nested chat-completions function shape the
+			// upstreams accept. Forwarding flat/non-function tools upstream was a
+			// 400 ("invalid request") that surfaced as a proxy 502.
+			chatBody.tools = normalizeToolsForUpstream(requestBody.tools);
 		}
 		if (requestBody.stop) chatBody.stop = requestBody.stop;
 
@@ -2587,6 +2523,23 @@ proxy.all('/*', async (c) => {
 			}, 400);
 		}
 		}
+	}
+
+	// ─── 7a2. Tool-shape normalisation (all OpenAI-compatible paths) ─────────
+	// Clients post tools in three shapes (canonical nested, flat Responses-style,
+	// and non-function local_shell/custom/web_search). Upstreams accept only the
+	// nested function shape and answer 400 "invalid request" otherwise, which the
+	// proxy reports as a 502. One normaliser keeps every endpoint in agreement.
+	if (
+		requestBody &&
+		Array.isArray((requestBody as any).tools) &&
+		(requestBody as any).tools.length > 0
+	) {
+		const normalizedTools = normalizeToolsForUpstream((requestBody as any).tools);
+		// Assign even when undefined so a fully unusable tool list does not
+		// leave a dangling tool_choice that upstream rejects.
+		(requestBody as any).tools = normalizedTools;
+		requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
 	}
 
 	// ─── 7b-early. Content-based IDE fallback (before Token Saver) ───────────
