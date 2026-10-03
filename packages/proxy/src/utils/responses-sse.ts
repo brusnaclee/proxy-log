@@ -11,6 +11,7 @@ export type ResponsesSseState = {
 	sentCreated: boolean;
 	sentItemAdded: boolean;
 	sentContentPart: boolean;
+	sentMessageDone: boolean;
 	completed: boolean;
 	text: string;
 	/**
@@ -33,6 +34,7 @@ export function createResponsesSseState(now = Date.now()): ResponsesSseState {
 		sentCreated: false,
 		sentItemAdded: false,
 		sentContentPart: false,
+		sentMessageDone: false,
 		completed: false,
 		text: "",
 		toolCalls: new Map(),
@@ -215,12 +217,15 @@ export function finalizeResponsesSse(state: ResponsesSseState): string[] {
 	const pendingTools = [...state.toolCalls.values()].filter((t) => t.added);
 	const hasToolCalls = pendingTools.length > 0;
 
-	// A tool-call turn must NOT open a message item: Codex treats a completed
-	// message as "assistant answered", which ends the agent loop. Only emit the
-	// message scaffold when there is real assistant text to deliver.
-	if (!hasToolCalls && !state.sentItemAdded) {
+	// A tool-call turn must NOT open a message item from scratch: Codex treats a
+	// completed message as "assistant answered", which ends the agent loop.
+	// But a scaffold opened by an early text delta must still be closed cleanly.
+	const messageOpen = state.sentItemAdded && !state.sentMessageDone;
+	const emitMessage = state.sentItemAdded;
+
+	if (!state.sentCreated && !hasToolCalls) {
 		ensureMessageScaffold(state, out);
-	} else if (!hasToolCalls && state.sentItemAdded && !state.sentContentPart) {
+	} else if (messageOpen && !state.sentContentPart) {
 		// created + item but no text — still close content part cleanly
 		state.sentContentPart = true;
 		out.push(
@@ -234,7 +239,7 @@ export function finalizeResponsesSse(state: ResponsesSseState): string[] {
 		);
 	}
 
-	if (!hasToolCalls && state.sentContentPart) {
+	if (emitMessage && state.sentContentPart) {
 		out.push(
 			sse("response.output_text.done", {
 				type: "response.output_text.done",
@@ -253,9 +258,10 @@ export function finalizeResponsesSse(state: ResponsesSseState): string[] {
 				part: { type: "output_text", text: state.text },
 			}),
 		);
+		state.sentMessageDone = true;
 	}
 
-	if (!hasToolCalls && state.sentItemAdded) {
+	if (emitMessage) {
 		out.push(
 			sse("response.output_item.done", {
 				type: "response.output_item.done",
@@ -293,7 +299,7 @@ export function finalizeResponsesSse(state: ResponsesSseState): string[] {
 	}
 
 	const output: any[] = [];
-	if (!hasToolCalls && state.sentItemAdded) {
+	if (state.sentItemAdded) {
 		output.push({
 			type: "message",
 			id: state.itemId,

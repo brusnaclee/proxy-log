@@ -84,6 +84,25 @@ describe("responses sse agent loop", () => {
     assert.equal(done.item.arguments, '{"a":1}');
   });
 
+  it("closes a dangling message item when text precedes a tool call", () => {
+    const state = createResponsesSseState(5);
+    const chunks = [
+      ...responsesSseFromChatPayload(state, { choices: [{ delta: { content: "Let me look." } }] }),
+      ...responsesSseFromChatPayload(state, {
+        choices: [{ delta: { tool_calls: [{ index: 0, id: "call_m", function: { name: "shell", arguments: '{"command":["ls"]}' } }] } }],
+      }),
+      ...responsesSseFromChatPayload(state, { choices: [{ delta: {}, finish_reason: "tool_calls" }] }),
+    ];
+    const names = eventNames(chunks);
+    assert.equal(names.filter((n) => n === "response.output_item.added").length, 2);
+    const doneBlocks = eventBlocks(chunks)["response.output_item.done"];
+    assert.equal(doneBlocks.length, 2, "both the message and the call must be closed");
+    const completed = JSON.parse(eventBlocks(chunks)["response.completed"][0]);
+    const kinds = completed.response.output.map((o: { type: string }) => o.type);
+    assert.deepEqual(kinds, ["message", "function_call"]);
+    assert.equal((doneBlocks as string[]).length, 2);
+  });
+
   it("still completes a plain text answer", () => {
     const state = createResponsesSseState(4);
     const chunks = [
