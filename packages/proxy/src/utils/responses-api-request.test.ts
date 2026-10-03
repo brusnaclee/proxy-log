@@ -74,17 +74,41 @@ export function convertResponsesTools(tools: unknown): any[] {
       if (!t || typeof t !== "object") return null;
       if (t.function && typeof t.function === "object") return t;
       const type = String(t.type || "function");
-      if (type !== "function") return null;
       const fn = t.function;
-      const name = String(fn?.name || t.name || "").trim();
+      const name = String(
+        fn?.name ||
+          t.name ||
+          (type === "local_shell"
+            ? "local_shell"
+            : type === "web_search"
+              ? "web_search"
+              : type === "computer_use_preview"
+                ? "computer_use_preview"
+                : ""),
+      ).trim();
       if (!name) return null;
       return {
         type: "function",
         function: {
           name,
-          description: fn?.description ?? t.description,
+          description:
+            fn?.description ??
+            t.description ??
+            (type === "local_shell"
+              ? "Run a shell command locally in the workspace."
+              : type === "web_search"
+                ? "Search the web."
+                : type === "custom"
+                  ? `Custom tool: ${name}`
+                  : undefined),
           parameters:
-            fn?.parameters ?? t.parameters ?? { type: "object", properties: {}, additionalProperties: true },
+            fn?.parameters ??
+            t.parameters ??
+            (type === "local_shell"
+              ? { type: "object", properties: { command: { type: "array", items: { type: "string" } } }, required: ["command"] }
+              : type === "web_search"
+                ? { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
+                : { type: "object", properties: {}, additionalProperties: true }),
           strict: fn?.strict ?? t.strict,
         },
       };
@@ -155,15 +179,29 @@ describe("responses api conversion", () => {
     assert.equal(out[0].function.name, "shell");
   });
 
-  it("drops non-function tool types that upstreams reject with 400", () => {
+  it("downgrades non-function tool types instead of dropping them", () => {
     const out = convertResponsesTools([
-      { type: "custom", name: "apply_patch", format: { type: "text" } },
+      { type: "custom", name: "apply_patch", description: "patch", format: { type: "text" } },
       { type: "local_shell" },
       { type: "web_search" },
       { type: "function", name: "shell" },
     ]);
-    assert.equal(out.length, 1);
-    assert.equal(out[0].function.name, "shell");
+    assert.equal(out.length, 4);
+    assert.ok(out.every((t: any) => t.type === "function"));
+    const localShell = out.find((t: any) => t.function.name === "local_shell");
+    assert.deepEqual(localShell.function.parameters, {
+      type: "object",
+      properties: { command: { type: "array", items: { type: "string" } } },
+      required: ["command"],
+    });
+    const search = out.find((t: any) => t.function.name === "web_search");
+    assert.ok(search.function.parameters.properties.query);
+  });
+
+  it("keeps a custom tool callable with a permissive schema", () => {
+    const out = convertResponsesTools([{ type: "custom", name: "apply_patch", description: "patch" }]);
+    assert.equal(out[0].function.name, "apply_patch");
+    assert.deepEqual(out[0].function.parameters, { type: "object", properties: {}, additionalProperties: true });
   });
 
   it("gives function tools a schema when the client omits one", () => {

@@ -2479,29 +2479,64 @@ proxy.all('/*', async (c) => {
 			// Codex also sends non-function tool types (custom, local_shell,
 			// web_search, ...). OpenAI chat upstreams reject those with a 400
 			// "invalid request", which surfaced as a proxy 502 on
-			// /v1/responses. Convert what we can and drop the rest.
+			// /v1/responses. Downgrade them to function tools so Codex still
+			// has a tool to call — dropping them silently killed the agent loop.
 			chatBody.tools = requestBody.tools
 				.map((t: any) => {
 					if (!t || typeof t !== 'object') return null;
 					if (t.function && typeof t.function === 'object') return t; // already nested
 					const type = String(t.type || 'function');
-					if (type !== 'function') return null; // custom/local_shell/etc — drop
 					const fn = t.function;
-					const name = String(fn?.name || t.name || '').trim();
+					const name = String(
+						fn?.name ||
+							t.name ||
+							(type === 'local_shell'
+								? 'local_shell'
+								: type === 'web_search'
+									? 'web_search'
+									: type === 'computer_use_preview'
+										? 'computer_use_preview'
+										: ''),
+					).trim();
 					if (!name) return null;
 					return {
 						type: 'function',
 						function: {
 							name,
-							description: fn?.description ?? t.description,
+							description:
+								fn?.description ??
+								t.description ??
+								(type === 'local_shell'
+									? 'Run a shell command locally in the workspace.'
+									: type === 'web_search'
+										? 'Search the web.'
+										: type === 'custom'
+											? `Custom tool: ${name}`
+											: undefined),
 							// Upstreams reject a missing/null schema; default to a
 							// permissive object so the tool still renders in context.
 							parameters:
-								fn?.parameters ?? t.parameters ?? {
-									type: 'object',
-									properties: {},
-									additionalProperties: true,
-								},
+								fn?.parameters ??
+								t.parameters ??
+								(type === 'local_shell'
+									? {
+											type: 'object',
+											properties: {
+												command: { type: 'array', items: { type: 'string' } },
+											},
+											required: ['command'],
+										}
+									: type === 'web_search'
+										? {
+												type: 'object',
+												properties: { query: { type: 'string' } },
+												required: ['query'],
+											}
+										: {
+												type: 'object',
+												properties: {},
+												additionalProperties: true,
+											}),
 							strict: fn?.strict ?? t.strict,
 						},
 					};
@@ -6655,24 +6690,47 @@ proxy.all('/*', async (c) => {
 						});
 					}
 
-					if (choice.message?.tool_calls) {
+					// Tool calls MUST be top-level function_call output items. Nesting
+					// them inside the message item (old `tool_call` block) left the
+					// item without arguments in Codex, so the agent loop stopped and
+					// asked the user instead of executing the tool.
+					const toolCallItems: any[] = [];
+					if (Array.isArray(choice.message?.tool_calls)) {
 						for (const tc of choice.message.tool_calls) {
-							contentBlocks.push({
-								type: 'tool_call',
-								id: tc.id,
-								name: tc.function?.name,
-								arguments: tc.function?.arguments,
+							if (!tc) continue;
+							const fnName = String(tc.function?.name || '').trim();
+							const rawArgs = tc.function?.arguments;
+							let argsText: string;
+							try {
+								const parsedArgs =
+									typeof rawArgs === 'string' ? JSON.parse(rawArgs || '{}') : rawArgs;
+								argsText = JSON.stringify(parsedArgs ?? {});
+							} catch {
+								argsText = typeof rawArgs === 'string' && rawArgs ? rawArgs : '{}';
+							}
+							toolCallItems.push({
+								type: 'function_call',
+								id: tc.id || `call_${Date.now()}`,
+								call_id: tc.id || `call_${Date.now()}`,
+								name: fnName,
+								arguments: argsText,
+								status: 'completed',
 							});
 						}
 					}
 
-					responsesOutput.push({
-						type: 'message',
-						role: 'assistant',
-						content: contentBlocks,
-						status:
-							choice.finish_reason === 'stop' ? 'completed' : 'incomplete',
-					});
+					// Emit the message item only when there is text/reasoning, so a
+					// pure tool-call turn never looks like a finished answer.
+					if (contentBlocks.length > 0) {
+						responsesOutput.push({
+							type: 'message',
+							role: 'assistant',
+							content: contentBlocks,
+							status:
+								choice.finish_reason === 'stop' ? 'completed' : 'incomplete',
+						});
+					}
+					responsesOutput.push(...toolCallItems);
 				}
 
 				const responsesBody = {
