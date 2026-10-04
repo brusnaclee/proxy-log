@@ -17,6 +17,7 @@ import {
   getAliasesForProviderName,
   loadVendorAliasIndex,
   preferRealVendorHits,
+  sanitizeClientModelId,
   stripModelCollisionTag,
   toPublicOwnedBy,
   toPublicUpstreamId,
@@ -811,8 +812,9 @@ export async function parseModelWithProvider(modelId: string): Promise<{
   forcedProviderName: string | null;
   matchCount: number;
 }> {
-  // Clients may echo log ids with collision tags (` · amanai`) — strip before resolve.
-  const raw = stripModelCollisionTag(String(modelId || "").trim());
+  // Clients may echo log ids with collision tags (` · amanai`) or Claude Code
+  // context-window tags (`[1m]`) — strip before resolve or upstream 404s.
+  const raw = sanitizeClientModelId(String(modelId || "").trim());
   if (!raw.includes("/")) {
     return { upstreamModel: raw, forcedProviderName: null, matchCount: 1 };
   }
@@ -832,7 +834,7 @@ export async function parseModelWithProvider(modelId: string): Promise<{
     peeled.push(prefix);
     rest = rest.slice(slashIdx + 1);
   }
-  rest = stripModelCollisionTag(rest);
+  rest = sanitizeClientModelId(rest);
 
   if (!forcedProviderName) {
     return { upstreamModel: raw, forcedProviderName: null, matchCount: 1 };
@@ -898,7 +900,7 @@ async function resolveUpstreamModelId(
 ): Promise<{ upstreamModel: string; matchCount: number }> {
   const aliasIndex = await loadVendorAliasIndex();
   const aliases = getAliasesForProviderName(aliasIndex, providerName);
-  const cleanRest = stripModelCollisionTag(rest);
+  const cleanRest = sanitizeClientModelId(rest);
   const restForms = expandUpstreamIdCandidates(cleanRest, aliases);
 
   const cacheKey = `${providerName}\0${cleanRest}\0${peeled.join("/")}\0${restForms.join("|")}`;

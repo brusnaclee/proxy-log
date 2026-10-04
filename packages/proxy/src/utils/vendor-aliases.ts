@@ -194,6 +194,23 @@ export function stripModelCollisionTag(modelId: string): string {
 }
 
 /**
+ * Claude Code (and some UIs) append a context-window decorator to the model id,
+ * e.g. `phantom/vibecode/glm-5.3[1m]` or `claude-sonnet-5[200k]`. Forwarding that
+ * literal bracket to upstream yields 404 "Unknown model: …[1m]". Strip only
+ * trailing size tags like `[1m]` / `[200k]` / `[1M]` — leave other brackets alone.
+ */
+export function stripClientContextWindowTag(modelId: string): string {
+	return String(modelId ?? "")
+		.trim()
+		.replace(/\[(\d+(?:\.\d+)?)[kKmM]?\]$/u, "");
+}
+
+/** Strip client-only decorations before catalog resolve / upstream forward. */
+export function sanitizeClientModelId(modelId: string): string {
+	return stripClientContextWindowTag(stripModelCollisionTag(modelId));
+}
+
+/**
  * True when vendor is only a public alias target (never a real upstream key).
  * Example: aliases `{ amanai: "vibecode" }` → vibecode is public-only.
  * Chain `{ ikan: "amanai", tokito: "ikan" }` → amanai public-only; ikan is still a real key.

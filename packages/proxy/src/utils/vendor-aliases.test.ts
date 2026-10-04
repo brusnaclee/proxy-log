@@ -14,6 +14,8 @@ import {
 	findForbiddenRawVendor,
 	realVendorsForClientVendor,
 	stripModelCollisionTag,
+	stripClientContextWindowTag,
+	sanitizeClientModelId,
 	isPublicAliasOnlyVendor,
 	filterForwardableUpstreamIds,
 	preferRealVendorHits,
@@ -166,6 +168,37 @@ describe("vendor-aliases", () => {
 		assert.equal(
 			stripModelCollisionTag("phantom/vibecode/claude-opus-4.8"),
 			"phantom/vibecode/claude-opus-4.8",
+		);
+	});
+
+	it("stripClientContextWindowTag removes Claude Code [1m]/[200k] tags", () => {
+		assert.equal(
+			stripClientContextWindowTag("phantom/vibecode/glm-5.3[1m]"),
+			"phantom/vibecode/glm-5.3",
+		);
+		assert.equal(
+			stripClientContextWindowTag("claude-sonnet-5[200k]"),
+			"claude-sonnet-5",
+		);
+		assert.equal(
+			stripClientContextWindowTag("phantom/vibecode/glm-5.3[1M]"),
+			"phantom/vibecode/glm-5.3",
+		);
+		assert.equal(
+			stripClientContextWindowTag("phantom/vibecode/glm-5.3"),
+			"phantom/vibecode/glm-5.3",
+		);
+		// Non-size brackets must stay (hypothetical model names).
+		assert.equal(
+			stripClientContextWindowTag("foo/bar[beta]"),
+			"foo/bar[beta]",
+		);
+	});
+
+	it("sanitizeClientModelId strips collision + context tags", () => {
+		assert.equal(
+			sanitizeClientModelId("phantom/vibecode/glm-5.3[1m] · amanai"),
+			"phantom/vibecode/glm-5.3",
 		);
 	});
 
