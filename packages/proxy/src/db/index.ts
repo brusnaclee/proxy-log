@@ -45,7 +45,7 @@ export async function initializeDatabase() {
 		await pool.query(`ALTER TABLE model_limits ADD COLUMN IF NOT EXISTS dedicated_pool_group text`);
 		await pool.query(`CREATE INDEX IF NOT EXISTS idx_model_limits_dedicated_pool_group ON model_limits (dedicated_pool_group) WHERE dedicated_pool_group IS NOT NULL`);
 		await pool.query(`ALTER TABLE model_limits ADD COLUMN IF NOT EXISTS prompt_limit_bypass boolean NOT NULL DEFAULT false`);
-		// Shared dedicated pool: gcli grok-4.5 + grok-4.6 → 30M total (group: gcli-grok)
+		// Shared dedicated pool: gcli grok-4.5 + grok-4.6 + grok-4.7 → 30M total (group: gcli-grok)
 		await pool.query(
 			`DELETE FROM model_limits
 			 WHERE scope = 'global' AND scope_id = 0 AND model = 'grok-4.5'
@@ -60,10 +60,10 @@ export async function initializeDatabase() {
 		await pool.query(
 			`DELETE FROM model_limits
 			 WHERE scope = 'global' AND scope_id = 0
-			   AND model IN ('tokitoV2/gcli/grok-4.5', 'tokitoV2/gcli/grok-4.6')
+			   AND model IN ('tokitoV2/gcli/grok-4.5', 'tokitoV2/gcli/grok-4.6', 'tokitoV2/gcli/grok-4.7')
 			   AND is_pattern = false`,
 		);
-		for (const gcliModel of ["tokitoV2/gcli/grok-4.5", "tokitoV2/gcli/grok-4.6"]) {
+		for (const gcliModel of ["tokitoV2/gcli/grok-4.5", "tokitoV2/gcli/grok-4.6", "tokitoV2/gcli/grok-4.7"]) {
 			const existingGcli = await pool.query(
 				`SELECT id FROM model_limits
 				 WHERE scope = 'global' AND scope_id = 0 AND model = $1 AND is_pattern = false
@@ -94,7 +94,7 @@ export async function initializeDatabase() {
 				);
 			}
 		}
-		console.log('✅ Applied idempotent model_limits migrations (+ gcli grok-4.5/4.6 shared dedicated pool 30M)');
+		console.log('✅ Applied idempotent model_limits migrations (+ gcli grok-4.5/4.6/4.7 shared dedicated pool 30M)');
 	} catch (err: any) {
 		console.warn('⚠️ model_limits idempotent migration warning:', err?.message || err);
 	}
