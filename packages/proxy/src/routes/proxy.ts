@@ -5536,11 +5536,17 @@ proxy.all('/*', async (c) => {
 		let fetchSucceeded = false;
 		let fetchError: Error | null = null;
 		const originalModel = model;
-		// Trial users should not wait through 2 retries per model — one attempt
-		// per model, then skip-ahead to __auto__ on the first failure. Phantom
-		// users still get 3 attempts per model for the cost-savings case where
-		// an upstream has transient hiccups.
-		const maxAttemptsPerModel = keyRecord.isTrial ? 1 : 3;
+		// Trial: one attempt per model then skip-ahead. Phantom/amanai often
+		// returns HTTP 200 with empty body (Claude Code / OpenCode then retry
+		// 10× and burn far more upstream credit). Soft-retry empty locally up
+		// to 5× — user prompt quota is never charged on empty (see empty
+		// response path below). Non-transient providers stay at 3.
+		const maxAttemptsPerModel = keyRecord.isTrial
+			? 1
+			: isTransientUpstreamProvider(targetProvider?.name)
+				? 5
+				: 3;
+		let emptySoftRetriesUsed = 0;
 		// When a model in the chain fails (upstream 5xx / network error / abort)
 		// we increment this. For trial users we go to __auto__ on the first
 		// failure instead of continuing to retry other gpy models — they've
@@ -5822,17 +5828,25 @@ proxy.all('/*', async (c) => {
 					}
 
 					if (emptyUpstream) {
+						emptySoftRetriesUsed += 1;
 						const canRetryEmpty = attempt + 1 < maxAttemptsPerModel;
+						// Empty body: do NOT charge user quota (reservation released
+						// only if we ultimately fail). Soft-retry here is cheaper than
+						// letting the CLI retry the full prompt 10× against amanai.
 						console.warn(
-							`[proxy] empty upstream from ${pickModel} (attempt ${attempt + 1}/${maxAttemptsPerModel})${canRetryEmpty ? ', retrying' : ''}`,
+							`[proxy] empty upstream from ${pickModel} (empty ${emptySoftRetriesUsed}/${maxAttemptsPerModel}, attempt ${attempt + 1}/${maxAttemptsPerModel}; user quota not charged)${canRetryEmpty ? ', soft-retrying' : ''}`,
 						);
 						upstreamResponse = null as any;
 						if (canRetryEmpty) {
-							await sleep(400 * (attempt + 1));
+							// Short jittered backoff — rotate key on next loop via getNextApiKey.
+							const backoffMs =
+								280 +
+								180 * emptySoftRetriesUsed +
+								Math.floor(Math.random() * 160);
+							await sleep(backoffMs);
 							continue;
 						}
-						// Exhausted retries for this model — treat as failure and
-						// let outer loop / error path surface empty_upstream.
+						// Exhausted empty soft-retries — surface empty_upstream.
 						fetchError = new Error(
 							`Upstream returned empty content for ${pickModel}`,
 						);
