@@ -34,6 +34,7 @@ import {
 } from '../utils/responses-sse.js';
 import { normalizeToolCallArray } from '../utils/tool-call-normalize.js';
 import { normalizeToolsForUpstream } from '../utils/openai-tools.js';
+import { normalizeAnthropicToolsForUpstream } from '../utils/anthropic-tools.js';
 import { sanitizeChatMessageRoles } from '../utils/sanitize-message-roles.js';
 import {
 	convertResponseToOpenAI,
@@ -2494,6 +2495,8 @@ proxy.all('/*', async (c) => {
 	// Detect Anthropic format clients (Claude Code, Anthropic SDK) and translate.
 	// Detection: path matches /v1/messages OR body shape is Anthropic (system string + max_tokens + messages array).
 	let isAnthropicRequest = anthropicByPath;
+	/** True when body stays Anthropic and is forwarded to a native /v1/messages upstream. */
+	let anthropicNativePassthrough = false;
 	if (!isAnthropicRequest && requestBody && c.req.method === 'POST') {
 		if (looksLikeAnthropicMessages(requestBody)) {
 			isAnthropicRequest = true;
@@ -2505,6 +2508,7 @@ proxy.all('/*', async (c) => {
 			// Native Anthropic client → upstream that supports /v1/messages: keep body as-is.
 			// Critical for phantomv2/amanai — translating to OpenAI then falling back to
 			// auto/gemini was producing wrong models and Chinese safety refusals.
+			anthropicNativePassthrough = true;
 			console.log(`[proxy] anthropic passthrough request for model=${model} provider=${routeProvider?.name}`);
 		} else {
 		try {
@@ -2525,20 +2529,25 @@ proxy.all('/*', async (c) => {
 		}
 	}
 
-	// ─── 7a2. Tool-shape normalisation (all OpenAI-compatible paths) ─────────
-	// Clients post tools in three shapes (canonical nested, flat Responses-style,
-	// and non-function local_shell/custom/web_search). Upstreams accept only the
-	// nested function shape and answer 400 "invalid request" otherwise, which the
-	// proxy reports as a 502. One normaliser keeps every endpoint in agreement.
+	// ─── 7a2. Tool-shape normalisation ───────────────────────────────────────
+	// OpenAI-compatible paths need nested {type:"function", function:{…}}.
+	// Anthropic native passthrough must NOT get that shape — amanai rejects
+	// `tools[0].type` with 400, which Claude Code surfaces as endless 502 retries.
+	// Instead, downgrade Claude Code beta tool types to classic Anthropic tools.
 	if (
 		requestBody &&
 		Array.isArray((requestBody as any).tools) &&
 		(requestBody as any).tools.length > 0
 	) {
-		const normalizedTools = normalizeToolsForUpstream((requestBody as any).tools);
-		// Assign even when undefined so a fully unusable tool list does not
-		// leave a dangling tool_choice that upstream rejects.
-		(requestBody as any).tools = normalizedTools;
+		if (anthropicNativePassthrough) {
+			(requestBody as any).tools = normalizeAnthropicToolsForUpstream(
+				(requestBody as any).tools,
+			);
+		} else {
+			(requestBody as any).tools = normalizeToolsForUpstream(
+				(requestBody as any).tools,
+			);
+		}
 		requestBodyBytes = new TextEncoder().encode(JSON.stringify(requestBody));
 	}
 
