@@ -219,4 +219,104 @@ describe("upstream-leak-scrub", () => {
     assert.deepEqual(scrubUpstreamLeakJson(null), null);
     assert.deepEqual(scrubUpstreamLeakJson({ a: 1 }), { a: 1 });
   });
+
+  // Amanai occasionally injects a fake "reward / gift code" line into chat
+  // completions. The brand word should never reach the client in any casing.
+  it("redacts ALL-CAPS AMANAI word (e.g. AMANAI, AMANAI-GACHA-XXXX)", () => {
+    const s = scrubUpstreamLeakText(
+      " reward 🎉 You rolled a rare gift code worth 100,000,000 credits: AMANAI-GACHA-A9GW-9WCZ — redeem once in your dashboard billing page",
+    );
+    assert.ok(!/AMANAI/i.test(s), `brand leaked: ${s}`);
+    assert.ok(!/redeem once/i.test(s), `promo cta leaked: ${s}`);
+    assert.ok(s.includes("loremipsum"), `placeholder missing: ${s}`);
+  });
+
+  it("keeps a redeem sentence that is not an upstream promo code", () => {
+    const s = scrubUpstreamLeakText(
+      "You can redeem your own coupon in the app settings later.",
+    );
+    assert.ok(s.includes("redeem your own coupon"));
+    assert.ok(!s.includes("loremipsum"));
+  });
+
+  it("redacts mixed-case Amanai / amanai / aMaNaI", () => {
+    const samples = [
+      [" amanai_xyz99 reward line", "loremipsum"],
+      ["Powered by amanai.gateway", "loremipsum"],
+      ["Trained on aMaNaI-3 corpus", "loremipsum"],
+      ["AMANAI rules", "loremipsum"],
+    ];
+    for (const [t, expect] of samples) {
+      const s = scrubUpstreamLeakText(t);
+      assert.ok(!/[Aa][Mm][Aa][Nn][Aa][Ii]/i.test(s), `brand leaked: ${s}`);
+      assert.ok(s.includes(expect), `placeholder missing in: ${s}`);
+    }
+  });
+
+  it("redacts reward / gift / bonus line + brand in one pass", () => {
+    const original =
+      "Build · DeepSeek: DeepSeek V4 Flash 0731 · 4m 59s · 32.1 tok/s\n" +
+      " reward 🎉 You rolled a rare gift code worth 100,000,000 credits: AMANAI-GACHA-A9GW-9WCZ — redeem once in your dashboard billing page: dashboard/billing/";
+    const s = scrubUpstreamLeakText(original);
+    assert.ok(!/amanai/i.test(s), `brand leaked: ${s}`);
+    assert.ok(!/redeem once/i.test(s), `promo cta leaked: ${s}`);
+    assert.ok(!s.includes("dashboard/billing"), `billing path leaked: ${s}`);
+    assert.ok(s.includes("DeepSeek V4 Flash 0731"), "real content lost");
+    assert.ok(s.includes("Build · DeepSeek:"), "real content lost");
+  });
+
+  it("redacts brand inside streamed JSON (deep + tool_calls)", () => {
+    // scrubUpstreamLeakText is also used directly (non-JSON) — sanity check
+    // the plain-text path first to isolate any deep-walk regressions. With
+    // the marketing-hook+brand scrub the "reward line" span is intentionally
+    // collapsed to a `loremipsum` placeholder; we only assert that
+    // surrounding non-hook context ("ok " and " v1") survives.
+    const plain = scrubUpstreamLeakText("ok Amanai reward line AMANAI-XXXX v1");
+    assert.ok(!/amanai/i.test(plain), `brand leaked in plain: ${plain}`);
+    assert.ok(plain.includes("loremipsum"), `placeholder missing in plain: ${plain}`);
+    assert.ok(plain.startsWith("ok ") && plain.endsWith(" v1"), `context lost: ${plain}`);
+
+    const payload = {
+      choices: [
+        {
+          message: {
+            content: "ok Amanai reward line AMANAI-XXXX v1",
+          },
+        },
+      ],
+    };
+    const out = scrubUpstreamLeakJson(payload);
+    const c = (out as any).choices[0].message.content;
+    assert.ok(typeof c === "string", "content must be a string");
+    assert.ok(!/amanai/i.test(c), `brand leaked: ${c}`);
+    assert.ok(c.includes("loremipsum"), `placeholder missing in: ${c}`);
+    // The "reward line" span is the marketing hook + brand and is
+    // intentionally collapsed to `loremipsum`; only the surrounding
+    // non-hook context must survive.
+    assert.ok(
+      c.startsWith("ok ") && c.endsWith(" v1"),
+      `context lost: ${c}`,
+    );
+  });
+
+  it("holdback catches brand word split across chunks", () => {
+    const hb = new StreamHoldbackScrubber(80);
+    const part1 = "Selamat! ";
+    const part2 = "AMANAI-DEV reward 🎉 you got AMANAI-GACHA-A9GW-9WCZ";
+    hb.push(part1);
+    const b = hb.push(part2);
+    const c = hb.flush();
+    const all = b + c;
+    assert.ok(!/amanai/i.test(all), `brand leaked: ${all}`);
+  });
+
+  it("does not touch model ids like phantom/amanai/glm-5.2 in request bodies (URL scrub only)", () => {
+    // Note: scrubUpstreamLeakText is only run on upstream RESPONSE text, not
+    // request bodies. The brand redaction is broader and intentionally hits
+    // those model ids too — model ids are server-internal, never echoed to
+    // the client inside response text.
+    const s = scrubUpstreamLeakText("model: phantom/amanai/glm-5.2");
+    assert.ok(!/amanai/i.test(s));
+    assert.ok(s.includes("phantom/loremipsum/glm-5.2"));
+  });
 });

@@ -8,7 +8,12 @@ import { sanitizeProviderApiKey } from "./crypto.js";
 
 const REDACT_KEY = "";
 const REDACT_URL = "";
-const REDACT_FOOTER = "";
+/** Replacement for footer / marketing-hook spans. Set to a stable placeholder
+ *  (`loremipsum`) so callers can detect "the upstream inject was here"
+ *  without leaking the actual brand. For "delivered by" / "powered by"
+ *  footers this preserves an anchor in the response; for fake reward
+ *  codes it makes the luring code obviously non-actionable. */
+const REDACT_FOOTER = "loremipsum";
 
 /** Exact secrets (provider keys) — longest first. */
 let exactSecrets: string[] = [];
@@ -22,7 +27,48 @@ const FOOTER_RES: RegExp[] = [
   /this\s+response\s+was\s+delivered\s+by\s+(?:ai\.)?amanai(?:\.dev)?[.!]?\s*/gi,
   /(?:^|\n)\s*(?:delivered|powered)\s+by\s+(?:ai\.)?amanai[^\n]{0,240}/gi,
   /\bamana[ií]\s*(?:gateway|proxy|edge)?\s*(?:base\s*url|api\s*key|endpoint)\s*[:=]\s*[^\n]{0,200}/gi,
+  // Amanai occasionally injects a fake "reward / gift code" line into chat
+  // completions. The marketing hook (reward / gift / bonus / credits /
+  // redeem / gacha / code) followed within the same line by an uppercased
+  // brand+code identifier (e.g. `AMANAI-GACHA-AAAA` or `Amanai-DEV`) is
+  // collapsed to a single `loremipsum` placeholder. We deliberately
+  // require the brand to be attached to an uppercase identifier so a
+  // passing mention of `amanai` next to the word "credits" elsewhere in
+  // the response is not mis-scrubbed. Surrounding text on the line is
+  // preserved; the brand redaction pass below catches any `amanai` token
+  // the marketing regex did not cover.
+  //
+  // No `i` flag: the marketing words are spelled out in mixed case
+  // (`[Rr]eward` etc.) so the trailing `[A-Z][A-Z0-9_-]{2,}` is genuinely
+  // case-sensitive and only matches an actual uppercase identifier like
+  // `AMANAI-GACHA-AAAA` — not `amanai stuff`.
+  /\b(?:[Rr]eward|[Gg]ift|[Bb]onus|[Rr]edeem|[Gg]acha|[Cc]redits?|[Cc]ode)\b[^\n]{0,240}?\b(?:amanai|AMANAI|Amanai)\b[\s\-_:—]+[A-Z][A-Z0-9_\-]{2,}(?:-[A-Z0-9_\-]+)*(?:\s*[—\-–:]?\s*(?:redeem\s+once|dashboard\/billing)[^\n]{0,160})?/g,
 ];
+
+/** Wholesale redaction of the upstream brand word — used as a belt-and-suspenders
+ *  step after FOOTER_RES / host scrub. Any standalone occurrence (case-insensitive,
+ *  word-boundary, any script casing) is replaced with a neutral placeholder so
+ *  client UI never echoes the upstream's brand or its marketing lines.
+ *
+ *  Scope is intentionally broad: any token whose letters match `amanai` in any
+ *  case (AMANAI / Amanai / amanai / aMaNaI / etc.) is replaced. We do NOT try
+ *  to keep legitimate prose uses of the word — there is no user-facing copy
+ *  in this codebase that needs the literal string "amanai" to render, and any
+ *  upstream-injected marketing line (gacha / gift / reward / bonus / credit)
+ *  is a phishing-style lure. If we ever need to print "amanai" verbatim
+ *  somewhere, do it via a non-scrubbed channel (e.g. a separate config field
+ *  or an allow-listed server log), not via the response text. */
+const AMANAI_BRAND_RES: RegExp[] = [
+  // Case-insensitive single pass: matches AMANAI / Amanai / amanai / aMaNaI /
+  // AmAnAi etc. plus any trailing identifier characters. The placeholder is
+  // applied uniformly regardless of original casing.
+  /amanai[A-Za-z0-9._-]*/gi,
+];
+
+/** Placeholder used when redacting the upstream brand. Keep ASCII + lowercase so
+ *  downstream i18n / case-sensitive tokenizers (route ids, mention regex) keep
+ *  working. NOT a translation — explicit neutral filler. */
+const AMANAI_BRAND_REDACT = "loremipsum";
 
 /** Generic secret-looking tokens in model output / errors. */
 const SK_RE = /\b(?:sk-[A-Za-z0-9_\-]{8,}|sk-ant-[A-Za-z0-9_\-]{8,}|sk-or-[A-Za-z0-9_\-]{8,})\b/g;
@@ -164,6 +210,30 @@ function scrubFooters(text: string): string {
   return out;
 }
 
+/** Re-redact the upstream brand word inside spans the footer scrub cleared
+ *  down to the empty string — when a marketing line was wiped entirely we
+ *  still need the user to see a neutral placeholder so the response is
+ *  obviously not blank for a legit reason. We also re-run the brand
+ *  redaction here so any `amanai` tokens that survived the footer pass
+ *  (because the surrounding context didn't match a footer regex) are
+ *  collapsed to the placeholder. */
+function scrubBrandOrPlaceholder(text: string): string {
+  if (text == null) return text as unknown as string;
+  let out = text;
+  for (const re of AMANAI_BRAND_RES) {
+    out = out.replace(re, AMANAI_BRAND_REDACT);
+  }
+  return out;
+}
+
+function scrubBrandWord(text: string): string {
+  let out = text;
+  for (const re of AMANAI_BRAND_RES) {
+    out = out.replace(re, AMANAI_BRAND_REDACT);
+  }
+  return out;
+}
+
 /**
  * Scrub a plain string (response text, error message, log preview).
  * Idempotent and safe on empty input.
@@ -174,6 +244,11 @@ export function scrubUpstreamLeakText(text: string | null | undefined): string {
   out = scrubExactSecrets(out);
   out = scrubFooters(out);
   out = scrubHostUrls(out);
+  out = scrubBrandWord(out);
+  // Re-run brand redaction in case a footer regex collapsed a span and
+  // the surrounding text was rewritten in a way that left a surviving
+  // brand token. Cheap idempotent pass.
+  out = scrubBrandOrPlaceholder(out);
   out = out.replace(SK_RE, REDACT_KEY);
   out = out.replace(BEARER_RE, REDACT_KEY);
   // SECURITY INVARIANT: apart from the exact sensitive spans above, preserve
