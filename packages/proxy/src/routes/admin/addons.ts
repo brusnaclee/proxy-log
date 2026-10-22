@@ -421,6 +421,11 @@ addonsApi.patch("/addon-assignments/:id", async (c) => {
     const [addon] = await db.select().from(addons).where(eq(addons.id, existing.addonId)).limit(1);
     if (!addon) return c.json({ error: "Add-on not found" }, 404);
 
+    // The user's latest assignment for this addon decides the chain point —
+    // NOT the click time. When the latest window has already expired, the new
+    // chain should start at "now" (it's overdue), but its own `starts_at`
+    // must stay anchored to the chain source's expiry so history reads
+    // correctly in the admin UI.
     const [latest] = await db
       .select()
       .from(addonAssignments)
@@ -429,10 +434,9 @@ addonsApi.patch("/addon-assignments/:id", async (c) => {
       .limit(1);
 
     const now = new Date();
-    const startsAt =
-      latest?.expiresAt && new Date(latest.expiresAt) > now
-        ? new Date(latest.expiresAt)
-        : now;
+    const latestExpiry = latest?.expiresAt ? new Date(latest.expiresAt) : null;
+    // Chain point = latest expiry when still in the future; otherwise start now.
+    const startsAt = latestExpiry && latestExpiry > now ? latestExpiry : now;
     const expiresAt = new Date(
       startsAt.getTime() + Math.max(0, addon.defaultDurationDays || 0) * 24 * 60 * 60 * 1000,
     );

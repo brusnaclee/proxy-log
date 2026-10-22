@@ -1258,6 +1258,51 @@ internal.get("/internal/addon-role-sync", async (c) => {
     }
   }
 
+  // Scheduled-start promotion: an `after_expiry` / `custom` chain that was
+  // created while its start was still in the future must flip to active the
+  // moment `starts_at` arrives — without an admin having to click again.
+  // This also fires the pack role grant and the key-access sync that the
+  // create-path would have done, so an overdue chain never sits "chained"
+  // forever with no effect.
+  const promoting = await db
+    .select({
+      id: addonAssignments.id,
+      discordUserId: addonAssignments.discordUserId,
+      addonId: addonAssignments.addonId,
+    })
+    .from(addonAssignments)
+    .where(
+      and(
+        eq(addonAssignments.isActive, false),
+        sql`${addonAssignments.startsAt} <= ${now}`,
+        sql`${addonAssignments.expiresAt} IS NULL OR ${addonAssignments.expiresAt} > ${now}`,
+        sql`${addonAssignments.archivedAt} IS NULL`,
+        or(isNull(addonAssignments.roleSyncAction), sql`${addonAssignments.roleSyncAction} = 'none'`),
+      ),
+    );
+
+  const promotedUsers: string[] = [];
+  for (const row of promoting) {
+    const [addon] = await db.select().from(addons).where(eq(addons.id, row.addonId)).limit(1);
+    await db
+      .update(addonAssignments)
+      .set({ isActive: true, roleSyncAction: "grant" } as any)
+      .where(eq(addonAssignments.id, row.id));
+    if (row.discordUserId) {
+      promotedUsers.push(row.discordUserId);
+      await applyMaxDevicesForScheduledPromotion(addon?.maxDevices || 0, row.discordUserId);
+      await syncUserKeyAccessAfterAddonChange(
+        row.discordUserId,
+        `add-on chain started: ${addon?.name || row.addonId}`,
+      );
+    }
+  }
+  if (promoting.length > 0) {
+    console.log(
+      `[addon-chain] promoted ${promoting.length} scheduled assignment(s) at ${now.toISOString()}`,
+    );
+  }
+
   const pending = await db
     .select({
       assignmentId: addonAssignments.id,
@@ -1277,8 +1322,42 @@ internal.get("/internal/addon-role-sync", async (c) => {
       ),
     );
 
-  return c.json({ jobs: pending, expiredUsers: [...new Set(expiredUsers)] });
+  return c.json({
+    jobs: pending,
+    expiredUsers: [...new Set(expiredUsers)],
+    promotedUsers: [...new Set(promotedUsers)],
+    promoted: promoting.length,
+  });
 });
+
+/** Max-device clamp helper for a chain that just started (mirrors the
+ *  create-path in admin/addons.ts). Kept local so internal.ts does not need
+ *  to import the admin router. */
+async function applyMaxDevicesForScheduledPromotion(
+  maxDevices: number,
+  discordUserId: string,
+): Promise<void> {
+  const cap = Math.max(0, maxDevices || 0);
+  if (cap <= 0) return;
+  try {
+    const rows = await db
+      .select({ id: apiKeys.id, maxDevices: apiKeys.maxDevices })
+      .from(apiKeys)
+      .where(eq(apiKeys.discordUserId, discordUserId));
+    for (const key of rows) {
+      const current = key.maxDevices || 0;
+      const next = current <= 0 ? cap : Math.min(current, cap);
+      if (next !== current) {
+        await db
+          .update(apiKeys)
+          .set({ maxDevices: next, updatedAt: new Date() })
+          .where(eq(apiKeys.id, key.id));
+      }
+    }
+  } catch (err) {
+    console.warn("[addon-chain] max-devices clamp failed:", (err as Error)?.message || err);
+  }
+}
 
 internal.post("/internal/sync-user-access", async (c) => {
   const authErr = checkInternal(c);
@@ -1357,6 +1436,10 @@ internal.post("/internal/addon-role-backfill", async (c) => {
         eq(addons.isActive, true),
         sql`${addonAssignments.discordUserId} IS NOT NULL`,
         sql`${addons.discordRoleId} IS NOT NULL AND ${addons.discordRoleId} != ''`,
+        // Respect the scheduled start: a chained row whose `starts_at` is
+        // still in the future must NOT get its pack role granted yet, or an
+        // admin "override" earlier would leak straight back in.
+        sql`${addonAssignments.startsAt} <= ${now}`,
         or(isNull(addonAssignments.expiresAt), gt(addonAssignments.expiresAt, now)),
       ),
     );
