@@ -73,6 +73,25 @@ export const FALLBACK_METADATA: FallbackMetadata[] = [
   { modelId: "glm/glm-4.6v", displayName: "GLM 4.6V", description: "Zhipu AI GLM-4.6V — vision-language model", contextLength: 128_000, maxOutputTokens: 32_768, inputPricePerMtok: usd(0.50), outputPricePerMtok: usd(1.60), inputModalities: ["text", "image"], outputModalities: ["text"], supportedFeatures: ["tools", "vision"] },
   { modelId: "glm-5.1", displayName: "GLM 5.1 (Qwen)", description: "GLM-5.1 via Qwen provider", contextLength: 200_000, maxOutputTokens: 128_000, inputPricePerMtok: usd(1.40), outputPricePerMtok: usd(4.40), inputModalities: ["text"], outputModalities: ["text"], supportedFeatures: ["tools", "reasoning"] },
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // phantom/vibecode catalog — vision capability flags.
+  //
+  // These are the PUBLIC model ids served by the `phantom` provider (vendor
+  // alias loremipsum → vibecode). The upstream accepts image parts on these
+  // models, but OpenRouter's metadata for the bare upstream ids claims
+  // text-only, which makes image-capable clients (Cline, Cursor, ...) block
+  // the image before the request is ever sent.
+  //
+  // Entries are matched via `getFallbackMetadata()`: exact id first, then a
+  // prefix match (`<id>-*` / `<id>_*`). `deepseek-v4-pro` is matched by the
+  // OpenRouter branch first, so its DB row is the effective source; these
+  // fallback entries cover the case where OpenRouter has no entry at all.
+  // ═══════════════════════════════════════════════════════════════════════════
+  { modelId: "glm-5.2", displayName: "GLM 5.2", description: "Zhipu AI GLM-5.2 — 744B MoE (40B active), 200K context", contextLength: 200_000, maxOutputTokens: 131_072, inputPricePerMtok: usd(1.00), outputPricePerMtok: usd(3.20), inputModalities: ["text", "image"], outputModalities: ["text"], supportedFeatures: ["tools", "reasoning", "structured_outputs", "vision"] },
+  { modelId: "glm-5.3", displayName: "GLM 5.3", description: "Zhipu AI GLM-5.3 — multimodal, 200K context", contextLength: 200_000, maxOutputTokens: 131_072, inputPricePerMtok: usd(1.00), outputPricePerMtok: usd(3.20), inputModalities: ["text", "image"], outputModalities: ["text"], supportedFeatures: ["tools", "reasoning", "structured_outputs", "vision"] },
+  { modelId: "deepseek-v4-pro", displayName: "DeepSeek V4 Pro", description: "DeepSeek V4 Pro — reasoning model with image input", contextLength: 128_000, maxOutputTokens: 64_000, inputPricePerMtok: usd(0.55), outputPricePerMtok: usd(2.19), inputModalities: ["text", "image"], outputModalities: ["text"], supportedFeatures: ["tools", "reasoning", "structured_outputs", "vision"] },
+  { modelId: "deepseek-v4-flash-0731", displayName: "DeepSeek V4 Flash", description: "DeepSeek V4 Flash — fast reasoning model with image input", contextLength: 128_000, maxOutputTokens: 64_000, inputPricePerMtok: usd(0.28), outputPricePerMtok: usd(1.10), inputModalities: ["text", "image"], outputModalities: ["text"], supportedFeatures: ["tools", "reasoning", "structured_outputs", "vision"] },
+
   // ═══════════════════════════════════════════════════════════════════════════
   // minimax/ — MiniMax models
   // ═══════════════════════════════════════════════════════════════════════════

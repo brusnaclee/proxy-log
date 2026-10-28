@@ -1954,11 +1954,43 @@ export async function enrichModelMetadata(): Promise<void> {
         // Skip virtual models
         if (modelId === "auto") continue;
 
+        // Preserve a manually/granted vision capability across enrichment runs.
+        //
+        // OpenRouter's metadata for some upstream ids claims text-only even
+        // though the upstream DOES accept image parts (verified by probing the
+        // upstream with a real image payload). Enrichment runs every 6h and
+        // would otherwise wipe the granted `image` modality + `vision` flag,
+        // which makes image-capable clients (Cline, Cursor, ...) silently
+        // refuse to send images ("This model doesn't support image input").
+        //
+        // Only upgrades text -> image are preserved; a genuine downgrade
+        // (image -> text) still applies, so upstream capability loss is
+        // reflected in the catalog.
+        const existingRow = (
+          await db.select().from(modelMetadata).where(eq(modelMetadata.modelId, modelId))
+        )[0];
+        const existingModalities = (() => {
+          if (!existingRow?.inputModalities) return [] as string[];
+          try {
+            const v = JSON.parse(existingRow.inputModalities);
+            return Array.isArray(v) ? (v as string[]) : [];
+          } catch {
+            return [];
+          }
+        })();
+        const hadVision = existingModalities.includes("image");
+
         // Try OpenRouter first
         const orMatch = findOpenRouterMatch(modelId, orMap);
 
         if (orMatch) {
           const meta = extractOpenRouterMetadata(orMatch);
+          const mergedModalities = hadVision
+            ? Array.from(new Set([...(meta.inputModalities || []), "image"]))
+            : meta.inputModalities;
+          const mergedFeatures = hadVision
+            ? Array.from(new Set([...(meta.supportedFeatures || []), "vision"]))
+            : meta.supportedFeatures;
           await db.insert(modelMetadata).values({
             modelId,
             displayName: meta.displayName,
@@ -1967,9 +1999,9 @@ export async function enrichModelMetadata(): Promise<void> {
             maxOutputTokens: meta.maxOutputTokens,
             inputPricePerMtok: meta.inputPricePerMtok,
             outputPricePerMtok: meta.outputPricePerMtok,
-            inputModalities: JSON.stringify(meta.inputModalities),
+            inputModalities: JSON.stringify(mergedModalities),
             outputModalities: JSON.stringify(meta.outputModalities),
-            supportedFeatures: JSON.stringify(meta.supportedFeatures),
+            supportedFeatures: JSON.stringify(mergedFeatures),
             source: "openrouter",
           }).onConflictDoUpdate({
             target: modelMetadata.modelId,
@@ -1980,9 +2012,9 @@ export async function enrichModelMetadata(): Promise<void> {
               maxOutputTokens: meta.maxOutputTokens,
               inputPricePerMtok: meta.inputPricePerMtok,
               outputPricePerMtok: meta.outputPricePerMtok,
-              inputModalities: JSON.stringify(meta.inputModalities),
+              inputModalities: JSON.stringify(mergedModalities),
               outputModalities: JSON.stringify(meta.outputModalities),
-              supportedFeatures: JSON.stringify(meta.supportedFeatures),
+              supportedFeatures: JSON.stringify(mergedFeatures),
               source: "openrouter",
               updatedAt: new Date(),
             },
@@ -1994,6 +2026,16 @@ export async function enrichModelMetadata(): Promise<void> {
         // Try hardcode fallback
         const fb = getFallbackMetadata(modelId);
         if (fb) {
+          const fbModalities = fb.inputModalities
+            ? (hadVision
+                ? Array.from(new Set([...fb.inputModalities, "image"]))
+                : fb.inputModalities)
+            : null;
+          const fbFeatures = fb.supportedFeatures
+            ? (hadVision
+                ? Array.from(new Set([...fb.supportedFeatures, "vision"]))
+                : fb.supportedFeatures)
+            : null;
           await db.insert(modelMetadata).values({
             modelId,
             displayName: fb.displayName,
@@ -2002,9 +2044,9 @@ export async function enrichModelMetadata(): Promise<void> {
             maxOutputTokens: fb.maxOutputTokens || null,
             inputPricePerMtok: fb.inputPricePerMtok || 0,
             outputPricePerMtok: fb.outputPricePerMtok || 0,
-            inputModalities: fb.inputModalities ? JSON.stringify(fb.inputModalities) : null,
+            inputModalities: fbModalities ? JSON.stringify(fbModalities) : null,
             outputModalities: fb.outputModalities ? JSON.stringify(fb.outputModalities) : null,
-            supportedFeatures: fb.supportedFeatures ? JSON.stringify(fb.supportedFeatures) : null,
+            supportedFeatures: fbFeatures ? JSON.stringify(fbFeatures) : null,
             source: "hardcode",
           }).onConflictDoUpdate({
             target: modelMetadata.modelId,
@@ -2015,9 +2057,9 @@ export async function enrichModelMetadata(): Promise<void> {
               maxOutputTokens: fb.maxOutputTokens || null,
               inputPricePerMtok: fb.inputPricePerMtok || 0,
               outputPricePerMtok: fb.outputPricePerMtok || 0,
-              inputModalities: fb.inputModalities ? JSON.stringify(fb.inputModalities) : null,
+              inputModalities: fbModalities ? JSON.stringify(fbModalities) : null,
               outputModalities: fb.outputModalities ? JSON.stringify(fb.outputModalities) : null,
-              supportedFeatures: fb.supportedFeatures ? JSON.stringify(fb.supportedFeatures) : null,
+              supportedFeatures: fbFeatures ? JSON.stringify(fbFeatures) : null,
               source: "hardcode",
               updatedAt: new Date(),
             },
