@@ -620,7 +620,49 @@ export async function getModelCatalogResponse() {
     const fb = getFallbackMetadata(m.id) || getFallbackMetadata(publicId);
     const meta = metadataMap.get(m.id) || metadataMap.get(publicId);
 
-    if (meta || fb) {
+    // Alias-aware metadata lookup.
+    //
+    // A provider can rename its vendor segment (`vendor_aliases`, e.g. the real
+    // upstream vendor → the public alias). The metadata table may then hold the
+    // capability under a DIFFERENT key than the one the catalog resolves:
+    //   upstream id  : loremipsum/glm-5.2
+    //   public id    : phantom/vibecode/glm-5.2
+    //   bare leaf    : glm-5.2
+    //
+    // Without this, an operator who granted image support on the bare leaf id
+    // would see no effect in /v1/models, and image-capable clients would keep
+    // refusing to send images ("This model doesn't support image input").
+    // So: try the upstream id, the public id, and every vendor-stripped
+    // candidate of both, and take the first row that exists.
+    const metaCandidates: string[] = [];
+    const pushCandidate = (id: string | null | undefined) => {
+      const v = String(id || "").trim();
+      if (v && !metaCandidates.includes(v)) metaCandidates.push(v);
+    };
+    pushCandidate(m.id);
+    pushCandidate(publicId);
+    for (const base of [m.id, publicId]) {
+      for (const cand of expandUpstreamIdCandidates(String(base || ""), aliases)) {
+        pushCandidate(cand);
+      }
+      // Strip every leading vendor segment: "phantom/vibecode/glm-5.2" → "glm-5.2"
+      const parts = String(base || "").split("/");
+      for (let i = 1; i < parts.length; i++) {
+        pushCandidate(parts.slice(i).join("/"));
+      }
+    }
+    let resolvedMeta = meta;
+    if (!resolvedMeta) {
+      for (const cand of metaCandidates) {
+        const hit = metadataMap.get(cand);
+        if (hit) {
+          resolvedMeta = hit;
+          break;
+        }
+      }
+    }
+
+    if (resolvedMeta || fb) {
       const enriched: any = { ...rest };
       enriched.owned_by = publicOwnedBy;
       enriched.provider = publicOwnedBy;
@@ -644,25 +686,25 @@ export async function getModelCatalogResponse() {
       }
 
       // Overlay DB metadata (higher priority when present)
-      if (meta) {
-        if (meta.contextLength) enriched.context_length = meta.contextLength;
-        if (meta.maxOutputTokens) enriched.max_output_tokens = meta.maxOutputTokens;
-        if (meta.displayName) enriched.name = meta.displayName;
-        if (meta.description) enriched.description = meta.description;
-        if (meta.inputPricePerMtok || meta.outputPricePerMtok) {
+      if (resolvedMeta) {
+        if (resolvedMeta.contextLength) enriched.context_length = resolvedMeta.contextLength;
+        if (resolvedMeta.maxOutputTokens) enriched.max_output_tokens = resolvedMeta.maxOutputTokens;
+        if (resolvedMeta.displayName) enriched.name = resolvedMeta.displayName;
+        if (resolvedMeta.description) enriched.description = resolvedMeta.description;
+        if (resolvedMeta.inputPricePerMtok || resolvedMeta.outputPricePerMtok) {
           enriched.pricing = {
-            prompt: (meta.inputPricePerMtok || 0) / 1_000_000,
-            completion: (meta.outputPricePerMtok || 0) / 1_000_000,
+            prompt: (resolvedMeta.inputPricePerMtok || 0) / 1_000_000,
+            completion: (resolvedMeta.outputPricePerMtok || 0) / 1_000_000,
           };
         }
-        if (meta.inputModalities) {
-          try { enriched.input_modalities = JSON.parse(meta.inputModalities); } catch {}
+        if (resolvedMeta.inputModalities) {
+          try { enriched.input_modalities = JSON.parse(resolvedMeta.inputModalities); } catch {}
         }
-        if (meta.outputModalities) {
-          try { enriched.output_modalities = JSON.parse(meta.outputModalities); } catch {}
+        if (resolvedMeta.outputModalities) {
+          try { enriched.output_modalities = JSON.parse(resolvedMeta.outputModalities); } catch {}
         }
-        if (meta.supportedFeatures) {
-          try { enriched.supported_features = JSON.parse(meta.supportedFeatures); } catch {}
+        if (resolvedMeta.supportedFeatures) {
+          try { enriched.supported_features = JSON.parse(resolvedMeta.supportedFeatures); } catch {}
         }
       }
       publicModels.push(enriched);
