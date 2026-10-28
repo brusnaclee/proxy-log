@@ -1991,6 +1991,7 @@ export async function enrichModelMetadata(): Promise<void> {
       let matched = 0;
       let fallback = 0;
       let unknown = 0;
+      let skipped = 0;
 
       for (const modelId of ourModels) {
         // Skip virtual models
@@ -2005,12 +2006,21 @@ export async function enrichModelMetadata(): Promise<void> {
         // which makes image-capable clients (Cline, Cursor, ...) silently
         // refuse to send images ("This model doesn't support image input").
         //
-        // Only upgrades text -> image are preserved; a genuine downgrade
-        // (image -> text) still applies, so upstream capability loss is
-        // reflected in the catalog.
+        // Rows whose `source` is 'verified' were set by an operator after
+        // probing the upstream and are left completely untouched by enrichment
+        // — that is the only way to express "this model is text-only on
+        // purpose" when OpenRouter claims vision support. (OpenRouter lists
+        // claude-*/gpt-* as vision models, but the upstream rejects their image
+        // requests with 503, so advertising them as vision-capable just makes
+        // clients send requests that can only fail.)
         const existingRow = (
           await db.select().from(modelMetadata).where(eq(modelMetadata.modelId, modelId))
         )[0];
+        if (existingRow?.source === 'verified') {
+          // Operator-verified: keep the row exactly as it is.
+          skipped++;
+          continue;
+        }
         const existingModalities = (() => {
           if (!existingRow?.inputModalities) return [] as string[];
           try {
@@ -2126,7 +2136,7 @@ export async function enrichModelMetadata(): Promise<void> {
       }
 
       lastEnrichmentAt = Date.now();
-      console.log(`[model-metadata] Enrichment complete: ${matched} OpenRouter, ${fallback} fallback, ${unknown} unknown`);
+      console.log(`[model-metadata] Enrichment complete: ${matched} OpenRouter, ${fallback} fallback, ${unknown} unknown, ${skipped} verified (kept as-is)`);
 
       // Fill identity prompts for any model still missing them (all providers)
       try {
