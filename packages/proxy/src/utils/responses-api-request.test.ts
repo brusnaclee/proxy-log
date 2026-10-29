@@ -7,8 +7,8 @@ import assert from "node:assert/strict";
  * handling stays testable without booting the whole route.
  */
 export function responsesContentToText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (content === null || content === undefined) return "";
+  if (typeof content === 'string') return content;
+  if (content === null || content === undefined) return '';
   if (Array.isArray(content)) {
     const text = content
       .filter(
@@ -25,6 +25,43 @@ export function responsesContentToText(content: unknown): string {
   return JSON.stringify(content);
 }
 
+/**
+ * Responses API content parts → Chat Completions multi-part content.
+ * `input_image` must become a real `image_url` part, otherwise the image is
+ * flattened into a JSON string and the model replies "No image was provided".
+ */
+export function responsesContentToChatParts(content: unknown): string | any[] {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return responsesContentToText(content);
+
+  const parts: any[] = [];
+  for (const c of content) {
+    if (!c || typeof c !== 'object') continue;
+    const type = String(c.type || '');
+    if (type === 'input_text' || type === 'output_text' || type === 'text' || type === 'summary_text') {
+      if (typeof c.text === 'string') parts.push({ type: 'text', text: c.text });
+      continue;
+    }
+    if (type === 'input_image' || type === 'image_url' || type === 'image') {
+      const src = (c as any).image_url ?? (c as any).url ?? (c as any).image ?? null;
+      const url = typeof src === 'string' ? src : src?.url ?? null;
+      if (url) {
+        parts.push({ type: 'image_url', image_url: { url } });
+        continue;
+      }
+      const data = (c as any).source?.data ?? (c as any).data ?? null;
+      const mediaType = (c as any).source?.media_type ?? (c as any).media_type ?? 'image/png';
+      if (data) {
+        parts.push({ type: 'image_url', image_url: { url: `data:${mediaType};base64,${data}` } });
+        continue;
+      }
+    }
+  }
+  if (parts.length === 0) return responsesContentToText(content);
+  if (parts.every((p) => p.type === 'text')) return parts.map((p) => p.text).join('');
+  return parts;
+}
+
 export function convertResponsesInput(input: unknown): any[] {
   const messages: any[] = [];
   if (typeof input === "string") {
@@ -33,8 +70,8 @@ export function convertResponsesInput(input: unknown): any[] {
     for (const item of input as any[]) {
       if (item.role && item.content !== undefined) {
         messages.push({
-          role: item.role === "developer" ? "system" : item.role,
-          content: responsesContentToText(item.content),
+          role: item.role === 'developer' ? 'system' : item.role,
+          content: responsesContentToChatParts(item.content),
         });
       } else if (item.type === "function_call_output" || item.type === "tool_result") {
         const output = item.output ?? item.content ?? item.result ?? "";
@@ -144,9 +181,46 @@ describe("responses api conversion", () => {
     assert.deepEqual(out, [{ role: "user", content: "hi" }]);
   });
 
-  it("keeps non-text-only payloads as JSON", () => {
-    const out = convertResponsesInput([{ role: "user", content: [{ type: "input_image", image_url: "http://x/y.png" }] }]);
-    assert.equal(out[0].content, '[{"type":"input_image","image_url":"http://x/y.png"}]');
+  it("maps input_image to a real image_url part (not a JSON string)", () => {
+    const out = convertResponsesInput([
+      { role: "user", content: [{ type: "input_image", image_url: "http://x/y.png" }] },
+    ]);
+    assert.deepEqual(out, [
+      { role: "user", content: [{ type: "image_url", image_url: { url: "http://x/y.png" } }] },
+    ]);
+  });
+
+  it("keeps text alongside an image as chat parts", () => {
+    const out = convertResponsesInput([
+      {
+        role: "user",
+        content: [
+          { type: "input_text", text: "what is this?" },
+          { type: "input_image", image_url: "data:image/png;base64,AAAA" },
+        ],
+      },
+    ]);
+    assert.deepEqual(out, [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "what is this?" },
+          { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
+        ],
+      },
+    ]);
+  });
+
+  it("maps an Anthropic-style base64 source inside a Responses payload", () => {
+    const out = convertResponsesInput([
+      {
+        role: "user",
+        content: [{ type: "input_image", source: { type: "base64", media_type: "image/png", data: "BBBB" } }],
+      },
+    ]);
+    assert.deepEqual(out, [
+      { role: "user", content: [{ type: "image_url", image_url: { url: "data:image/png;base64,BBBB" } }] },
+    ]);
   });
 
   it("keeps assistant tool calls so the history is not lost", () => {

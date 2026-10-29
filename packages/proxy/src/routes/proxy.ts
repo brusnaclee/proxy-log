@@ -2371,6 +2371,65 @@ proxy.all('/*', async (c) => {
 		return JSON.stringify(content);
 	};
 
+	/**
+	 * Convert Responses API `content` into Chat Completions multi-part content.
+	 *
+	 * The Responses API uses `input_text` / `input_image` parts; Chat
+	 * Completions uses `text` / `image_url` parts. Without this mapping an
+	 * image sent to /v1/responses was flattened into a JSON *string* by
+	 * responsesContentToText(), so the upstream received the base64 payload as
+	 * literal text and the model answered "No image was provided" — even on
+	 * models that support vision perfectly well over /v1/chat/completions.
+	 *
+	 * Returns a plain string when there is nothing but text (so simple
+	 * requests are unchanged), otherwise an array of Chat Completions parts.
+	 */
+	const responsesContentToChatParts = (content: unknown): string | any[] => {
+		if (typeof content === 'string') return content;
+		if (!Array.isArray(content)) return responsesContentToText(content);
+
+		const parts: any[] = [];
+		for (const c of content) {
+			if (!c || typeof c !== 'object') continue;
+			const type = String(c.type || '');
+			if (
+				type === 'input_text' ||
+				type === 'output_text' ||
+				type === 'text' ||
+				type === 'summary_text'
+			) {
+				if (typeof c.text === 'string') parts.push({ type: 'text', text: c.text });
+				continue;
+			}
+			if (type === 'input_image' || type === 'image_url' || type === 'image') {
+				// Responses: { type:'input_image', image_url: 'data:...' | 'https://...' }
+				// Chat:       { type:'image_url', image_url: { url: '...' } }
+				const src = c.image_url ?? c.url ?? c.image ?? null;
+				const url = typeof src === 'string' ? src : src?.url ?? null;
+				if (url) {
+					parts.push({ type: 'image_url', image_url: { url } });
+					continue;
+				}
+				// Anthropic-style base64 source inside a Responses payload.
+				const data = c.source?.data ?? c.data ?? null;
+				const mediaType = c.source?.media_type ?? c.media_type ?? 'image/png';
+				if (data) {
+					parts.push({
+						type: 'image_url',
+						image_url: { url: `data:${mediaType};base64,${data}` },
+					});
+					continue;
+				}
+			}
+		}
+		if (parts.length === 0) return responsesContentToText(content);
+		// All-text content: collapse to a plain string (unchanged behaviour).
+		if (parts.every((p) => p.type === 'text')) {
+			return parts.map((p) => p.text).join('');
+		}
+		return parts;
+	};
+
 	// ─── 7a0. Antigravity / Gemini contents → OpenAI chat completions ────────
 	// Antigravity often hits /v1/chat/completions with { request: { contents } }
 	// and no `messages`. Forwarding raw → amanai 400 "messages required" → 502.
@@ -2411,7 +2470,7 @@ proxy.all('/*', async (c) => {
 				if (item.role && item.content !== undefined) {
 					messages.push({
 						role: item.role === 'developer' ? 'system' : item.role,
-						content: responsesContentToText(item.content),
+						content: responsesContentToChatParts(item.content),
 					});
 				} else if (
 					item.type === 'function_call_output' ||
@@ -2452,7 +2511,7 @@ proxy.all('/*', async (c) => {
 					// Responses API message block
 					messages.push({
 						role: item.role || 'user',
-						content: responsesContentToText(item.content),
+						content: responsesContentToChatParts(item.content),
 					});
 				}
 			}
