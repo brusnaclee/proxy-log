@@ -1,6 +1,10 @@
 ﻿import { config as loadEnv } from "dotenv";
 import { existsSync, readFileSync } from "fs";
 import { resolve, join } from "path";
+// Load environment FIRST — must happen before db/index.js and friends
+// capture process.env at module-evaluation time. See src/env.ts.
+import "./env.js";
+
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";

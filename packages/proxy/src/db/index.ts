@@ -1,3 +1,9 @@
+// Bootstrap the environment before we read process.env below. db/index.ts is
+// imported by many modules, so it cannot rely on the entrypoint having loaded
+// .env already (ESM hoists imports, so a call in the entrypoint body runs too
+// late for top-level consts like this one).
+import "../env.js";
+
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
