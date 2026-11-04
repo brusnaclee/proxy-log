@@ -72,3 +72,6 @@ docs/
 
 # Packaging leftovers
 proxy-src.tar.gz
+
+# Local VPN client profiles (contain private keys) — never commit
+downloads/
