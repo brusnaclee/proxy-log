@@ -57,6 +57,14 @@ export default function KeyDetailPage() {
   const [editDailyTokenLimit, setEditDailyTokenLimit] = useState(0);
   const [editDailyInputTokenLimit, setEditDailyInputTokenLimit] = useState(0);
   const [editDailyOutputTokenLimit, setEditDailyOutputTokenLimit] = useState(0);
+  // These four had NO edit state: handleSave read them from the stale keyData,
+  // so anything typed into Prompt/API-call limit fields was silently discarded.
+  const [editPromptLimit, setEditPromptLimit] = useState(0);
+  const [editPromptLimitWindow, setEditPromptLimitWindow] = useState("5h");
+  const [editRateLimit, setEditRateLimit] = useState(0);
+  const [editRateLimitWindow, setEditRateLimitWindow] = useState("5h");
+  const [editPerModelPromptLimit, setEditPerModelPromptLimit] = useState(0);
+  const [editPerModelPromptLimitWindow, setEditPerModelPromptLimitWindow] = useState("1d");
   const [showDelete, setShowDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [showRotate, setShowRotate] = useState(false);
@@ -238,6 +246,12 @@ export default function KeyDetailPage() {
       setEditDailyTokenLimit(k.dailyTokenLimit);
       setEditDailyInputTokenLimit(k.dailyInputTokenLimit);
       setEditDailyOutputTokenLimit(k.dailyOutputTokenLimit);
+      setEditPromptLimit(k.promptLimit || 0);
+      setEditPromptLimitWindow(k.promptLimitWindow || "5h");
+      setEditRateLimit(k.rateLimit || 0);
+      setEditRateLimitWindow(k.rateLimitWindow || "5h");
+      setEditPerModelPromptLimit(k.perModelPromptLimit || 0);
+      setEditPerModelPromptLimitWindow(k.perModelPromptLimitWindow || "1d");
       setStatusText("");
       if (k.isTrial) {
         try {
@@ -303,6 +317,27 @@ export default function KeyDetailPage() {
     }
   };
 
+  // The Save button is disabled until something actually changes. Without this
+  // it was clickable even with zero edits, which made it look like saving was
+  // broken (the PUT went through with identical values and nothing changed).
+  const hasUnsavedChanges = !!keyData && (
+    editName !== keyData.name ||
+    editMaxDevices !== keyData.maxDevices ||
+    editDevicePolicy !== keyData.devicePolicy ||
+    editIpPolicy !== keyData.ipPolicy ||
+    editIdePolicy !== keyData.idePolicy ||
+    editMonthlyLimit !== keyData.monthlyTokenLimit ||
+    editDailyTokenLimit !== keyData.dailyTokenLimit ||
+    editDailyInputTokenLimit !== keyData.dailyInputTokenLimit ||
+    editDailyOutputTokenLimit !== keyData.dailyOutputTokenLimit ||
+    editPromptLimit !== (keyData.promptLimit || 0) ||
+    editPromptLimitWindow !== (keyData.promptLimitWindow || "5h") ||
+    editRateLimit !== (keyData.rateLimit || 0) ||
+    editRateLimitWindow !== (keyData.rateLimitWindow || "5h") ||
+    editPerModelPromptLimit !== (keyData.perModelPromptLimit || 0) ||
+    editPerModelPromptLimitWindow !== (keyData.perModelPromptLimitWindow || "1d")
+  );
+
   const handleSave = async () => {
     if (!id) return;
     try {
@@ -316,16 +351,27 @@ export default function KeyDetailPage() {
         dailyTokenLimit: editDailyTokenLimit,
         dailyInputTokenLimit: editDailyInputTokenLimit,
         dailyOutputTokenLimit: editDailyOutputTokenLimit,
-        rateLimit: keyData?.rateLimit || 0,
-        rateLimitWindow: keyData?.rateLimitWindow || "",
-        promptLimit: keyData?.promptLimit || 0,
-        promptLimitWindow: keyData?.promptLimitWindow || "",
-        perModelPromptLimit: keyData?.perModelPromptLimit || 0,
-        perModelPromptLimitWindow: keyData?.perModelPromptLimitWindow || "",
+        rateLimit: editRateLimit,
+        rateLimitWindow: editRateLimitWindow,
+        promptLimit: editPromptLimit,
+        promptLimitWindow: editPromptLimitWindow,
+        perModelPromptLimit: editPerModelPromptLimit,
+        perModelPromptLimitWindow: editPerModelPromptLimitWindow,
       });
       setEditing(false);
       loadAll();
-    } catch {}
+      notify.success("API key updated");
+    } catch (error: any) {
+      // Do NOT swallow this. A silent failure here is what made "Save Changes"
+      // look broken: the request 500'd (e.g. a limit above int32 max) and the
+      // UI showed nothing at all, leaving the button stuck in edit mode.
+      const msg =
+        error?.message ||
+        error?.error?.message ||
+        "Failed to save API key changes.";
+      setStatusText(msg);
+      notify.error(msg);
+    }
   };
 
   const handleToggleActive = async () => {
@@ -1189,6 +1235,12 @@ export API_TIMEOUT_MS=500000`}
                   variant={editing ? "default" : "outline"}
                   size="sm"
                   onClick={() => editing ? handleSave() : setEditing(true)}
+                  disabled={editing && !hasUnsavedChanges}
+                  title={
+                    editing && !hasUnsavedChanges
+                      ? "No changes to save"
+                      : undefined
+                  }
                 >
                   {editing ? "Save Changes" : "Edit"}
                 </Button>
@@ -1310,11 +1362,10 @@ export API_TIMEOUT_MS=500000`}
       <Label>Prompt Limit (0 = use global)</Label>
       <Input
         type="number"
-        value={keyData?.promptLimit || 0}
+        value={editPromptLimit}
         onChange={(e) => {
           if (!editing) return;
-          const val = parseInt(e.target.value) || 0;
-          setKeyData(prev => prev ? { ...prev, promptLimit: val } : prev);
+          setEditPromptLimit(parseInt(e.target.value) || 0);
         }}
         disabled={!editing}
         className="mt-1"
@@ -1324,10 +1375,10 @@ export API_TIMEOUT_MS=500000`}
     <div>
       <Label>Prompt Limit Window</Label>
       <Input
-        value={keyData?.promptLimitWindow || "5h"}
+        value={editPromptLimitWindow}
         onChange={(e) => {
           if (!editing) return;
-          setKeyData(prev => prev ? { ...prev, promptLimitWindow: e.target.value } : prev);
+          setEditPromptLimitWindow(e.target.value);
         }}
         disabled={!editing}
         className="mt-1"
@@ -1337,11 +1388,10 @@ export API_TIMEOUT_MS=500000`}
       <Label>API Call Limit (0 = use global)</Label>
       <Input
         type="number"
-        value={keyData?.rateLimit || 0}
+        value={editRateLimit}
         onChange={(e) => {
           if (!editing) return;
-          const val = parseInt(e.target.value) || 0;
-          setKeyData(prev => prev ? { ...prev, rateLimit: val } : prev);
+          setEditRateLimit(parseInt(e.target.value) || 0);
         }}
         disabled={!editing}
         className="mt-1"
@@ -1351,10 +1401,10 @@ export API_TIMEOUT_MS=500000`}
     <div>
       <Label>API Call Limit Window</Label>
       <Input
-        value={keyData?.rateLimitWindow || "5h"}
+        value={editRateLimitWindow}
         onChange={(e) => {
           if (!editing) return;
-          setKeyData(prev => prev ? { ...prev, rateLimitWindow: e.target.value } : prev);
+          setEditRateLimitWindow(e.target.value);
         }}
         disabled={!editing}
         className="mt-1"
@@ -1364,11 +1414,10 @@ export API_TIMEOUT_MS=500000`}
       <Label>Default Per-Model Prompt Limit (0 = use global)</Label>
       <Input
         type="number"
-        value={keyData?.perModelPromptLimit || 0}
+        value={editPerModelPromptLimit}
         onChange={(e) => {
           if (!editing) return;
-          const val = parseInt(e.target.value) || 0;
-          setKeyData(prev => prev ? { ...prev, perModelPromptLimit: val } : prev);
+          setEditPerModelPromptLimit(parseInt(e.target.value) || 0);
         }}
         disabled={!editing}
         className="mt-1"
@@ -1377,10 +1426,10 @@ export API_TIMEOUT_MS=500000`}
     <div>
       <Label>Per-Model Window</Label>
       <Input
-        value={keyData?.perModelPromptLimitWindow || "1d"}
+        value={editPerModelPromptLimitWindow}
         onChange={(e) => {
           if (!editing) return;
-          setKeyData(prev => prev ? { ...prev, perModelPromptLimitWindow: e.target.value } : prev);
+          setEditPerModelPromptLimitWindow(e.target.value);
         }}
         disabled={!editing}
         className="mt-1"
