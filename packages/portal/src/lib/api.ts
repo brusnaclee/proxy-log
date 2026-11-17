@@ -317,6 +317,24 @@ export interface ModelEntry {
   checkedAt?: string | null;
   lastCheckedMinutes?: number | null;
   latencyMs?: number | null;
+  /**
+   * Official upstream rates (credits per token). Present so the UI can show why
+   * one model drains quota faster than another.
+   */
+  pricing?: { prompt?: number; completion?: number; input_cache_read?: number } | null;
+  /**
+   * Input cost relative to the cheapest model in the catalog.
+   * 1 = cheapest, 3 = three times the input cost, null = no pricing available.
+   */
+  usageMultiplier?: number | null;
+  /**
+   * Observed end-to-end latency from real user requests over the last 7 days.
+   * This is the wall-clock time a client actually waited, not a synthetic probe.
+   * `null` when the model has too few samples to be meaningful.
+   */
+  latencyP50?: number | null;
+  latencyP95?: number | null;
+  latencySamples?: number | null;
 }
 
 export interface RecapStatus {

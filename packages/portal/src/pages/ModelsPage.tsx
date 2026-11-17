@@ -229,7 +229,11 @@ export default function ModelsPage() {
             {displayList.length === 0 ? (
               <p className="text-sm text-muted-foreground py-6 text-center">{t("No models found")}</p>
             ) : (
-              <div className="space-y-1.5">
+              <>
+                <p className="mb-2 text-[11px] text-muted-foreground">
+                  {t("The x badge is the input cost vs the cheapest model — 3x burns quota three times faster. Hover a badge for exact rates.")}
+                </p>
+                <div className="space-y-1.5">
                 {displayList.map((m) => {
                   const st = statusMeta(m, t);
                   return (
@@ -242,15 +246,49 @@ export default function ModelsPage() {
                         <div className="flex items-center gap-2">
                           <span className="text-sm text-foreground truncate font-mono">{m.id}</span>
                           <CopyButton text={m.id} />
+                          {m.usageMultiplier != null && (
+                            <span
+                              className={`flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium tabular-nums ${
+                                m.usageMultiplier >= 3
+                                  ? "bg-red-500/15 text-red-400"
+                                  : m.usageMultiplier >= 2
+                                    ? "bg-amber-500/15 text-amber-400"
+                                    : "bg-green-500/15 text-green-400"
+                              }`}
+                              title={
+                                m.pricing
+                                  ? `${t("Input")} ${m.pricing.prompt} · ${t("Cached")} ${m.pricing.input_cache_read ?? "—"} · ${t("Output")} ${m.pricing.completion} (${t("credits per token")})`
+                                  : undefined
+                              }
+                            >
+                              {m.usageMultiplier}x
+                            </span>
+                          )}
                         </div>
-                        <div className="flex items-center gap-2 mt-0.5 text-[11px] text-muted-foreground">
+                        <div className="flex items-center gap-2 mt-0.5 text-[11px] text-muted-foreground flex-wrap">
                           <span className={st.color}>{st.label}</span>
                           <span>·</span>
                           <span>{t("Last check")}: {lastCheckLabel(m, t)}</span>
-                          {m.latencyMs != null && m.online && (
+                          {m.latencyP50 != null && m.latencyP50 > 0 && (
                             <>
                               <span>·</span>
-                              <span>{m.latencyMs}ms</span>
+                              <span
+                                className="font-mono tabular-nums"
+                                title={`p50 ${m.latencyP50}ms · p95 ${m.latencyP95 ?? "—"}ms · ${m.latencySamples ?? 0} samples (7d)`}
+                              >
+                                {m.latencyP50 < 1000
+                                  ? `${m.latencyP50}ms`
+                                  : `${(m.latencyP50 / 1000).toFixed(1)}s`}
+                              </span>
+                            </>
+                          )}
+                          {m.pricing && (
+                            <>
+                              <span>·</span>
+                              <span className="font-mono tabular-nums">
+                                {t("in")} {m.pricing.prompt} / {t("cache")} {m.pricing.input_cache_read ?? "—"} / {t("out")} {m.pricing.completion}
+                              </span>
+                              <span className="text-muted-foreground/60">{t("credits per token")}</span>
                             </>
                           )}
                         </div>
@@ -258,7 +296,8 @@ export default function ModelsPage() {
                     </div>
                   );
                 })}
-              </div>
+                </div>
+              </>
             )}
 
             {filtered.length > 24 && (

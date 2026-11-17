@@ -233,6 +233,37 @@ import {
 	scrubUpstreamLeakText,
 } from '../utils/upstream-leak-scrub.js';
 import { isKeyScopedAuthFailure } from '../utils/upstream-key-failure.js';
+import { StreamLoopGuard } from '../utils/stream-loop-guard.js';
+
+/** Visible text carried by an OpenAI stream chunk's first choice, if any. */
+function streamDeltaContent(data: any): string {
+	const d = data?.choices?.[0]?.delta;
+	if (!d) return '';
+	if (typeof d.content === 'string') return d.content;
+	if (Array.isArray(d.content)) {
+		return d.content
+			.map((part: any) => (typeof part?.text === 'string' ? part.text : ''))
+			.join('');
+	}
+	return '';
+}
+
+/** Remove visible content from a chunk, keeping role/tool_calls/finish intact. */
+function stripStreamContent(data: any): void {
+	const d = data?.choices?.[0]?.delta;
+	if (!d) return;
+	if (typeof d.content === 'string') d.content = '';
+	else if (Array.isArray(d.content)) d.content = [];
+}
+
+/** Append text to a chunk's visible content, creating the field if needed. */
+function appendStreamContent(data: any, text: string): void {
+	const d = data?.choices?.[0]?.delta;
+	if (!d) return;
+	if (typeof d.content === 'string') d.content += text;
+	else if (Array.isArray(d.content)) d.content.push({ type: 'text', text });
+	else d.content = text;
+}
 
 const proxy = new Hono();
 
@@ -870,11 +901,22 @@ async function pumpStreamBody(
 	body: ReadableStream<Uint8Array>,
 	writable: WritableStream<Uint8Array>,
 	onError?: (err: unknown) => Uint8Array | null,
+	shouldStop?: () => boolean,
 ): Promise<void> {
 	const writer = writable.getWriter();
 	const reader = body.getReader();
 	try {
 		while (true) {
+			// A downstream transform (e.g. the repetition guard) can ask us to
+			// stop reading. Cancelling the reader closes the upstream socket,
+			// which is what actually stops the provider from billing the rest
+			// of the generation — dropping chunks alone would not.
+			if (shouldStop?.()) {
+				try {
+					await reader.cancel('client-side stop');
+				} catch {}
+				break;
+			}
 			const { done, value } = await reader.read();
 			if (done) break;
 			if (value) await writer.write(value);
@@ -3789,8 +3831,15 @@ proxy.all('/*', async (c) => {
 				const completionTokens =
 					responseJson?.usage?.completion_tokens || estimateTokens(trialText);
 				const promptTokens = responseJson?.usage?.prompt_tokens || 0;
+				// Amanai reports cache reads in BOTH shapes depending on the wire format:
+				//   OpenAI-style      : usage.prompt_tokens_details.cached_tokens
+				//   Anthropic-style   : usage.cache_read_input_tokens
+				// Reading only the OpenAI key silently logs cached_tokens=0 and loses the
+				// cache discount, so accept either (max, they are mutually exclusive).
 				const cachedTokens =
-					responseJson?.usage?.prompt_tokens_details?.cached_tokens || 0;
+					responseJson?.usage?.prompt_tokens_details?.cached_tokens ??
+					responseJson?.usage?.cache_read_input_tokens ??
+					0;
 				const billableInput = Math.max(promptTokens - cachedTokens, 0);
 				enqueueLogWrite(async (tx) => {
 			const autoLogEntry: Record<string, any> = {
@@ -5026,10 +5075,18 @@ proxy.all('/*', async (c) => {
 
 	// ─── Token Saver "Stream Translate" eligibility ──────────────────────────
 	// s2ns: client streams, upstream gets stream:false, we fake-stream the
-	// buffered answer back (avoids upstream streaming billing overhead, e.g.
-	// amanai's flat +2000 prompt_tokens on every stream request).
+	// buffered answer back.
+	//
+	// What this actually saves: on SOME models the upstream stream path reports
+	// extra input tokens (deepseek-v4-pro: 5 non-stream vs 2005 stream). It does
+	// NOT remove the per-model prefill overhead — e.g. glm-5.3-flash reports
+	// ~2068 prompt_tokens for "hi" on BOTH paths. Measure per model; do not
+	// assume a fixed saving.
+	//
 	// Anthropic-native and Responses API clients are excluded: re-emitting
 	// their SSE needs format-specific builders, so they pass through as-is.
+	// Consequence: Claude Code / Claude Desktop (/v1/messages) and Codex CLI
+	// (/v1/responses) do NOT get this saving — only /v1/chat/completions does.
 	// ns2s: client wants JSON, upstream streams; the existing looksSse
 	// assembler converts the SSE back into a single JSON response.
 	//
@@ -5044,9 +5101,7 @@ proxy.all('/*', async (c) => {
 		/claude-opus/i.test(String(model || requestBody?.model || ''));
 	const tsStreamToNonstreamWanted =
 		isStreaming &&
-		(resolvedTsFlags.streamToNonstream || forceAmanaiOpusS2ns) &&
-		!isAnthropicRequest &&
-		!isResponsesApi;
+		(resolvedTsFlags.streamToNonstream || forceAmanaiOpusS2ns);
 	const tsNonstreamToStreamWanted =
 		!isStreaming && resolvedTsFlags.nonstreamToStream;
 	if (forceAmanaiOpusS2ns && !resolvedTsFlags.streamToNonstream) {
@@ -5747,11 +5802,20 @@ proxy.all('/*', async (c) => {
 						Array.isArray(requestBody?.tools) && requestBody.tools.length > 0;
 					const trialForcesNonStream =
 						keyRecord.isTrial && requestHasToolsForTrial && isStreaming;
-					// Token Saver Stream Translate: only OpenAI-format attempts get the
-					// flag flip — Anthropic-native and you.com attempts use their own
-					// pre-built bodies and keep the client's original mode.
+					// Token Saver Stream Translate: flip the upstream mode for every
+					// attempt we can re-encode on return.
+					//
+					// s2ns (stream -> non-stream): safe for ALL formats, because the
+					// fake-stream block below has a builder for each one (OpenAI,
+					// Anthropic Messages, Responses).
+					//
+					// ns2s (non-stream -> stream): OpenAI only. An Anthropic-native
+					// passthrough that streams upstream returns Messages SSE, and there is
+					// no SSE->Messages-JSON assembler on that path — forcing it produced
+					// "Upstream returned empty content" 502s. Keep the exclusion.
+					// you.com keeps its own pre-built body and is excluded from both.
 					const tsForcesNonStream =
-						tsStreamToNonstreamWanted && !attemptIsAnthropic && !attemptIsYoucom;
+						tsStreamToNonstreamWanted && !attemptIsYoucom;
 					const tsForcesStream =
 						tsNonstreamToStreamWanted && !attemptIsAnthropic && !attemptIsYoucom;
 					const attemptUsesStream = tsForcesStream
@@ -5772,12 +5836,39 @@ proxy.all('/*', async (c) => {
 									`[stream-translate] ${pickModel}: client stream=${isStreaming} → upstream stream=${wantUpstreamStream}`,
 								);
 							}
+							// The Anthropic body was serialized above from the PRE-flip
+							// requestBody, so it still carries the client's original stream
+							// flag. Rebuild it now that the mode is final — otherwise s2ns
+							// silently does nothing for Anthropic-native attempts (they keep
+							// streaming upstream and pay the streaming-path token overhead).
+							if (attemptIsAnthropic) {
+								attemptAnthropicBody = buildAnthropicBodyForProvider(
+									requestBody,
+									attemptProvider,
+									isAnthropicRequest,
+								);
+							}
 						}
 						if (trialForcesNonStream) trialForcedNonStreamForTools = true;
 					}
 					// Reflect the winning attempt only (reassigned every iteration).
 					tsForcedNonStreamUpstream =
 						!!requestBody && tsForcesNonStream && !trialForcesNonStream;
+
+					// The Anthropic body is serialized once (either from the pre-loop
+					// `anthropicRequestBody`, or inside the model-switch block above) and
+					// therefore carries whatever `stream` value existed at that moment.
+					// s2ns flips `requestBody.stream` afterwards, so rebuild here — the
+					// single point after every body decision and before the fetch — or
+					// Anthropic-native attempts keep streaming upstream and pay the
+					// streaming-path token overhead even though we fake-stream on return.
+					if (attemptIsAnthropic && requestBody) {
+						attemptAnthropicBody = buildAnthropicBodyForProvider(
+							requestBody,
+							attemptProvider,
+							isAnthropicRequest,
+						);
+					}
 
 				try {
 				const result = await fetchWithKeyRotation(
@@ -6030,17 +6121,25 @@ proxy.all('/*', async (c) => {
 				})
 				.where(eq(devices.id, existingDevice.id));
 		} else {
-			await db.insert(devices).values({
-				apiKeyId: keyRecord.id,
-				fingerprint: effectiveFingerprint,
-				ipAddress: clientIp,
-				userAgentRaw: userAgent,
-				osDetected,
-				deviceName: deviceName || null,
-				ideDetected: ide,
-				requestCount: 1,
-				isProvisional: deviceIsProvisional,
-			});
+			// Race-safe insert: two concurrent requests can carry the same
+			// (api_key_id, fingerprint) — the unique index
+			// idx_devices_api_key_fingerprint makes the loser throw and the whole
+			// request 502s. onConflictDoNothing() turns that into a no-op; the
+			// device row already exists, which is all this branch needs.
+			await db
+				.insert(devices)
+				.values({
+					apiKeyId: keyRecord.id,
+					fingerprint: effectiveFingerprint,
+					ipAddress: clientIp,
+					userAgentRaw: userAgent,
+					osDetected,
+					deviceName: deviceName || null,
+					ideDetected: ide,
+					requestCount: 1,
+					isProvisional: deviceIsProvisional,
+				})
+				.onConflictDoNothing();
 		}
 		}
 
@@ -6086,6 +6185,12 @@ proxy.all('/*', async (c) => {
 			let anthropicSawDone = false;
 			const streamHoldback = new StreamHoldbackScrubber();
 			const streamFinishDeferral = new StreamFinishDeferral();
+			// Repetition guard state for this hop. `tripped` latches so the
+			// expensive detection only runs until the first verdict.
+			const loopGuard = new StreamLoopGuard();
+			const loopGuardState: { tripped: boolean; cycle?: string; repeats?: number } = {
+				tripped: false,
+			};
 
 			const { readable, writable } = new TransformStream({
 				transform(chunk, controller) {
@@ -6353,6 +6458,33 @@ proxy.all('/*', async (c) => {
 										);
 										lastStreamChunk = data;
 										noteStreamDeltaFields(data, streamDeltaState);
+										// Repetition guard: reasoning models sometimes
+										// degenerate into "Now. / Let me write. / OK."
+										// loops and burn the whole max_tokens budget.
+										// Once tripped we stop forwarding the repeated
+										// text and tell the user what happened, so the
+										// rest of the hop is not paid for in quota.
+										if (loopGuardState.tripped) {
+											stripStreamContent(data);
+										} else {
+											const deltaText = streamDeltaContent(data);
+											if (deltaText) {
+												const verdict = loopGuard.push(deltaText);
+												if (verdict?.looping) {
+													loopGuardState.tripped = true;
+													loopGuardState.cycle = verdict.cycle;
+													loopGuardState.repeats = verdict.repeats;
+													stripStreamContent(data);
+													appendStreamContent(
+														data,
+														`\n\n[Output dihentikan otomatis: model mengulang kalimat yang sama (${verdict.repeats}x). Coba lagi atau perkecil konteks.]`,
+													);
+													console.warn(
+														`[loop-guard] tripped model=${model} repeats=${verdict.repeats} cycle=${JSON.stringify(verdict.cycle).slice(0, 80)}`,
+													);
+												}
+											}
+										}
 										appendToolsFromPayload(data);
 										if (detectToolCallsInResponse(data))
 											hasActualToolCalls = true;
@@ -6591,8 +6723,11 @@ proxy.all('/*', async (c) => {
 				},
 			});
 
-			void pumpStreamBody(upstreamResponse.body, writable, () =>
-				buildStreamInterruptSse(model),
+			void pumpStreamBody(
+				upstreamResponse.body,
+				writable,
+				() => buildStreamInterruptSse(model),
+				() => loopGuardState.tripped,
 			);
 
 			const responseHeaders: Record<string, string> = {
@@ -7098,6 +7233,13 @@ proxy.all('/*', async (c) => {
 				// If empty, set statusCode=502 and fall through to the final return
 				// so the user gets a meaningful error instead of a silent 200 with
 				// an empty stream.
+				//
+				// responseBody may already be in the CLIENT's shape at this point
+				// (the Responses/Anthropic converters run earlier in this function),
+				// so the emptiness check has to understand all three:
+				//   OpenAI chat : choices[0].message.{content,tool_calls}
+				//   Responses   : output[].content[].text  / output[].type==='function_call'
+				//   Anthropic   : content[].{text,tool_use}
 				const choice = openaiParsed?.choices?.[0]?.message;
 				const hasToolCalls = Array.isArray(choice?.tool_calls) && choice.tool_calls.length > 0;
 				const choiceContent =
@@ -7105,9 +7247,41 @@ proxy.all('/*', async (c) => {
 					choice?.reasoning_content ||
 					choice?.reasoning ||
 					'';
+
+				const responsesOutput: any[] = Array.isArray(openaiParsed?.output)
+					? openaiParsed.output
+					: [];
+				const responsesText = responsesOutput
+					.map((item: any) => {
+						if (item?.type === 'function_call') return item?.arguments || 'x';
+						const parts = Array.isArray(item?.content) ? item.content : [];
+						return parts
+							.map((p: any) => p?.text || p?.refusal || '')
+							.join('');
+					})
+					.join('');
+				const hasResponsesToolCall = responsesOutput.some(
+					(i: any) => i?.type === 'function_call',
+				);
+
+				const anthropicBlocks: any[] = Array.isArray(openaiParsed?.content)
+					? openaiParsed.content
+					: [];
+				const anthropicText = anthropicBlocks
+					.map((b: any) => b?.text || b?.thinking || '')
+					.join('');
+				const hasAnthropicToolUse = anthropicBlocks.some(
+					(b: any) => b?.type === 'tool_use',
+				);
+
 				// Ignore usage.completion_tokens alone — amanai may report tokens with empty message.
 				const isEmptyCompletion =
-					!hasToolCalls && !String(choiceContent || '').trim();
+					!hasToolCalls &&
+					!hasResponsesToolCall &&
+					!hasAnthropicToolUse &&
+					!String(choiceContent || '').trim() &&
+					!String(responsesText || '').trim() &&
+					!String(anthropicText || '').trim();
 
 				if (isEmptyCompletion) {
 					errorMessage = `Upstream model "${model}" returned empty response`;
@@ -7118,6 +7292,159 @@ proxy.all('/*', async (c) => {
 					// Reasoning-only completions (glm/minimax etc.): promote reasoning
 					// into content per IDE prefs so the fake stream isn't empty.
 					backfillOpenAIResponseContent(openaiParsed, reasoningOptsForIde(ide));
+
+					// ── Anthropic-native clients (Claude Code, Anthropic SDK) ──────
+					// s2ns is format-agnostic at the billing layer: we already have the
+					// full answer, so re-emit it as an Anthropic Messages SSE sequence.
+					// Without this branch those clients were excluded from the saving
+					// entirely — and they were the most expensive path.
+					//
+					// Two possible upstream shapes here:
+					//   a) native Anthropic passthrough -> body is already Anthropic
+					//   b) translated OpenAI            -> body is OpenAI chat
+					if (isAnthropicRequest) {
+						const isAnthropicShaped =
+							String(openaiParsed?.type || '') === 'message' ||
+							(Array.isArray(openaiParsed?.content) && !openaiParsed?.choices);
+						const anthropicMsg = isAnthropicShaped
+							? openaiParsed
+							: convertOpenAIToAnthropicResponse(openaiParsed);
+
+						const anthState = createAnthropicStreamState(
+							String(anthropicMsg?.model || model),
+							String(anthropicMsg?.id || ''),
+						);
+						// Feed the converter an OpenAI-shaped single chunk so it reuses
+						// the exact same event sequence a real stream would produce.
+						const blocks: any[] = Array.isArray(anthropicMsg?.content)
+							? anthropicMsg.content
+							: [];
+						const textOut = blocks
+							.filter((b: any) => b?.type === 'text')
+							.map((b: any) => b.text)
+							.join('');
+						const thinkingOut = blocks
+							.filter((b: any) => b?.type === 'thinking')
+							.map((b: any) => b.thinking)
+							.join('');
+						const toolUses = blocks
+							.filter((b: any) => b?.type === 'tool_use')
+							.map((b: any, i: number) => ({
+								index: i,
+								id: b.id,
+								type: 'function',
+								function: {
+									name: b.name || '',
+									arguments: JSON.stringify(b.input ?? {}),
+								},
+							}));
+						const finish =
+							anthropicMsg?.stop_reason === 'tool_use'
+								? 'tool_calls'
+								: anthropicMsg?.stop_reason === 'max_tokens'
+									? 'length'
+									: 'stop';
+
+						let out = '';
+						out += convertOpenAIChunkToAnthropicEvents(
+							JSON.stringify({
+								id: anthropicMsg?.id,
+								model: anthropicMsg?.model,
+								choices: [
+									{
+										index: 0,
+										delta: {
+											role: 'assistant',
+											...(textOut ? { content: textOut } : {}),
+											...(thinkingOut ? { reasoning_content: thinkingOut } : {}),
+											...(toolUses.length ? { tool_calls: toolUses } : {}),
+										},
+										finish_reason: finish,
+									},
+								],
+								usage: {
+									prompt_tokens:
+										anthropicMsg?.usage?.input_tokens ??
+										openaiParsed?.usage?.prompt_tokens ??
+										0,
+									completion_tokens:
+										anthropicMsg?.usage?.output_tokens ??
+										openaiParsed?.usage?.completion_tokens ??
+										0,
+								},
+							}),
+							anthState,
+						);
+						// [DONE] is what closes content blocks + emits message_delta/stop.
+						out += convertOpenAIChunkToAnthropicEvents('data: [DONE]', anthState);
+						out += flushAnthropicStream(anthState);
+						return new Response(out, {
+							status: statusCode,
+							headers: {
+								...responseHeaders,
+								'Content-Type': 'text/event-stream; charset=utf-8',
+								'Cache-Control': 'no-cache',
+								Connection: 'keep-alive',
+							},
+						});
+					}
+
+					// ── Responses API clients (Codex CLI, Responses SDK) ───────────
+					// responseBody is ALREADY in Responses shape here (the converter ran
+					// earlier in this function), so pull the text/tool calls straight
+					// out of `output` instead of re-converting from `.choices`.
+					if (isResponsesApi) {
+						const respState = createResponsesSseState();
+						const outItems: any[] = Array.isArray(openaiParsed?.output)
+							? openaiParsed.output
+							: [];
+						const respText = outItems
+							.filter((i: any) => i?.type === 'message')
+							.flatMap((i: any) => (Array.isArray(i.content) ? i.content : []))
+							.map((p: any) => p?.text || '')
+							.join('');
+						const respToolCalls = outItems
+							.filter((i: any) => i?.type === 'function_call')
+							.map((i: any, idx: number) => ({
+								index: idx,
+								id: i.call_id || i.id || `call_${idx}`,
+								type: 'function',
+								function: {
+									name: i.name || '',
+									arguments: i.arguments || '{}',
+								},
+							}));
+
+						let out = '';
+						for (const ev of responsesSseFromChatPayload(respState, {
+							id: openaiParsed?.id,
+							model: openaiParsed?.model,
+							choices: [
+								{
+									index: 0,
+									delta: {
+										...(respText ? { content: respText } : {}),
+										...(respToolCalls.length ? { tool_calls: respToolCalls } : {}),
+									},
+									finish_reason: respToolCalls.length ? 'tool_calls' : 'stop',
+								},
+							],
+							usage: openaiParsed?.usage,
+						})) {
+							out += ev;
+						}
+						for (const ev of finalizeResponsesSse(respState)) out += ev;
+						return new Response(out, {
+							status: statusCode,
+							headers: {
+								...responseHeaders,
+								'Content-Type': 'text/event-stream; charset=utf-8',
+								'Cache-Control': 'no-cache',
+								Connection: 'keep-alive',
+							},
+						});
+					}
+
 					const sseLines = buildYouComStreamChunks(openaiParsed);
 					const sseBody = sseLines.map((l) => l + '\n\n').join('');
 					return new Response(sseBody, {

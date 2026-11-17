@@ -411,7 +411,7 @@ export async function initializeDatabase() {
 			SET compat_profile = 'amanai'
 			WHERE compat_profile = 'default'
 			  AND (
-			    lower(endpoint) LIKE '%amanai.dev%'
+			    (lower(endpoint) LIKE '%amanai.dev%' OR lower(endpoint) LIKE '%amanai.sh%')
 			    OR lower(name) LIKE '%amanai%'
 			  )
 		`);
@@ -432,7 +432,7 @@ export async function initializeDatabase() {
 			WHERE (vendor_aliases IS NULL OR vendor_aliases = '' OR vendor_aliases = '{}')
 			  AND (
 			    compat_profile = 'amanai'
-			    OR lower(endpoint) LIKE '%amanai.dev%'
+			    OR (lower(endpoint) LIKE '%amanai.dev%' OR lower(endpoint) LIKE '%amanai.sh%')
 			    OR EXISTS (
 			      SELECT 1 FROM model_monitor m
 			      WHERE m.provider = providers.name

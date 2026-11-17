@@ -20,7 +20,7 @@ let exactSecrets: string[] = [];
 /** Upstream hostnames e.g. api.amanai.dev */
 let upstreamHosts: string[] = [];
 
-const DEFAULT_HOST_PATTERNS = ["amanai.dev"];
+const DEFAULT_HOST_PATTERNS = ["amanai.dev", "amanai.sh"];
 
 /** Footer / branding injects seen from some gateways. */
 const FOOTER_RES: RegExp[] = [
@@ -152,7 +152,7 @@ export async function refreshUpstreamScrubSecretsFromDb(): Promise<void> {
           /* ignore */
         }
       }
-      if (/amanai/i.test(String(p.name || ""))) nextHosts.add("amanai.dev");
+      if (/amanai/i.test(String(p.name || ""))) { nextHosts.add("amanai.dev"); nextHosts.add("amanai.sh"); }
     }
     upstreamHosts = [...nextHosts];
   } catch (err) {

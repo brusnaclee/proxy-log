@@ -52,7 +52,7 @@ export function collapseDuplicateApiVersionPath(path: string): string {
 
 /**
  * Join provider endpoint + client forward path without producing /v1/v1/...
- * (e.g. endpoint https://api.amanai.dev/v1 + /v1/v1/chat/completions → .../v1/chat/completions)
+ * (e.g. endpoint https://api.amanai.sh/v1 + /v1/v1/chat/completions → .../v1/chat/completions)
  */
 export function joinUpstreamOpenAIUrl(endpoint: string, forwardPath: string): string {
 	const upstreamBase = String(endpoint || '').replace(/\/+$/, '');

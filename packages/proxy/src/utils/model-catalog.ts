@@ -727,8 +727,15 @@ export async function getModelCatalogResponse() {
       toPublicOwnedBy(vendorOf(cm.modelId) || providerName, publicSuffix, aliases) ||
       providerName;
 
-    if (seen.has(publicId)) continue;
-    seen.add(publicId);
+    // Dedupe against BOTH key spaces: `seenPublic` (public ids) and `seen`
+    // (providerId:modelId). The provider-catalog loop registers models under
+    // `${providerId}:${modelId}`, so checking only `seenPublic` let a custom
+    // model that already came from the provider catalog through twice — the
+    // client then saw the same id two times in /v1/models.
+    const dedupeKey = `${cm.providerId}:${cm.modelId}`;
+    if (seen.has(dedupeKey) || seenPublic.has(publicId)) continue;
+    seen.add(dedupeKey);
+    seenPublic.add(publicId);
 
     // Pull fallback metadata for the raw model id to fill any gaps
     const fb = getFallbackMetadata(cm.modelId);
@@ -914,7 +921,7 @@ function providerUsesNestedModelIds(
   const name = String(providerName || "").toLowerCase();
   if (String(compatProfile || "").toLowerCase() === "amanai") return true;
   // Amanai always nests vendor ids as amanai/<model>
-  if (ep.includes("amanai.dev") || name.includes("amanai")) return true;
+  if (ep.includes("amanai.dev") || ep.includes("amanai.sh") || name.includes("amanai")) return true;
   let total = 0;
   let withSlash = 0;
   for (const id of knownIds) {

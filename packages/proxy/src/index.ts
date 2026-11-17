@@ -22,7 +22,6 @@ import internalRoutes from "./routes/admin/internal.js";
 import internalAuditRoute from "./routes/internal-audit.js";
 import monitorRoutes from "./routes/admin/monitor.js";
 import buglogRoutes from "./routes/admin/buglog.js";
-import quotaGuardRoutes from "./routes/admin/quota-guard.js";
 import trialRoutes from "./routes/admin/trial.js";
 import addonsRoutes from "./routes/admin/addons.js";
 import sessionsRoutes from "./routes/admin/sessions.js";
@@ -31,8 +30,8 @@ import recapWebRoutes from "./routes/recap-web.js";
 import portalRoutes from "./routes/portal/index.js";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { initializeModelCatalogScheduler, initializeMetadataEnrichmentScheduler } from "./utils/model-catalog.js";
-import { initializeQuotaGuardScheduler } from "./utils/quota-guard.js";
 import { initializeTrialScheduler } from "./utils/trial-scheduler.js";
+import { initializeAmanaiRateScheduler } from "./utils/amanai-rate-scheduler.js";
 import { runTranscriptCleanup, run3MonthCleanup } from "./utils/cleanup.js";
 import { adminAuditMiddleware } from "./utils/admin-audit.js";
 
@@ -84,7 +83,6 @@ app.route("/admin", statsRoutes);
 app.route("/admin", internalRoutes);
 app.route("/admin", monitorRoutes);
 app.route("/admin", buglogRoutes);
-app.route("/admin", quotaGuardRoutes);
 app.route("/admin", recapRoutes);
 app.route("/admin", trialRoutes);
 app.route("/admin", addonsRoutes);
@@ -216,8 +214,8 @@ async function main() {
   }
   await initializeModelCatalogScheduler();
   initializeMetadataEnrichmentScheduler();
-  initializeQuotaGuardScheduler();
   initializeTrialScheduler();
+  initializeAmanaiRateScheduler();
 
   // Check every 3 hours if yesterday's data needs cleanup
   // Only clears YESTERDAY's heavy fields, NEVER touches today's data

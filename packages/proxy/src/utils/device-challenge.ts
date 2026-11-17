@@ -218,15 +218,23 @@ export async function openOrReuseChallenge(opts: {
 			})
 			.where(eq(devices.id, existingDev.id));
 	} else {
-		await db.insert(devices).values({
-			apiKeyId: opts.apiKeyId,
-			fingerprint: opts.fingerprint,
-			ipAddress: opts.ipAddress,
-			userAgentRaw: opts.userAgentRaw,
-			ideDetected: opts.ideDetected,
-			isProvisional: true,
-			requestCount: 0,
-		});
+		// Race-safe insert: a concurrent request can carry the same
+		// (api_key_id, fingerprint) and the unique index
+		// idx_devices_api_key_fingerprint makes the loser throw, taking the
+		// whole request down with a 502. A no-op conflict keeps the existing
+		// row, which is all this branch needs.
+		await db
+			.insert(devices)
+			.values({
+				apiKeyId: opts.apiKeyId,
+				fingerprint: opts.fingerprint,
+				ipAddress: opts.ipAddress,
+				userAgentRaw: opts.userAgentRaw,
+				ideDetected: opts.ideDetected,
+				isProvisional: true,
+				requestCount: 0,
+			})
+			.onConflictDoNothing();
 	}
 
 	const ideLabel = opts.ideDetected || 'Unknown IDE';
@@ -333,15 +341,20 @@ export async function approveChallenge(
 			})
 			.where(eq(devices.id, prov.id));
 	} else {
-		await db.insert(devices).values({
-			apiKeyId: ch.apiKeyId,
-			fingerprint: ch.fingerprint,
-			ipAddress: ch.ipAddress,
-			userAgentRaw: ch.userAgentRaw,
-			ideDetected: ch.ideDetected,
-			isProvisional: false,
-			requestCount: 0,
-		});
+		// Race-safe insert — see the note on the provisional insert above:
+		// a duplicate (api_key_id, fingerprint) must not 502 the approval.
+		await db
+			.insert(devices)
+			.values({
+				apiKeyId: ch.apiKeyId,
+				fingerprint: ch.fingerprint,
+				ipAddress: ch.ipAddress,
+				userAgentRaw: ch.userAgentRaw,
+				ideDetected: ch.ideDetected,
+				isProvisional: false,
+				requestCount: 0,
+			})
+			.onConflictDoNothing();
 	}
 
 	await db

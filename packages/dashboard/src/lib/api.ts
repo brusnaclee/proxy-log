@@ -844,6 +844,12 @@ export interface ModelMonitorEntry {
   checkedAt: string;
   probeOk?: boolean;
   forceDeactivated?: boolean;
+  /** Billing rates in credits per token (what the quota is actually charged). */
+  billing?: { prompt: number; input_cache_read: number; completion: number } | null;
+  /** Observed end-to-end latency from real requests over the last 7 days. */
+  latencyP50?: number | null;
+  latencyP95?: number | null;
+  latencySamples?: number | null;
 }
 
 export interface ModelMonitorResponse {
@@ -1156,58 +1162,7 @@ export const buglog = {
 
 // ─── Quota Guard ────────────────────────────────────────────────────────────
 
-export interface QuotaGuardSnapshot {
-  scheduler: {
-    enabled: boolean;
-    pollIntervalMs: number;
-    threshold: number;
-    isRunning: boolean;
-    lastCycleAt: string | null;
-    excludedProviders: string[];
-  };
-  providers: ProviderSnapshot[];
-}
 
-export interface ProviderSnapshot {
-  name: string;
-  alias: string;
-  connections: ConnectionSnapshot[];
-}
-
-export interface ConnectionSnapshot {
-  id: string;
-  name: string;
-  isActive: boolean;
-  quotaType: string;
-  quotas: Record<string, {
-    used: number;
-    total: number;
-    remainingPercentage: number;
-    resetAt?: string;
-    unlimited?: boolean;
-    displayName?: string;
-  }>;
-  guardState: {
-    phase: string;
-    retryCount: number;
-    lockoutCount: number;
-    disabledByGuard: boolean;
-    excluded: boolean;
-    lastResetAt?: string;
-  };
-}
-
-export const quotaGuard = {
-  getStatus: () => request<QuotaGuardSnapshot>("/quota-guard/status"),
-  disable: (data: { providerAlias: string; type: string; id: string }) =>
-    request<{ success: boolean }>("/quota-guard/disable", { method: "POST", body: JSON.stringify(data) }),
-  enable: (data: { providerAlias: string; type: string; id: string }) =>
-    request<{ success: boolean }>("/quota-guard/enable", { method: "POST", body: JSON.stringify(data) }),
-  updateScheduler: (data: { enabled?: boolean }) =>
-    request<{ success: boolean }>("/quota-guard/scheduler", { method: "PUT", body: JSON.stringify(data) }),
-  setProviderExcluded: (provider: string, excluded: boolean) =>
-    request<{ success: boolean; excludedProviders: string[] }>("/quota-guard/provider", { method: "PUT", body: JSON.stringify({ provider, excluded }) }),
-};
 
 // ─── Trial Mode ────────────────────────────────────────────────────────────────
 export interface TrialEmbedConfig {

@@ -348,6 +348,24 @@ export function resolveTokenSaverFlags(
 		streamToNonstream: resolveFlag(
 			userOverrides?.tokenSaverStreamToNonstreamOverride,
 			globalCfg?.tokenSaverStreamToNonstreamEnabled,
+			// Groupy default: OFF.
+			//
+			// It saves the per-model input prefill (measured ~2000 tokens on some
+			// models) but it is NOT safe as a global default:
+			//
+			//  - Reasoning models (glm-5.3-flash, minimax-m3.1-flash, ...) spend
+			//    max_tokens on hidden reasoning first. In NON-STREAM mode the
+			//    upstream returns keys `role,content` only — no reasoning_content —
+			//    so backfillOpenAIMessageContent() has nothing to copy and the
+			//    client gets an empty answer with finish_reason "length".
+			//  - Measured on glm-5.3-flash, max_tokens=2000, 20 requests per mode:
+			//    s2ns ON = 13/20 failed (65%), s2ns OFF = 2/20 failed (10%).
+			//  - Even on success it buffers, so time-to-first-byte equals total
+			//    time (4 chunks vs 576) and clients show no progress.
+			//
+			// Keep it available as an opt-in per key/global flag, never as the
+			// default. Re-enabling globally is only safe once s2ns is scoped to
+			// non-reasoning models.
 			false,
 		),
 		nonstreamToStream: resolveFlag(

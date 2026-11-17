@@ -52,7 +52,7 @@ async function fetchAmanaiUsageRecent(apiKey: string): Promise<UsageRecent[]> {
 	const ctrl = new AbortController();
 	const t = setTimeout(() => ctrl.abort(), 4000);
 	try {
-		const res = await fetch("https://api.amanai.dev/v1/usage", {
+		const res = await fetch("https://api.amanai.sh/v1/usage", {
 			headers: { Authorization: `Bearer ${apiKey}` },
 			signal: ctrl.signal,
 		});

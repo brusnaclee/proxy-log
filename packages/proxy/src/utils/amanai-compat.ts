@@ -5,7 +5,7 @@
  *   credits = ceil( (input - cache_read) * m_in + cache_read * m_cache + output * m_out )
  *   m_cache = 0.25 * m_in  → 75% discount on cached input
  *
- * Docs: https://ai.amanai.dev/docs/billing/
+ * Docs: https://amanai.sh/docs/billing
  * Anthropic prompt caching: prefer top-level automatic cache_control for multi-turn,
  * plus explicit breakpoints on tools/system/stable prefix (max 4 explicit).
  */
@@ -33,7 +33,7 @@ export function inferCompatProfile(opts: {
 	}
 	const name = String(opts.name || "").toLowerCase();
 	const endpoint = String(opts.endpoint || "").toLowerCase();
-	if (endpoint.includes("amanai.dev") || name.includes("amanai")) return "amanai";
+	if (endpoint.includes("amanai.dev") || endpoint.includes("amanai.sh") || name.includes("amanai")) return "amanai";
 	return "default";
 }
 
@@ -47,7 +47,7 @@ export function providerIsAmanaiCompat(provider: {
 	if (provider.compatProfile == null || provider.compatProfile === "") {
 		const name = String(provider.name || "").toLowerCase();
 		const endpoint = String(provider.endpoint || "").toLowerCase();
-		return endpoint.includes("amanai.dev") || name.includes("amanai");
+		return endpoint.includes("amanai.dev") || endpoint.includes("amanai.sh") || name.includes("amanai");
 	}
 	return false;
 }

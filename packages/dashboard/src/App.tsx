@@ -12,7 +12,6 @@ import SettingsPage from "@/pages/SettingsPage";
 import SessionDetailPage from "@/pages/SessionDetailPage";
 import ModelMonitorPage from "@/pages/ModelMonitorPage";
 import BugLogPage from "@/pages/BugLogPage";
-import QuotaGuardPage from "@/pages/QuotaGuardPage";
 import TrialSettingsPage from "@/pages/TrialSettingsPage";
 import AddonsPage from "@/pages/AddonsPage";
 import AdminLogPage from "@/pages/AdminLogPage";
@@ -76,7 +75,6 @@ export default function App() {
         <Route path="analytics" element={<AnalyticsPage />} />
         <Route path="monitor" element={<ModelMonitorPage />} />
         <Route path="buglog" element={<BugLogPage />} />
-        <Route path="quota-guard" element={<QuotaGuardPage />} />
         <Route path="trial" element={<TrialSettingsPage />} />
         <Route path="addons" element={<AddonsPage />} />
         <Route path="admin-log" element={<AdminLogPage />} />

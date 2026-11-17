@@ -27,6 +27,7 @@ import {
   sqlMatchDedicatedRule,
 } from "../../utils/rate-limit.js";
 import { getAccountUsageOverride } from "../../utils/account-usage-overrides.js";
+import { resolveAmanaiMultipliers } from "../../utils/amanai-credits.js";
 import { buildModelPromptUsage } from "../../utils/model-prompt-usage.js";
 import { logEmitter } from "../../utils/event-emitter.js";
 import { randomBytes } from "crypto";
@@ -1629,6 +1630,79 @@ portal.get("/models", async (c) => {
     const catalog = await getModelCatalogResponse();
     const allModels: Array<{ id: string; owned_by?: string }> = (catalog as any)?.data || [];
 
+    // Real observed latency per model, from the requests users actually made.
+    // `model_monitor.latency_ms` is a synthetic probe that is 0 on every row
+    // (the monitor never measured it), so it cannot be shown as a speed figure.
+    // request_logs.latency_ms is the true end-to-end time the client waited.
+    const latencyByModel = new Map<string, { p50: number; p95: number; n: number }>();
+    try {
+      const rows = await db.execute(sql`
+        SELECT model,
+               COUNT(*)::int AS n,
+               PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms)::int AS p50,
+               PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)::int AS p95
+        FROM request_logs
+        WHERE status_code = 200
+          AND latency_ms > 0
+          AND created_at > NOW() - INTERVAL '7 days'
+        GROUP BY model
+        HAVING COUNT(*) >= 3
+      `);
+      for (const r of (rows as any).rows || rows || []) {
+        const key = String(r.model || "");
+        if (!key) continue;
+        latencyByModel.set(key, { p50: Number(r.p50) || 0, p95: Number(r.p95) || 0, n: Number(r.n) || 0 });
+      }
+    } catch {
+      // Latency is a nice-to-have; never fail the models list over it.
+    }
+
+    // Cheapest input rate in the catalog is the 1x baseline for the usage
+    // multiplier shown next to each model. Computed before the trial branch so
+    // both paths agree on the scale.
+    //
+    // IMPORTANT: use the billing multiplier table (`AMANAI_MODEL_MULTIPLIERS`),
+    // not the `pricing` block from the upstream catalog. The catalog reports a
+    // different scale (it calls gpt-5.6-sol 571x the cheapest model) while the
+    // real billed ratio is 9.5x. Only the billing table matches what the user's
+    // quota is actually charged.
+    const ratesFor = (id: string) => resolveAmanaiMultipliers(id);
+
+    const cheapestInputRate = allModels.reduce((min, m) => {
+      const rate = ratesFor(m.id)?.mIn;
+      if (!Number.isFinite(rate) || !rate || rate <= 0) return min;
+      return min === null || rate < min ? rate : min;
+    }, null as number | null);
+
+    /**
+     * Input cost of this model relative to the cheapest one, rounded to 1dp.
+     * `null` when the billing table has no rate for the model (e.g. `auto`).
+     */
+    const usageMultiplierFor = (
+      id: string,
+      cheapest: number | null,
+    ): number | null => {
+      const rate = ratesFor(id)?.mIn;
+      if (!Number.isFinite(rate) || !rate || rate <= 0) return null;
+      if (!cheapest || cheapest <= 0) return null;
+      return Math.round((rate / cheapest) * 10) / 10;
+    };
+
+    /** Billing rates for the model, so the UI can show exact numbers. */
+    const pricingFor = (id: string) => {
+      const r = ratesFor(id);
+      if (!r) return null;
+      return { prompt: r.mIn, input_cache_read: r.mCache, completion: r.mOut };
+    };
+
+    const latencyFor = (id: string) => {
+      const direct = latencyByModel.get(id);
+      if (direct) return direct;
+      // `auto` resolves to a concrete model at request time; fall back to the
+      // busiest model so the row still shows a real number instead of nothing.
+      return latencyByModel.get(`auto (${id})`) ?? null;
+    };
+
     if (isTrial) {
       const config = (await db.select().from(adminConfig).limit(1))[0];
       const mode = String(config?.trialModelSelectionMode || "all").toLowerCase();
@@ -1645,14 +1719,22 @@ portal.get("/models", async (c) => {
         allowedIds = ["auto", ...allowedIds];
       }
 
-      return c.json(allowedIds.map(id => ({
-        id,
-        allowed: true,
-        online: null as boolean | null,
-        checkedAt: null as string | null,
-        lastCheckedMinutes: null as number | null,
-        latencyMs: null as number | null,
-      })));
+      return c.json(allowedIds.map(id => {
+        const entry = allModels.find((m) => m.id === id) as any;
+        return {
+          id,
+          allowed: true,
+          online: null as boolean | null,
+          checkedAt: null as string | null,
+          lastCheckedMinutes: null as number | null,
+          latencyMs: null as number | null,
+          pricing: pricingFor(id),
+          usageMultiplier: usageMultiplierFor(id, cheapestInputRate),
+          latencyP50: latencyFor(id)?.p50 ?? null,
+          latencyP95: latencyFor(id)?.p95 ?? null,
+          latencySamples: latencyFor(id)?.n ?? null,
+        };
+      }));
     }
 
     // Same matrix as Discord /v1/models — provider-strict (no bare-ID Online borrow)
@@ -1701,6 +1783,14 @@ portal.get("/models", async (c) => {
             checkedAt: checkedAt?.toISOString() ?? null,
             lastCheckedMinutes: checkedAt ? minutesAgo(checkedAt) : null,
             latencyMs: st.latencyMs ?? null,
+            // Official upstream rates, so users can see WHY one model drains
+            // quota faster than another. `usageMultiplier` is the input cost
+            // relative to the cheapest model in the catalog (1x = cheapest).
+            pricing: pricingFor(m.id),
+            usageMultiplier: usageMultiplierFor(m.id, cheapestInputRate),
+            latencyP50: latencyFor(m.id)?.p50 ?? null,
+            latencyP95: latencyFor(m.id)?.p95 ?? null,
+            latencySamples: latencyFor(m.id)?.n ?? null,
           };
         })
         .filter(Boolean),

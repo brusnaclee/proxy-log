@@ -447,11 +447,10 @@ export default function ModelMonitorPage() {
                       <th className="text-left py-3 px-3 font-medium text-muted-foreground">Model</th>
                       <th className="text-right py-3 px-3 font-medium text-muted-foreground">Context/Input</th>
                       <th className="text-right py-3 px-3 font-medium text-muted-foreground">Max Output</th>
-                      <th className="text-right py-3 px-3 font-medium text-muted-foreground">Input $/M</th>
-                      <th className="text-right py-3 px-3 font-medium text-muted-foreground">Output $/M</th>
+                      <th className="text-right py-3 px-3 font-medium text-muted-foreground">In / Cache / Out</th>
                       <th className="text-left py-3 px-3 font-medium text-muted-foreground">Modalities</th>
                       <th className="text-left py-3 px-3 font-medium text-muted-foreground">Features</th>
-                      <th className="text-right py-3 px-3 font-medium text-muted-foreground">Latency</th>
+                      <th className="text-right py-3 px-3 font-medium text-muted-foreground">Latency (7d)</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -478,10 +477,9 @@ export default function ModelMonitorPage() {
                             {m.max_output_tokens ? `${Math.round(m.max_output_tokens / 1024)}K` : "—"}
                           </td>
                           <td className="py-2 px-3 text-right font-mono text-xs">
-                            {m.pricing?.prompt != null ? `$${m.pricing.prompt.toFixed(2)}` : "—"}
-                          </td>
-                          <td className="py-2 px-3 text-right font-mono text-xs">
-                            {m.pricing?.completion != null ? `$${m.pricing.completion.toFixed(2)}` : "—"}
+                            {m.billing
+                              ? `${m.billing.prompt} / ${m.billing.input_cache_read} / ${m.billing.completion}`
+                              : "—"}
                           </td>
                           <td className="py-2 px-3">
                             <div className="flex flex-wrap gap-1">
@@ -502,7 +500,15 @@ export default function ModelMonitorPage() {
                             </div>
                           </td>
                           <td className="py-2 px-3 text-right font-mono text-xs">
-                            {m.latency_ms != null ? `${m.latency_ms}ms` : "—"}
+                            {m.latencyP50 != null && m.latencyP50 > 0 ? (
+                              <span title={`p50 ${m.latencyP50}ms · p95 ${m.latencyP95 ?? "—"}ms · ${m.latencySamples ?? 0} samples`}>
+                                {m.latencyP50 < 1000 ? `${m.latencyP50}ms` : `${(m.latencyP50 / 1000).toFixed(1)}s`}
+                              </span>
+                            ) : m.latency_ms != null && m.latency_ms > 0 ? (
+                              `${m.latency_ms}ms`
+                            ) : (
+                              "—"
+                            )}
                           </td>
                         </tr>
                       ))}

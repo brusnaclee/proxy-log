@@ -4,6 +4,7 @@ import { modelMonitor } from "../../db/schema.js";
 import { eq, sql, desc } from "drizzle-orm";
 import { isInternalRequest, isAuthenticated } from "../../middleware/session.js";
 import { adminConfig, providers, providerApiKeys, customModels } from "../../db/schema.js";
+import { resolveAmanaiMultipliers } from "../../utils/amanai-credits.js";
 import {
   getActiveProviderNames,
   monitorStaleCutoffIso,
@@ -329,6 +330,39 @@ monitor.get("/monitor/models", async (c) => {
 
   const mode = await getMonitorAutoMode();
   const activeProviders = [...activeNames].sort((a, b) => a.localeCompare(b));
+
+  // Billing rates and real observed latency, keyed by public model id.
+  // `model_monitor.latency_ms` is a synthetic probe that reads 0 on every row,
+  // so the admin table needs `request_logs` to show a truthful speed figure.
+  const billingRates = new Map<string, { prompt: number; input_cache_read: number; completion: number }>();
+  const latencyStats = new Map<string, { p50: number; p95: number; n: number }>();
+  try {
+    const latRows = (await db.execute(sql`
+      SELECT model,
+             COUNT(*)::int AS n,
+             PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms)::int AS p50,
+             PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)::int AS p95
+      FROM request_logs
+      WHERE status_code = 200 AND latency_ms > 0 AND created_at > NOW() - INTERVAL '7 days'
+      GROUP BY model HAVING COUNT(*) >= 3
+    `)).rows as any[];
+    for (const r of latRows) {
+      latencyStats.set(String(r.model || ""), {
+        p50: Number(r.p50) || 0,
+        p95: Number(r.p95) || 0,
+        n: Number(r.n) || 0,
+      });
+    }
+  } catch {
+    // Admin table still renders without latency.
+  }
+  for (const d of publicData) {
+    const r = resolveAmanaiMultipliers(d.modelId);
+    if (r) {
+      billingRates.set(d.modelId, { prompt: r.mIn, input_cache_read: r.mCache, completion: r.mOut });
+    }
+  }
+
   const vendorOptions = ["all", ...new Set(data.map((d) => d.modelVendor))]
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b));
@@ -339,7 +373,13 @@ monitor.get("/monitor/models", async (c) => {
   );
 
   return c.json({
-    data: publicData,
+    data: publicData.map((d) => ({
+      ...d,
+      billing: billingRates.get(d.modelId) ?? null,
+      latencyP50: latencyStats.get(d.modelId)?.p50 ?? null,
+      latencyP95: latencyStats.get(d.modelId)?.p95 ?? null,
+      latencySamples: latencyStats.get(d.modelId)?.n ?? null,
+    })),
     summary,
     monitorAutoMode: mode,
     activeProviders,
