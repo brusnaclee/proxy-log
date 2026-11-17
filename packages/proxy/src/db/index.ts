@@ -52,14 +52,22 @@ export async function initializeDatabase() {
 		await pool.query(`CREATE INDEX IF NOT EXISTS idx_model_limits_dedicated_pool_group ON model_limits (dedicated_pool_group) WHERE dedicated_pool_group IS NOT NULL`);
 		await pool.query(`ALTER TABLE model_limits ADD COLUMN IF NOT EXISTS prompt_limit_bypass boolean NOT NULL DEFAULT false`);
 		// Shared dedicated pool: gcli grok-4.5 + grok-4.6 + grok-4.7 → 30M total (group: gcli-grok)
+		//
+		// The models are served by the `grok` upstream (api3.tokito.xyz). Older
+		// builds seeded these rows as `tokitoV2/gcli/*`, a provider that no
+		// longer exists — the proxy rejects those ids with "No active upstream
+		// provider available", so the pool could never be spent. Migrate any
+		// leftover tokitoV2 rows onto the live provider id and drop the dead
+		// duplicates so the pool is listed once.
 		await pool.query(
 			`DELETE FROM model_limits
 			 WHERE scope = 'global' AND scope_id = 0 AND model = 'grok-4.5'
 			   AND is_pattern = true AND dedicated_quota = true`,
 		);
 		await pool.query(
-			`UPDATE model_limits SET model = 'tokitoV2/gcli/grok-4.5'
-			 WHERE scope = 'global' AND scope_id = 0 AND model = 'tokito/gcli/grok-4.5'
+			`UPDATE model_limits SET model = 'grok/gcli/grok-4.5'
+			 WHERE scope = 'global' AND scope_id = 0
+			   AND model IN ('tokito/gcli/grok-4.5', 'tokitoV2/gcli/grok-4.5')
 			   AND is_pattern = true`,
 		);
 		// Drop legacy single-model pattern rows — shared pool below
@@ -69,7 +77,7 @@ export async function initializeDatabase() {
 			   AND model IN ('tokitoV2/gcli/grok-4.5', 'tokitoV2/gcli/grok-4.6', 'tokitoV2/gcli/grok-4.7')
 			   AND is_pattern = false`,
 		);
-		for (const gcliModel of ["tokitoV2/gcli/grok-4.5", "tokitoV2/gcli/grok-4.6", "tokitoV2/gcli/grok-4.7"]) {
+		for (const gcliModel of ["grok/gcli/grok-4.5", "grok/gcli/grok-4.6", "grok/gcli/grok-4.7"]) {
 			const existingGcli = await pool.query(
 				`SELECT id FROM model_limits
 				 WHERE scope = 'global' AND scope_id = 0 AND model = $1 AND is_pattern = false
