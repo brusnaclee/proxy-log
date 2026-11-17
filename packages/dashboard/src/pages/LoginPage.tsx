@@ -55,10 +55,9 @@ export default function LoginPage() {
           <img
             src="/groupy-logo.png"
             alt="Groupy"
-            className="h-12 object-contain mb-4"
+            className="h-10 w-auto object-contain mb-3"
           />
-          <h1 className="text-xl font-bold">Groupy</h1>
-          <p className="text-sm text-muted-foreground mt-1">Vibecode Admin</p>
+          <p className="text-sm text-muted-foreground">Vibecode Admin</p>
         </div>
 
         <Card className="border-border/50">

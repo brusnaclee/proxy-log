@@ -86,16 +86,17 @@ export default function Layout() {
   return (
     <div className="min-h-screen bg-background">
       <aside className="hidden lg:flex flex-col w-64 fixed inset-y-0 left-0 z-30 bg-card border-r border-border">
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-border shrink-0">
+        <div className="px-5 py-4 border-b border-border shrink-0">
+          {/* Full Groupy lockup (icon + wordmark) — the artwork already carries
+              the brand name, so no duplicate text next to it. */}
           <img
-            src="/portal/groupy-mark.png"
+            src="/portal/groupy-logo.png"
             alt="Groupy"
-            className="w-8 h-8 object-contain flex-shrink-0"
+            className="h-7 w-auto object-contain"
           />
-          <div>
-            <h1 className="font-semibold text-foreground leading-tight">Groupy</h1>
-            <p className="text-xs text-muted-foreground">Vibecode Dashboard</p>
-          </div>
+          <p className="text-[10px] text-muted-foreground mt-1.5 uppercase tracking-widest font-semibold">
+            Vibecode Dashboard
+          </p>
         </div>
 
         <div className="px-4 py-3 border-b border-border shrink-0 space-y-2">
@@ -152,14 +153,11 @@ export default function Layout() {
         </header>
 
         <header className="lg:hidden sticky top-0 z-[45] flex items-center justify-between p-4 border-b border-border bg-card">
-          <div className="flex items-center gap-2">
-            <img
-              src="/portal/groupy-mark.png"
-              alt="Groupy"
-              className="w-7 h-7 object-contain"
-            />
-            <span className="font-semibold text-foreground">Groupy</span>
-          </div>
+          <img
+            src="/portal/groupy-logo.png"
+            alt="Groupy"
+            className="h-6 w-auto object-contain"
+          />
           <div className="flex items-center gap-1.5">
             <NotificationBell initialCount={notifCount} onChanged={refreshUser} />
             <AccountBadge />

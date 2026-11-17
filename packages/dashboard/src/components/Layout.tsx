@@ -89,16 +89,13 @@ export default function Layout() {
           sidebarCollapsed ? "justify-center px-1.5" : "justify-between px-3"
         )}>
           {!sidebarCollapsed && (
-            <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-center min-w-0">
+              {/* Full lockup — artwork already contains the wordmark. */}
               <img
-                src="/groupy-mark.png"
+                src="/groupy-logo.png"
                 alt="Groupy"
-                className="h-7 w-7 object-contain shrink-0"
+                className="h-6 w-auto object-contain"
               />
-              <div className="min-w-0">
-                <h1 className="text-sm font-bold tracking-tight truncate">Groupy</h1>
-                <p className="text-[9px] text-muted-foreground uppercase tracking-widest font-semibold">Vibecode Admin</p>
-              </div>
             </div>
           )}
           {sidebarCollapsed && (
@@ -228,11 +225,10 @@ export default function Layout() {
           </button>
           <div className="flex items-center gap-2">
             <img
-              src="/groupy-mark.png"
+              src="/groupy-logo.png"
               alt="Groupy"
-              className="h-6 w-6 object-contain"
+              className="h-5 w-auto object-contain"
             />
-            <span className="text-sm font-bold">Groupy</span>
           </div>
           {realtimeEnabled && (
             <div title="Dashboard realtime feed (bukan status model Online)" className="ml-auto flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
