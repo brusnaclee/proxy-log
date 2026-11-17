@@ -850,6 +850,10 @@ export interface ModelMonitorEntry {
   latencyP50?: number | null;
   latencyP95?: number | null;
   latencySamples?: number | null;
+  /** Provider-published health (upstream-only, covers every model). */
+  successRate?: number | null;
+  tps?: number | null;
+  providerStatus?: string | null;
 }
 
 export interface ModelMonitorResponse {

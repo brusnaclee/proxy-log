@@ -335,6 +335,10 @@ export interface ModelEntry {
   latencyP50?: number | null;
   latencyP95?: number | null;
   latencySamples?: number | null;
+  /** Provider-published health. */
+  successRate?: number | null;
+  tps?: number | null;
+  providerStatus?: string | null;
 }
 
 export interface RecapStatus {

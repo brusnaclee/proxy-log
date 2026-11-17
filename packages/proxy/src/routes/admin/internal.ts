@@ -1,6 +1,11 @@
 import { Hono } from "hono";
 import { and, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import { resolveAmanaiMultipliers } from "../../utils/amanai-credits.js";
+import {
+  getProviderModelStatus,
+  lookupProviderStatus,
+  type ProviderModelStatus,
+} from "../../utils/provider-status.js";
 import { db } from "../../db/index.js";
 import { adminConfig, addonAssignments, addons, allowedDevices, allowedIdes, apiKeys, devices, requestLogs, modelLimits, providers, trialUsers, userPortalSettings } from "../../db/schema.js";
 import { generateApiKey, getKeyPrefix, sha256 } from "../../utils/crypto.js";
@@ -1605,6 +1610,15 @@ internal.get("/internal/models/details", async (c) => {
     // Latency is a nice-to-have; never fail the catalog over it.
   }
 
+  // Provider-published health is the primary speed signal (covers every model,
+  // measures upstream time only). request_logs is the fallback.
+  let providerStatus = new Map<string, ProviderModelStatus>();
+  try {
+    providerStatus = await getProviderModelStatus();
+  } catch {
+    // fall back to request_logs only
+  }
+
   const enriched = catalog.data
     .map((model: any) => {
       const id = String(model.id || "");
@@ -1614,6 +1628,8 @@ internal.get("/internal/models/details", async (c) => {
       // catalog: the catalog reports a different scale (it calls gpt-5.6-sol
       // 571x the cheapest model while the real billed ratio is 9.5x).
       const rates = resolveAmanaiMultipliers(id);
+      const ph = lookupProviderStatus(providerStatus, id);
+      const own = latencyStats.get(id);
       return {
         ...model,
         is_online: monitor.clientOnline,
@@ -1625,11 +1641,14 @@ internal.get("/internal/models/details", async (c) => {
           ? { prompt: rates.mIn, input_cache_read: rates.mCache, completion: rates.mOut }
           : null,
         usage_multiplier: rates ? rates.mIn : null,
-        // Real observed latency (p50/p95 over 7d) — `latency_ms` above is the
-        // synthetic probe and reads 0.
-        latency_p50: latencyStats.get(id)?.p50 ?? null,
-        latency_p95: latencyStats.get(id)?.p95 ?? null,
-        latency_samples: latencyStats.get(id)?.n ?? null,
+        // Provider feed first (upstream-only, covers every model), then our own
+        // observed p50 as the fallback.
+        latency_p50: ph?.p50_1h ?? ph?.p50_24h ?? own?.p50 ?? null,
+        latency_p95: ph?.p95_1h ?? ph?.p95_24h ?? own?.p95 ?? null,
+        latency_samples: ph?.requests24h ?? own?.n ?? null,
+        success_rate: ph?.successRate24h ?? null,
+        tps: ph?.tps24h ?? null,
+        provider_status: ph?.status ?? null,
       };
     })
     .filter(Boolean);

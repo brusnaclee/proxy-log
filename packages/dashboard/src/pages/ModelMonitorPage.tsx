@@ -717,7 +717,9 @@ export default function ModelMonitorPage() {
                   <th className="text-left py-3 px-4 font-medium text-muted-foreground">Vendor</th>
                   <th className="text-center py-3 px-4 font-medium text-muted-foreground">Published</th>
                   <th className="text-center py-3 px-4 font-medium text-muted-foreground">Probe</th>
+                  <th className="text-right py-3 px-4 font-medium text-muted-foreground">In / Cache / Out</th>
                   <th className="text-right py-3 px-4 font-medium text-muted-foreground">Latency</th>
+                  <th className="text-right py-3 px-4 font-medium text-muted-foreground">Success</th>
                   <th className="text-left py-3 px-4 font-medium text-muted-foreground">HTTP</th>
                   <th className="text-left py-3 px-4 font-medium text-muted-foreground">Last Checked</th>
                   <th className="text-center py-3 px-4 font-medium text-muted-foreground">Action</th>
@@ -726,7 +728,34 @@ export default function ModelMonitorPage() {
               <tbody>
                 {filtered.map((d) => (
                   <tr key={`${d.provider || "unknown"}:${d.modelId}`} className="data-row hover:bg-muted/10 transition-colors border-b border-border/30">
-                    <td className="py-3 px-4 font-mono text-xs">{d.modelId}</td>
+                    <td className="py-3 px-4 font-mono text-xs">
+                      <div className="flex items-center gap-1.5">
+                        <span>{d.modelId}</span>
+                        {d.billing && (() => {
+                          const cheapest = Math.min(
+                            ...(data || [])
+                              .map((x) => x.billing?.prompt)
+                              .filter((v): v is number => typeof v === "number" && v > 0)
+                          );
+                          const mult = cheapest > 0 ? Math.round((d.billing.prompt / cheapest) * 10) / 10 : null;
+                          if (mult == null) return null;
+                          return (
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-medium tabular-nums ${
+                                mult >= 3
+                                  ? "bg-red-500/15 text-red-400"
+                                  : mult >= 2
+                                    ? "bg-amber-500/15 text-amber-400"
+                                    : "bg-green-500/15 text-green-400"
+                              }`}
+                              title={`Input cost vs cheapest model (${cheapest} credits/token)`}
+                            >
+                              {mult}x
+                            </span>
+                          );
+                        })()}
+                      </div>
+                    </td>
                     <td className="py-3 px-4 text-xs text-muted-foreground">{d.provider || "-"}</td>
                     <td className="py-3 px-4 text-xs text-muted-foreground">{d.modelVendor || modelVendorOf(d.modelId)}</td>
                     <td className="py-3 px-4 text-center">
@@ -743,16 +772,38 @@ export default function ModelMonitorPage() {
                       </Badge>
                     </td>
                     <td className="py-3 px-4 text-right">
-                      {d.latencyMs != null && d.latencyMs > 0 ? (
+                      {d.billing ? (
+                        <span className="font-mono text-xs" title={`${d.billing.prompt} in / ${d.billing.input_cache_read} cache / ${d.billing.completion} out (credits per token)`}>
+                          {d.billing.prompt} / {d.billing.input_cache_read} / {d.billing.completion}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground text-xs">-</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      {d.latencyP50 != null && d.latencyP50 > 0 ? (
                         <div className="flex items-center justify-end gap-2">
-                          <span className="font-mono text-xs">{d.latencyMs}ms</span>
+                          <span className="font-mono text-xs">
+                            {d.latencyP50 < 1000 ? `${d.latencyP50}ms` : `${(d.latencyP50 / 1000).toFixed(1)}s`}
+                          </span>
                           <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden flex justify-end">
-                            <div 
-                              className={`h-full rounded-full ${d.latencyMs! < 1000 ? 'bg-emerald-500' : d.latencyMs! < 3000 ? 'bg-amber-500' : 'bg-red-500'}`} 
-                              style={{ width: `${Math.min(100, Math.max(5, (d.latencyMs! / 5000) * 100))}%` }}
+                            <div
+                              className={`h-full rounded-full ${d.latencyP50 < 1000 ? 'bg-emerald-500' : d.latencyP50 < 3000 ? 'bg-amber-500' : 'bg-red-500'}`}
+                              style={{ width: `${Math.min(100, Math.max(5, (d.latencyP50 / 5000) * 100))}%` }}
                             />
                           </div>
                         </div>
+                      ) : d.latencyMs != null && d.latencyMs > 0 ? (
+                        <span className="font-mono text-xs">{d.latencyMs}ms</span>
+                      ) : (
+                        <span className="text-muted-foreground text-xs">-</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      {d.successRate != null ? (
+                        <span className={`font-mono text-xs ${d.successRate >= 99 ? 'text-emerald-400' : d.successRate >= 95 ? 'text-amber-400' : 'text-red-400'}`}>
+                          {d.successRate}%
+                        </span>
                       ) : (
                         <span className="text-muted-foreground text-xs">-</span>
                       )}

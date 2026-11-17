@@ -28,6 +28,11 @@ import {
 } from "../../utils/rate-limit.js";
 import { getAccountUsageOverride } from "../../utils/account-usage-overrides.js";
 import { resolveAmanaiMultipliers } from "../../utils/amanai-credits.js";
+import {
+  getProviderModelStatus,
+  lookupProviderStatus,
+  type ProviderModelStatus,
+} from "../../utils/provider-status.js";
 import { buildModelPromptUsage } from "../../utils/model-prompt-usage.js";
 import { logEmitter } from "../../utils/event-emitter.js";
 import { randomBytes } from "crypto";
@@ -1657,6 +1662,16 @@ portal.get("/models", async (c) => {
       // Latency is a nice-to-have; never fail the models list over it.
     }
 
+    // Provider-published health is the primary speed signal: it has p50/p95,
+    // success rate and throughput for every model, including ones nobody here
+    // has called yet. Our own request_logs aggregate is the fallback.
+    let providerStatus = new Map<string, ProviderModelStatus>();
+    try {
+      providerStatus = await getProviderModelStatus();
+    } catch {
+      // fall back to request_logs only
+    }
+
     // Cheapest input rate in the catalog is the 1x baseline for the usage
     // multiplier shown next to each model. Computed before the trial branch so
     // both paths agree on the scale.
@@ -1703,6 +1718,34 @@ portal.get("/models", async (c) => {
       return latencyByModel.get(`auto (${id})`) ?? null;
     };
 
+    /**
+     * Speed + reliability for a model. Provider-published numbers win because
+     * they cover every model and measure upstream time only; our own
+     * request_logs aggregate is the fallback when the feed has no row.
+     */
+    const healthFor = (id: string) => {
+      const p = lookupProviderStatus(providerStatus, id);
+      const own = latencyFor(id);
+      if (p) {
+        return {
+          latencyP50: p.p50_1h ?? p.p50_24h ?? own?.p50 ?? null,
+          latencyP95: p.p95_1h ?? p.p95_24h ?? own?.p95 ?? null,
+          latencySamples: p.requests24h ?? own?.n ?? null,
+          successRate: p.successRate24h,
+          tps: p.tps24h,
+          providerStatus: p.status,
+        };
+      }
+      return {
+        latencyP50: own?.p50 ?? null,
+        latencyP95: own?.p95 ?? null,
+        latencySamples: own?.n ?? null,
+        successRate: null as number | null,
+        tps: null as number | null,
+        providerStatus: null as string | null,
+      };
+    };
+
     if (isTrial) {
       const config = (await db.select().from(adminConfig).limit(1))[0];
       const mode = String(config?.trialModelSelectionMode || "all").toLowerCase();
@@ -1730,9 +1773,12 @@ portal.get("/models", async (c) => {
           latencyMs: null as number | null,
           pricing: pricingFor(id),
           usageMultiplier: usageMultiplierFor(id, cheapestInputRate),
-          latencyP50: latencyFor(id)?.p50 ?? null,
-          latencyP95: latencyFor(id)?.p95 ?? null,
-          latencySamples: latencyFor(id)?.n ?? null,
+          latencyP50: healthFor(id).latencyP50,
+          latencyP95: healthFor(id).latencyP95,
+          latencySamples: healthFor(id).latencySamples,
+          successRate: healthFor(id).successRate,
+          tps: healthFor(id).tps,
+          providerStatus: healthFor(id).providerStatus,
         };
       }));
     }
@@ -1788,9 +1834,12 @@ portal.get("/models", async (c) => {
             // relative to the cheapest model in the catalog (1x = cheapest).
             pricing: pricingFor(m.id),
             usageMultiplier: usageMultiplierFor(m.id, cheapestInputRate),
-            latencyP50: latencyFor(m.id)?.p50 ?? null,
-            latencyP95: latencyFor(m.id)?.p95 ?? null,
-            latencySamples: latencyFor(m.id)?.n ?? null,
+            latencyP50: healthFor(m.id).latencyP50,
+            latencyP95: healthFor(m.id).latencyP95,
+            latencySamples: healthFor(m.id).latencySamples,
+            successRate: healthFor(m.id).successRate,
+            tps: healthFor(m.id).tps,
+            providerStatus: healthFor(m.id).providerStatus,
           };
         })
         .filter(Boolean),

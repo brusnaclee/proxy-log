@@ -6,6 +6,11 @@ import { isInternalRequest, isAuthenticated } from "../../middleware/session.js"
 import { adminConfig, providers, providerApiKeys, customModels } from "../../db/schema.js";
 import { resolveAmanaiMultipliers } from "../../utils/amanai-credits.js";
 import {
+  getProviderModelStatus,
+  lookupProviderStatus,
+  type ProviderModelStatus,
+} from "../../utils/provider-status.js";
+import {
   getActiveProviderNames,
   monitorStaleCutoffIso,
   replaceModelMonitorSnapshot,
@@ -363,6 +368,15 @@ monitor.get("/monitor/models", async (c) => {
     }
   }
 
+  // Provider-published health: p50/p95, success rate, throughput. Primary
+  // source because it covers every model and measures upstream time only.
+  let providerStatus = new Map<string, ProviderModelStatus>();
+  try {
+    providerStatus = await getProviderModelStatus();
+  } catch {
+    // latencyStats from request_logs still applies
+  }
+
   const vendorOptions = ["all", ...new Set(data.map((d) => d.modelVendor))]
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b));
@@ -373,13 +387,19 @@ monitor.get("/monitor/models", async (c) => {
   );
 
   return c.json({
-    data: publicData.map((d) => ({
-      ...d,
-      billing: billingRates.get(d.modelId) ?? null,
-      latencyP50: latencyStats.get(d.modelId)?.p50 ?? null,
-      latencyP95: latencyStats.get(d.modelId)?.p95 ?? null,
-      latencySamples: latencyStats.get(d.modelId)?.n ?? null,
-    })),
+    data: publicData.map((d) => {
+      const ph = lookupProviderStatus(providerStatus, d.modelId);
+      return {
+        ...d,
+        billing: billingRates.get(d.modelId) ?? null,
+        latencyP50: ph?.p50_1h ?? ph?.p50_24h ?? latencyStats.get(d.modelId)?.p50 ?? null,
+        latencyP95: ph?.p95_1h ?? ph?.p95_24h ?? latencyStats.get(d.modelId)?.p95 ?? null,
+        latencySamples: ph?.requests24h ?? latencyStats.get(d.modelId)?.n ?? null,
+        successRate: ph?.successRate24h ?? null,
+        tps: ph?.tps24h ?? null,
+        providerStatus: ph?.status ?? null,
+      };
+    }),
     summary,
     monitorAutoMode: mode,
     activeProviders,

@@ -3274,8 +3274,8 @@ function buildTokitoEmbed(kind, session) {
 				meta?.usage_multiplier != null ? `${meta.usage_multiplier}x` : '—';
 			const inMod = (meta?.input_modalities || ['text']).join(', ');
 			const outMod = (meta?.output_modalities || ['text']).join(', ');
-			// Prefer real observed latency (p50 over 7d) over the synthetic probe,
-			// which reads 0 on every row.
+			// Prefer the provider-published p50 (upstream-only, covers every model)
+			// over the synthetic probe, which reads 0 on every row.
 			const latency =
 				meta?.latency_p50 != null && meta.latency_p50 > 0
 					? meta.latency_p50 < 1000
@@ -3284,9 +3284,12 @@ function buildTokitoEmbed(kind, session) {
 					: lt?.ms != null && lt.ms > 0
 						? `${lt.ms}ms`
 						: '—';
+			const success =
+				meta?.success_rate != null ? `${meta.success_rate}%` : '—';
+			const tps = meta?.tps != null ? `${meta.tps} tok/s` : null;
 			const features =
 				(meta?.supported_features || []).slice(0, 4).join(', ') || '—';
-			return `━━━━━━━━━━━━━━━━━━━━\n${icon} **${name}** (\`${displayFull}\`)\n📐 Context/Input: **${ctx}**  •  Max Output: **${maxOut}**\n💰 Billing: **${inPrice}** in / **${cachePrice}** cache / **${outPrice}** out (credit/token)  •  **${mult}**\n📥 ${inMod} → ${outMod}\n⚡ ${latency}  •  🛠 ${features}`;
+			return `━━━━━━━━━━━━━━━━━━━━\n${icon} **${name}** (\`${displayFull}\`)\n📐 Context/Input: **${ctx}**  •  Max Output: **${maxOut}**\n💰 Billing: **${inPrice}** in / **${cachePrice}** cache / **${outPrice}** out (credit/token)  •  **${mult}**\n📥 ${inMod} → ${outMod}\n⚡ ${latency}${tps ? `  •  🚀 ${tps}` : ''}  •  ✅ ${success}  •  🛠 ${features}`;
 		}
 
 		if (kind === 'status') {

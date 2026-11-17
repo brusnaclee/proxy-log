@@ -280,11 +280,33 @@ export default function ModelsPage() {
                               <span>·</span>
                               <span
                                 className="font-mono tabular-nums"
-                                title={`p50 ${m.latencyP50}ms · p95 ${m.latencyP95 ?? "—"}ms · ${m.latencySamples ?? 0} samples (7d)`}
+                                title={`p50 ${m.latencyP50}ms · p95 ${m.latencyP95 ?? "—"}ms${m.successRate != null ? ` · ${m.successRate}% success` : ""}${m.tps != null ? ` · ${m.tps} tok/s` : ""}`}
                               >
                                 {m.latencyP50 < 1000
                                   ? `${m.latencyP50}ms`
                                   : `${(m.latencyP50 / 1000).toFixed(1)}s`}
+                              </span>
+                            </>
+                          )}
+                          {m.tps != null && (
+                            <>
+                              <span>·</span>
+                              <span className="tabular-nums">{m.tps} tok/s</span>
+                            </>
+                          )}
+                          {m.successRate != null && (
+                            <>
+                              <span>·</span>
+                              <span
+                                className={`tabular-nums ${
+                                  m.successRate >= 99
+                                    ? "text-green-400"
+                                    : m.successRate >= 95
+                                      ? "text-amber-400"
+                                      : "text-red-400"
+                                }`}
+                              >
+                                {m.successRate}%
                               </span>
                             </>
                           )}

@@ -32,6 +32,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { initializeModelCatalogScheduler, initializeMetadataEnrichmentScheduler } from "./utils/model-catalog.js";
 import { initializeTrialScheduler } from "./utils/trial-scheduler.js";
 import { initializeAmanaiRateScheduler } from "./utils/amanai-rate-scheduler.js";
+import { initializeProviderStatusScheduler } from "./utils/provider-status.js";
 import { runTranscriptCleanup, run3MonthCleanup } from "./utils/cleanup.js";
 import { adminAuditMiddleware } from "./utils/admin-audit.js";
 
@@ -216,6 +217,7 @@ async function main() {
   initializeMetadataEnrichmentScheduler();
   initializeTrialScheduler();
   initializeAmanaiRateScheduler();
+  initializeProviderStatusScheduler();
 
   // Check every 3 hours if yesterday's data needs cleanup
   // Only clears YESTERDAY's heavy fields, NEVER touches today's data
