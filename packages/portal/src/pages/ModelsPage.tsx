@@ -1,5 +1,23 @@
 import { useState, useEffect, useMemo } from "react";
-import { Copy, Check, ChevronDown, ChevronUp, Circle, Search } from "lucide-react";
+import {
+  Copy,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Circle,
+  Search,
+  FileText,
+  ArrowUpRight,
+  Coins,
+  Timer,
+  Gauge,
+  CheckCircle2,
+  Activity,
+  Server,
+  Boxes,
+  Wrench,
+  Info,
+} from "lucide-react";
 import { PeriodSelector, PERIOD_OPTIONS, type PeriodKey } from "@/components/PeriodSelector";
 import { api, type ModelEntry, type ModelUsage } from "@/lib/api";
 import { formatNumber, formatRelativeTime, formatInputBreakdown } from "@/lib/utils";
@@ -244,206 +262,248 @@ export default function ModelsPage() {
                 <div className="space-y-1.5">
                 {displayList.map((m) => {
                   const st = statusMeta(m, t);
+                  const isOpen = openDetail === m.id;
                   return (
                     <div
                       key={m.id}
-                      className="flex items-center gap-3 px-3 py-2 rounded-lg border border-border/60 bg-accent/20 hover:bg-accent/40 transition-colors"
+                      className={`rounded-lg border transition-colors ${
+                        isOpen
+                          ? "border-primary/40 bg-accent/40"
+                          : "border-border/60 bg-accent/20 hover:bg-accent/40"
+                      }`}
                     >
-                      <Circle className={`w-2 h-2 fill-current ${st.dot} ${st.color} flex-shrink-0`} />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setOpenDetail(openDetail === m.id ? null : m.id)}
-                            className="text-sm text-foreground truncate font-mono hover:underline text-left"
-                            title={t("Click for full details")}
-                          >
-                            {m.id}
-                          </button>
-                          <CopyButton text={m.id} />
-                          <button
-                            type="button"
-                            onClick={() => setOpenDetail(openDetail === m.id ? null : m.id)}
-                            className="flex-shrink-0 text-muted-foreground hover:text-foreground transition-colors"
-                            aria-label={openDetail === m.id ? t("Hide details") : t("Show details")}
-                          >
-                            {openDetail === m.id ? (
-                              <ChevronUp className="w-3 h-3" />
-                            ) : (
-                              <ChevronDown className="w-3 h-3" />
-                            )}
-                          </button>
-                          {m.usageMultiplier != null && (
-                            <span
-                              className={`flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium tabular-nums ${
-                                m.usageMultiplier >= 3
-                                  ? "bg-red-500/15 text-red-400"
-                                  : m.usageMultiplier >= 2
-                                    ? "bg-amber-500/15 text-amber-400"
-                                    : "bg-green-500/15 text-green-400"
-                              }`}
-                              title={
-                                m.pricing
-                                  ? `${t("Input")} ${m.pricing.prompt} · ${t("Cached")} ${m.pricing.input_cache_read ?? "—"} · ${t("Output")} ${m.pricing.completion} (${t("credits per token")})`
-                                  : undefined
-                              }
-                            >
-                              {m.usageMultiplier}x
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 mt-0.5 text-[11px] text-muted-foreground flex-wrap">
-                          <span className={st.color}>{st.label}</span>
-                          <span>·</span>
-                          <span>{t("Last check")}: {lastCheckLabel(m, t)}</span>
-                          {m.latencyP50 != null && m.latencyP50 > 0 && (
-                            <>
-                              <span>·</span>
+                      {/* Whole header is the toggle — no tiny chevron to hunt. */}
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setOpenDetail(isOpen ? null : m.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setOpenDetail(isOpen ? null : m.id);
+                          }
+                        }}
+                        className="flex items-start gap-3 px-3 py-2 cursor-pointer select-none"
+                        aria-expanded={isOpen}
+                      >
+                        <Circle className={`w-2 h-2 mt-1.5 fill-current ${st.dot} ${st.color} flex-shrink-0`} />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-foreground truncate font-mono">{m.id}</span>
+                            {m.usageMultiplier != null && (
                               <span
-                                className="font-mono tabular-nums"
-                                title={`p50 ${m.latencyP50}ms · p95 ${m.latencyP95 ?? "—"}ms${m.successRate != null ? ` · ${m.successRate}% success` : ""}${m.tps != null ? ` · ${m.tps} tok/s` : ""}`}
-                              >
-                                {m.latencyP50 < 1000
-                                  ? `${m.latencyP50}ms`
-                                  : `${(m.latencyP50 / 1000).toFixed(1)}s`}
-                              </span>
-                            </>
-                          )}
-                          {m.tps != null && (
-                            <>
-                              <span>·</span>
-                              <span className="tabular-nums">{m.tps} tok/s</span>
-                            </>
-                          )}
-                          {m.successRate != null && (
-                            <>
-                              <span>·</span>
-                              <span
-                                className={`tabular-nums ${
-                                  m.successRate >= 99
-                                    ? "text-green-400"
-                                    : m.successRate >= 95
-                                      ? "text-amber-400"
-                                      : "text-red-400"
+                                className={`flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium tabular-nums ${
+                                  m.usageMultiplier >= 3
+                                    ? "bg-red-500/15 text-red-400"
+                                    : m.usageMultiplier >= 2
+                                      ? "bg-amber-500/15 text-amber-400"
+                                      : "bg-green-500/15 text-green-400"
                                 }`}
+                                title={
+                                  m.pricing
+                                    ? `${t("Input")} ${m.pricing.prompt} · ${t("Cached")} ${m.pricing.input_cache_read ?? "—"} · ${t("Output")} ${m.pricing.completion} (${t("credits per token")})`
+                                    : undefined
+                                }
                               >
-                                {m.successRate}%
+                                {m.usageMultiplier}x
                               </span>
-                            </>
-                          )}
-                          {m.pricing && (
-                            <>
-                              <span>·</span>
-                              <span className="font-mono tabular-nums">
-                                {t("in")} {m.pricing.prompt} / {t("cache")} {m.pricing.input_cache_read ?? "—"} / {t("out")} {m.pricing.completion}
-                              </span>
-                              <span className="text-muted-foreground/60">{t("credits per token")}</span>
-                            </>
-                          )}
+                            )}
+                            <span className="flex-1" />
+                            <span className="flex-shrink-0 text-muted-foreground">
+                              {isOpen ? (
+                                <ChevronUp className="w-4 h-4" />
+                              ) : (
+                                <ChevronDown className="w-4 h-4" />
+                              )}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 mt-0.5 text-[11px] text-muted-foreground flex-wrap">
+                            <span className={st.color}>{st.label}</span>
+                            <span>·</span>
+                            <span>{t("Last check")}: {lastCheckLabel(m, t)}</span>
+                            {m.latencyP50 != null && m.latencyP50 > 0 && (
+                              <>
+                                <span>·</span>
+                                <span
+                                  className="font-mono tabular-nums"
+                                  title={`p50 ${m.latencyP50}ms · p95 ${m.latencyP95 ?? "—"}ms${m.successRate != null ? ` · ${m.successRate}% success` : ""}${m.tps != null ? ` · ${m.tps} tok/s` : ""}`}
+                                >
+                                  {m.latencyP50 < 1000
+                                    ? `${m.latencyP50}ms`
+                                    : `${(m.latencyP50 / 1000).toFixed(1)}s`}
+                                </span>
+                              </>
+                            )}
+                            {m.tps != null && (
+                              <>
+                                <span>·</span>
+                                <span className="tabular-nums">{m.tps} tok/s</span>
+                              </>
+                            )}
+                            {m.successRate != null && (
+                              <>
+                                <span>·</span>
+                                <span
+                                  className={`tabular-nums ${
+                                    m.successRate >= 99
+                                      ? "text-green-400"
+                                      : m.successRate >= 95
+                                        ? "text-amber-400"
+                                        : "text-red-400"
+                                  }`}
+                                >
+                                  {m.successRate}%
+                                </span>
+                              </>
+                            )}
+                            {m.pricing && (
+                              <>
+                                <span>·</span>
+                                <span className="font-mono tabular-nums">
+                                  {t("in")} {m.pricing.prompt} / {t("cache")} {m.pricing.input_cache_read ?? "—"} / {t("out")} {m.pricing.completion}
+                                </span>
+                                <span className="text-muted-foreground/60">{t("credits per token")}</span>
+                              </>
+                            )}
+                          </div>
                         </div>
+                      </div>
 
                         {/* Full detail card — same fields the Discord "Model
                             Details" panel shows, so users can inspect one
                             model without leaving the page. */}
                         {openDetail === m.id && (
-                          <div className="mt-2 rounded-md border border-border/60 bg-background/40 px-3 py-2.5 space-y-1.5 text-[11px]">
-                            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 sm:grid-cols-3">
-                              <div>
-                                <div className="text-muted-foreground">{t("Context / Input")}</div>
-                                <div className="font-mono tabular-nums text-foreground">
-                                  {m.contextLength ? `${Math.round(m.contextLength / 1024)}K` : "—"}
+                          <div className="mt-2 rounded-md border border-border/60 bg-background/40 px-3 py-2.5 space-y-2 text-[11px]">
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+                              <div className="flex items-start gap-1.5">
+                                <FileText className="w-3.5 h-3.5 mt-0.5 text-muted-foreground flex-shrink-0" />
+                                <div>
+                                  <div className="text-muted-foreground">{t("Context / Input")}</div>
+                                  <div className="font-mono tabular-nums text-foreground">
+                                    {m.contextLength ? `${Math.round(m.contextLength / 1024)}K` : "—"}
+                                  </div>
                                 </div>
                               </div>
-                              <div>
-                                <div className="text-muted-foreground">{t("Max Output")}</div>
-                                <div className="font-mono tabular-nums text-foreground">
-                                  {m.maxOutputTokens ? `${Math.round(m.maxOutputTokens / 1024)}K` : "—"}
+                              <div className="flex items-start gap-1.5">
+                                <ArrowUpRight className="w-3.5 h-3.5 mt-0.5 text-muted-foreground flex-shrink-0" />
+                                <div>
+                                  <div className="text-muted-foreground">{t("Max Output")}</div>
+                                  <div className="font-mono tabular-nums text-foreground">
+                                    {m.maxOutputTokens ? `${Math.round(m.maxOutputTokens / 1024)}K` : "—"}
+                                  </div>
                                 </div>
                               </div>
-                              <div>
-                                <div className="text-muted-foreground">{t("Usage multiplier")}</div>
-                                <div className="font-mono tabular-nums text-foreground">
-                                  {m.usageMultiplier != null ? `${m.usageMultiplier}x` : "—"}
+                              <div className="flex items-start gap-1.5">
+                                <Coins className="w-3.5 h-3.5 mt-0.5 text-muted-foreground flex-shrink-0" />
+                                <div>
+                                  <div className="text-muted-foreground">{t("Usage multiplier")}</div>
+                                  <div className="font-mono tabular-nums text-foreground">
+                                    {m.usageMultiplier != null ? `${m.usageMultiplier}x` : "—"}
+                                  </div>
                                 </div>
                               </div>
-                              <div>
-                                <div className="text-muted-foreground">{t("Billing (in / cache / out)")}</div>
-                                <div className="font-mono tabular-nums text-foreground">
-                                  {m.pricing
-                                    ? `${m.pricing.prompt} / ${m.pricing.input_cache_read ?? "—"} / ${m.pricing.completion}`
-                                    : "—"}
+                              <div className="flex items-start gap-1.5">
+                                <Coins className="w-3.5 h-3.5 mt-0.5 text-muted-foreground flex-shrink-0" />
+                                <div>
+                                  <div className="text-muted-foreground">{t("Billing (in / cache / out)")}</div>
+                                  <div className="font-mono tabular-nums text-foreground">
+                                    {m.pricing
+                                      ? `${m.pricing.prompt} / ${m.pricing.input_cache_read ?? "—"} / ${m.pricing.completion}`
+                                      : "—"}
+                                  </div>
                                 </div>
                               </div>
-                              <div>
-                                <div className="text-muted-foreground">{t("Latency p50 / p95")}</div>
-                                <div className="font-mono tabular-nums text-foreground">
-                                  {m.latencyP50 != null && m.latencyP50 > 0
-                                    ? `${m.latencyP50 < 1000 ? `${m.latencyP50}ms` : `${(m.latencyP50 / 1000).toFixed(1)}s`} / ${
-                                        m.latencyP95 != null
-                                          ? m.latencyP95 < 1000
-                                            ? `${m.latencyP95}ms`
-                                            : `${(m.latencyP95 / 1000).toFixed(1)}s`
-                                          : "—"
-                                      }`
-                                    : "—"}
+                              <div className="flex items-start gap-1.5">
+                                <Timer className="w-3.5 h-3.5 mt-0.5 text-muted-foreground flex-shrink-0" />
+                                <div>
+                                  <div className="text-muted-foreground">{t("Latency p50 / p95")}</div>
+                                  <div className="font-mono tabular-nums text-foreground">
+                                    {m.latencyP50 != null && m.latencyP50 > 0
+                                      ? `${m.latencyP50 < 1000 ? `${m.latencyP50}ms` : `${(m.latencyP50 / 1000).toFixed(1)}s`} / ${
+                                          m.latencyP95 != null
+                                            ? m.latencyP95 < 1000
+                                              ? `${m.latencyP95}ms`
+                                              : `${(m.latencyP95 / 1000).toFixed(1)}s`
+                                            : "—"
+                                        }`
+                                      : "—"}
+                                  </div>
                                 </div>
                               </div>
-                              <div>
-                                <div className="text-muted-foreground">{t("Throughput")}</div>
-                                <div className="font-mono tabular-nums text-foreground">
-                                  {m.tps != null ? `${m.tps} tok/s` : "—"}
+                              <div className="flex items-start gap-1.5">
+                                <Gauge className="w-3.5 h-3.5 mt-0.5 text-muted-foreground flex-shrink-0" />
+                                <div>
+                                  <div className="text-muted-foreground">{t("Throughput")}</div>
+                                  <div className="font-mono tabular-nums text-foreground">
+                                    {m.tps != null ? `${m.tps} tok/s` : "—"}
+                                  </div>
                                 </div>
                               </div>
-                              <div>
-                                <div className="text-muted-foreground">{t("Success rate")}</div>
-                                <div
-                                  className={`font-mono tabular-nums ${
-                                    m.successRate == null
-                                      ? "text-foreground"
-                                      : m.successRate >= 99
-                                        ? "text-green-400"
-                                        : m.successRate >= 95
-                                          ? "text-amber-400"
-                                          : "text-red-400"
-                                  }`}
-                                >
-                                  {m.successRate != null ? `${m.successRate}%` : "—"}
+                              <div className="flex items-start gap-1.5">
+                                <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 text-muted-foreground flex-shrink-0" />
+                                <div>
+                                  <div className="text-muted-foreground">{t("Success rate")}</div>
+                                  <div
+                                    className={`font-mono tabular-nums ${
+                                      m.successRate == null
+                                        ? "text-foreground"
+                                        : m.successRate >= 99
+                                          ? "text-green-400"
+                                          : m.successRate >= 95
+                                            ? "text-amber-400"
+                                            : "text-red-400"
+                                    }`}
+                                  >
+                                    {m.successRate != null ? `${m.successRate}%` : "—"}
+                                  </div>
                                 </div>
                               </div>
-                              <div>
-                                <div className="text-muted-foreground">{t("Requests (24h)")}</div>
-                                <div className="font-mono tabular-nums text-foreground">
-                                  {m.latencySamples != null ? formatNumber(m.latencySamples) : "—"}
+                              <div className="flex items-start gap-1.5">
+                                <Activity className="w-3.5 h-3.5 mt-0.5 text-muted-foreground flex-shrink-0" />
+                                <div>
+                                  <div className="text-muted-foreground">{t("Requests (24h)")}</div>
+                                  <div className="font-mono tabular-nums text-foreground">
+                                    {m.latencySamples != null ? formatNumber(m.latencySamples) : "—"}
+                                  </div>
                                 </div>
                               </div>
-                              <div>
-                                <div className="text-muted-foreground">{t("Provider status")}</div>
-                                <div className="text-foreground">{m.providerStatus ?? "—"}</div>
+                              <div className="flex items-start gap-1.5">
+                                <Server className="w-3.5 h-3.5 mt-0.5 text-muted-foreground flex-shrink-0" />
+                                <div>
+                                  <div className="text-muted-foreground">{t("Provider status")}</div>
+                                  <div className="text-foreground">{m.providerStatus ?? "—"}</div>
+                                </div>
                               </div>
                             </div>
                             {(m.inputModalities?.length || m.outputModalities?.length) && (
-                              <div className="pt-1 border-t border-border/40">
-                                <span className="text-muted-foreground">{t("Modalities")}: </span>
-                                <span className="text-foreground">
-                                  {(m.inputModalities || ["text"]).join(", ")} →{" "}
-                                  {(m.outputModalities || ["text"]).join(", ")}
-                                </span>
+                              <div className="flex items-start gap-1.5 pt-1.5 border-t border-border/40">
+                                <Boxes className="w-3.5 h-3.5 mt-0.5 text-muted-foreground flex-shrink-0" />
+                                <div>
+                                  <span className="text-muted-foreground">{t("Modalities")}: </span>
+                                  <span className="text-foreground">
+                                    {(m.inputModalities || ["text"]).join(", ")} →{" "}
+                                    {(m.outputModalities || ["text"]).join(", ")}
+                                  </span>
+                                </div>
                               </div>
                             )}
                             {m.supportedFeatures?.length ? (
-                              <div>
-                                <span className="text-muted-foreground">{t("Features")}: </span>
-                                <span className="text-foreground">{m.supportedFeatures.join(", ")}</span>
+                              <div className="flex items-start gap-1.5">
+                                <Wrench className="w-3.5 h-3.5 mt-0.5 text-muted-foreground flex-shrink-0" />
+                                <div>
+                                  <span className="text-muted-foreground">{t("Features")}: </span>
+                                  <span className="text-foreground">{m.supportedFeatures.join(", ")}</span>
+                                </div>
                               </div>
                             ) : null}
                             {m.description && (
-                              <div className="pt-1 border-t border-border/40 text-muted-foreground">
-                                {m.description}
+                              <div className="flex items-start gap-1.5 pt-1.5 border-t border-border/40 text-muted-foreground">
+                                <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                                <div>{m.description}</div>
                               </div>
                             )}
                           </div>
                         )}
-                      </div>
                     </div>
                   );
                 })}
