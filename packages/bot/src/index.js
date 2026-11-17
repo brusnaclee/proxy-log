@@ -3042,13 +3042,39 @@ function resolveModelDetailsMeta(entry, detailsCache) {
 	const candidates = new Set([
 		entry.modelId,
 		`${entry.provider}/${entry.modelId}`,
+		entry.displayModelId,
+		entry.catalogId,
 	]);
+	// The details feed keys on the PUBLIC id (`phantom/vibecode/glm-5.3`) while
+	// monitor rows carry the raw upstream id (`amanai/glm-5.3`). Try the public
+	// forms too, otherwise every row falls through to the bare-tail match and
+	// pricing/latency render as "—".
+	if (entry.displayModelId) {
+		candidates.add(`phantom/vibecode/${entry.displayModelId}`);
+		candidates.add(`vibecode/${entry.displayModelId}`);
+	}
+	const bare = String(entry.modelId || '').split('/').pop();
+	if (bare) {
+		candidates.add(bare);
+		candidates.add(`phantom/vibecode/${bare}`);
+		candidates.add(`vibecode/${bare}`);
+	}
 	if (String(entry.modelId).startsWith('webnet/')) {
 		candidates.add(`gpy/${entry.modelId}`);
 	}
 	for (const id of candidates) {
+		if (!id) continue;
 		const hit = detailsCache.find((m) => m.id === id);
 		if (hit && (hit.context_length || hit.name || hit.pricing)) return hit;
+	}
+	// Last resort: match on the tail segment so `amanai/glm-5.3` still finds
+	// `phantom/vibecode/glm-5.3`.
+	if (bare) {
+		const tailHit = detailsCache.find((m) => {
+			const t = String(m.id || '').split('/').pop();
+			return t === bare;
+		});
+		if (tailHit) return tailHit;
 	}
 	return detailsCache.find(
 		(m) =>
@@ -9446,7 +9472,15 @@ client.on('interactionCreate', async (interaction) => {
 				interaction.customId === PANEL_DETAILS
 			) {
 				const access = await getMemberToolAccess(interaction.member);
-				if (!access.canUseTools) {
+				// The API Checker panel is read-only status info (no quota is
+				// spent, no key is revealed), so it is open to every member —
+				// including public users who never bought a plan. Other tools
+				// keep the role gate below.
+				const isApiCheckerPanel =
+					interaction.customId === PANEL_STATUS ||
+					interaction.customId === PANEL_LATENCY ||
+					interaction.customId === PANEL_DETAILS;
+				if (!access.canUseTools && !isApiCheckerPanel) {
 					await interaction.reply({
 						content: toolAccessDeniedMessage(access),
 						ephemeral: true,
