@@ -1840,6 +1840,13 @@ portal.get("/models", async (c) => {
             successRate: healthFor(m.id, st.provider).successRate,
             tps: healthFor(m.id, st.provider).tps,
             providerStatus: healthFor(m.id, st.provider).providerStatus,
+            // Metadata for the expandable detail card (Discord parity).
+            contextLength: (m as any).context_length ?? null,
+            maxOutputTokens: (m as any).max_output_tokens ?? null,
+            inputModalities: (m as any).input_modalities ?? null,
+            outputModalities: (m as any).output_modalities ?? null,
+            supportedFeatures: (m as any).supported_features ?? null,
+            description: (m as any).description ?? null,
           };
         })
         .filter(Boolean),

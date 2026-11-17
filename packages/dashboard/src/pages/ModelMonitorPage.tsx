@@ -255,7 +255,7 @@ export default function ModelMonitorPage() {
         rows: makeRows(offline),
       },
     ], `model-monitor-${dateStr}`, {
-      title: "AI Proxy Gateway  -  Model Health Monitor",
+      title: "Groupy Export - Model Health Monitor",
       period: `Checked at ${new Date().toLocaleTimeString()}`,
     });
   };

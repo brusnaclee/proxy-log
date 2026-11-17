@@ -9,7 +9,6 @@ import {
   BarChart3,
   Settings,
   LogOut,
-  Zap,
   Activity,
   Menu,
   X,
@@ -91,19 +90,23 @@ export default function Layout() {
         )}>
           {!sidebarCollapsed && (
             <div className="flex items-center gap-2 min-w-0">
-              <div className="h-7 w-7 rounded-md bg-gradient-to-br from-violet-500 to-indigo-600 shadow-md shadow-indigo-500/20 flex items-center justify-center shrink-0">
-                <Zap className="h-3.5 w-3.5 text-white" />
-              </div>
+              <img
+                src="/groupy-mark.png"
+                alt="Groupy"
+                className="h-7 w-7 object-contain shrink-0"
+              />
               <div className="min-w-0">
-                <h1 className="text-sm font-bold tracking-tight truncate">AI Proxy</h1>
-                <p className="text-[9px] text-muted-foreground uppercase tracking-widest font-semibold">Gateway</p>
+                <h1 className="text-sm font-bold tracking-tight truncate">Groupy</h1>
+                <p className="text-[9px] text-muted-foreground uppercase tracking-widest font-semibold">Vibecode Admin</p>
               </div>
             </div>
           )}
           {sidebarCollapsed && (
-            <div className="h-7 w-7 rounded-md bg-gradient-to-br from-violet-500 to-indigo-600 shadow-md shadow-indigo-500/20 flex items-center justify-center">
-              <Zap className="h-3.5 w-3.5 text-white" />
-            </div>
+            <img
+              src="/groupy-mark.png"
+              alt="Groupy"
+              className="h-7 w-7 object-contain"
+            />
           )}
           {!sidebarCollapsed && realtimeEnabled && (
             <div title="Dashboard realtime feed (bukan status model Online)" className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 shrink-0">
@@ -224,10 +227,12 @@ export default function Layout() {
             <Menu className="h-5 w-5" />
           </button>
           <div className="flex items-center gap-2">
-            <div className="h-6 w-6 rounded-md bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center">
-              <Zap className="h-3 w-3 text-white" />
-            </div>
-            <span className="text-sm font-bold">AI Proxy</span>
+            <img
+              src="/groupy-mark.png"
+              alt="Groupy"
+              className="h-6 w-6 object-contain"
+            />
+            <span className="text-sm font-bold">Groupy</span>
           </div>
           {realtimeEnabled && (
             <div title="Dashboard realtime feed (bukan status model Online)" className="ml-auto flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">

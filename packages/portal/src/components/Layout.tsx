@@ -1,6 +1,6 @@
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
 import { useState, useEffect, useCallback } from "react";
-import { LayoutDashboard, Key, Activity, Settings, LogOut, Menu, X, Zap, Boxes } from "lucide-react";
+import { LayoutDashboard, Key, Activity, Settings, LogOut, Menu, X, Boxes } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { useI18n, hydrateLangFromServer } from "@/lib/i18n";
@@ -87,12 +87,14 @@ export default function Layout() {
     <div className="min-h-screen bg-background">
       <aside className="hidden lg:flex flex-col w-64 fixed inset-y-0 left-0 z-30 bg-card border-r border-border">
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border shrink-0">
-          <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
-            <Zap className="w-4 h-4 text-primary" />
-          </div>
+          <img
+            src="/portal/groupy-mark.png"
+            alt="Groupy"
+            className="w-8 h-8 object-contain flex-shrink-0"
+          />
           <div>
-            <h1 className="font-semibold text-foreground leading-tight">Tokito</h1>
-            <p className="text-xs text-muted-foreground">Your Dashboard</p>
+            <h1 className="font-semibold text-foreground leading-tight">Groupy</h1>
+            <p className="text-xs text-muted-foreground">Vibecode Dashboard</p>
           </div>
         </div>
 
@@ -151,10 +153,12 @@ export default function Layout() {
 
         <header className="lg:hidden sticky top-0 z-[45] flex items-center justify-between p-4 border-b border-border bg-card">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-md bg-primary/20 flex items-center justify-center">
-              <Zap className="w-3.5 h-3.5 text-primary" />
-            </div>
-            <span className="font-semibold text-foreground">Tokito</span>
+            <img
+              src="/portal/groupy-mark.png"
+              alt="Groupy"
+              className="w-7 h-7 object-contain"
+            />
+            <span className="font-semibold text-foreground">Groupy</span>
           </div>
           <div className="flex items-center gap-1.5">
             <NotificationBell initialCount={notifCount} onChanged={refreshUser} />

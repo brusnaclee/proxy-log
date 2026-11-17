@@ -4,7 +4,7 @@ import { auth } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Zap } from "lucide-react";
+
 
 export default function LoginPage() {
   const [password, setPassword] = useState("");
@@ -52,11 +52,13 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="flex flex-col items-center mb-8">
-          <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center mb-4">
-            <Zap className="h-6 w-6 text-white" />
-          </div>
-          <h1 className="text-xl font-bold">AI Proxy Gateway</h1>
-          <p className="text-sm text-muted-foreground mt-1">Admin Dashboard</p>
+          <img
+            src="/groupy-logo.png"
+            alt="Groupy"
+            className="h-12 object-contain mb-4"
+          />
+          <h1 className="text-xl font-bold">Groupy</h1>
+          <p className="text-sm text-muted-foreground mt-1">Vibecode Admin</p>
         </div>
 
         <Card className="border-border/50">

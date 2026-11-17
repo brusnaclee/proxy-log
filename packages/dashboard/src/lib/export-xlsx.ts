@@ -1,6 +1,6 @@
 /**
  * export-xlsx.ts
- * Professional XLSX export library for AI Proxy Gateway Dashboard.
+ * Professional XLSX export library for the Groupy dashboard.
  * Uses ExcelJS — full styling support (colors, borders, freeze, tab colors).
  */
 
@@ -227,10 +227,10 @@ export interface XlsxSheet {
 export function exportXlsx(
   sheets: XlsxSheet[],
   filename: string,
-  meta: { title: string; period?: string; keyName?: string } = { title: "AI Proxy Gateway Export" },
+  meta: { title: string; period?: string; keyName?: string } = { title: "Groupy Export" },
 ) {
   const wb = new ExcelJS.Workbook();
-  wb.creator = "AI Proxy Gateway";
+  wb.creator = "Groupy";
   wb.created = new Date();
 
   const coverMeta: [string, any][] = [
@@ -274,7 +274,7 @@ export function exportCsvMultiSection(
   exportXlsx(
     sections.map(s => ({ name: s.title.slice(0, 31), headers: s.headers, rows: s.rows, note: s.notes })),
     filename.replace(/\.csv$/i, ""),
-    { title: "AI Proxy Gateway Export", period, keyName },
+    { title: "Groupy Export", period, keyName },
   );
 }
 
@@ -284,7 +284,7 @@ export function exportCsvSimple(
   exportXlsx(
     [{ name: filename.replace(/[-_]/g, " ").replace(/\.csv$/i, "").slice(0, 31), headers, rows }],
     filename.replace(/\.csv$/i, ""),
-    { title: "AI Proxy Gateway Export", period, keyName },
+    { title: "Groupy Export", period, keyName },
   );
 }
 

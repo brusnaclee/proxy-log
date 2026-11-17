@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Zap, Key, Lock, Eye, EyeOff, AlertCircle } from "lucide-react";
+import { Key, Lock, Eye, EyeOff, AlertCircle } from "lucide-react";
 import { api } from "@/lib/api";
 
 export default function LoginPage() {
@@ -54,11 +54,13 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="flex flex-col items-center mb-8">
-          <div className="w-14 h-14 rounded-2xl bg-primary/20 flex items-center justify-center mb-4">
-            <Zap className="w-7 h-7 text-primary" />
-          </div>
-          <h1 className="text-2xl font-bold text-foreground">Tokito</h1>
-          <p className="text-sm text-muted-foreground mt-1">Your AI Dashboard</p>
+          <img
+            src="/portal/groupy-logo.png"
+            alt="Groupy"
+            className="h-12 object-contain mb-4"
+          />
+          <h1 className="text-2xl font-bold text-foreground">Groupy</h1>
+          <p className="text-sm text-muted-foreground mt-1">Vibecode Dashboard</p>
         </div>
 
         {/* Card */}

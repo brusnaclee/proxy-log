@@ -182,7 +182,7 @@ export default function LogsPage() {
     const dateStr = new Date().toISOString().split("T")[0];
     const logSheet = buildLogsSection(requestData, "Request Logs");
     exportXlsx([logSheet], `proxy-logs-${dateStr}`, {
-      title: "AI Proxy Gateway  -  Request Logs",
+      title: "Groupy Export - Request Logs",
       period: `${requestData.length} rows (current view)`,
     });
   };

@@ -188,7 +188,7 @@ export default function AnalyticsPage() {
     }
 
     exportXlsx(sheets, `analytics-${dateStr}`, {
-      title: "AI Proxy Gateway - Analytics Report",
+      title: "Groupy Export - Analytics Report",
       period: pl,
     });
   };

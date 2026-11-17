@@ -339,6 +339,13 @@ export interface ModelEntry {
   successRate?: number | null;
   tps?: number | null;
   providerStatus?: string | null;
+  /** Model metadata shown in the expandable detail card. */
+  contextLength?: number | null;
+  maxOutputTokens?: number | null;
+  inputModalities?: string[] | null;
+  outputModalities?: string[] | null;
+  supportedFeatures?: string[] | null;
+  description?: string | null;
 }
 
 export interface RecapStatus {

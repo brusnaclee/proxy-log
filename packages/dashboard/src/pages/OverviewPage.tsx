@@ -279,7 +279,7 @@ export default function OverviewPage() {
     }
 
     exportXlsx(sheets, `gateway-overview-${dateStr}`, {
-      title: "AI Proxy Gateway  -  Overview Report",
+      title: "Groupy Export - Overview Report",
       period: activePeriodLabel,
     });
   };

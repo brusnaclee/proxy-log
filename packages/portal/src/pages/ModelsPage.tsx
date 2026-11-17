@@ -90,6 +90,8 @@ export default function ModelsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(false);
+  // Which model row is expanded to show the full detail card (Discord parity).
+  const [openDetail, setOpenDetail] = useState<string | null>(null);
   const [filter, setFilter] = useState<StatusFilter>("all");
   const [sort, setSort] = useState<SortKey>("latency");
   const [provider, setProvider] = useState<string>("all");
@@ -250,8 +252,27 @@ export default function ModelsPage() {
                       <Circle className={`w-2 h-2 fill-current ${st.dot} ${st.color} flex-shrink-0`} />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="text-sm text-foreground truncate font-mono">{m.id}</span>
+                          <button
+                            type="button"
+                            onClick={() => setOpenDetail(openDetail === m.id ? null : m.id)}
+                            className="text-sm text-foreground truncate font-mono hover:underline text-left"
+                            title={t("Click for full details")}
+                          >
+                            {m.id}
+                          </button>
                           <CopyButton text={m.id} />
+                          <button
+                            type="button"
+                            onClick={() => setOpenDetail(openDetail === m.id ? null : m.id)}
+                            className="flex-shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+                            aria-label={openDetail === m.id ? t("Hide details") : t("Show details")}
+                          >
+                            {openDetail === m.id ? (
+                              <ChevronUp className="w-3 h-3" />
+                            ) : (
+                              <ChevronDown className="w-3 h-3" />
+                            )}
+                          </button>
                           {m.usageMultiplier != null && (
                             <span
                               className={`flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium tabular-nums ${
@@ -320,6 +341,108 @@ export default function ModelsPage() {
                             </>
                           )}
                         </div>
+
+                        {/* Full detail card — same fields the Discord "Model
+                            Details" panel shows, so users can inspect one
+                            model without leaving the page. */}
+                        {openDetail === m.id && (
+                          <div className="mt-2 rounded-md border border-border/60 bg-background/40 px-3 py-2.5 space-y-1.5 text-[11px]">
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 sm:grid-cols-3">
+                              <div>
+                                <div className="text-muted-foreground">{t("Context / Input")}</div>
+                                <div className="font-mono tabular-nums text-foreground">
+                                  {m.contextLength ? `${Math.round(m.contextLength / 1024)}K` : "—"}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-muted-foreground">{t("Max Output")}</div>
+                                <div className="font-mono tabular-nums text-foreground">
+                                  {m.maxOutputTokens ? `${Math.round(m.maxOutputTokens / 1024)}K` : "—"}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-muted-foreground">{t("Usage multiplier")}</div>
+                                <div className="font-mono tabular-nums text-foreground">
+                                  {m.usageMultiplier != null ? `${m.usageMultiplier}x` : "—"}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-muted-foreground">{t("Billing (in / cache / out)")}</div>
+                                <div className="font-mono tabular-nums text-foreground">
+                                  {m.pricing
+                                    ? `${m.pricing.prompt} / ${m.pricing.input_cache_read ?? "—"} / ${m.pricing.completion}`
+                                    : "—"}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-muted-foreground">{t("Latency p50 / p95")}</div>
+                                <div className="font-mono tabular-nums text-foreground">
+                                  {m.latencyP50 != null && m.latencyP50 > 0
+                                    ? `${m.latencyP50 < 1000 ? `${m.latencyP50}ms` : `${(m.latencyP50 / 1000).toFixed(1)}s`} / ${
+                                        m.latencyP95 != null
+                                          ? m.latencyP95 < 1000
+                                            ? `${m.latencyP95}ms`
+                                            : `${(m.latencyP95 / 1000).toFixed(1)}s`
+                                          : "—"
+                                      }`
+                                    : "—"}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-muted-foreground">{t("Throughput")}</div>
+                                <div className="font-mono tabular-nums text-foreground">
+                                  {m.tps != null ? `${m.tps} tok/s` : "—"}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-muted-foreground">{t("Success rate")}</div>
+                                <div
+                                  className={`font-mono tabular-nums ${
+                                    m.successRate == null
+                                      ? "text-foreground"
+                                      : m.successRate >= 99
+                                        ? "text-green-400"
+                                        : m.successRate >= 95
+                                          ? "text-amber-400"
+                                          : "text-red-400"
+                                  }`}
+                                >
+                                  {m.successRate != null ? `${m.successRate}%` : "—"}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-muted-foreground">{t("Requests (24h)")}</div>
+                                <div className="font-mono tabular-nums text-foreground">
+                                  {m.latencySamples != null ? formatNumber(m.latencySamples) : "—"}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-muted-foreground">{t("Provider status")}</div>
+                                <div className="text-foreground">{m.providerStatus ?? "—"}</div>
+                              </div>
+                            </div>
+                            {(m.inputModalities?.length || m.outputModalities?.length) && (
+                              <div className="pt-1 border-t border-border/40">
+                                <span className="text-muted-foreground">{t("Modalities")}: </span>
+                                <span className="text-foreground">
+                                  {(m.inputModalities || ["text"]).join(", ")} →{" "}
+                                  {(m.outputModalities || ["text"]).join(", ")}
+                                </span>
+                              </div>
+                            )}
+                            {m.supportedFeatures?.length ? (
+                              <div>
+                                <span className="text-muted-foreground">{t("Features")}: </span>
+                                <span className="text-foreground">{m.supportedFeatures.join(", ")}</span>
+                              </div>
+                            ) : null}
+                            {m.description && (
+                              <div className="pt-1 border-t border-border/40 text-muted-foreground">
+                                {m.description}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
