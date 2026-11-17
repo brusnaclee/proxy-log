@@ -1628,7 +1628,7 @@ internal.get("/internal/models/details", async (c) => {
       // catalog: the catalog reports a different scale (it calls gpt-5.6-sol
       // 571x the cheapest model while the real billed ratio is 9.5x).
       const rates = resolveAmanaiMultipliers(id);
-      const ph = lookupProviderStatus(providerStatus, id);
+      const ph = lookupProviderStatus(providerStatus, id, monitor.provider);
       const own = latencyStats.get(id);
       return {
         ...model,

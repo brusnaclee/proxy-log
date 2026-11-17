@@ -388,7 +388,7 @@ monitor.get("/monitor/models", async (c) => {
 
   return c.json({
     data: publicData.map((d) => {
-      const ph = lookupProviderStatus(providerStatus, d.modelId);
+      const ph = lookupProviderStatus(providerStatus, d.modelId, d.provider);
       return {
         ...d,
         billing: billingRates.get(d.modelId) ?? null,
@@ -554,6 +554,40 @@ monitor.get("/internal/monitor/models", async (c) => {
 
   const aliasIndex = await loadVendorAliasIndex();
   const { getClientCatalogFlags } = await import("../../utils/model-monitor-store.js");
+
+  // The bot's API Checker panel reads this endpoint. `model_monitor.latency_ms`
+  // is a synthetic probe that reads 0 on every row, so the panel showed "—"
+  // for every model. Attach the provider-published health (p50/p95, success
+  // rate, tok/s) plus our own request_logs p50 as the fallback.
+  let providerStatus = new Map<string, ProviderModelStatus>();
+  try {
+    providerStatus = await getProviderModelStatus();
+  } catch {
+    // fall back to request_logs only
+  }
+
+  const ownLatency = new Map<string, { p50: number; p95: number; n: number }>();
+  try {
+    const latRows = (await db.execute(sql`
+      SELECT model,
+             COUNT(*)::int AS n,
+             PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms)::int AS p50,
+             PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)::int AS p95
+      FROM request_logs
+      WHERE status_code = 200 AND latency_ms > 0 AND created_at > NOW() - INTERVAL '7 days'
+      GROUP BY model HAVING COUNT(*) >= 3
+    `)).rows as any[];
+    for (const r of latRows) {
+      ownLatency.set(String(r.model || ""), {
+        p50: Number(r.p50) || 0,
+        p95: Number(r.p95) || 0,
+        n: Number(r.n) || 0,
+      });
+    }
+  } catch {
+    // latency is optional
+  }
+
   return c.json({
     data: data.map((d) => {
       const flags = getClientCatalogFlags({
@@ -561,6 +595,17 @@ monitor.get("/internal/monitor/models", async (c) => {
         httpStatus: d.httpStatus,
       });
       const displayModelId = publicizeMonitorModelId(d.provider, d.modelId, aliasIndex);
+      const ph = lookupProviderStatus(providerStatus, displayModelId, d.provider) ||
+        lookupProviderStatus(providerStatus, d.modelId, d.provider);
+      // Own observed latency: try the raw id, the public id, and the public
+      // form with the provider prefix stripped (request_logs stores the id the
+      // client sent, which for the grok upstream is `grok/gcli/grok-4.5` while
+      // the monitor row is `gcli/grok-4.5`).
+      const own =
+        ownLatency.get(d.modelId) ||
+        ownLatency.get(displayModelId) ||
+        ownLatency.get(`${d.provider}/${d.modelId}`) ||
+        ownLatency.get(`${d.provider}/${displayModelId}`);
       return {
         ...d,
         // Keep RAW modelId for bot sweeps/probes. Public form is display-only —
@@ -575,6 +620,13 @@ monitor.get("/internal/monitor/models", async (c) => {
         visible: flags.visible,
         clientOnline: flags.clientOnline,
         requestable: flags.requestable,
+        // Real speed/reliability. `latencyMs` above stays the raw probe value.
+        latencyP50: ph?.p50_1h ?? ph?.p50_24h ?? own?.p50 ?? null,
+        latencyP95: ph?.p95_1h ?? ph?.p95_24h ?? own?.p95 ?? null,
+        latencySamples: ph?.requests24h ?? own?.n ?? null,
+        successRate: ph?.successRate24h ?? null,
+        tps: ph?.tps24h ?? null,
+        providerStatus: ph?.status ?? null,
       };
     }),
   });

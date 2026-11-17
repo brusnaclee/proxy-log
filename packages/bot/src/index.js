@@ -1910,7 +1910,19 @@ async function refreshLatencyFromProxy() {
 					// Align with portal /v1/models: clientOnline = Published AND Probe OK
 					ok: clientOnline,
 					visible: Boolean(row.visible ?? published),
-					ms: row.latencyMs || 0,
+					// `latencyMs` is the synthetic probe and reads 0 on every row.
+					// Prefer the provider-published p50, then our own request_logs
+					// p50, so the panel shows a real number.
+					ms:
+						Number(row.latencyP50) > 0
+							? Number(row.latencyP50)
+							: row.latencyMs || 0,
+					p50: Number(row.latencyP50) || null,
+					p95: Number(row.latencyP95) || null,
+					samples: Number(row.latencySamples) || null,
+					successRate:
+						row.successRate != null ? Number(row.successRate) : null,
+					tps: row.tps != null ? Number(row.tps) : null,
 					checkedAt: row.checkedAt
 						? new Date(row.checkedAt).getTime()
 						: Date.now(),
@@ -3303,14 +3315,27 @@ function buildTokitoEmbed(kind, session) {
 					: lt.status
 						? `HTTP ${lt.status}`
 						: 'timeout';
-			return `${icon} \`${displayFull}\` | ${httpInfo} | vendor: **${vendor}**`;
+			const okBit =
+				lt.successRate != null ? ` | ✅ ${lt.successRate}%` : '';
+			return `${icon} \`${displayFull}\` | ${httpInfo}${okBit} | vendor: **${vendor}**`;
 		}
 
 		if (!lt)
 			return `⚪ \`${displayFull}\` | not tested yet`;
 		const icon = lt.ok ? '🟢' : lt.status === 429 ? '🟡' : '🔴';
 		const statusInfo = lt.status === 429 ? 'rate limited' : `HTTP ${lt.status}`;
-		return `${icon} \`${displayFull}\` | ${lt.ms} ms | ${statusInfo}`;
+		// Show the real p50 and reliability; `lt.ms` is already the provider p50
+		// when available (refreshLatencyFromProxy prefers it over the probe).
+		const msLabel =
+			lt.ms > 0
+				? lt.ms < 1000
+					? `${lt.ms} ms`
+					: `${(lt.ms / 1000).toFixed(1)} s`
+				: '—';
+		const bits = [`⚡ ${msLabel}`];
+		if (lt.tps != null) bits.push(`🚀 ${lt.tps} tok/s`);
+		if (lt.successRate != null) bits.push(`✅ ${lt.successRate}%`);
+		return `${icon} \`${displayFull}\` | ${bits.join(' · ')} | ${statusInfo}`;
 	});
 
 	const titleStyled =

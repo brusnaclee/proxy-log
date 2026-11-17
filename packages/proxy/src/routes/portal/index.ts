@@ -1723,8 +1723,8 @@ portal.get("/models", async (c) => {
      * they cover every model and measure upstream time only; our own
      * request_logs aggregate is the fallback when the feed has no row.
      */
-    const healthFor = (id: string) => {
-      const p = lookupProviderStatus(providerStatus, id);
+    const healthFor = (id: string, providerName?: string | null) => {
+      const p = lookupProviderStatus(providerStatus, id, providerName);
       const own = latencyFor(id);
       if (p) {
         return {
@@ -1834,12 +1834,12 @@ portal.get("/models", async (c) => {
             // relative to the cheapest model in the catalog (1x = cheapest).
             pricing: pricingFor(m.id),
             usageMultiplier: usageMultiplierFor(m.id, cheapestInputRate),
-            latencyP50: healthFor(m.id).latencyP50,
-            latencyP95: healthFor(m.id).latencyP95,
-            latencySamples: healthFor(m.id).latencySamples,
-            successRate: healthFor(m.id).successRate,
-            tps: healthFor(m.id).tps,
-            providerStatus: healthFor(m.id).providerStatus,
+            latencyP50: healthFor(m.id, st.provider).latencyP50,
+            latencyP95: healthFor(m.id, st.provider).latencyP95,
+            latencySamples: healthFor(m.id, st.provider).latencySamples,
+            successRate: healthFor(m.id, st.provider).successRate,
+            tps: healthFor(m.id, st.provider).tps,
+            providerStatus: healthFor(m.id, st.provider).providerStatus,
           };
         })
         .filter(Boolean),

@@ -48,6 +48,8 @@ type Cache = {
 
 let cache: Cache = { fetchedAt: 0, byModel: new Map(), overall: null };
 let inFlight: Promise<void> | null = null;
+/** Provider name that owns the status feed (e.g. `phantom`). */
+let feedProviderName: string | null = null;
 
 /**
  * Derive the public status URL from the configured provider endpoint.
@@ -67,6 +69,7 @@ async function resolveStatusUrl(): Promise<string | null> {
       if (!/amanai/i.test(ep) && !/amanai/i.test(String(row?.name || ""))) continue;
       try {
         const u = new URL(ep);
+        feedProviderName = String(row?.name || "").trim() || null;
         return `${u.protocol}//${u.host}/public/status`;
       } catch {
         continue;
@@ -160,12 +163,25 @@ export function getProviderOverall() {
  * Look up status for a public model id such as `phantom/vibecode/glm-5.3` or
  * `grok/gcli/grok-4.5`. The feed keys on `<vendor>/<model>`, so try the tail
  * and a few common prefixes.
+ *
+ * `providerName` matters: the feed belongs to ONE upstream. A model served by a
+ * different provider (e.g. `gcli/grok-4.5` on the `grok` upstream) must NOT
+ * borrow the numbers from the feed's own same-named model
+ * (`amanai/grok-4.5`) — they are different deployments with different
+ * latency. Pass the provider and the lookup returns null on a mismatch.
  */
 export function lookupProviderStatus(
   map: Map<string, ProviderModelStatus>,
   publicId: string,
+  providerName?: string | null,
 ): ProviderModelStatus | null {
   if (!map.size) return null;
+
+  // Reject cross-provider matches outright.
+  if (providerName && feedProviderName && providerName !== feedProviderName) {
+    return null;
+  }
+
   const direct = map.get(publicId);
   if (direct) return direct;
 
