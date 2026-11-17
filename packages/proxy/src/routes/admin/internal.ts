@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { and, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
+import { resolveAmanaiMultipliers } from "../../utils/amanai-credits.js";
 import { db } from "../../db/index.js";
 import { adminConfig, addonAssignments, addons, allowedDevices, allowedIdes, apiKeys, devices, requestLogs, modelLimits, providers, trialUsers, userPortalSettings } from "../../db/schema.js";
 import { generateApiKey, getKeyPrefix, sha256 } from "../../utils/crypto.js";
@@ -1579,19 +1580,74 @@ internal.get("/internal/models/details", async (c) => {
     await (await import("../../utils/vendor-aliases.js")).loadVendorAliasIndex(),
   );
 
+  // Real observed latency per model from actual user requests. The monitor's
+  // own `latency_ms` is a synthetic probe that reads 0 on every row, so it
+  // cannot be shown as a speed figure.
+  const latencyStats = new Map<string, { p50: number; p95: number; n: number }>();
+  try {
+    const latRows = (await db.execute(sql`
+      SELECT model,
+             COUNT(*)::int AS n,
+             PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms)::int AS p50,
+             PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)::int AS p95
+      FROM request_logs
+      WHERE status_code = 200 AND latency_ms > 0 AND created_at > NOW() - INTERVAL '7 days'
+      GROUP BY model HAVING COUNT(*) >= 3
+    `)).rows as any[];
+    for (const r of latRows) {
+      latencyStats.set(String(r.model || ""), {
+        p50: Number(r.p50) || 0,
+        p95: Number(r.p95) || 0,
+        n: Number(r.n) || 0,
+      });
+    }
+  } catch {
+    // Latency is a nice-to-have; never fail the catalog over it.
+  }
+
   const enriched = catalog.data
     .map((model: any) => {
       const id = String(model.id || "");
       const monitor = lookup(id);
       if (!monitor?.visible) return null;
+      // Billing rates come from the meter's own table, not the upstream
+      // catalog: the catalog reports a different scale (it calls gpt-5.6-sol
+      // 571x the cheapest model while the real billed ratio is 9.5x).
+      const rates = resolveAmanaiMultipliers(id);
       return {
         ...model,
         is_online: monitor.clientOnline,
         latency_ms: monitor.latencyMs ?? null,
         active_provider: monitor.provider ?? null,
+        // Explicit billing block so Discord/portal/admin all render the same
+        // numbers as the quota meter.
+        pricing: rates
+          ? { prompt: rates.mIn, input_cache_read: rates.mCache, completion: rates.mOut }
+          : null,
+        usage_multiplier: rates ? rates.mIn : null,
+        // Real observed latency (p50/p95 over 7d) — `latency_ms` above is the
+        // synthetic probe and reads 0.
+        latency_p50: latencyStats.get(id)?.p50 ?? null,
+        latency_p95: latencyStats.get(id)?.p95 ?? null,
+        latency_samples: latencyStats.get(id)?.n ?? null,
       };
     })
     .filter(Boolean);
+
+  // Scale the multiplier against the cheapest model in this catalog so the
+  // caller can render "3x" without recomputing the baseline.
+  const cheapest = enriched.reduce((min: number | null, m: any) => {
+    const v = Number(m?.pricing?.prompt);
+    if (!Number.isFinite(v) || v <= 0) return min;
+    return min === null || v < min ? v : min;
+  }, null as number | null);
+  if (cheapest && cheapest > 0) {
+    for (const m of enriched as any[]) {
+      const v = Number(m?.pricing?.prompt);
+      m.usage_multiplier =
+        Number.isFinite(v) && v > 0 ? Math.round((v / cheapest) * 10) / 10 : null;
+    }
+  }
 
   return c.json({ object: "list", data: enriched });
 });

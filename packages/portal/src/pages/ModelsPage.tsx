@@ -27,12 +27,18 @@ function CopyButton({ text }: { text: string }) {
 }
 
 function lastCheckLabel(m: ModelEntry, t: (k: string) => string): string {
+  // `checkedAt` is the monitor probe timestamp and is stale (it only moves when
+  // someone re-probes). Prefer the real latency sample window instead, which is
+  // what actually reflects current health.
+  if (m.latencySamples != null && m.latencySamples > 0) {
+    return `${m.latencySamples} ${t("reqs / 7d")}`;
+  }
   if (m.checkedAt) return formatRelativeTime(m.checkedAt);
   if (m.lastCheckedMinutes != null) {
     const at = new Date(Date.now() - m.lastCheckedMinutes * 60_000).toISOString();
     return formatRelativeTime(at);
   }
-  return t("Never checked");
+  return t("No traffic yet");
 }
 
 function statusMeta(m: ModelEntry, t: (k: string) => string) {

@@ -467,7 +467,32 @@ export default function ModelMonitorPage() {
                             )}
                           </td>
                           <td className="py-2 px-3">
-                            <div className="font-mono text-xs font-medium">{m.id}</div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono text-xs font-medium">{m.id}</span>
+                              {m.billing && (() => {
+                                const cheapest = Math.min(
+                                  ...(data || [])
+                                    .map((x) => x.billing?.prompt)
+                                    .filter((v): v is number => typeof v === "number" && v > 0)
+                                );
+                                const mult = cheapest > 0 ? Math.round((m.billing.prompt / cheapest) * 10) / 10 : null;
+                                if (mult == null) return null;
+                                return (
+                                  <span
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-medium tabular-nums ${
+                                      mult >= 3
+                                        ? "bg-red-500/15 text-red-400"
+                                        : mult >= 2
+                                          ? "bg-amber-500/15 text-amber-400"
+                                          : "bg-green-500/15 text-green-400"
+                                    }`}
+                                    title={`Input cost vs cheapest model (${cheapest} credits/token)`}
+                                  >
+                                    {mult}x
+                                  </span>
+                                );
+                              })()}
+                            </div>
                             {m.name && m.name !== m.id && <div className="text-xs text-muted-foreground mt-0.5">{m.name}</div>}
                           </td>
                           <td className="py-2 px-3 text-right font-mono text-xs">
@@ -477,9 +502,11 @@ export default function ModelMonitorPage() {
                             {m.max_output_tokens ? `${Math.round(m.max_output_tokens / 1024)}K` : "—"}
                           </td>
                           <td className="py-2 px-3 text-right font-mono text-xs">
-                            {m.billing
-                              ? `${m.billing.prompt} / ${m.billing.input_cache_read} / ${m.billing.completion}`
-                              : "—"}
+                            {m.billing ? (
+                              <span title={`${m.billing.prompt} in / ${m.billing.input_cache_read} cache / ${m.billing.completion} out (credits per token)`}>
+                                {m.billing.prompt} / {m.billing.input_cache_read} / {m.billing.completion}
+                              </span>
+                            ) : "—"}
                           </td>
                           <td className="py-2 px-3">
                             <div className="flex flex-wrap gap-1">

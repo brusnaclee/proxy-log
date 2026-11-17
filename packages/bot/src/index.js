@@ -3260,18 +3260,33 @@ function buildTokitoEmbed(kind, session) {
 				: '—';
 			const inPrice =
 				meta?.pricing?.prompt != null
-					? `$${meta.pricing.prompt.toFixed(2)}`
+					? `${meta.pricing.prompt}`
+					: '—';
+			const cachePrice =
+				meta?.pricing?.input_cache_read != null
+					? `${meta.pricing.input_cache_read}`
 					: '—';
 			const outPrice =
 				meta?.pricing?.completion != null
-					? `$${meta.pricing.completion.toFixed(2)}`
+					? `${meta.pricing.completion}`
 					: '—';
+			const mult =
+				meta?.usage_multiplier != null ? `${meta.usage_multiplier}x` : '—';
 			const inMod = (meta?.input_modalities || ['text']).join(', ');
 			const outMod = (meta?.output_modalities || ['text']).join(', ');
-			const latency = lt?.ms != null ? `${lt.ms}ms` : '—';
+			// Prefer real observed latency (p50 over 7d) over the synthetic probe,
+			// which reads 0 on every row.
+			const latency =
+				meta?.latency_p50 != null && meta.latency_p50 > 0
+					? meta.latency_p50 < 1000
+						? `${meta.latency_p50}ms`
+						: `${(meta.latency_p50 / 1000).toFixed(1)}s`
+					: lt?.ms != null && lt.ms > 0
+						? `${lt.ms}ms`
+						: '—';
 			const features =
 				(meta?.supported_features || []).slice(0, 4).join(', ') || '—';
-			return `━━━━━━━━━━━━━━━━━━━━\n${icon} **${name}** (\`${displayFull}\`)\n📐 Context/Input: **${ctx}**  •  Max Output: **${maxOut}**\n💰 In: **${inPrice}/M**  •  Out: **${outPrice}/M**\n📥 ${inMod} → ${outMod}\n⚡ ${latency}  •  🛠 ${features}`;
+			return `━━━━━━━━━━━━━━━━━━━━\n${icon} **${name}** (\`${displayFull}\`)\n📐 Context/Input: **${ctx}**  •  Max Output: **${maxOut}**\n💰 Billing: **${inPrice}** in / **${cachePrice}** cache / **${outPrice}** out (credit/token)  •  **${mult}**\n📥 ${inMod} → ${outMod}\n⚡ ${latency}  •  🛠 ${features}`;
 		}
 
 		if (kind === 'status') {
