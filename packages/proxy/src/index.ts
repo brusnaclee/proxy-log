@@ -111,6 +111,14 @@ app.use("/portal/*", serveStatic({
     path.startsWith("/portal") ? path.slice("/portal".length) || "/index.html" : "/index.html",
 }));
 
+// ─── Root favicon ──────────────────────────────────────────────────────────────
+// Browsers probe /favicon.ico even when <link rel="icon"> is present. Without
+// this route the request falls through to the SPA fallback and returns HTML,
+// which the browser cannot decode as an icon (it renders as a blank/broken tab).
+app.get("/favicon.ico", serveStatic({ path: "./public/portal/favicon.ico" }));
+app.get("/apple-touch-icon.png", serveStatic({ path: "./public/portal/apple-touch-icon.png" }));
+app.get("/apple-touch-icon-precomposed.png", serveStatic({ path: "./public/portal/apple-touch-icon.png" }));
+
 const PORTAL_INDEX_PATH = join(process.cwd(), "public", "portal", "index.html");
 const API_PREFIXES = ["/v1", "/admin", "/portal", "/recap", "/health", "/internal"];
 
