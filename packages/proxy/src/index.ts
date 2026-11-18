@@ -105,6 +105,25 @@ app.route("/recap", recapWebRoutes);
 // IMPORTANT: Must come AFTER /v1, /admin, /portal/api, /recap so API routes win.
 // /portal/* → JS/CSS/assets from ./public/portal/
 // Any other browser path (/, /login, /keys, …) → index.html for client routing.
+// Cache policy for the portal SPA, decided by path.
+// Registered BEFORE serveStatic: serveStatic responds without calling next(),
+// so a middleware placed after it would never run.
+//   /portal/assets/*  → hashed bundles, immutable, cache forever
+//   everything else   → index.html (SPA entry), must always revalidate
+// A cached index.html is what made the portal render blank: it kept asking for
+// a bundle hash that the latest deploy had already deleted.
+app.use("/portal/*", async (c, next) => {
+  await next();
+  if (c.res.status !== 200) return;
+  const isHashedAsset = /\/assets\/[^/]+\.(js|css|woff2?|png|svg|jpg|webp)$/i.test(
+    new URL(c.req.url).pathname,
+  );
+  c.res.headers.set(
+    "Cache-Control",
+    isHashedAsset ? "public, max-age=31536000, immutable" : "no-cache, must-revalidate",
+  );
+});
+
 app.use("/portal/*", serveStatic({
   root: "./public/portal",
   rewriteRequestPath: (path) =>
@@ -148,6 +167,11 @@ function isSensitiveProbePath(pathname: string): boolean {
 function servePortalIndex(c: any) {
   try {
     const html = readFileSync(PORTAL_INDEX_PATH, "utf8");
+    // The HTML points at hashed bundles. If a browser caches this document it
+    // keeps requesting a hash we have since deleted, and the SPA renders blank.
+    // Always revalidate the entry document; the hashed assets are immutable.
+    c.header("Cache-Control", "no-cache, must-revalidate");
+    c.header("Pragma", "no-cache");
     return c.html(html);
   } catch {
     return c.json({
