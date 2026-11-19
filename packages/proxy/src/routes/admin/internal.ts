@@ -1589,6 +1589,14 @@ internal.get("/internal/models/details", async (c) => {
   // own `latency_ms` is a synthetic probe that reads 0 on every row, so it
   // cannot be shown as a speed figure.
   const latencyStats = new Map<string, { p50: number; p95: number; n: number }>();
+  // Observed reliability/throughput per model. Only the amanai-compat provider
+  // publishes a status feed, so providers like gcli/antigravity would render
+  // `—` for success rate and tps forever. Derive them from our own traffic
+  // instead: same source as latency, so every model gets a real number.
+  const obsStats = new Map<
+    string,
+    { ok: number; total: number; outTok: number; ms: number }
+  >();
   try {
     const latRows = (await db.execute(sql`
       SELECT model,
@@ -1604,6 +1612,25 @@ internal.get("/internal/models/details", async (c) => {
         p50: Number(r.p50) || 0,
         p95: Number(r.p95) || 0,
         n: Number(r.n) || 0,
+      });
+    }
+
+    const obsRows = (await db.execute(sql`
+      SELECT model,
+             COUNT(*)::int AS total,
+             COUNT(CASE WHEN status_code = 200 THEN 1 END)::int AS ok,
+             SUM(CASE WHEN status_code = 200 THEN completion_tokens ELSE 0 END)::int AS out_tok,
+             SUM(CASE WHEN status_code = 200 THEN latency_ms ELSE 0 END)::int AS ms
+      FROM request_logs
+      WHERE created_at > NOW() - INTERVAL '7 days'
+      GROUP BY model HAVING COUNT(*) >= 3
+    `)).rows as any[];
+    for (const r of obsRows) {
+      obsStats.set(String(r.model || ""), {
+        ok: Number(r.ok) || 0,
+        total: Number(r.total) || 0,
+        outTok: Number(r.out_tok) || 0,
+        ms: Number(r.ms) || 0,
       });
     }
   } catch {
@@ -1630,6 +1657,15 @@ internal.get("/internal/models/details", async (c) => {
       const rates = resolveAmanaiMultipliers(id);
       const ph = lookupProviderStatus(providerStatus, id, monitor.provider);
       const own = latencyStats.get(id);
+      const obs = obsStats.get(id);
+      // Observed success rate / throughput from our own traffic, used only when
+      // the provider publishes no status feed for this model.
+      const obsSuccess =
+        obs && obs.total > 0 ? Math.round((obs.ok / obs.total) * 10000) / 100 : null;
+      const obsTps =
+        obs && obs.ms > 0 && obs.outTok > 0
+          ? Math.round((obs.outTok / (obs.ms / 1000)) * 10) / 10
+          : null;
       return {
         ...model,
         is_online: monitor.clientOnline,
@@ -1646,9 +1682,11 @@ internal.get("/internal/models/details", async (c) => {
         latency_p50: ph?.p50_1h ?? ph?.p50_24h ?? own?.p50 ?? null,
         latency_p95: ph?.p95_1h ?? ph?.p95_24h ?? own?.p95 ?? null,
         latency_samples: ph?.requests24h ?? own?.n ?? null,
-        success_rate: ph?.successRate24h ?? null,
-        tps: ph?.tps24h ?? null,
-        provider_status: ph?.status ?? null,
+        success_rate: ph?.successRate24h ?? obsSuccess,
+        tps: ph?.tps24h ?? obsTps,
+        // A model with no provider feed but healthy traffic is operational by
+        // observation; no traffic at all stays null rather than guessing.
+        provider_status: ph?.status ?? (obs && obs.total > 0 ? "operational" : null),
       };
     })
     .filter(Boolean);
