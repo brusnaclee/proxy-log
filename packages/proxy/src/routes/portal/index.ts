@@ -1640,6 +1640,12 @@ portal.get("/models", async (c) => {
     // (the monitor never measured it), so it cannot be shown as a speed figure.
     // request_logs.latency_ms is the true end-to-end time the client waited.
     const latencyByModel = new Map<string, { p50: number; p95: number; n: number }>();
+    // Observed reliability/throughput, so models served by a provider without a
+    // status feed still show a real number instead of `—` forever.
+    const obsByModel = new Map<
+      string,
+      { ok: number; total: number; outTok: number; ms: number; cachedTok: number }
+    >();
     try {
       const rows = await db.execute(sql`
         SELECT model,
@@ -1657,6 +1663,30 @@ portal.get("/models", async (c) => {
         const key = String(r.model || "");
         if (!key) continue;
         latencyByModel.set(key, { p50: Number(r.p50) || 0, p95: Number(r.p95) || 0, n: Number(r.n) || 0 });
+      }
+
+      const obsRows = await db.execute(sql`
+        SELECT model,
+               COUNT(*)::int AS total,
+               COUNT(CASE WHEN status_code = 200 THEN 1 END)::int AS ok,
+               SUM(CASE WHEN status_code = 200 THEN completion_tokens ELSE 0 END)::int AS out_tok,
+               SUM(CASE WHEN status_code = 200 THEN latency_ms ELSE 0 END)::int AS ms,
+               SUM(COALESCE(cached_tokens, 0))::int AS cached_tok
+        FROM request_logs
+        WHERE created_at > NOW() - INTERVAL '7 days'
+        GROUP BY model
+        HAVING COUNT(*) >= 3
+      `);
+      for (const r of (obsRows as any).rows || obsRows || []) {
+        const key = String(r.model || "");
+        if (!key) continue;
+        obsByModel.set(key, {
+          ok: Number(r.ok) || 0,
+          total: Number(r.total) || 0,
+          outTok: Number(r.out_tok) || 0,
+          ms: Number(r.ms) || 0,
+          cachedTok: Number(r.cached_tok) || 0,
+        });
       }
     } catch {
       // Latency is a nice-to-have; never fail the models list over it.
@@ -1726,24 +1756,42 @@ portal.get("/models", async (c) => {
     const healthFor = (id: string, providerName?: string | null) => {
       const p = lookupProviderStatus(providerStatus, id, providerName);
       const own = latencyFor(id);
+      const obs = obsByModel.get(id);
+      const obsSuccess =
+        obs && obs.total > 0 ? Math.round((obs.ok / obs.total) * 10000) / 100 : null;
+      const obsTps =
+        obs && obs.ms > 0 && obs.outTok > 0
+          ? Math.round((obs.outTok / (obs.ms / 1000)) * 10) / 10
+          : null;
       if (p) {
         return {
           latencyP50: p.p50_1h ?? p.p50_24h ?? own?.p50 ?? null,
           latencyP95: p.p95_1h ?? p.p95_24h ?? own?.p95 ?? null,
           latencySamples: p.requests24h ?? own?.n ?? null,
-          successRate: p.successRate24h,
-          tps: p.tps24h,
-          providerStatus: p.status,
+          successRate: p.successRate24h ?? obsSuccess,
+          tps: p.tps24h ?? obsTps,
+          providerStatus: p.status ?? (obs && obs.total > 0 ? "operational" : null),
         };
       }
       return {
         latencyP50: own?.p50 ?? null,
         latencyP95: own?.p95 ?? null,
-        latencySamples: own?.n ?? null,
-        successRate: null as number | null,
-        tps: null as number | null,
-        providerStatus: null as string | null,
+        latencySamples: own?.n ?? obs?.total ?? null,
+        successRate: obsSuccess,
+        tps: obsTps,
+        providerStatus: obs && obs.total > 0 ? "operational" : null,
       };
+    };
+
+    /**
+     * Prompt-cache totals observed for the model over the same 7-day window.
+     * Clients and the portal can show "how much cache did this model actually
+     * use" — a model with 0 cached tokens genuinely does not cache upstream.
+     */
+    const cacheFor = (id: string) => {
+      const obs = obsByModel.get(id);
+      if (!obs || obs.total === 0) return { cachedTokens: null, requests: null };
+      return { cachedTokens: obs.cachedTok, requests: obs.total };
     };
 
     if (isTrial) {
@@ -1779,6 +1827,7 @@ portal.get("/models", async (c) => {
           successRate: healthFor(id).successRate,
           tps: healthFor(id).tps,
           providerStatus: healthFor(id).providerStatus,
+          cache: cacheFor(id),
         };
       }));
     }
@@ -1840,6 +1889,9 @@ portal.get("/models", async (c) => {
             successRate: healthFor(m.id, st.provider).successRate,
             tps: healthFor(m.id, st.provider).tps,
             providerStatus: healthFor(m.id, st.provider).providerStatus,
+            // Observed prompt-cache totals: how much of this model's input was
+            // actually served from upstream cache in the last 7 days.
+            cache: cacheFor(m.id),
             // Metadata for the expandable detail card (Discord parity).
             contextLength: (m as any).context_length ?? null,
             maxOutputTokens: (m as any).max_output_tokens ?? null,

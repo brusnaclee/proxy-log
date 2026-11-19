@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, lte, or, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import * as zlib from 'zlib';
 import { db } from '../db/index.js';
@@ -1744,6 +1744,26 @@ proxy.all('/*', async (c) => {
 			const { lookup } = buildProviderStrictStatusLookup(monitorRows, aliasIndex);
 
 			if (Array.isArray((catalog as any)?.data)) {
+				// Observed prompt-cache totals per model (7d). request_logs is the
+				// only place that records real `cached_tokens`; model_monitor never
+				// has it. Lets a client see whether a model actually caches.
+				const cacheByModel = new Map<string, number>();
+				try {
+					const cacheRows = (await db.execute(sql`
+						SELECT model, SUM(COALESCE(cached_tokens,0))::bigint AS cached
+						FROM request_logs
+						WHERE created_at > NOW() - INTERVAL '7 days'
+						GROUP BY model
+						HAVING SUM(COALESCE(cached_tokens,0)) > 0
+					`)).rows as any[];
+					for (const r of cacheRows) {
+						const k = String(r.model || '');
+						if (k) cacheByModel.set(k, Number(r.cached) || 0);
+					}
+				} catch {
+					// advisory only — never fail the catalog over cache stats
+				}
+
 				(catalog as any).data = (catalog as any).data
 					.filter((m: any) => {
 						const id = String(m?.id || '');
@@ -1758,6 +1778,7 @@ proxy.all('/*', async (c) => {
 							is_online: Boolean(match?.clientOnline),
 							context_length: m.context_length ?? m.max_context_length ?? null,
 							max_tokens: m.max_output_tokens ?? m.max_tokens ?? null,
+							cached_tokens_7d: cacheByModel.get(id) ?? 0,
 						};
 					});
 			}
@@ -4151,6 +4172,37 @@ proxy.all('/*', async (c) => {
 					.limit(1)
 			)[0];
 			if (latest) break;
+		}
+
+		// Fallback matching. A client can legitimately send a shape the resolver
+		// keeps bare while the monitor row carries the upstream prefix:
+		//   client/model : `claude-opus-4.6`
+		//   monitor row  : `amanai/claude-opus-4.6`
+		// A provider-only fallback misses that (the row lives under a different
+		// provider name than the one this request resolved to), `latest` stays
+		// undefined, and the gate is skipped entirely — the request goes upstream
+		// even though an admin published the model OFF. Measured: bare
+		// `claude-opus-4.6` / `deepseek-v4-flash` / `glm-5.1` returned 200 while
+		// their prefixed forms correctly 503'd.
+		// So also match any row whose leaf equals a candidate, ignoring provider.
+		if (!latest) {
+			for (const mid of [...new Set(monitorCandidates)]) {
+				const leaf = mid.includes('/') ? mid.slice(mid.lastIndexOf('/') + 1) : mid;
+				latest = (
+					await db
+						.select()
+						.from(modelMonitor)
+						.where(
+							or(
+								eq(modelMonitor.modelId, mid),
+								sql`${modelMonitor.modelId} LIKE ${'%/' + leaf}`,
+							),
+						)
+						.orderBy(desc(modelMonitor.checkedAt))
+						.limit(1)
+				)[0];
+				if (latest) break;
+			}
 		}
 
 		if (latest) {
