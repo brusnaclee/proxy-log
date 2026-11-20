@@ -11,6 +11,7 @@ import {
 } from "./probe-validate.js";
 import { getClientCatalogFlags } from "./model-monitor-store.js";
 import { seedMonitorModelsFromList } from "./model-monitor-store.js";
+import { scrubUpstreamLeakText } from "./upstream-leak-scrub.js";
 import {
   expandUpstreamIdCandidates,
   filterForwardableUpstreamIds,
@@ -778,6 +779,33 @@ export async function getModelCatalogResponse() {
     }
 
     publicModels.push(enriched);
+  }
+
+  // Final guard: strip every raw-upstream pricing artifact and scrub the
+  // upstream brand from user-visible text. The catalog is assembled from our own
+  // columns, so these keys should never appear — but a future enrichment path
+  // that copies `pricing`/`contract`/`icon` verbatim would leak the upstream
+  // credit currency, its per-token billing mode and its logo CDN straight to
+  // clients. Dropping them here is cheaper than auditing every producer.
+  const RAW_UPSTREAM_KEYS = [
+    "currency", "unit", "billing", "pricing_version", "contract",
+    "capabilities", "icon", "owned_by_raw", "minimum_request",
+    "input_cache_read", "quality_multipliers", "size_multipliers",
+    "output_multipliers", "credentials",
+  ];
+  const scrubText = (v: unknown): unknown =>
+    typeof v === "string" ? scrubUpstreamLeakText(v) : v;
+
+  for (const m of publicModels as any[]) {
+    for (const k of RAW_UPSTREAM_KEYS) {
+      if (k in m) delete m[k];
+    }
+    if (m.pricing && typeof m.pricing === "object") {
+      for (const k of RAW_UPSTREAM_KEYS) delete m.pricing[k];
+      if (!Object.keys(m.pricing).length) delete m.pricing;
+    }
+    m.name = scrubText(m.name);
+    m.description = scrubText(m.description);
   }
 
   return {
