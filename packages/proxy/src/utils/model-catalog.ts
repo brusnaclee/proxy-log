@@ -2037,19 +2037,29 @@ export async function enrichModelMetadata(): Promise<void> {
             return [];
           }
         })();
-        const hadVision = existingModalities.includes("image");
+        // Keep EVERY modality an operator/upstream already declared, not just
+        // `image`. Enrichment runs every 6h and used to re-write the row with
+        // OpenRouter's narrower list, so a model whose row said
+        // ["text","image","video","file"] came back as ["text","image","video"]
+        // — and every 6h it lost `file` again. The clobber is silent: the row
+        // simply stops advertising a modality the upstream accepts, and clients
+        // refuse to send that content type before the request is even made.
+        const hadModalities = existingModalities;
 
         // Try OpenRouter first
         const orMatch = findOpenRouterMatch(modelId, orMap);
 
         if (orMatch) {
           const meta = extractOpenRouterMetadata(orMatch);
-          const mergedModalities = hadVision
-            ? Array.from(new Set([...(meta.inputModalities || []), "image"]))
-            : meta.inputModalities;
-          const mergedFeatures = hadVision
-            ? Array.from(new Set([...(meta.supportedFeatures || []), "vision"]))
-            : meta.supportedFeatures;
+          const mergedModalities = Array.from(
+            new Set([...(meta.inputModalities || []), ...hadModalities]),
+          );
+          const mergedFeatures = Array.from(
+            new Set([
+              ...(meta.supportedFeatures || []),
+              ...(mergedModalities.includes("image") ? ["vision"] : []),
+            ]),
+          );
           await db.insert(modelMetadata).values({
             modelId,
             displayName: meta.displayName,
@@ -2085,15 +2095,19 @@ export async function enrichModelMetadata(): Promise<void> {
         // Try hardcode fallback
         const fb = getFallbackMetadata(modelId);
         if (fb) {
+          // Same union rule as the OpenRouter branch: never drop a modality the
+          // row already declared, and derive `vision` from the merged set rather
+          // than from a single hardcoded entry.
           const fbModalities = fb.inputModalities
-            ? (hadVision
-                ? Array.from(new Set([...fb.inputModalities, "image"]))
-                : fb.inputModalities)
+            ? Array.from(new Set([...fb.inputModalities, ...hadModalities]))
             : null;
           const fbFeatures = fb.supportedFeatures
-            ? (hadVision
-                ? Array.from(new Set([...fb.supportedFeatures, "vision"]))
-                : fb.supportedFeatures)
+            ? Array.from(
+                new Set([
+                  ...fb.supportedFeatures,
+                  ...((fbModalities || []).includes("image") ? ["vision"] : []),
+                ]),
+              )
             : null;
           await db.insert(modelMetadata).values({
             modelId,
