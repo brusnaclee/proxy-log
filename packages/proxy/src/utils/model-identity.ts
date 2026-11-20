@@ -27,21 +27,28 @@ export function buildIdentityPrompt(advertisedName: string, developer?: string |
 export function deriveAdvertisedName(modelId: string): string {
 	const raw = String(modelId || '').trim();
 	if (!raw) return 'AI Assistant';
-	// Strip provider prefix: phantom/gpt-5.5-pro → gpt-5.5-pro
-	const bare = raw.includes('/') ? raw.split('/').slice(1).join('/') : raw;
+	// Strip EVERY provider/vendor prefix: `grok/gcli/grok-4.5` → `grok-4.5`,
+	// `phantom/gpt-5.5-pro` → `gpt-5.5-pro`. Slicing only the first segment left
+	// the middle vendor in place, so the UI showed "Gcli/Grok 4.5" — an internal
+	// provider codename leaked into a product surface.
+	const bare = raw.includes('/') ? raw.slice(raw.lastIndexOf('/') + 1) : raw;
 	const base = bare.split(':')[0] || bare;
 
 	const lower = base.toLowerCase();
-	if (lower === 'auto' || lower === '__auto__') return 'Tokito Auto';
+	if (lower === 'auto' || lower === '__auto__') return 'Auto';
 
 	// Soft title-case while preserving version dots/numbers
 	return base
 		.replace(/[_-]+/g, ' ')
 		.replace(/\b([a-z])/g, (m) => m.toUpperCase())
 		.replace(/\bGpt\b/gi, 'GPT')
+		.replace(/\bOss\b/gi, 'OSS')
 		.replace(/\bClaude\b/gi, 'Claude')
 		.replace(/\bGlm\b/gi, 'GLM')
 		.replace(/\bFable\b/gi, 'Fable')
+		.replace(/\bQwen\b/gi, 'Qwen')
+		.replace(/\bMimo\b/gi, 'MiMo')
+		.replace(/\bKimi\b/gi, 'Kimi')
 		.trim();
 }
 
