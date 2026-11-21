@@ -75,7 +75,14 @@ function ModelDetailPanel({
             ? `${(m.pricing ?? m.billing).prompt} / ${(m.pricing ?? m.billing).input_cache_read ?? "—"} / ${(m.pricing ?? m.billing).completion}`
             : "—",
         )}
-        {cell(Timer, "Latency p50 / p95", `${fmtMs(m.latency_p50)} / ${fmtMs(m.latency_p95)}`)}
+        {cell(
+          Timer,
+          // Say which window the figure came from: the card reads the provider
+          // feed (1h/24h) while the chart below reads our own traffic, so an
+          // unlabelled number looks like a contradiction.
+          `Latency p50 / p95${m.latency_window ? ` (${m.latency_window})` : ""}`,
+          `${fmtMs(m.latency_p50)} / ${fmtMs(m.latency_p95)}`,
+        )}
         {cell(Gauge, "Throughput", m.tps != null ? `${m.tps} tok/s` : "—")}
         {cell(
           CheckCircle2,

@@ -335,6 +335,12 @@ export interface ModelEntry {
   latencyP50?: number | null;
   latencyP95?: number | null;
   latencySamples?: number | null;
+  /**
+   * Which window `latencyP50`/`latencyP95` came from — `1h`/`24h` (provider feed)
+   * or `7d` (our own traffic). The history chart measures the selected range, so
+   * the label must name its window or the two numbers look like they contradict.
+   */
+  latencyWindow?: string | null;
   /** Provider-published health. */
   successRate?: number | null;
   tps?: number | null;

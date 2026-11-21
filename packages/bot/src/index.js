@@ -3334,7 +3334,7 @@ async function buildModelDrilldown(modelId, range, liveEntry = null) {
 				`**Window:** ${range}  •  **Buckets:** ${history?.bucket || '—'}  •  **Active days:** ${t.activeDays ?? 0}`,
 				`**Requests:** ${fmtN(t.req)}  •  **Success:** ${successTone} ${success}`,
 				`**p50 / p95:** ${fmtMs(t.p50)} / ${fmtMs(t.p95)}  •  **Throughput:** ${t.tps != null ? `${t.tps} tok/s` : '—'}`,
-				`**Tokens:** ${fmtN(t.inTok)} in / ${fmtN(t.outTok)} out  •  **Cache:** ${fmtN(t.cachedTok)}`,
+				`**Window:** ${range} (chart) • tokens ${fmtN(t.inTok)} in / ${fmtN(t.outTok)} out • cache ${fmtN(t.cachedTok)}`,
 			].join('\n'),
 		)
 		.addFields(

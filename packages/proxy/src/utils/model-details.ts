@@ -140,6 +140,18 @@ export async function buildModelDetailsPayload(): Promise<{
         latency_p50: ph?.p50_1h ?? ph?.p50_24h ?? own?.p50 ?? null,
         latency_p95: ph?.p95_1h ?? ph?.p95_24h ?? own?.p95 ?? null,
         latency_samples: ph?.requests24h ?? own?.n ?? null,
+        // Which window the latency figures above came from. The card and the
+        // history chart legitimately measure different windows (the provider
+        // feed is 1h/24h; the chart is our own traffic over the chosen range),
+        // so the UI must say which one it is showing instead of implying the
+        // two numbers are the same measurement.
+        latency_window: ph?.p50_1h != null
+          ? "1h"
+          : ph?.p50_24h != null
+            ? "24h"
+            : own?.p50 != null
+              ? "7d"
+              : null,
         success_rate: ph?.successRate24h ?? obsSuccess,
         tps: ph?.tps24h ?? obsTps,
         provider_status: ph?.status ?? (obs && obs.total > 0 ? "operational" : null),

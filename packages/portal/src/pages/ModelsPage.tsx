@@ -417,7 +417,10 @@ export default function ModelsPage() {
                               <div className="flex items-start gap-1.5">
                                 <Timer className="w-3.5 h-3.5 mt-0.5 text-muted-foreground flex-shrink-0" />
                                 <div>
-                                  <div className="text-muted-foreground">{t("Latency p50 / p95")}</div>
+                                  <div className="text-muted-foreground">
+                                    {t("Latency p50 / p95")}
+                                    {m.latencyWindow ? ` (${m.latencyWindow})` : ""}
+                                  </div>
                                   <div className="font-mono tabular-nums text-foreground">
                                     {m.latencyP50 != null && m.latencyP50 > 0
                                       ? `${m.latencyP50 < 1000 ? `${m.latencyP50}ms` : `${(m.latencyP50 / 1000).toFixed(1)}s`} / ${
