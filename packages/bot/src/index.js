@@ -2659,7 +2659,12 @@ async function ensurePanelMessage() {
 					(c) =>
 						c.customId === PANEL_STATUS ||
 						c.customId === PANEL_LATENCY ||
-						c.customId === PANEL_DETAILS,
+						c.customId === PANEL_DETAILS ||
+						// A panel edited by an older build carries only the three
+						// original buttons; matching the drill button too means a
+						// restart recognises and edits it instead of posting a
+						// duplicate panel underneath the stale one.
+						c.customId === PANEL_DRILL,
 				),
 			),
 	);
