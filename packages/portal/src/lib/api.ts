@@ -624,6 +624,16 @@ export const logs = {
 
 export const models = {
   list: () => request<ModelEntry[]>("/models", "GET"),
+  /**
+   * Per-model history. The payload is identical to the admin
+   * `/admin/internal/models/:model/history` endpoint, so both dashboards draw
+   * the same shape from the same numbers.
+   */
+  history: (model: string, range: string) =>
+    request<import("@/components/ModelHistoryChart").ModelHistory>(
+      `/models/${encodeURIComponent(model)}/history?range=${encodeURIComponent(range)}`,
+      "GET",
+    ),
 };
 
 // ─── Recap ────────────────────────────────────────────────────────────────────

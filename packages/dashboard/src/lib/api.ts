@@ -883,6 +883,15 @@ export const monitor = {
   },
   getModelHistory: (modelId: string) => request<ModelMonitorEntry[]>(`/monitor/models/${encodeURIComponent(modelId)}/history`),
   getModelDetails: () => request<{ object: string; data: any[] }>("/monitor/models/details"),
+  /**
+   * Per-model traffic history for the chart. Distinct from `getModelHistory`
+   * above, which returns monitor *rows* (per-provider status), not time series.
+   * Payload is identical to the portal's endpoint so both draw the same shape.
+   */
+  getModelTimeline: (modelId: string, range: string) =>
+    request<import("@/components/ModelHistoryChart").ModelHistory>(
+      `/monitor/models/${encodeURIComponent(modelId)}/timeline?range=${encodeURIComponent(range)}`,
+    ),
   triggerSweep: (opts?: { manual?: boolean }) =>
     request<{ started: boolean; message: string; monitorAutoMode?: string }>("/monitor/sweep", {
       method: "POST",

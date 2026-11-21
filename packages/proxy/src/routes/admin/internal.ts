@@ -1569,144 +1569,31 @@ internal.post("/internal/clear-notification/:keyId", async (c) => {
 internal.get("/internal/models/details", async (c) => {
   const authErr = checkInternal(c);
   if (authErr) return authErr;
+  // Shared with /admin/monitor/models/details so the two routes cannot drift.
+  const { buildModelDetailsPayload } = await import("../../utils/model-details.js");
+  return c.json(await buildModelDetailsPayload());
+});
 
-  const {
-    getModelCatalogResponse,
-    getAllClientCatalogMonitorRows,
-    buildProviderStrictStatusLookup,
-  } = await import("../../utils/model-catalog.js");
-
-  const [catalog, monitorRows] = await Promise.all([
-    getModelCatalogResponse(),
-    getAllClientCatalogMonitorRows(),
-  ]);
-  const { lookup } = buildProviderStrictStatusLookup(
-    monitorRows,
-    await (await import("../../utils/vendor-aliases.js")).loadVendorAliasIndex(),
-  );
-
-  // Real observed latency per model from actual user requests. The monitor's
-  // own `latency_ms` is a synthetic probe that reads 0 on every row, so it
-  // cannot be shown as a speed figure.
-  const latencyStats = new Map<string, { p50: number; p95: number; n: number }>();
-  // Observed reliability/throughput per model. Only the amanai-compat provider
-  // publishes a status feed, so providers like gcli/antigravity would render
-  // `—` for success rate and tps forever. Derive them from our own traffic
-  // instead: same source as latency, so every model gets a real number.
-  const obsStats = new Map<
-    string,
-    { ok: number; total: number; outTok: number; ms: number }
-  >();
+/**
+ * Per-model history: requests, success, p50/p95, tps and tokens bucketed over
+ * 7d / 30d / 60d / all. Same payload feeds the admin chart, the portal chart and
+ * the Discord drilldown so the three surfaces cannot drift.
+ */
+internal.get("/internal/models/:model/history", async (c) => {
+  const authErr = checkInternal(c);
+  if (authErr) return authErr;
+  const model = decodeURIComponent(String(c.req.param("model") || ""));
+  if (!model) return c.json({ error: "model required" }, 400);
+  const { getModelHistory } = await import("../../utils/model-history.js");
   try {
-    const latRows = (await db.execute(sql`
-      SELECT model,
-             COUNT(*)::int AS n,
-             PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms)::int AS p50,
-             PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)::int AS p95
-      FROM request_logs
-      WHERE status_code = 200 AND latency_ms > 0 AND created_at > NOW() - INTERVAL '7 days'
-      GROUP BY model HAVING COUNT(*) >= 3
-    `)).rows as any[];
-    for (const r of latRows) {
-      latencyStats.set(String(r.model || ""), {
-        p50: Number(r.p50) || 0,
-        p95: Number(r.p95) || 0,
-        n: Number(r.n) || 0,
-      });
-    }
-
-    const obsRows = (await db.execute(sql`
-      SELECT model,
-             COUNT(*)::int AS total,
-             COUNT(CASE WHEN status_code = 200 THEN 1 END)::int AS ok,
-             SUM(CASE WHEN status_code = 200 THEN completion_tokens ELSE 0 END)::int AS out_tok,
-             SUM(CASE WHEN status_code = 200 THEN latency_ms ELSE 0 END)::int AS ms
-      FROM request_logs
-      WHERE created_at > NOW() - INTERVAL '7 days'
-      GROUP BY model HAVING COUNT(*) >= 3
-    `)).rows as any[];
-    for (const r of obsRows) {
-      obsStats.set(String(r.model || ""), {
-        ok: Number(r.ok) || 0,
-        total: Number(r.total) || 0,
-        outTok: Number(r.out_tok) || 0,
-        ms: Number(r.ms) || 0,
-      });
-    }
-  } catch {
-    // Latency is a nice-to-have; never fail the catalog over it.
+    const history = await getModelHistory(model, c.req.query("range"));
+    return c.json(history);
+  } catch (err) {
+    return c.json(
+      { error: err instanceof Error ? err.message : "history failed" },
+      500,
+    );
   }
-
-  // Provider-published health is the primary speed signal (covers every model,
-  // measures upstream time only). request_logs is the fallback.
-  let providerStatus = new Map<string, ProviderModelStatus>();
-  try {
-    providerStatus = await getProviderModelStatus();
-  } catch {
-    // fall back to request_logs only
-  }
-
-  const enriched = catalog.data
-    .map((model: any) => {
-      const id = String(model.id || "");
-      const monitor = lookup(id);
-      if (!monitor?.visible) return null;
-      // Billing rates come from the meter's own table, not the upstream
-      // catalog: the catalog reports a different scale (it calls gpt-5.6-sol
-      // 571x the cheapest model while the real billed ratio is 9.5x).
-      const rates = resolveAmanaiMultipliers(id);
-      const ph = lookupProviderStatus(providerStatus, id, monitor.provider);
-      const own = latencyStats.get(id);
-      const obs = obsStats.get(id);
-      // Observed success rate / throughput from our own traffic, used only when
-      // the provider publishes no status feed for this model.
-      const obsSuccess =
-        obs && obs.total > 0 ? Math.round((obs.ok / obs.total) * 10000) / 100 : null;
-      const obsTps =
-        obs && obs.ms > 0 && obs.outTok > 0
-          ? Math.round((obs.outTok / (obs.ms / 1000)) * 10) / 10
-          : null;
-      return {
-        ...model,
-        is_online: monitor.clientOnline,
-        latency_ms: monitor.latencyMs ?? null,
-        active_provider: monitor.provider ?? null,
-        // Explicit billing block so Discord/portal/admin all render the same
-        // numbers as the quota meter.
-        pricing: rates
-          ? { prompt: rates.mIn, input_cache_read: rates.mCache, completion: rates.mOut }
-          : null,
-        usage_multiplier: rates ? rates.mIn : null,
-        // Provider feed first (upstream-only, covers every model), then our own
-        // observed p50 as the fallback.
-        latency_p50: ph?.p50_1h ?? ph?.p50_24h ?? own?.p50 ?? null,
-        latency_p95: ph?.p95_1h ?? ph?.p95_24h ?? own?.p95 ?? null,
-        latency_samples: ph?.requests24h ?? own?.n ?? null,
-        success_rate: ph?.successRate24h ?? obsSuccess,
-        tps: ph?.tps24h ?? obsTps,
-        // A model with no provider feed but healthy traffic is operational by
-        // observation; no traffic at all stays null rather than guessing.
-        provider_status: ph?.status ?? (obs && obs.total > 0 ? "operational" : null),
-      };
-    })
-    .filter(Boolean);
-
-  // Scale the multiplier against the cheapest model in this catalog so the
-  // caller can render "3x" without recomputing the baseline.
-  const cheapest = enriched.reduce((min: number | null, m: any) => {
-    const v = Number(m?.pricing?.prompt);
-    if (!Number.isFinite(v) || v <= 0) return min;
-    return min === null || v < min ? v : min;
-  }, null as number | null);
-  if (cheapest && cheapest > 0) {
-    for (const m of enriched as any[]) {
-      const v = Number(m?.pricing?.prompt);
-      m.usage_multiplier =
-        Number.isFinite(v) && v > 0 ? Math.round((v / cheapest) * 10) / 10 : null;
-    }
-  }
-
-  return c.json({ object: "list", data: enriched });
 });
 
 /** Vendor alias maps for Discord / clients that render raw monitor model ids. */

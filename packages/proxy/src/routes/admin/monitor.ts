@@ -431,6 +431,38 @@ monitor.get("/monitor/models/:modelId/history", async (c) => {
   );
 });
 
+// GET traffic timeline for a specific model (requests / latency / throughput).
+// Distinct from `/monitor/models/:modelId/history` above, which returns monitor
+// *probe rows*. This one reads request_logs time series and feeds the admin
+// chart; the portal endpoint returns the identical payload.
+monitor.get("/monitor/models/:modelId/timeline", async (c) => {
+  const modelIdParam = decodeURIComponent(c.req.param("modelId"));
+  if (!modelIdParam) return c.json({ error: "modelId required" }, 400);
+  const providerHint = c.req.query("provider") || null;
+  // The chart row may show a publicized display id; request_logs stores the raw
+  // upstream id, so resolve and try both.
+  let rawId = modelIdParam;
+  try {
+    rawId = await resolveRawMonitorModelId(providerHint, modelIdParam);
+  } catch {
+    // resolveRawMonitorModelId is best-effort; fall back to the given id.
+  }
+  const { getModelHistory } = await import("../../utils/model-history.js");
+  const range = c.req.query("range");
+  try {
+    let history = await getModelHistory(modelIdParam, range);
+    if (history.totals.req === 0 && rawId && rawId !== modelIdParam) {
+      history = await getModelHistory(rawId, range);
+    }
+    return c.json(history);
+  } catch (err) {
+    return c.json(
+      { error: err instanceof Error ? err.message : "timeline failed" },
+      500,
+    );
+  }
+});
+
 // POST batch update from bot
 monitor.post("/monitor/models", async (c) => {
   const authErr = checkInternal(c);
@@ -807,36 +839,14 @@ monitor.post("/monitor/models/bulk-override", async (c) => {
 
 // ─── Enriched Model Details (catalog + metadata + monitor status) ────────────
 monitor.get("/monitor/models/details", async (c) => {
-  const {
-    getModelCatalogResponse,
-    getAllClientCatalogMonitorRows,
-    buildProviderStrictStatusLookup,
-  } = await import("../../utils/model-catalog.js");
-
-  const [catalog, monitorRows] = await Promise.all([
-    getModelCatalogResponse(),
-    getAllClientCatalogMonitorRows(),
-  ]);
-  const { lookup } = buildProviderStrictStatusLookup(
-    monitorRows,
-    await (await import("../../utils/vendor-aliases.js")).loadVendorAliasIndex(),
-  );
-
-  const enriched = catalog.data
-    .map((model: any) => {
-      const id = String(model.id || "");
-      const monitor = lookup(id);
-      if (!monitor?.visible) return null;
-      return {
-        ...model,
-        is_online: monitor.clientOnline,
-        latency_ms: monitor.latencyMs ?? null,
-        active_provider: monitor.provider ?? null,
-      };
-    })
-    .filter(Boolean);
-
-  return c.json({ object: "list", data: enriched });
+  const authErr = await checkAdminSession(c);
+  if (authErr) return authErr;
+  // Delegate to the same implementation the internal route uses. Two handlers
+  // used to build this payload independently, so any field added to one was
+  // missing from the other — that is how the dashboard ended up rendering
+  // `0 / 0` for a model that had thousands of requests. One source, no drift.
+  const { buildModelDetailsPayload } = await import("../../utils/model-details.js");
+  return c.json(await buildModelDetailsPayload());
 });
 
 /** Force re-fetch /models into Model Monitor for all active upstreams. */

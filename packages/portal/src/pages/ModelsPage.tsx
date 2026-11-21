@@ -19,6 +19,7 @@ import {
   Info,
 } from "lucide-react";
 import { PeriodSelector, PERIOD_OPTIONS, type PeriodKey } from "@/components/PeriodSelector";
+import { ModelHistoryChart, type HistoryRangeKey } from "@/components/ModelHistoryChart";
 import { api, type ModelEntry, type ModelUsage } from "@/lib/api";
 import { formatNumber, formatRelativeTime, formatInputBreakdown } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n";
@@ -502,6 +503,16 @@ export default function ModelsPage() {
                                 <div>{m.description}</div>
                               </div>
                             )}
+
+                            {/* History: requests / latency / throughput over a
+                                selectable range. Same component and payload as
+                                the admin monitor, so both show identical shapes. */}
+                            <div className="pt-2 border-t border-border/40">
+                              <ModelHistoryChart
+                                load={(range) => api.models.history(m.id, range)}
+                                compact
+                              />
+                            </div>
                           </div>
                         )}
                     </div>

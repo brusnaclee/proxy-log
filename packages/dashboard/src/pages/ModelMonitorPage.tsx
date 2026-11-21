@@ -1,16 +1,122 @@
-﻿import { useEffect, useState, useCallback, useMemo } from "react";
+﻿import { useEffect, useState, useCallback, useMemo, Fragment } from "react";
 import { monitor, type ModelMonitorEntry } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatDate } from "@/lib/utils";
-import { Download, RefreshCw, Activity, ServerCrash, CheckCircle2, Clock, Zap, Power, PowerOff } from "lucide-react";
+import {
+  Download, RefreshCw, Activity, ServerCrash, CheckCircle2, Clock, Zap, Power, PowerOff,
+  FileText, ArrowUpRight, Coins, Timer, Gauge, Server, Boxes, Wrench, Info,
+} from "lucide-react";
 import { exportXlsx } from "@/lib/export-xlsx";
 import { useNotify } from "@/components/Notify";
+import { ModelHistoryChart, type HistoryRangeKey } from "@/components/ModelHistoryChart";
 
 function modelVendorOf(modelId: string) {
   return modelId.includes("/") ? modelId.split("/")[0] : "unknown";
+}
+
+function fmtMs(v: number | null | undefined): string {
+  if (v == null || v <= 0) return "—";
+  return v < 1000 ? `${v} ms` : `${(v / 1000).toFixed(1)} s`;
+}
+
+function fmtK(v: number | null | undefined): string {
+  if (v == null || v <= 0) return "—";
+  return `${Math.round(v / 1024)}K`;
+}
+
+/**
+ * Expanded detail for one catalog row. Field set mirrors the portal detail card
+ * and the Discord "Model Details" panel exactly — same source, same labels.
+ */
+function ModelDetailPanel({
+  m,
+  cheapestInput,
+  loadHistory,
+}: {
+  m: any;
+  cheapestInput: number | null;
+  loadHistory: (range: HistoryRangeKey) => Promise<any>;
+}) {
+  const priceObj = m?.pricing ?? m?.billing;
+  const mult =
+    m?.usage_multiplier ??
+    (cheapestInput && cheapestInput > 0 && priceObj?.prompt
+      ? Math.round((priceObj.prompt / cheapestInput) * 10) / 10
+      : null);
+
+  const cell = (icon: any, label: string, value: React.ReactNode) => {
+    const Icon = icon;
+    return (
+      <div className="flex items-start gap-1.5">
+        <Icon className="w-3.5 h-3.5 mt-0.5 text-muted-foreground flex-shrink-0" />
+        <div className="min-w-0">
+          <div className="text-muted-foreground">{label}</div>
+          <div className="font-mono tabular-nums text-foreground truncate">{value}</div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="rounded-md border border-border/60 bg-background/60 px-3 py-2.5 space-y-2 text-[11px]">
+      <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3 lg:grid-cols-4">
+        {cell(FileText, "Context / Input", fmtK(m.context_length))}
+        {cell(ArrowUpRight, "Max Output", fmtK(m.max_output_tokens))}
+        {cell(Coins, "Usage multiplier", mult != null ? `${mult}x` : "—")}
+        {cell(
+          Coins,
+          "Billing (in / cache / out)",
+          // The API field is `pricing`; older rows/callers used `billing`.
+          // Reading only one of them left the cell empty on every model.
+          (m.pricing ?? m.billing)
+            ? `${(m.pricing ?? m.billing).prompt} / ${(m.pricing ?? m.billing).input_cache_read ?? "—"} / ${(m.pricing ?? m.billing).completion}`
+            : "—",
+        )}
+        {cell(Timer, "Latency p50 / p95", `${fmtMs(m.latency_p50)} / ${fmtMs(m.latency_p95)}`)}
+        {cell(Gauge, "Throughput", m.tps != null ? `${m.tps} tok/s` : "—")}
+        {cell(
+          CheckCircle2,
+          "Success rate",
+          <span
+            className={
+              m.success_rate == null
+                ? ""
+                : m.success_rate >= 99
+                  ? "text-green-400"
+                  : m.success_rate >= 95
+                    ? "text-amber-400"
+                    : "text-red-400"
+            }
+          >
+            {m.success_rate != null ? `${m.success_rate}%` : "—"}
+          </span>,
+        )}
+        {cell(
+          Activity,
+          "Requests (7d / 30d)",
+          `${m.requests_by_range?.["7d"]?.req ?? 0} / ${m.requests_by_range?.["30d"]?.req ?? 0}`,
+        )}
+        {cell(Server, "Provider", m.active_provider ?? "—")}
+        {cell(Server, "Provider status", m.provider_status ?? "—")}
+        {cell(Boxes, "Modalities", `${(m.input_modalities || ["text"]).join(", ")} → ${(m.output_modalities || ["text"]).join(", ")}`)}
+        {cell(Wrench, "Features", (m.supported_features || []).slice(0, 4).join(", ") || "—")}
+      </div>
+
+      {(m.supported_features?.length > 4 || m.description) && (
+        <div className="flex items-start gap-1.5 pt-1.5 border-t border-border/40 text-muted-foreground">
+          <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+          <div className="break-words">{m.description || m.supported_features.slice(4).join(", ")}</div>
+        </div>
+      )}
+
+      <div className="pt-2 border-t border-border/40">
+        <ModelHistoryChart load={loadHistory} compact />
+      </div>
+    </div>
+  );
 }
 
 export default function ModelMonitorPage() {
@@ -28,6 +134,17 @@ export default function ModelMonitorPage() {
   const [catalogData, setCatalogData] = useState<any[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogSearch, setCatalogSearch] = useState("");
+  // Which catalog row is expanded to show its full detail card (parity with the
+  // portal's Models page and the Discord Model Details panel).
+  const [openCatalog, setOpenCatalog] = useState<string | null>(null);
+
+  /** Cheapest input rate in the catalog — the baseline every `Nx` badge uses. */
+  const cheapestInput = useMemo(() => {
+    const vals = (catalogData || [])
+      .map((x: any) => x?.billing?.prompt)
+      .filter((v: any): v is number => typeof v === "number" && v > 0);
+    return vals.length ? Math.min(...vals) : null;
+  }, [catalogData]);
   const [sweepState, setSweepState] = useState<{ running: boolean; progress: any }>({ running: false, progress: null });
   const [sweepInterval, setSweepInterval] = useState<ReturnType<typeof setInterval> | null>(null);
 
@@ -458,7 +575,22 @@ export default function ModelMonitorPage() {
                       .filter(m => m.id !== "auto")
                       .filter(m => !catalogSearch || m.id.toLowerCase().includes(catalogSearch.toLowerCase()) || (m.name || "").toLowerCase().includes(catalogSearch.toLowerCase()))
                       .map((m) => (
-                        <tr key={m.id} className="data-row hover:bg-muted/10 transition-colors border-b border-border/30">
+                        <Fragment key={m.id}>
+                        <tr
+                          role="button"
+                          tabIndex={0}
+                          aria-expanded={openCatalog === m.id}
+                          onClick={() => setOpenCatalog(openCatalog === m.id ? null : m.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setOpenCatalog(openCatalog === m.id ? null : m.id);
+                            }
+                          }}
+                          className={`data-row cursor-pointer select-none transition-colors border-b border-border/30 ${
+                            openCatalog === m.id ? "bg-accent/40" : "hover:bg-muted/10"
+                          }`}
+                        >
                           <td className="py-2 px-3 text-center">
                             {m.is_online ? (
                               <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500" title="Online" />
@@ -538,6 +670,18 @@ export default function ModelMonitorPage() {
                             )}
                           </td>
                         </tr>
+                        {openCatalog === m.id && (
+                          <tr className="bg-background/40">
+                            <td colSpan={8} className="px-3 pb-3 pt-0">
+                              <ModelDetailPanel
+                                m={m}
+                                cheapestInput={cheapestInput}
+                                loadHistory={(range) => monitor.getModelTimeline(m.id, range)}
+                              />
+                            </td>
+                          </tr>
+                        )}
+                        </Fragment>
                       ))}
                   </tbody>
                 </table>

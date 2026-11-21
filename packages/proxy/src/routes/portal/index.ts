@@ -1908,6 +1908,25 @@ portal.get("/models", async (c) => {
   }
 });
 
+/**
+ * Per-model history for the portal detail card. Same payload shape and same
+ * `range` values as the admin endpoint, because both surfaces must never show
+ * different numbers for the same model.
+ */
+portal.get("/models/:model/history", async (c) => {
+  const model = decodeURIComponent(String(c.req.param("model") || ""));
+  if (!model) return c.json({ error: "model required" }, 400);
+  const { getModelHistory } = await import("../../utils/model-history.js");
+  try {
+    return c.json(await getModelHistory(model, c.req.query("range")));
+  } catch (err) {
+    return c.json(
+      { error: err instanceof Error ? err.message : "history failed" },
+      500,
+    );
+  }
+});
+
 // ─── Recap ────────────────────────────────────────────────────────────────────
 
 portal.get("/recap/status", async (c) => {

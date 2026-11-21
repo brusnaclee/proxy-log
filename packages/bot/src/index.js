@@ -11,6 +11,7 @@ const {
 	TextInputBuilder,
 	TextInputStyle,
 	StringSelectMenuBuilder,
+	AttachmentBuilder,
 } = require('discord.js');
 const fs = require('fs').promises;
 const path = require('path');
@@ -1216,6 +1217,15 @@ async function loadDynamicSettings() {
 const PANEL_STATUS = 'tokito_panel_status';
 const PANEL_LATENCY = 'tokito_panel_latency';
 const PANEL_DETAILS = 'tokito_panel_details';
+// Per-model drilldown: pick a model from a select menu, then page through its
+// charts. Range buttons switch the window without re-picking the model.
+const PANEL_DRILL = 'tokito_panel_drill';
+const DRILL_RANGES = [
+	{ key: '7d', label: '7d' },
+	{ key: '30d', label: '30d' },
+	{ key: '60d', label: '60d' },
+	{ key: 'all', label: 'All' },
+];
 const STATE_PATH = path.join(AGVERIF_DATA_DIR, 'tokito_state.json');
 
 const tokitoSessions = new Map();
@@ -2585,6 +2595,10 @@ function buildPanelRow() {
 			.setCustomId(PANEL_DETAILS)
 			.setLabel('Model Details')
 			.setStyle(ButtonStyle.Secondary),
+		new ButtonBuilder()
+			.setCustomId(PANEL_DRILL)
+			.setLabel('Per-Model Charts')
+			.setStyle(ButtonStyle.Secondary),
 		buildDashboardLinkButton('Dashboard'),
 	);
 }
@@ -2722,6 +2736,9 @@ function createTokitoSession(userId, kind, access = null) {
 		sortMode: 'status_online_first',
 		trialMode,
 		trialCache: null,
+		// Which window the per-model drilldown chart covers. Shared by every
+		// surface (admin / portal / Discord) so the numbers never disagree.
+		historyRange: '7d',
 	};
 	tokitoSessions.set(id, session);
 	return session;
@@ -3249,6 +3266,160 @@ async function refreshFromLiveGateway() {
 		`[tokito-monitor] live gateway /v1/models: ${live.models.length} catalog rows, ${patched} bot entries matched (${live.ms}ms)`,
 	);
 	return live;
+}
+
+/**
+ * Per-model drilldown: one model, its numbers, and three charts.
+ *
+ * The payload comes from `/admin/internal/models/:model/history`, the same
+ * endpoint the admin dashboard and portal use, so a user comparing Discord with
+ * the web UI sees identical figures.
+ */
+async function buildModelDrilldown(modelId, range, liveEntry = null) {
+	const history = await proxyInternal(
+		`/admin/internal/models/${encodeURIComponent(modelId)}/history?range=${encodeURIComponent(range)}`,
+	);
+	const t = history?.totals || {};
+	const pts = history?.points || [];
+
+	// Per-model metadata (context, pricing, features) from the details feed.
+	let meta = null;
+	try {
+		const details = await ensureModelDetailsCache();
+		meta = (details || []).find(
+			(d) => d.id === modelId || d.catalog_id === modelId,
+		) || null;
+	} catch {
+		// Metadata is cosmetic; charts still render without it.
+	}
+
+	const fmtMs = (v) =>
+		v == null || v <= 0
+			? '—'
+			: v < 1000
+				? `${v} ms`
+				: `${(v / 1000).toFixed(1)} s`;
+	const fmtN = (v) =>
+		v == null
+			? '—'
+			: v >= 1_000_000
+				? `${(v / 1_000_000).toFixed(1)}M`
+				: v >= 1000
+					? `${(v / 1000).toFixed(1)}K`
+					: String(v);
+
+	const online = liveEntry
+		? runtime.latency.get(entryKey(liveEntry))?.ok
+		: null;
+	const dot = online === true ? '🟢' : online === false ? '🔴' : '⚪';
+
+	const success =
+		t.successRate != null ? `${t.successRate}%` : '—';
+	const successTone =
+		t.successRate == null
+			? ''
+			: t.successRate >= 99
+				? '🟢'
+				: t.successRate >= 95
+					? '🟡'
+					: '🔴';
+
+	const embed = new EmbedBuilder()
+		.setTitle(`${dot} ${modelId}`)
+		.setColor(
+			online === true ? 0x22c55e : online === false ? 0xef4444 : 0x3498db,
+		)
+		.setDescription(
+			[
+				`**Window:** ${range}  •  **Buckets:** ${history?.bucket || '—'}  •  **Active days:** ${t.activeDays ?? 0}`,
+				`**Requests:** ${fmtN(t.req)}  •  **Success:** ${successTone} ${success}`,
+				`**p50 / p95:** ${fmtMs(t.p50)} / ${fmtMs(t.p95)}  •  **Throughput:** ${t.tps != null ? `${t.tps} tok/s` : '—'}`,
+				`**Tokens:** ${fmtN(t.inTok)} in / ${fmtN(t.outTok)} out  •  **Cache:** ${fmtN(t.cachedTok)}`,
+			].join('\n'),
+		)
+		.addFields(
+			{
+				name: 'Traffic',
+				value: `${pts.length} ${history?.bucket === 'week' ? 'weeks' : 'days'} with data`,
+				inline: true,
+			},
+			{
+				name: 'First seen',
+				value: history?.firstSeen
+					? `<t:${Math.floor(new Date(history.firstSeen).getTime() / 1000)}:R>`
+					: '—',
+				inline: true,
+			},
+			{
+				name: 'Last seen',
+				value: history?.lastSeen
+					? `<t:${Math.floor(new Date(history.lastSeen).getTime() / 1000)}:R>`
+					: '—',
+				inline: true,
+			},
+		);
+
+	if (meta) {
+		const bits = [];
+		if (meta.context_length)
+			bits.push(`ctx ${Math.round(meta.context_length / 1024)}K`);
+		if (meta.max_output_tokens)
+			bits.push(`max ${Math.round(meta.max_output_tokens / 1024)}K`);
+		if (meta.usage_multiplier != null) bits.push(`${meta.usage_multiplier}x`);
+		if (meta.pricing)
+			bits.push(
+				`${meta.pricing.prompt}/${meta.pricing.input_cache_read ?? '—'}/${meta.pricing.completion} cr`,
+			);
+		if (bits.length) {
+			embed.addFields({ name: 'Model', value: bits.join(' • '), inline: false });
+		}
+	}
+
+	// Range selector — the same four windows the dashboards offer.
+	const rangeRow = new ActionRowBuilder().addComponents(
+		...DRILL_RANGES.map((r) =>
+			new ButtonBuilder()
+				.setCustomId(`${PANEL_DRILL}_range_${r.key}`)
+				.setLabel(r.label)
+				.setStyle(r.key === range ? ButtonStyle.Primary : ButtonStyle.Secondary),
+		),
+		new ButtonBuilder()
+			.setCustomId(`${PANEL_DRILL}_back`)
+			.setLabel('Back')
+			.setStyle(ButtonStyle.Danger),
+	);
+
+	return { embed, rangeRow, history };
+}
+
+/** Render the three drilldown charts as PNG buffers. */
+async function buildModelDrilldownFiles(history) {
+	const { renderRequestsChart, renderLineChart } = require('./chart-png.js');
+	const files = [];
+	try {
+		files.push(
+			new AttachmentBuilder(renderRequestsChart(history), {
+				name: 'requests.png',
+			}),
+		);
+		files.push(
+			new AttachmentBuilder(
+				renderLineChart(history, 'p50', [59, 130, 246, 255], 'LATENCY P50'),
+				{ name: 'latency.png' },
+			),
+		);
+		if ((history?.points || []).some((p) => p.tps != null)) {
+			files.push(
+				new AttachmentBuilder(
+					renderLineChart(history, 'tps', [168, 85, 247, 255], 'THROUGHPUT'),
+					{ name: 'throughput.png' },
+				),
+			);
+		}
+	} catch (err) {
+		console.warn('drilldown chart render failed:', err?.message || err);
+	}
+	return files;
 }
 
 function buildTokitoEmbed(kind, session) {
@@ -8866,6 +9037,35 @@ client.on('interactionCreate', async (interaction) => {
 			return;
 		}
 
+		// Model picked from the drilldown select menu. Lives OUTSIDE the
+		// isButton() branch below — a select interaction is not a button, so
+		// anything nested there never receives it.
+		{
+			const isDrillPick =
+				interaction.isStringSelectMenu?.() &&
+				interaction.customId === `${PANEL_DRILL}_pick`;
+			if (isDrillPick) {
+				await interaction.deferUpdate();
+				const drill = runtime._drillState || (runtime._drillState = {});
+				const uid = interaction.user.id;
+				const st = drill[uid] || { model: null, range: '7d' };
+				st.model = interaction.values[0];
+				drill[uid] = st;
+
+				const entry = runtime.modelEntries.find(
+					(e) => e.modelId === st.model || e.catalogId === st.model,
+				);
+				const built = await buildModelDrilldown(st.model, st.range, entry || null);
+				const files = await buildModelDrilldownFiles(built.history);
+				if (files.length) built.embed.setImage('attachment://requests.png');
+				await interaction.editReply({
+					embeds: [built.embed],
+					components: [built.rangeRow],
+					files,
+				});
+				return;
+			}
+		}
 		if (interaction.isButton()) {
 			if (interaction.customId === 'create_agverif_ticket') {
 				const member = interaction.member;
@@ -9469,7 +9669,9 @@ client.on('interactionCreate', async (interaction) => {
 			if (
 				interaction.customId === PANEL_STATUS ||
 				interaction.customId === PANEL_LATENCY ||
-				interaction.customId === PANEL_DETAILS
+				interaction.customId === PANEL_DETAILS ||
+				interaction.customId === PANEL_DRILL ||
+				interaction.customId.startsWith(`${PANEL_DRILL}_`)
 			) {
 				const access = await getMemberToolAccess(interaction.member);
 				// The API Checker panel is read-only status info (no quota is
@@ -9479,7 +9681,9 @@ client.on('interactionCreate', async (interaction) => {
 				const isApiCheckerPanel =
 					interaction.customId === PANEL_STATUS ||
 					interaction.customId === PANEL_LATENCY ||
-					interaction.customId === PANEL_DETAILS;
+					interaction.customId === PANEL_DETAILS ||
+					interaction.customId === PANEL_DRILL ||
+					interaction.customId.startsWith(`${PANEL_DRILL}_`);
 				if (!access.canUseTools && !isApiCheckerPanel) {
 					await interaction.reply({
 						content: toolAccessDeniedMessage(access),
@@ -9536,6 +9740,91 @@ client.on('interactionCreate', async (interaction) => {
 				await interaction.editReply({
 					embeds: [embed],
 					components,
+				});
+				return;
+			}
+
+
+			// ── Per-model drilldown buttons ────────────────────────────────────
+			// Two entry points: the panel button (shows a model picker) and the
+			// in-drilldown buttons (`_range_<key>` switches window, `_back`
+			// returns to the picker). Charts are rendered server-side to PNG
+			// because the host has no canvas/sharp available.
+			if (
+				interaction.customId === PANEL_DRILL ||
+				interaction.customId.startsWith(`${PANEL_DRILL}_`)
+			) {
+				await interaction.deferReply({ ephemeral: true });
+				await refreshLatencyFromProxy();
+				const drill = runtime._drillState || (runtime._drillState = {});
+				const uid = interaction.user.id;
+				const st = drill[uid] || { model: null, range: '7d' };
+
+				const cid = interaction.customId;
+				if (cid.startsWith(`${PANEL_DRILL}_range_`)) {
+					st.range = cid.slice(`${PANEL_DRILL}_range_`.length);
+				} else if (cid === `${PANEL_DRILL}_back`) {
+					st.model = null;
+				}
+				drill[uid] = st;
+
+				if (!st.model) {
+					// Model picker: the models that actually have traffic, so the
+					// user is not scrolling a list of dark models.
+					let options = [];
+					try {
+						const details = await proxyInternal('/admin/internal/models/details');
+						const rows = (details?.data || [])
+							.filter((d) => d.id && d.id !== 'auto')
+							.map((d) => ({
+								id: d.id,
+								req7: Number(d?.requests_by_range?.['7d']?.req || 0),
+							}))
+							.sort((a, b) => b.req7 - a.req7)
+							.slice(0, 25);
+						options = rows.map((r) => ({
+							label: r.id.slice(0, 100),
+							value: r.id.slice(0, 100),
+							description: `${r.req7} req / 7d`.slice(0, 100),
+						}));
+					} catch (err) {
+						console.warn('drill picker failed:', err?.message || err);
+					}
+					if (!options.length) {
+						await interaction.editReply({
+							content: 'No models with recorded traffic yet.',
+						});
+						return;
+					}
+					const menu = new StringSelectMenuBuilder()
+						.setCustomId(`${PANEL_DRILL}_pick`)
+						.setPlaceholder('Pick a model to chart')
+						.addOptions(options);
+					const row = new ActionRowBuilder().addComponents(menu);
+					await interaction.editReply({
+						content:
+							'**Per-Model Charts** — pick a model. Charts cover requests, latency and throughput; switch the window inside.',
+						components: [row],
+					});
+					return;
+				}
+
+				// Render one model's drilldown.
+				const entry = runtime.modelEntries.find(
+					(e) => e.modelId === st.model || e.catalogId === st.model,
+				);
+				const built = await buildModelDrilldown(st.model, st.range, entry || null);
+				const files = await buildModelDrilldownFiles(built.history);
+				if (files.length) {
+					built.embed.setImage('attachment://requests.png');
+					// Latency/throughput go as extra attachments the user can open;
+					// an embed can only show one image, and burying three charts in
+					// one composite makes them unreadable on mobile.
+				}
+				await interaction.editReply({
+					embeds: [built.embed],
+					components: [built.rangeRow],
+					files,
 				});
 				return;
 			}
