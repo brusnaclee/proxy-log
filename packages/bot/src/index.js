@@ -9946,6 +9946,15 @@ client.on('interactionCreate', async (interaction) => {
 		}
 
 		if (interaction.isStringSelectMenu()) {
+			// This listener only owns the tokito filter menus. Every other select
+			// menu (the how-to tutorial's `howto_ide_*`, and anything added later)
+			// is handled by the earlier interactionCreate listener; without this
+			// guard we fall through to the "no session ID" branch below, which
+			// DEFERS AND DELETES the message — wiping the tutorial the other
+			// listener had just rendered.
+			if (!interaction.customId.startsWith('tokito_filter_')) {
+				return;
+			}
 			const upstreamMatch = interaction.customId.match(
 				/^tokito_filter_upstream_(.+)$/,
 			);
