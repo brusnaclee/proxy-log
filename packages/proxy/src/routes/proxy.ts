@@ -2811,6 +2811,25 @@ proxy.all('/*', async (c) => {
 		onlineModels = onlineModels.filter((m) => isAutoCompatible(m.modelId));
 		// Trial uses full online catalog (same as Phantom); whitelist enforced elsewhere if configured.
 
+		// Cost- and vision-aware ordering. `auto` used to sort by latency alone,
+		// which routed default traffic to gpt-6-astra (25x) and opus-5.5 (8.3x)
+		// whenever they happened to answer fast. Cheap models now lead and
+		// expensive ones are last-resort; an image request only sees models whose
+		// catalog row declares `image` input.
+		const {
+			rankAutoCandidates,
+			requestHasImage,
+			buildAutoMetaIndex,
+		} = await import('../utils/auto-selection.js');
+		// One shared index: it aliases both the published and raw vendor ids so
+		// the lookup actually resolves (see buildAutoMetaIndex).
+		const autoMetaIndex = await buildAutoMetaIndex();
+		const autoNeedsVision = requestHasImage(requestBody);
+		onlineModels = rankAutoCandidates(onlineModels, {
+			needsVision: autoNeedsVision,
+			metaFor: (providerModel) => autoMetaIndex.get(providerModel) ?? null,
+		});
+
 		const {
 			loadVendorAliasIndex,
 			publicizeModelString,
@@ -2825,7 +2844,9 @@ proxy.all('/*', async (c) => {
 			return c.json(
 				{
 					error: {
-						message: 'No compatible online models available for auto selection',
+						message: autoNeedsVision
+							? 'No compatible online model supports image input right now. Try a text-only request or pick a vision-capable model explicitly.'
+							: 'No compatible online models available for auto selection',
 						type: 'model_offline',
 					},
 				},
@@ -5763,6 +5784,19 @@ proxy.all('/*', async (c) => {
 					// response rather than a 503. Phantom users get the full pool.
 					let onlineModels = await getOnlineModelsByLatency();
 					onlineModels = onlineModels.filter((m) => isAutoCompatible(m.modelId));
+					if (onlineModels.length === 0) break;
+					// Same policy as the primary auto path: cheap models first, and an
+					// image request only reaches a model that declares image input.
+					const {
+						rankAutoCandidates: rankAuto,
+						requestHasImage: hasImage,
+						buildAutoMetaIndex: buildAutoMeta,
+					} = await import('../utils/auto-selection.js');
+					const fbMeta = await buildAutoMeta();
+					onlineModels = rankAuto(onlineModels, {
+						needsVision: hasImage(requestBody),
+						metaFor: (pm) => fbMeta.get(pm) ?? null,
+					});
 					if (onlineModels.length === 0) break;
 					const pick = onlineModels[0];
 					pickModel = pick.provider ? `${pick.provider}/${pick.modelId}` : pick.modelId;
